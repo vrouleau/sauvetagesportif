@@ -4,6 +4,7 @@ import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router'
 import './index.css'
 import { LangProvider, useLang } from './i18n'
 import Login from './pages/Login'
+import Meet from './pages/Meet'
 import Athletes from './pages/Athletes'
 import Register from './pages/Register'
 import Admin from './pages/Admin'
@@ -21,8 +22,9 @@ function AuthLayout({ children, canOrganizer, canAdmin, meetName, toggle, lang, 
   if (standalone) return children
 
   const tabs = [
-    { to: '/', label: t.athletes, show: true },
-    { to: '/organizer', label: t.organizer, show: canOrganizer },
+    { to: '/meet', label: t.tab_meet || 'Compétition', show: canOrganizer },
+    { to: '/invitation', label: t.tab_invitation || 'Invitation', show: canOrganizer },
+    { to: '/', label: t.tab_registration || 'Inscription', show: true },
     { to: '/admin', label: t.admin, show: canAdmin },
     { to: '/data-management', label: t.data_management, show: canAdmin },
   ]
@@ -127,7 +129,8 @@ function AppInner() {
         <Routes>
           <Route path="/" element={<Athletes role={auth.role} clubId={auth.club_id} />} />
           <Route path="/athletes/:id/register" element={<Register />} />
-          {canOrganizer && <Route path="/organizer" element={<Organizer />} />}
+          {canOrganizer && <Route path="/meet" element={<Meet />} />}
+          {canOrganizer && <Route path="/invitation" element={<Organizer />} />}
           {canAdmin && <Route path="/admin" element={<Admin />} />}
           {canAdmin && <Route path="/data-management" element={<DataManagement />} />}
           <Route path="/secret/:token" element={<Secret />} />
