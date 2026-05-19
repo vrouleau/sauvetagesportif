@@ -816,7 +816,7 @@ def list_sessions(db: Session = Depends(get_db)):
                     "name": ag.name or "",
                     "minAge": ag.agemin or 0,
                     "maxAge": ag.agemax,
-                    "gender": "M" if ag.gender == 1 else "F" if ag.gender == 2 else "X",
+                    "gender": "M" if ag.gender == 1 else "F" if ag.gender == 2 else ("M" if e.gender == 1 else "F" if e.gender == 2 else "X"),
                     "numHeats": ag.heatcount or 1,
                     "ranking": "By time",
                     "countForMedalStats": ag.useformedals == "T",
