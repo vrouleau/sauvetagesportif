@@ -22,8 +22,9 @@ import Footer from './Footer'
 
 // Wrap the shared EventsPage with its required providers
 function EventsPage() {
+  const { lang } = useLang()
   return (
-    <SharedLangProvider>
+    <SharedLangProvider initialLang={lang}>
       <ApiProvider api={meetApiHttp}>
         <EventsPageShared />
       </ApiProvider>
