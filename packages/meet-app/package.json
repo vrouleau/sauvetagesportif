@@ -9,6 +9,8 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "build:win": "npm run build && electron-builder --win",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "postinstall": "electron-rebuild -f -w better-sqlite3"
   },
   "build": {
@@ -54,6 +56,7 @@
     "postcss": "^8.4.38",
     "tailwindcss": "^3.4.4",
     "typescript": "^5.5.2",
-    "vite": "^5.3.1"
+    "vite": "^5.3.1",
+    "vitest": "^4.1.6"
   }
 }
