@@ -11,7 +11,7 @@
     "build:win": "npm run build && electron-builder --win",
     "test": "vitest run",
     "test:watch": "vitest",
-    "rebuild": "npx @electron/rebuild -f -w better-sqlite3"
+    "rebuild": "node scripts/rebuild.js"
   },
   "build": {
     "appId": "com.splashmeet",

@@ -29,7 +29,7 @@ xcode-select --install
 ```bash
 cd packages/meet-app
 npm install
-npx @electron/rebuild -f -w better-sqlite3
+npm run rebuild    # compile better-sqlite3 for Electron (needs VS Build Tools)
 npm run dev
 ```
 

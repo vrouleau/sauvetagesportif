@@ -27,7 +27,7 @@ jobs:
 
       - name: Rebuild better-sqlite3 for Electron
         working-directory: packages/meet-app
-        run: npx @electron/rebuild -f -w better-sqlite3
+        run: npx @electron/rebuild -f -w better-sqlite3 -m ../..
 
       - name: Build & package
         working-directory: packages/meet-app
@@ -57,7 +57,7 @@ jobs:
 
       - name: Rebuild better-sqlite3 for Electron
         working-directory: packages/meet-app
-        run: npx @electron/rebuild -f -w better-sqlite3
+        run: npx @electron/rebuild -f -w better-sqlite3 -m ../..
 
       - name: Build & package
         working-directory: packages/meet-app

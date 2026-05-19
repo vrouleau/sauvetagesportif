@@ -16,14 +16,14 @@ Monorepo for lifesaving competition management. Two apps sharing UI components:
 ```bash
 cd packages/meet-app
 npm install
-npx @electron/rebuild -f -w better-sqlite3   # compile native module for Electron
+npm run rebuild   # compile native module for Electron
 npm run dev
 ```
 
 F12 opens DevTools. **Do NOT run from Claude Code terminal** (ELECTRON_RUN_AS_NODE=1 crashes it).
 
 **After switching between `npm test` and `npm run dev`:**
-- Before `npm run dev`: `npx @electron/rebuild -f -w better-sqlite3`
+- Before `npm run dev`: `npm run rebuild`
 - Before `npm test`: `npm rebuild better-sqlite3`
 
 (They compile the native module for different Node ABIs.)
