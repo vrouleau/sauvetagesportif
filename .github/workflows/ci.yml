@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ─── Meet App: Unit Tests ─────────────────────────────────────────────────
+  meet-app-test:
+    name: Meet App — Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: packages/meet-app/package-lock.json
+
+      - name: Install dependencies
+        working-directory: packages/meet-app
+        run: npm ci
+
+      - name: Rebuild better-sqlite3 for Node (not Electron)
+        working-directory: packages/meet-app
+        run: npm rebuild better-sqlite3
+
+      - name: Run unit tests
+        working-directory: packages/meet-app
+        run: npm test
+
+  # ─── Meet App: Build ───────────────────────────────────────────────────────
+  meet-app-build:
+    name: Meet App — Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: packages/meet-app/package-lock.json
+
+      - name: Install dependencies
+        working-directory: packages/meet-app
+        run: npm ci
+
+      - name: Rebuild better-sqlite3 for Node
+        working-directory: packages/meet-app
+        run: npm rebuild better-sqlite3
+
+      - name: Build (electron-vite)
+        working-directory: packages/meet-app
+        run: npm run build
+
+  # ─── Team App: Docker Build ────────────────────────────────────────────────
+  team-app-build:
+    name: Team App — Docker Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker images
+        working-directory: packages/team-app
+        run: docker compose build
+
+  # ─── Team App: Integration Tests ──────────────────────────────────────────
+  team-app-test:
+    name: Team App — Integration Tests
+    runs-on: ubuntu-latest
+    needs: team-app-build
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: pip install pytest requests
+
+      - name: Start stack
+        working-directory: packages/team-app
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.test.yml \
+            --env-file tests/test.env up --build -d
+          # Wait for backend to be healthy
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:8000/api/status > /dev/null 2>&1; then
+              echo "Backend healthy after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+
+      - name: Run integration tests
+        working-directory: packages/team-app
+        env:
+          MEETMGR_SKIP_STACK: "1"
+          MEETMGR_URL: "http://127.0.0.1:8000"
+        run: python -m pytest tests/ -v
+
+      - name: Show logs on failure
+        if: failure()
+        working-directory: packages/team-app
+        run: docker compose -f docker-compose.yml -f docker-compose.test.yml logs
+
+      - name: Tear down
+        if: always()
+        working-directory: packages/team-app
+        run: docker compose -f docker-compose.yml -f docker-compose.test.yml down -v
