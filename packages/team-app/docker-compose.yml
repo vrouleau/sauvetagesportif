@@ -34,7 +34,9 @@ services:
       - appdata:/app/data
 
   frontend:
-    build: ./frontend
+    build:
+      context: ../..
+      dockerfile: packages/team-app/frontend/Dockerfile
     environment:
       TURNSTILE_SITE_KEY: "${TURNSTILE_SITE_KEY:-}"
       SUPPORT_EMAIL: "${SUPPORT_EMAIL:-}"
