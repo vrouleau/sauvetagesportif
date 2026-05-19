@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   # ─── Meet App: Windows x64 Installer ──────────────────────────────────────
-  meet-app-installer:
+  meet-app-windows:
     name: Meet App — Windows x64 Setup
     runs-on: windows-latest
     steps:
@@ -39,6 +39,36 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: packages/meet-app/dist/*.exe
+
+  # ─── Meet App: macOS Installer ─────────────────────────────────────────────
+  meet-app-macos:
+    name: Meet App — macOS DMG
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        working-directory: packages/meet-app
+        run: npm install
+
+      - name: Rebuild better-sqlite3 for Electron
+        working-directory: packages/meet-app
+        run: npx electron-rebuild -f -w better-sqlite3
+
+      - name: Build & package
+        working-directory: packages/meet-app
+        run: npx electron-vite build && npx electron-builder --mac
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload DMG to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: packages/meet-app/dist/*.dmg
 
   # ─── Team App: Docker Images ───────────────────────────────────────────────
   team-app-images:
