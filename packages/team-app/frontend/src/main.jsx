@@ -5,6 +5,10 @@ import './index.css'
 import { LangProvider, useLang } from './i18n'
 import Login from './pages/Login'
 import Meet from './pages/Meet'
+import EventsPageShared from './shared/EventsPage'
+import { ApiProvider } from './shared/ApiContext'
+import { LangProvider as SharedLangProvider } from './shared/LangContext'
+import { meetApiHttp } from './meetApi'
 import Athletes from './pages/Athletes'
 import Register from './pages/Register'
 import Admin from './pages/Admin'
@@ -15,6 +19,17 @@ import SelfInvite from './pages/SelfInvite'
 import BestTimesPublic from './pages/BestTimesPublic'
 import Workflow from './pages/Workflow'
 import Footer from './Footer'
+
+// Wrap the shared EventsPage with its required providers
+function EventsPage() {
+  return (
+    <SharedLangProvider>
+      <ApiProvider api={meetApiHttp}>
+        <EventsPageShared />
+      </ApiProvider>
+    </SharedLangProvider>
+  )
+}
 
 function AuthLayout({ children, canOrganizer, canAdmin, meetName, toggle, lang, logout, auth, t }) {
   const location = useLocation()
@@ -129,7 +144,7 @@ function AppInner() {
         <Routes>
           <Route path="/" element={<Athletes role={auth.role} clubId={auth.club_id} />} />
           <Route path="/athletes/:id/register" element={<Register />} />
-          {canOrganizer && <Route path="/meet" element={<Meet />} />}
+          {canOrganizer && <Route path="/meet" element={<EventsPage />} />}
           {canOrganizer && <Route path="/invitation" element={<Organizer />} />}
           {canAdmin && <Route path="/admin" element={<Admin />} />}
           {canAdmin && <Route path="/data-management" element={<DataManagement />} />}
