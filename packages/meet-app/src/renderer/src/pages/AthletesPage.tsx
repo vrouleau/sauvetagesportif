@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { type Athlete } from '../data/mockData'
-import { useLang } from '../context/LangContext'
+import { useLang } from '@shared/context/LangContext'
 
 function dbApi() {
   return (window as unknown as {

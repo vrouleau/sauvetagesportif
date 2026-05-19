@@ -4,7 +4,7 @@ import HeatsPage from './pages/HeatsPage'
 import AthletesPage from './pages/AthletesPage'
 import { DbConfigDialog } from './components/DbConfigDialog'
 import { competition } from './data/mockData'
-import { LangProvider, useLang } from './context/LangContext'
+import { LangProvider, useLang } from '@shared/context/LangContext'
 
 type Page = 'events' | 'heats' | 'athletes'
 

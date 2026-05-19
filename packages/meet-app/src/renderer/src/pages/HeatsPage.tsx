@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { type HeatListEvent, type HeatListSession, type Heat, type LaneEntry } from '../data/mockData'
-import { useLang } from '../context/LangContext'
+import { useLang } from '@shared/context/LangContext'
 
 interface HeatState {
   [heatId: number]: LaneEntry[]
