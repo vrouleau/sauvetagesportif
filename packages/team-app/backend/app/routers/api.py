@@ -793,7 +793,6 @@ def update_athlete(athlete_id: int, data: AthleteUpdate, request: Request, db: S
 
 @router.get("/sessions")
 def list_sessions(db: Session = Depends(get_db)):
-    from .models import SwimSession, AgeGroup
     sessions = db.query(SwimSession).order_by(SwimSession.sessionnumber).all()
     result = []
     for s in sessions:
