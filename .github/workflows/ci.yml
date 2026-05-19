@@ -17,12 +17,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: packages/meet-app/package-lock.json
 
       - name: Install dependencies
         working-directory: packages/meet-app
-        run: npm ci
+        run: npm install
 
       - name: Rebuild better-sqlite3 for Node (not Electron)
         working-directory: packages/meet-app
@@ -42,16 +40,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: packages/meet-app/package-lock.json
 
       - name: Install dependencies
         working-directory: packages/meet-app
-        run: npm ci
-
-      - name: Rebuild better-sqlite3 for Node
-        working-directory: packages/meet-app
-        run: npm rebuild better-sqlite3
+        run: npm install
 
       - name: Build (electron-vite)
         working-directory: packages/meet-app
