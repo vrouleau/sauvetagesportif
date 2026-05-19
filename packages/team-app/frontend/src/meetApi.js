@@ -56,14 +56,8 @@ export const meetApiHttp = {
 
   async getSwimStyles() {
     try {
-      const r = await api.get('/styles', { headers: { 'X-Club-Pin': localStorage.getItem('pin') } })
-      return (r.data || []).map(s => ({
-        id: s.uid || s.id,
-        distance: s.distance || 0,
-        stroke: 1,
-        name: s.name || '',
-        relaycount: s.relay_count || 1,
-      }))
+      const r = await api.get('/swim-styles')
+      return r.data || []
     } catch { return [] }
   },
 }

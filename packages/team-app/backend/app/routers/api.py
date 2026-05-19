@@ -858,6 +858,18 @@ def list_events(db: Session = Depends(get_db)):
     } for e in events]
 
 
+@router.get("/swim-styles")
+def list_swim_styles(db: Session = Depends(get_db)):
+    styles = db.query(SwimStyle).order_by(SwimStyle.distance, SwimStyle.stroke).all()
+    return [{
+        "id": s.swimstyleid,
+        "distance": s.distance or 0,
+        "stroke": s.stroke or 1,
+        "name": s.name or "",
+        "relaycount": s.relaycount or 1,
+    } for s in styles]
+
+
 # ---------------------------------------------------------------------------
 # Registration detail (athlete entry page)
 # ---------------------------------------------------------------------------
