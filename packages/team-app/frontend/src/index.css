@@ -1,0 +1,60 @@
+@import "tailwindcss";
+
+@theme {
+  --color-border: var(--color-gray-200);
+}
+
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200);
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  html, body, #root {
+    height: 100%;
+  }
+
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 13px;
+    background: #f3f4f6;
+    color: #111;
+  }
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: #f0f0f0; }
+::-webkit-scrollbar-thumb { background: #aaa; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #888; }
+
+@media print {
+  .best-times-print {
+    padding: 0;
+  }
+  @page {
+    size: landscape;
+    margin: 1cm;
+  }
+  .best-times-header {
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+    white-space: nowrap;
+    display: inline-block;
+  }
+}
+
+@media screen {
+  .best-times-header {
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+    white-space: nowrap;
+    display: inline-block;
+  }
+}

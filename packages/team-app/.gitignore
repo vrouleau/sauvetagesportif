@@ -1,0 +1,9 @@
+.env
+.env.bak
+.venv
+__pycache__
+.kiro/context.md
+backend/target/
+frontend/dist/
+frontend/node_modules/
+PLAN.md

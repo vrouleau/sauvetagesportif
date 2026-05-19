@@ -1,0 +1,49 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  font-size: 13px;
+  background: #f0f0f0;
+  color: #111;
+}
+
+/* Compact table rows */
+.heat-table td, .heat-table th {
+  padding: 2px 6px;
+  white-space: nowrap;
+}
+
+/* Time input in heat table */
+.time-input {
+  width: 90px;
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  padding: 1px 4px;
+  border: 2px solid #0066cc;
+  background: #ddeeff;
+  outline: none;
+}
+
+/* Tree node hover */
+.tree-node:hover {
+  background: #e8f0fe;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: #f0f0f0; }
+::-webkit-scrollbar-thumb { background: #aaa; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #888; }
