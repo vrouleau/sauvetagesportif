@@ -1,0 +1,10 @@
+{
+  "name": "@meetmgr/team-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Web app for team registration, entries, and invoices",
+  "dependencies": {
+    "@meetmgr/shared-ui": "*"
+  },
+  "devDependencies": {}
+}
