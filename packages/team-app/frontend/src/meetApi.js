@@ -7,52 +7,8 @@ import api from './api'
 
 export const meetApiHttp = {
   async getSessions() {
-    // The team-app backend doesn't have a /sessions endpoint yet.
-    // Use /events and group by session for now.
-    const r = await api.get('/events')
-    const events = r.data || []
-    // Group events by session
-    const sessionMap = new Map()
-    for (const e of events) {
-      const sid = e.session_id || 1
-      if (!sessionMap.has(sid)) {
-        sessionMap.set(sid, {
-          id: sid,
-          number: e.session_number || sid,
-          name: e.session_name || `Session ${sid}`,
-          poolSize: 50,
-          events: [],
-        })
-      }
-      sessionMap.get(sid).events.push({
-        id: e.id,
-        sessionId: sid,
-        number: e.eventnumber || e.event_number || 0,
-        nameFr: e.style_name || e.name || '',
-        nameEn: e.style_name || e.name || '',
-        gender: e.gender === 2 ? 'F' : e.gender === 1 ? 'M' : 'X',
-        distance: e.distance || 0,
-        phase: 'Finale directe',
-        isAdmin: false,
-        swimstyleId: e.swimstyle_id || null,
-        ageGroups: (e.age_groups || []).map((ag, i) => ({
-          id: ag.id || i,
-          number: i + 1,
-          name: ag.name || ag.code || '',
-          minAge: ag.agemin || 0,
-          maxAge: ag.agemax || null,
-          gender: ag.gender === 2 ? 'F' : ag.gender === 1 ? 'M' : 'X',
-          numHeats: 1,
-          ranking: 'By time',
-          countForMedalStats: true,
-          usedForCombined: false,
-          alwaysSwimPrelims: true,
-          advanceByTime: false,
-          laneOrderInFinals: 'By time',
-        })),
-      })
-    }
-    return Array.from(sessionMap.values())
+    const r = await api.get('/sessions')
+    return r.data || []
   },
 
   async createSession(name, number) { return { id: Date.now() } },

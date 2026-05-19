@@ -788,6 +788,56 @@ def update_athlete(athlete_id: int, data: AthleteUpdate, request: Request, db: S
 
 
 # ---------------------------------------------------------------------------
+# Sessions (for shared EventsPage)
+# ---------------------------------------------------------------------------
+
+@router.get("/sessions")
+def list_sessions(db: Session = Depends(get_db)):
+    from .models import SwimSession, AgeGroup
+    sessions = db.query(SwimSession).order_by(SwimSession.sessionnumber).all()
+    result = []
+    for s in sessions:
+        events_data = []
+        for e in sorted(s.events, key=lambda x: x.sortcode or x.eventnumber or 0):
+            ags = db.query(AgeGroup).filter(AgeGroup.swimeventid == e.swimeventid).order_by(AgeGroup.sortcode).all()
+            events_data.append({
+                "id": e.swimeventid,
+                "sessionId": s.swimsessionid,
+                "number": e.eventnumber or 0,
+                "nameFr": e.roundname or (e.swimstyle.name if e.swimstyle else ""),
+                "nameEn": e.roundname or (e.swimstyle.name if e.swimstyle else ""),
+                "gender": "M" if e.gender == 1 else "F" if e.gender == 2 else "X",
+                "distance": e.swimstyle.distance if e.swimstyle else 0,
+                "phase": "Eliminatoire" if e.round == 1 else "Finale" if e.round == 4 else "Finale directe",
+                "isAdmin": e.internalevent == "T",
+                "swimstyleId": e.swimstyleid,
+                "ageGroups": [{
+                    "id": ag.agegroupid,
+                    "number": i + 1,
+                    "name": ag.name or "",
+                    "minAge": ag.agemin or 0,
+                    "maxAge": ag.agemax,
+                    "gender": "M" if ag.gender == 1 else "F" if ag.gender == 2 else "X",
+                    "numHeats": ag.heatcount or 1,
+                    "ranking": "By time",
+                    "countForMedalStats": ag.useformedals == "T",
+                    "usedForCombined": False,
+                    "alwaysSwimPrelims": True,
+                    "advanceByTime": False,
+                    "laneOrderInFinals": "By time",
+                } for i, ag in enumerate(ags)],
+            })
+        result.append({
+            "id": s.swimsessionid,
+            "number": s.sessionnumber or 0,
+            "name": s.name or "",
+            "poolSize": 50 if s.course == 1 else 25,
+            "events": events_data,
+        })
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Events
 # ---------------------------------------------------------------------------
 
