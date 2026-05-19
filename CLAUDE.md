@@ -8,22 +8,44 @@ Monorepo for lifesaving competition management. Two apps sharing UI components:
 ## How to run
 
 ### Meet app (Electron)
+
+**Prerequisites (one-time):**
+- Windows: `winget install Microsoft.VisualStudio.2022.BuildTools --override "--quiet --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"`
+- macOS: `xcode-select --install`
+
 ```bash
 cd packages/meet-app
+npm install
+npx @electron/rebuild -f -w better-sqlite3   # compile native module for Electron
 npm run dev
 ```
+
 F12 opens DevTools. **Do NOT run from Claude Code terminal** (ELECTRON_RUN_AS_NODE=1 crashes it).
+
+**After switching between `npm test` and `npm run dev`:**
+- Before `npm run dev`: `npx @electron/rebuild -f -w better-sqlite3`
+- Before `npm test`: `npm rebuild better-sqlite3`
+
+(They compile the native module for different Node ABIs.)
 
 ### Team app (Docker)
 ```bash
 cd packages/team-app
-cp .env_template .env  # set SECRET_KEY
-docker compose up -d   # http://localhost:8001
+cp .env_template .env  # set SECRET_KEY to something other than default
+docker compose up -d   # http://localhost:8001, admin PIN: 314159
 ```
 
-### Integration tests
+### Tests
 ```bash
-wsl -- bash -c "cd .../packages/team-app && python3 -m pytest tests/ -v"
+# Meet app unit tests (24 tests, Vitest)
+cd packages/meet-app
+npm rebuild better-sqlite3   # ensure compiled for system Node
+npm test
+
+# Team app integration tests (94 tests, pytest)
+cd packages/team-app
+pip install pytest requests
+MEETMGR_SKIP_STACK=1 MEETMGR_URL=http://127.0.0.1:8001 python -m pytest tests/ -v
 ```
 
 ## Project structure

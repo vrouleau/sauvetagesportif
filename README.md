@@ -15,12 +15,25 @@ packages/
 
 ### Electron app (meet-app)
 
+**Prerequisites (Windows, one-time):**
+```bash
+winget install Microsoft.VisualStudio.2022.BuildTools --override "--quiet --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+```
+
+**Prerequisites (macOS, one-time):**
+```bash
+xcode-select --install
+```
+
+**Setup & run:**
 ```bash
 cd packages/meet-app
 npm install
-npx electron-rebuild -f -w better-sqlite3
+npx @electron/rebuild -f -w better-sqlite3
 npm run dev
 ```
+
+> Note: `@electron/rebuild` recompiles `better-sqlite3` for Electron's Node ABI. This is required once after `npm install` and after any Electron version change.
 
 ### Web app (team-app)
 
@@ -33,9 +46,25 @@ docker compose up -d    # runs on http://localhost:8001
 ### Integration tests (team-app)
 
 ```bash
-# Requires WSL with Docker
-wsl -- bash -c "cd /mnt/c/.../packages/team-app && python3 -m pytest tests/ -v"
+# Requires Docker (WSL on Windows, or native on Linux/macOS)
+cd packages/team-app
+cp .env_template .env   # edit SECRET_KEY
+# Full suite (starts/stops Docker stack automatically):
+python -m pytest tests/ -v
+# Against already-running stack:
+MEETMGR_SKIP_STACK=1 MEETMGR_URL=http://127.0.0.1:8001 python -m pytest tests/ -v
 ```
+
+### Unit tests (meet-app)
+
+```bash
+cd packages/meet-app
+npm install
+npm rebuild better-sqlite3   # compile for system Node (not Electron)
+npm test
+```
+
+> Note: `npm test` uses system Node.js. If you previously ran `@electron/rebuild`, you need `npm rebuild better-sqlite3` to recompile for system Node before tests will pass.
 
 ## Architecture
 
