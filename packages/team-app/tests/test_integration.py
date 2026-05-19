@@ -1024,3 +1024,168 @@ class TestAuditLog:
                          json={"closure_date": ""},
                          headers=admin_headers, timeout=5)
         assert r.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Sessions endpoint (shared EventsPage data source)
+# ---------------------------------------------------------------------------
+
+class TestSessions:
+    """Tests for GET /sessions — the data source for the shared EventsPage."""
+
+    def test_sessions_returns_list(self, uploaded):
+        r = requests.get(f"{BASE_URL}/api/sessions", timeout=10)
+        r.raise_for_status()
+        sessions = r.json()
+        assert isinstance(sessions, list)
+        assert len(sessions) > 0
+
+    def test_sessions_have_required_fields(self, uploaded):
+        r = requests.get(f"{BASE_URL}/api/sessions", timeout=10)
+        r.raise_for_status()
+        for s in r.json():
+            assert "id" in s
+            assert "number" in s
+            assert "name" in s
+            assert "poolSize" in s
+            assert "events" in s
+            assert isinstance(s["events"], list)
+
+    def test_sessions_contain_multiple_sessions(self, uploaded):
+        """The Gatineau meet template has multiple sessions."""
+        r = requests.get(f"{BASE_URL}/api/sessions", timeout=10)
+        r.raise_for_status()
+        sessions = r.json()
+        assert len(sessions) > 1, "Expected multiple sessions from Gatineau template"
+
+    def test_session_events_have_required_fields(self, uploaded):
+        r = requests.get(f"{BASE_URL}/api/sessions", timeout=10)
+        r.raise_for_status()
+        sessions = r.json()
+        # Find a session with events
+        session_with_events = next((s for s in sessions if s["events"]), None)
+        assert session_with_events, "No session has events"
+        ev = session_with_events["events"][0]
+        assert "id" in ev
+        assert "sessionId" in ev
+        assert "number" in ev
+        assert "nameFr" in ev
+        assert "gender" in ev
+        assert ev["gender"] in ("M", "F", "X")
+        assert "distance" in ev
+        assert "phase" in ev
+        assert "swimstyleId" in ev
+        assert "ageGroups" in ev
+
+    def test_session_events_have_age_groups(self, uploaded):
+        r = requests.get(f"{BASE_URL}/api/sessions", timeout=10)
+        r.raise_for_status()
+        sessions = r.json()
+        # Find an event with age groups
+        found = False
+        for s in sessions:
+            for ev in s["events"]:
+                if ev["ageGroups"]:
+                    found = True
+                    ag = ev["ageGroups"][0]
+                    assert "id" in ag
+                    assert "name" in ag or ag["name"] == ""
+                    assert "minAge" in ag
+                    assert "maxAge" in ag
+                    assert "gender" in ag
+                    assert ag["gender"] in ("M", "F", "X")
+                    break
+            if found:
+                break
+        assert found, "No event has age groups"
+
+    def test_age_group_gender_inherits_from_event(self, uploaded):
+        """Age groups with NULL gender should inherit from parent event."""
+        r = requests.get(f"{BASE_URL}/api/sessions", timeout=10)
+        r.raise_for_status()
+        sessions = r.json()
+        for s in sessions:
+            for ev in s["events"]:
+                if ev["gender"] != "X":  # skip mixed events
+                    for ag in ev["ageGroups"]:
+                        # Age group gender should match event gender (not be X)
+                        assert ag["gender"] == ev["gender"], (
+                            f"Event {ev['id']} gender={ev['gender']} but "
+                            f"agegroup {ag['id']} gender={ag['gender']}"
+                        )
+                    if ev["ageGroups"]:
+                        return  # one check is enough
+        pytest.skip("No non-mixed event with age groups found")
+
+    def test_total_event_count_matches_meet(self, uploaded):
+        """Sum of events across all sessions should equal the meet's event count."""
+        r = requests.get(f"{BASE_URL}/api/sessions", timeout=10)
+        r.raise_for_status()
+        sessions = r.json()
+        total = sum(len(s["events"]) for s in sessions)
+        assert total == 57  # Gatineau template has 57 events
+
+    def test_sessions_no_auth_required(self):
+        """The /sessions endpoint should be accessible without authentication."""
+        r = requests.get(f"{BASE_URL}/api/sessions", timeout=10)
+        assert r.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Swim styles endpoint (EventsPage dropdown data source)
+# ---------------------------------------------------------------------------
+
+class TestSwimStyles:
+    """Tests for GET /swim-styles — provides the swimstyle dropdown data."""
+
+    def test_swim_styles_returns_list(self, uploaded):
+        r = requests.get(f"{BASE_URL}/api/swim-styles", timeout=10)
+        r.raise_for_status()
+        styles = r.json()
+        assert isinstance(styles, list)
+        assert len(styles) > 0
+
+    def test_swim_styles_have_required_fields(self, uploaded):
+        r = requests.get(f"{BASE_URL}/api/swim-styles", timeout=10)
+        r.raise_for_status()
+        for s in r.json():
+            assert "id" in s
+            assert "distance" in s
+            assert "stroke" in s
+            assert "name" in s
+            assert "relaycount" in s
+
+    def test_swim_styles_no_auth_required(self):
+        """The /swim-styles endpoint should be accessible without authentication."""
+        r = requests.get(f"{BASE_URL}/api/swim-styles", timeout=10)
+        assert r.status_code == 200
+
+    def test_swim_styles_have_valid_distances(self, uploaded):
+        r = requests.get(f"{BASE_URL}/api/swim-styles", timeout=10)
+        r.raise_for_status()
+        for s in r.json():
+            assert s["distance"] > 0, f"Style {s['id']} has invalid distance {s['distance']}"
+
+    def test_swim_styles_have_names(self, uploaded):
+        """Most styles should have non-empty names (from LENEX import)."""
+        r = requests.get(f"{BASE_URL}/api/swim-styles", timeout=10)
+        r.raise_for_status()
+        styles = r.json()
+        named = [s for s in styles if s["name"]]
+        assert len(named) > len(styles) * 0.5, "Most styles should have names"
+
+    def test_event_swimstyleid_references_valid_style(self, uploaded):
+        """Every event's swimstyleId should exist in the /swim-styles list."""
+        r = requests.get(f"{BASE_URL}/api/swim-styles", timeout=10)
+        r.raise_for_status()
+        style_ids = {s["id"] for s in r.json()}
+
+        r = requests.get(f"{BASE_URL}/api/sessions", timeout=10)
+        r.raise_for_status()
+        for s in r.json():
+            for ev in s["events"]:
+                if ev["swimstyleId"]:
+                    assert ev["swimstyleId"] in style_ids, (
+                        f"Event {ev['id']} references swimstyleId={ev['swimstyleId']} "
+                        f"which is not in /swim-styles"
+                    )
