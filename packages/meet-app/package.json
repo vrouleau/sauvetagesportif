@@ -11,7 +11,7 @@
     "build:win": "npm run build && electron-builder --win",
     "test": "vitest run",
     "test:watch": "vitest",
-    "rebuild": "electron-rebuild -f -w better-sqlite3"
+    "rebuild": "npx @electron/rebuild -f -w better-sqlite3"
   },
   "build": {
     "appId": "com.splashmeet",
@@ -48,6 +48,7 @@
   },
   "devDependencies": {
     "@electron-toolkit/tsconfig": "^1.0.1",
+    "@electron/rebuild": "^4.0.4",
     "@types/better-sqlite3": "^7.6.13",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
