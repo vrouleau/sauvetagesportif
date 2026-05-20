@@ -406,36 +406,43 @@ export function restoreSMB(filePath: string, db: Database.Database): { tables: n
   const zipEntries = readZipEntries(filePath)
   let totalRows = 0
 
-  // Clear existing data (reverse FK order)
-  const reversed = [...SMB_TABLES].reverse()
-  for (const tableDef of reversed) {
-    db.prepare(`DELETE FROM ${tableDef.name.toLowerCase()}`).run()
-  }
+  // Disable FK enforcement for bulk import — Splash encodes NULL integers as 0
+  // which would fail FK checks mid-load even though the data is self-consistent.
+  db.pragma('foreign_keys = OFF')
+  try {
+    // Clear existing data (reverse FK order)
+    const reversed = [...SMB_TABLES].reverse()
+    for (const tableDef of reversed) {
+      db.prepare(`DELETE FROM ${tableDef.name.toLowerCase()}`).run()
+    }
 
-  // Import each table
-  for (const tableDef of SMB_TABLES) {
-    const fileName = `${tableDef.name}-0001.gbin`
-    const gbinData = zipEntries.get(fileName)
-    if (!gbinData) continue
+    // Import each table
+    for (const tableDef of SMB_TABLES) {
+      const fileName = `${tableDef.name}-0001.gbin`
+      const gbinData = zipEntries.get(fileName)
+      if (!gbinData) continue
 
-    const { rows } = decodeGbin(gbinData)
-    if (rows.length === 0) continue
+      const { rows } = decodeGbin(gbinData)
+      if (rows.length === 0) continue
 
-    const colNames = tableDef.cols.map(c => c.name.toLowerCase())
-    const placeholders = colNames.map(() => '?').join(', ')
-    const stmt = db.prepare(
-      `INSERT OR REPLACE INTO ${tableDef.name.toLowerCase()} (${colNames.join(', ')}) VALUES (${placeholders})`
-    )
+      const colNames = tableDef.cols.map(c => c.name.toLowerCase())
+      const placeholders = colNames.map(() => '?').join(', ')
+      const stmt = db.prepare(
+        `INSERT OR IGNORE INTO ${tableDef.name.toLowerCase()} (${colNames.join(', ')}) VALUES (${placeholders})`
+      )
 
-    const insertAll = db.transaction((recs: Record<string, unknown>[]) => {
-      for (const row of recs) {
-        const vals = colNames.map(c => row[c] ?? null)
-        stmt.run(...vals)
-      }
-    })
+      const insertAll = db.transaction((recs: Record<string, unknown>[]) => {
+        for (const row of recs) {
+          const vals = colNames.map(c => row[c] ?? null)
+          stmt.run(...vals)
+        }
+      })
 
-    insertAll(rows)
-    totalRows += rows.length
+      insertAll(rows)
+      totalRows += rows.length
+    }
+  } finally {
+    db.pragma('foreign_keys = ON')
   }
 
   return { tables: SMB_TABLES.length, rows: totalRows }
