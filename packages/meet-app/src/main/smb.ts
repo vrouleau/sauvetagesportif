@@ -1,6 +1,6 @@
 /**
  * SMB file format handler (Splash Meet Backup)
- * 
+ *
  * An .smb file is a ZIP archive containing:
  * - geologix.ini: metadata (app version, record counts)
  * - TABLENAME-0001.gbin: binary-serialized table data
@@ -8,9 +8,20 @@
  * GBIN format:
  * - 2-byte LE header length
  * - Header: tab-separated "COLNAME;TYPE;SIZE" column definitions
- * - Body: records separated by 1-byte prefix (first record has no prefix)
+ * - Body: records packed contiguously (no separator bytes)
+ *
+ * Column types:
  * - I;32 = int32 LE (4 bytes), I;16 = int16 LE (2 bytes)
- * - S;N = uint16 LE string length + UTF-8 content
+ * - S;N = uint16 LE string length + UTF-8 content (len=0 → null)
+ * - D;32 = 8-byte LE double (OLE Automation date)
+ * - F;0 = 8-byte LE double (floating point / currency)
+ * - M;0 = uint32 LE length + UTF-8 content (memo field, len=0 → null)
+ *
+ * Null disambiguation:
+ * When a numeric field (I, D, F) stores its null-sentinel value, a trailing
+ * 1-byte flag follows: 0x00 = value is real, 0x01 = value is null.
+ * Sentinels: I → 0, F → 0.0, D → -36522.0 (OLE date for 1800-01-01 00:00:00).
+ * S/M fields use len=0 for null (no flag needed).
  */
 
 import { readFileSync, writeFileSync } from 'node:fs'
@@ -21,7 +32,7 @@ import Database from 'better-sqlite3'
 
 interface ColDef {
   name: string
-  type: 'I' | 'S'
+  type: 'I' | 'S' | 'D' | 'F' | 'M'
   size: number
 }
 
@@ -163,13 +174,12 @@ function encodeGbin(tableDef: { name: string; cols: ColDef[] }, rows: Record<str
   const headerLenBuf = Buffer.alloc(2)
   headerLenBuf.writeUInt16LE(headerBuf.length)
 
-  // Body
+  // Body — records packed contiguously (no separator)
   const chunks: Buffer[] = []
-  for (let i = 0; i < rows.length; i++) {
-    if (i > 0) chunks.push(Buffer.from([0x00])) // separator byte
-    const row = rows[i]
+  for (const row of rows) {
     for (const col of tableDef.cols) {
       const val = row[col.name.toLowerCase()]
+
       if (col.type === 'I') {
         const numVal = val != null ? Number(val) : 0
         if (col.size <= 16) {
@@ -181,12 +191,40 @@ function encodeGbin(tableDef: { name: string; cols: ColDef[] }, rows: Record<str
           b.writeInt32LE(numVal)
           chunks.push(b)
         }
-      } else {
-        // String: 2-byte LE length + UTF-8 content
+        // Null disambiguation flag when value is 0
+        if (numVal === 0) {
+          chunks.push(Buffer.from([val == null ? 0x01 : 0x00]))
+        }
+      } else if (col.type === 'S') {
         const strVal = val != null ? String(val) : ''
         const strBuf = Buffer.from(strVal, 'utf8')
         const lenBuf = Buffer.alloc(2)
         lenBuf.writeUInt16LE(strBuf.length)
+        chunks.push(lenBuf)
+        if (strBuf.length > 0) chunks.push(strBuf)
+      } else if (col.type === 'D') {
+        const dblVal = val != null ? Number(val) : D_NULL_SENTINEL
+        const b = Buffer.alloc(8)
+        b.writeDoubleLE(dblVal)
+        chunks.push(b)
+        // Null disambiguation flag when value is the sentinel
+        if (dblVal === D_NULL_SENTINEL || dblVal === 0) {
+          chunks.push(Buffer.from([val == null ? 0x01 : 0x00]))
+        }
+      } else if (col.type === 'F') {
+        const dblVal = val != null ? Number(val) : 0
+        const b = Buffer.alloc(8)
+        b.writeDoubleLE(dblVal)
+        chunks.push(b)
+        // Null disambiguation flag when value is 0
+        if (dblVal === 0) {
+          chunks.push(Buffer.from([val == null ? 0x01 : 0x00]))
+        }
+      } else if (col.type === 'M') {
+        const strVal = val != null ? String(val) : ''
+        const strBuf = Buffer.from(strVal, 'utf8')
+        const lenBuf = Buffer.alloc(4)
+        lenBuf.writeUInt32LE(strBuf.length)
         chunks.push(lenBuf)
         if (strBuf.length > 0) chunks.push(strBuf)
       }
@@ -196,6 +234,10 @@ function encodeGbin(tableDef: { name: string; cols: ColDef[] }, rows: Record<str
   return Buffer.concat([headerLenBuf, headerBuf, ...chunks])
 }
 
+// ── Null sentinel constants ────────────────────────────────────────────────────
+
+const D_NULL_SENTINEL = -36522.0 // OLE date for 1800-01-01 00:00:00
+
 // ── GBIN decoding ─────────────────────────────────────────────────────────────
 
 function decodeGbin(data: Buffer): { cols: ColDef[]; rows: Record<string, unknown>[] } {
@@ -203,40 +245,83 @@ function decodeGbin(data: Buffer): { cols: ColDef[]; rows: Record<string, unknow
   const headerStr = data.subarray(2, 2 + headerLen).toString('ascii')
   const cols: ColDef[] = headerStr.split('\t').map(c => {
     const [name, type, size] = c.split(';')
-    return { name, type: type as 'I' | 'S', size: parseInt(size, 10) }
+    return { name, type: type as ColDef['type'], size: parseInt(size, 10) }
   })
 
   const rows: Record<string, unknown>[] = []
   let offset = 2 + headerLen
-  const body = data
 
-  while (offset < body.length) {
-    // Skip separator byte between records (not before first)
-    if (rows.length > 0) offset += 1
-    if (offset >= body.length) break
-
+  while (offset < data.length) {
     const row: Record<string, unknown> = {}
+    let valid = true
     for (const col of cols) {
-      if (offset >= body.length) break
+      if (offset >= data.length) { valid = false; break }
+      const key = col.name.toLowerCase()
+
       if (col.type === 'I') {
-        if (col.size <= 16) {
-          row[col.name.toLowerCase()] = body.readInt16LE(offset)
-          offset += 2
+        const bytes = col.size <= 16 ? 2 : 4
+        const val = bytes === 2 ? data.readInt16LE(offset) : data.readInt32LE(offset)
+        offset += bytes
+        if (val === 0 && offset < data.length) {
+          const flag = data[offset]
+          if (flag === 0x00 || flag === 0x01) {
+            offset += 1
+            row[key] = flag === 0x01 ? null : val
+          } else {
+            row[key] = val
+          }
         } else {
-          row[col.name.toLowerCase()] = body.readInt32LE(offset)
-          offset += 4
+          row[key] = val
         }
-      } else {
-        const slen = body.readUInt16LE(offset)
+      } else if (col.type === 'S') {
+        const slen = data.readUInt16LE(offset)
         offset += 2
-        if (slen > 0) {
-          row[col.name.toLowerCase()] = body.subarray(offset, offset + slen).toString('utf8')
-          offset += slen
+        row[key] = slen > 0 ? data.subarray(offset, offset + slen).toString('utf8') : null
+        offset += slen
+      } else if (col.type === 'D') {
+        const dbl = data.readDoubleLE(offset)
+        offset += 8
+        if (dbl === D_NULL_SENTINEL || dbl === 0) {
+          if (offset < data.length) {
+            const flag = data[offset]
+            if (flag === 0x00 || flag === 0x01) {
+              offset += 1
+              row[key] = flag === 0x01 ? null : dbl
+            } else {
+              row[key] = dbl === 0 ? null : dbl
+            }
+          } else {
+            row[key] = dbl === 0 ? null : dbl
+          }
         } else {
-          row[col.name.toLowerCase()] = null
+          row[key] = dbl
         }
+      } else if (col.type === 'F') {
+        const dbl = data.readDoubleLE(offset)
+        offset += 8
+        if (dbl === 0) {
+          if (offset < data.length) {
+            const flag = data[offset]
+            if (flag === 0x00 || flag === 0x01) {
+              offset += 1
+              row[key] = flag === 0x01 ? null : dbl
+            } else {
+              row[key] = null
+            }
+          } else {
+            row[key] = null
+          }
+        } else {
+          row[key] = dbl
+        }
+      } else if (col.type === 'M') {
+        const mlen = data.readUInt32LE(offset)
+        offset += 4
+        row[key] = mlen > 0 ? data.subarray(offset, offset + mlen).toString('utf8') : null
+        offset += mlen
       }
     }
+    if (!valid) break
     rows.push(row)
   }
 
