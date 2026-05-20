@@ -30,7 +30,7 @@ import Database from 'better-sqlite3'
 
 // ── Table definitions (column name, type, size) ───────────────────────────────
 
-interface ColDef {
+export interface ColDef {
   name: string
   type: 'I' | 'S' | 'D' | 'F' | 'M'
   size: number
@@ -310,7 +310,7 @@ const SMB_TABLES: { name: string; cols: ColDef[] }[] = [
 
 // ── GBIN encoding ─────────────────────────────────────────────────────────────
 
-function encodeGbin(tableDef: { name: string; cols: ColDef[] }, rows: Record<string, unknown>[]): Buffer {
+export function encodeGbin(tableDef: { name: string; cols: ColDef[] }, rows: Record<string, unknown>[]): Buffer {
   // Header
   const headerStr = tableDef.cols.map(c => `${c.name};${c.type};${c.size}`).join('\t')
   const headerBuf = Buffer.from(headerStr, 'ascii')
@@ -379,11 +379,11 @@ function encodeGbin(tableDef: { name: string; cols: ColDef[] }, rows: Record<str
 
 // ── Null sentinel constants ────────────────────────────────────────────────────
 
-const D_NULL_SENTINEL = -36522.0 // OLE date for 1800-01-01 00:00:00
+export const D_NULL_SENTINEL = -36522.0 // OLE date for 1800-01-01 00:00:00
 
 // ── GBIN decoding ─────────────────────────────────────────────────────────────
 
-function decodeGbin(data: Buffer): { cols: ColDef[]; rows: Record<string, unknown>[] } {
+export function decodeGbin(data: Buffer): { cols: ColDef[]; rows: Record<string, unknown>[] } {
   const headerLen = data.readUInt16LE(0)
   const headerStr = data.subarray(2, 2 + headerLen).toString('ascii')
   const cols: ColDef[] = headerStr.split('\t').map(c => {
