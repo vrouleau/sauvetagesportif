@@ -59,6 +59,7 @@ export interface AgeGroup {
   alwaysSwimPrelims: boolean
   advanceByTime: boolean
   laneOrderInFinals: string
+  finalSeedType?: number | null
 }
 
 export interface SwimStyle {
@@ -133,4 +134,7 @@ export interface MeetAPI {
 
   // Swim styles
   getSwimStyles(): Promise<SwimStyle[]>
+
+  // Heat generation
+  generateHeats(eventId?: number, sessionId?: number): Promise<{ heatsCreated: number; entriesAssigned: number }>
 }

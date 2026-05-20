@@ -304,11 +304,16 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
         const agId = parseInt(aa.agegroupid ?? '0', 10)
         if (!agId) continue
         const agemax = parseInt(aa.agemax ?? '-1', 10)
+        const finalSeedType = aa.finalseedtype ? parseInt(aa.finalseedtype, 10) : null
         try {
           stmts.upsertAgeGroup.run(
             agId, eventId, aa.name ?? '', parseInt(aa.agemin ?? '0', 10),
             agemax < 0 ? null : agemax, gender, agIdx
           )
+          // Store finalseedtype if present in LENEX
+          if (finalSeedType != null) {
+            db.prepare(`UPDATE agegroup SET finalseedtype=? WHERE agegroupid=?`).run(finalSeedType, agId)
+          }
           summary.ageGroups++
           agIdx++
         } catch (e) {

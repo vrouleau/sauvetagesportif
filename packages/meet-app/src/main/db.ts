@@ -203,6 +203,7 @@ export interface AgeGroupRow {
   alwaysSwimPrelims: boolean
   advanceByTime: boolean
   laneOrderInFinals: string
+  finalSeedType: number | null
 }
 
 export interface CompetitionEventRow {
@@ -466,11 +467,12 @@ export async function getSessions(): Promise<SessionRow[]> {
     agegroupid: number; swimeventid: number; name: string | null
     agemin: number | null; agemax: number | null; gender: number | null
     heatcount: number | null; useformedals: string | null; sortcode: number | null
+    finalseedtype: number | null
   }> = []
   if (eventIds.length > 0) {
     const eph = eventIds.map(() => '?').join(',')
     ageGroups = db.prepare(`
-      SELECT agegroupid, swimeventid, name, agemin, agemax, gender, heatcount, useformedals, sortcode
+      SELECT agegroupid, swimeventid, name, agemin, agemax, gender, heatcount, useformedals, sortcode, finalseedtype
       FROM agegroup WHERE swimeventid IN (${eph})
       ORDER BY swimeventid, sortcode
     `).all(...eventIds) as typeof ageGroups
@@ -488,6 +490,7 @@ export async function getSessions(): Promise<SessionRow[]> {
       numHeats: ag.heatcount ?? 1, ranking: 'Selon temps nagé',
       countForMedalStats: ag.useformedals === 'T', usedForCombined: false,
       alwaysSwimPrelims: true, advanceByTime: false, laneOrderInFinals: 'Selon temps nagé',
+      finalSeedType: ag.finalseedtype ?? null,
     })
   }
 
@@ -1192,6 +1195,421 @@ export async function syncDown(): Promise<{ rowsCopied: number }> {
   return { rowsCopied: totalRows }
 }
 
+// ── Heat generation ───────────────────────────────────────────────────────────
+
+/** Read MEETVALUES from a given db instance (avoids getLocalDb() dependency for testing). */
+function readMeetValuesFromDb(db: ReturnType<typeof getLocalDb>): Record<string, string> {
+  const row = db.prepare(`SELECT data FROM bsglobal WHERE name='MEETVALUES'`).get() as { data: string | null } | undefined
+  if (!row?.data) return {}
+  const result: Record<string, string> = {}
+  for (const line of row.data.split(/\r?\n/)) {
+    const eq = line.indexOf('=')
+    if (eq < 0) continue
+    const key = line.slice(0, eq)
+    const rest = line.slice(eq + 1)
+    const semi = rest.indexOf(';')
+    result[key] = semi >= 0 ? rest.slice(semi + 1) : rest
+  }
+  return result
+}
+
+export interface GenerateHeatsResult {
+  heatsCreated: number
+  entriesAssigned: number
+}
+
+/**
+ * Generate heats for a given event (or all events in a session).
+ *
+ * Implements FINA/World Aquatics SW 3.1 seeding rules:
+ * - Circle seeding (prelims): distribute swimmers evenly across heats
+ * - Pyramid seeding (finals): fastest swimmers in last heat
+ * - Straight seeding: fastest in heat 1, sequential fill
+ * - "Last N heats" rule (fastheatcount): only circle-seed the last N heats
+ * - Qualification period filtering (QUALIFROM/QUALITO)
+ * - Seed bonus/exhibition/late entries last
+ * - Combine age groups option
+ * - Minimum swimmers per heat enforcement
+ * - Center-out lane assignment (or custom via lanesbyplace)
+ */
+export async function generateHeats(eventId?: number, sessionId?: number, injectedDb?: ReturnType<typeof getLocalDb>): Promise<GenerateHeatsResult> {
+  const db = injectedDb ?? getLocalDb()
+  let totalHeats = 0
+  let totalAssigned = 0
+
+  // ── Load meet-level seeding config from MEETVALUES ──
+  const meetCfg = readMeetValuesFromDb(db)
+  const globalSeedMethod = parseInt(meetCfg.SEEDMETHOD ?? '0', 10) // 0=circle, 1=pyramid, 2=straight
+  const globalFastHeatCount = parseInt(meetCfg.FASTHEATCOUNT ?? '0', 10) // FINA last-N-heats rule
+  const globalSeedBonusLast = meetCfg.SEEDBONUSLAST === 'T'
+  const globalSeedExhLast = meetCfg.SEEDEXHLAST === 'T'
+  const globalSeedLateLast = meetCfg.SEEDLATELAST === 'T'
+  const globalCombineAgeGroups = meetCfg.COMBINEAGEGROUPS === 'T'
+  const globalMinPerHeat = parseInt(meetCfg.MINPERHEAT ?? '3', 10)
+  const qualiFrom = meetCfg.QUALIFROM || null // date string e.g. "2024-01-01"
+  const qualiTo = meetCfg.QUALITO || null
+  const qualiCourse = parseInt(meetCfg.QUALICOURSE ?? '0', 10) // 0=all, 1=same course only
+
+  // Determine which events to process
+  let eventIds: number[]
+  if (eventId) {
+    eventIds = [eventId]
+  } else if (sessionId) {
+    eventIds = (db.prepare(
+      `SELECT swimeventid FROM swimevent WHERE swimsessionid=? AND internalevent='F' ORDER BY sortcode`
+    ).all(sessionId) as Array<{ swimeventid: number }>).map(r => r.swimeventid)
+  } else {
+    eventIds = (db.prepare(
+      `SELECT swimeventid FROM swimevent WHERE internalevent='F' ORDER BY sortcode`
+    ).all() as Array<{ swimeventid: number }>).map(r => r.swimeventid)
+  }
+
+  if (eventIds.length === 0) return { heatsCreated: 0, entriesAssigned: 0 }
+
+  // Get session lane config (use first session's config as default)
+  const sessionRow = db.prepare(`
+    SELECT lanemin, lanemax, lanesbyplace, course FROM swimsession ORDER BY sessionnumber LIMIT 1
+  `).get() as { lanemin: number | null; lanemax: number | null; lanesbyplace: string | null; course: number | null } | undefined
+
+  const defaultLaneMin = sessionRow?.lanemin ?? 1
+  const defaultLaneMax = sessionRow?.lanemax ?? 8
+  const meetCourse = sessionRow?.course ?? 1
+
+  for (const evId of eventIds) {
+    // Get event-specific config
+    const evRow = db.prepare(`
+      SELECT e.seedbonuslast, e.seedexhlast, e.seedlateentrylast, e.combineagegroups,
+             s.lanemin, s.lanemax, s.lanesbyplace, s.course
+      FROM swimevent e
+      JOIN swimsession s ON e.swimsessionid = s.swimsessionid
+      WHERE e.swimeventid=?
+    `).get(evId) as {
+      seedbonuslast: string | null; seedexhlast: string | null; seedlateentrylast: string | null
+      combineagegroups: string | null
+      lanemin: number | null; lanemax: number | null; lanesbyplace: string | null; course: number | null
+    } | undefined
+
+    const laneMin = evRow?.lanemin ?? defaultLaneMin
+    const laneMax = evRow?.lanemax ?? defaultLaneMax
+    const laneCount = laneMax - laneMin + 1
+    const eventCourse = evRow?.course ?? meetCourse
+
+    // Event-level overrides (fall back to global config)
+    const seedBonusLast = evRow?.seedbonuslast === 'T' || globalSeedBonusLast
+    const seedExhLast = evRow?.seedexhlast === 'T' || globalSeedExhLast
+    const seedLateLast = evRow?.seedlateentrylast === 'T' || globalSeedLateLast
+    const combineAgeGroups = evRow?.combineagegroups === 'T' || globalCombineAgeGroups
+
+    // Parse custom lane order from session
+    const customLaneOrder = parseLanesbyplace(evRow?.lanesbyplace ?? sessionRow?.lanesbyplace)
+
+    // Get age groups for this event
+    const ageGroups = db.prepare(`
+      SELECT agegroupid, heatcount, finalseedtype, fastheatcount FROM agegroup WHERE swimeventid=? ORDER BY sortcode
+    `).all(evId) as Array<{ agegroupid: number; heatcount: number | null; finalseedtype: number | null; fastheatcount: number | null }>
+
+    // Delete existing heats for this event
+    db.prepare(`DELETE FROM heat WHERE swimeventid=?`).run(evId)
+    // Reset heat assignments for all results in this event
+    db.prepare(`UPDATE swimresult SET heatid=NULL, lane=NULL WHERE swimeventid=?`).run(evId)
+
+    // Determine groups to process
+    if (combineAgeGroups || ageGroups.length === 0) {
+      // Combine all entries into one pool
+      const seedType = ageGroups.length > 0 ? (ageGroups[0].finalseedtype ?? globalSeedMethod) : globalSeedMethod
+      const fastCount = ageGroups.length > 0 ? (ageGroups[0].fastheatcount ?? globalFastHeatCount) : globalFastHeatCount
+      const minHeats = ageGroups.length > 0 ? (ageGroups[0].heatcount ?? 1) : 1
+
+      const entries = loadEntries(db, evId, null, seedBonusLast, seedExhLast, seedLateLast, qualiFrom, qualiTo, qualiCourse, eventCourse)
+      if (entries.length > 0) {
+        const result = seedAndAssignHeats(db, evId, null, entries, laneCount, laneMin, laneMax, minHeats, seedType, fastCount, globalMinPerHeat, customLaneOrder)
+        totalHeats += result.heats
+        totalAssigned += result.assigned
+      }
+    } else {
+      // Process each age group separately
+      for (const ag of ageGroups) {
+        const seedType = ag.finalseedtype ?? globalSeedMethod
+        const fastCount = ag.fastheatcount ?? globalFastHeatCount
+        const minHeats = ag.heatcount ?? 1
+
+        const entries = loadEntries(db, evId, ag.agegroupid, seedBonusLast, seedExhLast, seedLateLast, qualiFrom, qualiTo, qualiCourse, eventCourse)
+        if (entries.length > 0) {
+          const result = seedAndAssignHeats(db, evId, ag.agegroupid, entries, laneCount, laneMin, laneMax, minHeats, seedType, fastCount, globalMinPerHeat, customLaneOrder)
+          totalHeats += result.heats
+          totalAssigned += result.assigned
+        }
+      }
+    }
+  }
+
+  return { heatsCreated: totalHeats, entriesAssigned: totalAssigned }
+}
+
+// ── Entry loading with priority ordering ──────────────────────────────────────
+
+interface EntryRow {
+  swimresultid: number
+  entrytime: number | null
+  bonusentry: string | null
+  lateentry: string | null
+  infocode: string | null
+  qtdate: string | null
+  entrycourse: number | null
+}
+
+function loadEntries(
+  db: ReturnType<typeof getLocalDb>,
+  eventId: number,
+  agegroupId: number | null,
+  seedBonusLast: boolean,
+  seedExhLast: boolean,
+  seedLateLast: boolean,
+  qualiFrom: string | null,
+  qualiTo: string | null,
+  qualiCourse: number,
+  eventCourse: number,
+): EntryRow[] {
+  let entries: EntryRow[]
+  if (agegroupId != null) {
+    entries = db.prepare(`
+      SELECT swimresultid, entrytime, bonusentry, lateentry, infocode, qtdate, entrycourse
+      FROM swimresult
+      WHERE swimeventid=? AND agegroupid=?
+      ORDER BY swimresultid
+    `).all(eventId, agegroupId) as EntryRow[]
+  } else {
+    entries = db.prepare(`
+      SELECT swimresultid, entrytime, bonusentry, lateentry, infocode, qtdate, entrycourse
+      FROM swimresult
+      WHERE swimeventid=?
+      ORDER BY swimresultid
+    `).all(eventId) as EntryRow[]
+  }
+
+  // Apply qualification period filter: entries outside the period lose their time
+  if (qualiFrom || qualiTo) {
+    for (const e of entries) {
+      if (e.entrytime != null && e.qtdate) {
+        const qtd = e.qtdate.slice(0, 10) // normalize to YYYY-MM-DD
+        if (qualiFrom && qtd < qualiFrom) e.entrytime = null
+        if (qualiTo && qtd > qualiTo) e.entrytime = null
+      }
+      // Course filter: if qualiCourse=1 (same course only), reject times from different course
+      if (qualiCourse === 1 && e.entrytime != null && e.entrycourse != null && e.entrycourse !== eventCourse) {
+        e.entrytime = null
+      }
+    }
+  }
+
+  // Sort entries by priority groups, then by time within each group
+  // Priority: 1=regular timed, 2=late (if seedLateLast), 3=bonus (if seedBonusLast),
+  //           4=exhibition (if seedExhLast), 5=NTs
+  entries.sort((a, b) => {
+    const pa = entryPriority(a, seedBonusLast, seedExhLast, seedLateLast)
+    const pb = entryPriority(b, seedBonusLast, seedExhLast, seedLateLast)
+    if (pa !== pb) return pa - pb
+    // Within same priority, sort by time (NTs last)
+    if (a.entrytime == null && b.entrytime == null) return 0
+    if (a.entrytime == null) return 1
+    if (b.entrytime == null) return -1
+    return a.entrytime - b.entrytime
+  })
+
+  return entries
+}
+
+function entryPriority(e: EntryRow, seedBonusLast: boolean, seedExhLast: boolean, seedLateLast: boolean): number {
+  // Exhibition entries (identified by infocode containing 'EXH')
+  if (seedExhLast && e.infocode && e.infocode.toUpperCase().includes('EXH')) return 4
+  // Bonus entries
+  if (seedBonusLast && e.bonusentry === 'T') return 3
+  // Late entries
+  if (seedLateLast && e.lateentry === 'T') return 2
+  // NT entries always last within their priority group
+  if (e.entrytime == null) return 5
+  // Regular timed entries
+  return 1
+}
+
+// ── Core seeding and lane assignment ──────────────────────────────────────────
+
+function seedAndAssignHeats(
+  db: ReturnType<typeof getLocalDb>,
+  eventId: number,
+  agegroupId: number | null,
+  entries: EntryRow[],
+  laneCount: number,
+  laneMin: number,
+  laneMax: number,
+  minHeats: number,
+  seedType: number,
+  fastHeatCount: number,
+  minPerHeat: number,
+  customLaneOrder: number[] | null,
+): { heats: number; assigned: number } {
+  let totalHeats = 0
+  let totalAssigned = 0
+
+  const requiredHeats = Math.max(minHeats, Math.ceil(entries.length / laneCount))
+  const laneOrder = customLaneOrder ?? generateLaneOrder(laneMin, laneMax)
+
+  // Distribute entries into heats based on seeding method
+  const heats: EntryRow[][] = []
+  for (let i = 0; i < requiredHeats; i++) heats.push([])
+
+  if (seedType === 1) {
+    // ── Pyramid seeding: fastest in last heat ──
+    // Fill from last heat backward
+    let heatIdx = requiredHeats - 1
+    let count = 0
+    for (const entry of entries) {
+      heats[heatIdx].push(entry)
+      count++
+      if (count >= laneCount) {
+        count = 0
+        heatIdx--
+        if (heatIdx < 0) heatIdx = 0
+      }
+    }
+  } else if (seedType === 2) {
+    // ── Straight seeding: fastest in heat 1, fill sequentially ──
+    let heatIdx = 0
+    let count = 0
+    for (const entry of entries) {
+      heats[heatIdx].push(entry)
+      count++
+      if (count >= laneCount) {
+        count = 0
+        heatIdx++
+        if (heatIdx >= requiredHeats) heatIdx = requiredHeats - 1
+      }
+    }
+  } else {
+    // ── Circle seeding (default, FINA SW 3.1) ──
+    // If fastHeatCount > 0: only circle-seed the last N heats, fill earlier heats sequentially
+    const effectiveFastCount = fastHeatCount > 0 ? Math.min(fastHeatCount, requiredHeats) : requiredHeats
+
+    if (effectiveFastCount >= requiredHeats) {
+      // Circle-seed all heats
+      for (let i = 0; i < entries.length; i++) {
+        const heatIdx = i % requiredHeats
+        heats[heatIdx].push(entries[i])
+      }
+    } else {
+      // FINA "last N heats" rule:
+      // - The fastest (effectiveFastCount × laneCount) swimmers are circle-seeded across the last N heats
+      // - Remaining swimmers fill earlier heats sequentially (slowest first → heat 1)
+      const fastSlots = effectiveFastCount * laneCount
+      const fastEntries = entries.slice(0, Math.min(fastSlots, entries.length))
+      const slowEntries = entries.slice(fastEntries.length)
+
+      // Fill earlier heats sequentially with slow entries (slowest in heat 1)
+      // slowEntries are already sorted fastest-first, so reverse for sequential fill
+      const earlyHeatCount = requiredHeats - effectiveFastCount
+      let heatIdx = 0
+      let count = 0
+      // Distribute slow entries across early heats
+      for (let i = slowEntries.length - 1; i >= 0; i--) {
+        heats[heatIdx].push(slowEntries[i])
+        count++
+        if (count >= laneCount) {
+          count = 0
+          heatIdx++
+          if (heatIdx >= earlyHeatCount) heatIdx = earlyHeatCount - 1
+        }
+      }
+
+      // Circle-seed fast entries across the last N heats
+      const fastStartHeat = earlyHeatCount
+      for (let i = 0; i < fastEntries.length; i++) {
+        const targetHeat = fastStartHeat + (i % effectiveFastCount)
+        heats[targetHeat].push(fastEntries[i])
+      }
+    }
+  }
+
+  // ── Enforce minimum swimmers per heat (FINA SW 3.1.4) ──
+  // If the first heat has fewer than minPerHeat swimmers, redistribute
+  if (minPerHeat > 0 && heats.length > 1) {
+    for (let h = 0; h < heats.length - 1; h++) {
+      if (heats[h].length > 0 && heats[h].length < minPerHeat && heats[h + 1].length > minPerHeat) {
+        // Move swimmers from next heat to this one until minimum is met
+        while (heats[h].length < minPerHeat && heats[h + 1].length > minPerHeat) {
+          const moved = heats[h + 1].shift()!
+          heats[h].push(moved)
+        }
+      }
+    }
+  }
+
+  // ── Create heat rows and assign lanes ──
+  const insertHeat = db.prepare(
+    `INSERT INTO heat (heatid, swimeventid, agegroupid, heatnumber, racestatus, sortcode)
+     VALUES (?, ?, ?, ?, 4, ?)`
+  )
+  const updateResult = db.prepare(
+    `UPDATE swimresult SET heatid=?, lane=? WHERE swimresultid=?`
+  )
+
+  for (let h = 0; h < heats.length; h++) {
+    if (heats[h].length === 0) continue
+    const heatIdRow = db.prepare(`SELECT COALESCE(MAX(heatid), 0) + 1 AS next FROM heat`).get() as { next: number }
+    const heatId = heatIdRow.next
+    const heatNumber = h + 1
+    insertHeat.run(heatId, eventId, agegroupId, heatNumber, heatNumber)
+    totalHeats++
+
+    // Sort entries within this heat by entrytime for lane assignment (fastest gets center lane)
+    const sorted = [...heats[h]].sort((a, b) => {
+      if (a.entrytime == null && b.entrytime == null) return 0
+      if (a.entrytime == null) return 1
+      if (b.entrytime == null) return -1
+      return a.entrytime - b.entrytime
+    })
+
+    for (let i = 0; i < sorted.length; i++) {
+      const lane = laneOrder[i] ?? (laneMin + i)
+      updateResult.run(heatId, lane, sorted[i].swimresultid)
+      totalAssigned++
+    }
+  }
+
+  return { heats: totalHeats, assigned: totalAssigned }
+}
+
+// ── Lane order helpers ────────────────────────────────────────────────────────
+
+/**
+ * Generate preferred lane order (center-out) for a given lane range.
+ * E.g. for lanes 1-8: [4, 5, 3, 6, 2, 7, 1, 8]
+ * E.g. for lanes 1-6: [3, 4, 2, 5, 1, 6]
+ */
+function generateLaneOrder(laneMin: number, laneMax: number): number[] {
+  const count = laneMax - laneMin + 1
+  const center = Math.floor(count / 2) // 0-indexed center
+  const order: number[] = []
+  // Start from center, alternate left and right
+  order.push(laneMin + center)
+  for (let offset = 1; order.length < count; offset++) {
+    const right = laneMin + center + offset
+    const left = laneMin + center - offset
+    if (right <= laneMax) order.push(right)
+    if (left >= laneMin) order.push(left)
+  }
+  return order
+}
+
+/**
+ * Parse the lanesbyplace field (comma-separated lane numbers) into an array.
+ * Returns null if empty/invalid (use default center-out order).
+ */
+function parseLanesbyplace(s: string | null | undefined): number[] | null {
+  if (!s || !s.trim()) return null
+  const parts = s.split(',').map(p => parseInt(p.trim(), 10)).filter(n => !isNaN(n))
+  return parts.length > 0 ? parts : null
+}
+
 // ── Flush: delete all meet data ───────────────────────────────────────────────
 
 export async function flushMeet(): Promise<void> {
@@ -1379,6 +1797,7 @@ export interface AgeGroupUpdate {
   agemin?: number
   agemax?: number | null
   gender?: number
+  finalseedtype?: number | null
 }
 
 export async function updateAgeGroup(agegroupId: number, data: AgeGroupUpdate): Promise<void> {
@@ -1390,6 +1809,7 @@ export async function updateAgeGroup(agegroupId: number, data: AgeGroupUpdate): 
   if (data.agemin !== undefined) { sets.push('agemin=?'); vals.push(data.agemin) }
   if (data.agemax !== undefined) { sets.push('agemax=?'); vals.push(data.agemax) }
   if (data.gender !== undefined) { sets.push('gender=?'); vals.push(data.gender) }
+  if (data.finalseedtype !== undefined) { sets.push('finalseedtype=?'); vals.push(data.finalseedtype) }
 
   if (sets.length === 0) return
   vals.push(agegroupId)

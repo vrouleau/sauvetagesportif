@@ -64,4 +64,8 @@ export const meetApiElectron: MeetAPI = {
   async getSwimStyles() {
     return (await ipc()?.getSwimStyles()) as SwimStyle[] ?? []
   },
+  async generateHeats(eventId?: number, sessionId?: number) {
+    const result = (await ipc()?.generateHeats(eventId, sessionId)) as { heatsCreated: number; entriesAssigned: number } | undefined
+    return result ?? { heatsCreated: 0, entriesAssigned: 0 }
+  },
 }

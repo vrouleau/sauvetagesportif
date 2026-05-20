@@ -34,6 +34,11 @@ F12 opens DevTools. **Do NOT run from Claude Code terminal** (ELECTRON_RUN_AS_NO
 
 (They compile the native module for different Node ABIs.)
 
+**Clean build (wipes out/, rebuilds native modules, runs Vite build):**
+```bash
+npm run clean
+```
+
 ### Team app (Docker)
 ```bash
 cd packages/team-app
@@ -43,7 +48,7 @@ docker compose up -d   # http://localhost:8001, admin PIN: 314159
 
 ### Tests
 ```bash
-# Meet app unit tests (24 tests, Vitest)
+# Meet app unit tests (72 tests, Vitest)
 cd packages/meet-app
 npm rebuild better-sqlite3   # ensure compiled for system Node
 npm test
@@ -71,7 +76,7 @@ packages/
   meet-app/
     src/main/
       index.ts              — Electron main process, IPC handlers, native menu
-      db.ts                 — SQLite (better-sqlite3), all queries
+      db.ts                 — SQLite (better-sqlite3), all queries, heat generation
       combinedEvents.ts     — COMBINEDEVENTS XML generator (auto-regen on event/agegroup changes)
       lenex.ts              — LENEX .lxf importer
       quantum.ts            — Swiss Timing Quantum protocol bridge
@@ -83,6 +88,19 @@ packages/
       pages/EventsPage.tsx  — Thin wrapper: ApiProvider + shared EventsPage
       pages/HeatsPage.tsx   — Heat runner + Quantum toolbar
       pages/AthletesPage.tsx— Athlete list + editor
+    docs/
+      HEAT_GENERATION_RULES.md — Full heat seeding rules documentation
+      GBIN_FORMAT.md        — SMB binary format documentation
+    tests/
+      heat-generation.test.ts — Heat generation unit tests (28 tests)
+      gbin.test.ts          — SMB binary format tests
+      lenex.test.ts         — LENEX import tests
+      schema.test.ts        — Schema/query tests
+      smb.test.ts           — SMB save/restore tests
+      meetvalues.test.ts    — MEETVALUES parser tests
+    scripts/
+      clean-build.js        — Clean build (wipe out/, rebuild native, vite build)
+      rebuild.js            — Rebuild native modules for Electron
     electron.vite.config.ts — @shared alias → ../shared-ui/src
 
   team-app/
@@ -151,6 +169,7 @@ Team-app frontend Dockerfile uses monorepo root as context (`context: ../..`) to
 | `db:update-event` | Update event fields |
 | `db:update-age-group` | Update age group fields |
 | `db:reorder-events` | Reorder events (sortcode) |
+| `db:generate-heats` | Generate heats (seeding) for event/session/all |
 | `db:get-meet-config` | Read MEETVALUES from bsglobal |
 | `db:set-meet-config` | Write MEETVALUES to bsglobal |
 | `db:get-swim-styles` | List all swimstyles |
@@ -200,3 +219,49 @@ An event matches a category when its age group has:
 - Same `agemin` as the category
 - Same `agemax` (with -1 meaning no upper limit)
 - Same gender (or event gender=0/3 for mixed categories)
+
+## Heat Generation
+
+Full rules documentation: `packages/meet-app/docs/HEAT_GENERATION_RULES.md`
+
+### Implementation
+- **Backend**: `src/main/db.ts` → `generateHeats(eventId?, sessionId?, db?)`
+- **IPC**: `db:generate-heats` channel
+- **Preload**: `window.api.db.generateHeats(eventId?, sessionId?)`
+- **UI**: "Générer séries" button in EventsPage toolbar
+- **Tests**: `tests/heat-generation.test.ts` (28 tests)
+
+### Seeding methods (`agegroup.finalseedtype` or `MEETVALUES.SEEDMETHOD`)
+- `0` = Circle seeding (FINA prelims — round-robin across heats)
+- `1` = Pyramid seeding (fastest in last heat — timed finals)
+- `2` = Straight seeding (fastest in heat 1)
+
+### Meet-level config keys (MEETVALUES in bsglobal)
+| Key | Type | Description |
+|-----|------|-------------|
+| `SEEDMETHOD` | I | Default seeding method (0/1/2) |
+| `FASTHEATCOUNT` | I | FINA "last N heats" circle-seed rule |
+| `MINPERHEAT` | I | Minimum swimmers per heat (default 3) |
+| `SEEDBONUSLAST` | B | Seed bonus entries after regular |
+| `SEEDEXHLAST` | B | Seed exhibition entries after regular |
+| `SEEDLATELAST` | B | Seed late entries after regular |
+| `COMBINEAGEGROUPS` | B | Pool all age groups into one seeding |
+| `QUALIFROM` | S | Qualification period start (YYYY-MM-DD) |
+| `QUALITO` | S | Qualification period end (YYYY-MM-DD) |
+| `QUALICOURSE` | I | 0=all courses, 1=same course only |
+
+### Per-age-group overrides (agegroup table)
+- `finalseedtype` — overrides SEEDMETHOD
+- `fastheatcount` — overrides FASTHEATCOUNT
+- `heatcount` — minimum number of heats
+
+### Lane assignment
+Default: center-out (e.g., 5,6,4,7,3,8,2,1 for 8 lanes starting at 1).
+Custom: `swimsession.lanesbyplace` (comma-separated lane numbers).
+
+### Entry priority (when seed*last flags are set)
+1. Regular timed entries
+2. Late entries (`swimresult.lateentry='T'`)
+3. Bonus entries (`swimresult.bonusentry='T'`)
+4. Exhibition entries (`swimresult.infocode` contains 'EXH')
+5. No-time entries (NT)

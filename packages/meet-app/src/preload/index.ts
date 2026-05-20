@@ -103,6 +103,8 @@ const api = {
       ipcRenderer.invoke('db:get-swim-styles'),
     reorderEvents: (updates: Array<{ eventId: number; sessionId: number; sortcode: number }>) =>
       ipcRenderer.invoke('db:reorder-events', updates),
+    generateHeats: (eventId?: number, sessionId?: number) =>
+      ipcRenderer.invoke('db:generate-heats', eventId, sessionId),
     saveAthlete: (athlete: unknown) =>
       ipcRenderer.invoke('db:save-athlete', athlete),
     syncUp: () =>

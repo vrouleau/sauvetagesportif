@@ -12,6 +12,7 @@ import {
   saveAthlete,
   syncUp, syncDown,
   flushMeet,
+  generateHeats,
   getLocalDb, closeLocalDb,
   getMeetValues, setMeetValues,
   getSwimStyles,
@@ -128,6 +129,15 @@ ipcMain.handle('db:get-swim-styles', () => getSwimStyles())
 ipcMain.handle('db:reorder-events', (_event, updates: Array<{ eventId: number; sessionId: number; sortcode: number }>) =>
   reorderEvents(updates).then(() => ({ ok: true }))
 )
+
+ipcMain.handle('db:generate-heats', async (_event, eventId?: number, sessionId?: number) => {
+  try {
+    const result = await generateHeats(eventId, sessionId)
+    return { ok: true, ...result }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+})
 
 ipcMain.handle('db:save-athlete', (_event, athlete: Parameters<typeof saveAthlete>[0]) =>
   saveAthlete(athlete).then(() => ({ ok: true }))

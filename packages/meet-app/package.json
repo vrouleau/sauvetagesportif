@@ -9,6 +9,7 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "build:win": "npm run build && electron-builder --win",
+    "clean": "node scripts/clean-build.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "rebuild": "node scripts/rebuild.js"

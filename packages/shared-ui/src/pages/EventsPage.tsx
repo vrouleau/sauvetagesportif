@@ -577,6 +577,24 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
   const canAddCategory = selected.type === 'event' || selected.type === 'agegroup'
   const canAddBreak = selected.type === 'session' || selected.type === 'event'
   const canDelete = selected.type !== 'competition'
+  const canGenerateHeats = selected.type === 'session' || selected.type === 'event' || selected.type === 'competition'
+
+  async function handleGenerateHeats() {
+    let eventId: number | undefined
+    let sessionId: number | undefined
+    if (selected.type === 'event') {
+      eventId = selected.event.id
+    } else if (selected.type === 'session') {
+      sessionId = selected.session.id
+    }
+    // If competition-level, pass neither (generates for all events)
+    try {
+      const result = await api.generateHeats(eventId, sessionId)
+      window.alert(`Séries générées: ${result.heatsCreated} séries, ${result.entriesAssigned} inscriptions assignées`)
+    } catch {
+      window.alert('Erreur lors de la génération des séries')
+    }
+  }
 
   return (
     <div className="flex flex-col h-full">
@@ -608,6 +626,12 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
           enabled={canDelete}
           danger
           onClick={handleDelete}
+        />
+        <div className="w-px h-4 bg-gray-300 mx-1" />
+        <ToolbarBtn
+          label="Générer séries"
+          enabled={canGenerateHeats}
+          onClick={handleGenerateHeats}
         />
       </div>
 
@@ -1177,6 +1201,22 @@ function AgeGroupPropertiesPanel({ group, event }: { group: AgeGroup; event: Com
               <Row label={t.events.props.countForMedals} value={group.countForMedalStats} />
               <Row label={t.events.props.usedForCombined} value={group.usedForCombined} />
               <Row label={t.events.props.numHeats} value={group.numHeats} />
+              <tr className="border-b border-gray-100 hover:bg-gray-50">
+                <td className="px-4 py-0.5 text-gray-600 w-64">Type de répartition (finales)</td>
+                <td className="px-2 py-0.5">
+                  <select
+                    className="border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
+                    value={group.finalSeedType ?? 0}
+                    onChange={(e) => {
+                      const v = Number(e.target.value)
+                      api.updateAgeGroup(group.id, { finalseedtype: v } as unknown as Record<string, unknown>)
+                    }}
+                  >
+                    <option value={0}>Éliminatoires (circle seed)</option>
+                    <option value={1}>Finales (rapides en dernière série)</option>
+                  </select>
+                </td>
+              </tr>
               <Row label={t.events.props.alwaysSwimPrelims} value={group.alwaysSwimPrelims} />
               <Row label={t.events.props.advanceByTime} value={group.advanceByTime} />
               <Row label={t.events.props.laneOrderFinals} value={group.laneOrderInFinals} />
@@ -1610,6 +1650,41 @@ function CompetitionPropertiesPanel({ onMeetNameChange }: { onMeetNameChange: (n
               <TextFieldRow label={t.events.meetPanel.startMethod} fieldKey="STARTMETHOD" />
               <NumberFieldRow label={t.events.meetPanel.reserveCount} fieldKey="RESERVECOUNT" />
               <TextFieldRow label={t.events.meetPanel.deadline} fieldKey="DEADLINE" />
+            </>
+          )}
+
+          {/* Période de qualification */}
+          <SectionHeader title={t.events.meetPanel.qualification} />
+          {!collapsed.has(t.events.meetPanel.qualification) && (
+            <>
+              <TextFieldRow label={t.events.meetPanel.qualiFrom} fieldKey="QUALIFROM" />
+              <TextFieldRow label={t.events.meetPanel.qualiTo} fieldKey="QUALITO" />
+              <SelectFieldRow label={t.events.meetPanel.qualiCourse} fieldKey="QUALICOURSE" options={[
+                { value: '0', label: t.events.meetPanel.qualiCourseAll },
+                { value: '1', label: t.events.meetPanel.qualiCourseSame },
+              ]} />
+            </>
+          )}
+
+          {/* Répartition des séries */}
+          <SectionHeader title={t.events.meetPanel.seeding} />
+          {!collapsed.has(t.events.meetPanel.seeding) && (
+            <>
+              <SelectFieldRow label={t.events.meetPanel.seedingMethod} fieldKey="SEEDMETHOD" options={[
+                { value: '0', label: t.events.meetPanel.seedingCircle },
+                { value: '1', label: t.events.meetPanel.seedingPyramid },
+                { value: '2', label: t.events.meetPanel.seedingStraight },
+              ]} />
+              <NumberFieldRow label={t.events.meetPanel.fastHeatCount} fieldKey="FASTHEATCOUNT" />
+              <CheckFieldRow label={t.events.meetPanel.seedBonusLast} fieldKey="SEEDBONUSLAST" />
+              <CheckFieldRow label={t.events.meetPanel.seedExhLast} fieldKey="SEEDEXHLAST" />
+              <CheckFieldRow label={t.events.meetPanel.seedLateLast} fieldKey="SEEDLATELAST" />
+              <CheckFieldRow label={t.events.meetPanel.combineAgeGroups} fieldKey="COMBINEAGEGROUPS" />
+              <NumberFieldRow label={t.events.meetPanel.minPerHeat} fieldKey="MINPERHEAT" />
+              <SelectFieldRow label={t.events.meetPanel.lanesOrder} fieldKey="LANESORDER" options={[
+                { value: '0', label: t.events.meetPanel.lanesOrderDefault },
+                { value: '1', label: t.events.meetPanel.lanesOrderCustom },
+              ]} />
             </>
           )}
 
