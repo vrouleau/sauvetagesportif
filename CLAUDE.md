@@ -56,6 +56,9 @@ MEETMGR_SKIP_STACK=1 MEETMGR_URL=http://127.0.0.1:8001 python -m pytest tests/ -
 
 ## Project structure
 ```
+config/
+  combined-events-config.json  — Shared category/points config (both apps)
+
 packages/
   shared-ui/src/
     pages/EventsPage.tsx    — THE shared component (sessions tree + meet editor)
@@ -69,6 +72,7 @@ packages/
     src/main/
       index.ts              — Electron main process, IPC handlers, native menu
       db.ts                 — SQLite (better-sqlite3), all queries
+      combinedEvents.ts     — COMBINEDEVENTS XML generator (auto-regen on event/agegroup changes)
       lenex.ts              — LENEX .lxf importer
       quantum.ts            — Swiss Timing Quantum protocol bridge
       smb.ts                — SMB save/restore (Splash Meet Backup format)
@@ -86,6 +90,7 @@ packages/
       main.py               — FastAPI app, startup, audit logging
       models.py             — SQLAlchemy models (Splash schema + extra columns)
       routers/api.py        — All API endpoints
+      combined_events.py    — COMBINEDEVENTS XML generator (Python port)
       events.py             — LENEX meet structure parser
       best_times.py         — Best time storage (bsglobal JSON blobs)
       export.py             — LENEX export (registrations)
@@ -171,3 +176,27 @@ Team-app frontend Dockerfile uses monorepo root as context (`context: ../..`) to
 
 ## Best times storage
 Stored in `bsglobal` as `bt_{athlete_id}` keys with JSON: `{style_uid: {course: {time_ms, date, source}}}`. Updated on results upload, expired after 18 months.
+
+## Combined Events (COMBINEDEVENTS)
+
+Auto-generated XML in `bsglobal` that defines cumulative point standings per age/gender category. Both apps regenerate it when events or age groups change.
+
+### Config file: `config/combined-events-config.json`
+Single source of truth — shared by meet-app (TypeScript) and team-app (Python). Defines 10 categories for Canadian lifesaving with points scales and age/gender matching rules. Editable at runtime without rebuild.
+
+### Implementation
+- **meet-app**: `src/main/combinedEvents.ts` — called from `db.ts` after event/agegroup CRUD
+- **team-app**: `backend/app/combined_events.py` — called from `api.py` after `upload_meet`
+
+### Event filtering (what gets included)
+- Individual events only (`relaycount = 1`)
+- Pool events only (`distance >= 25` — excludes throwing events like "Lancer de précision")
+- No admin/internal events (`internalevent != 'T'`)
+- No finals linked to prelims (`preveventid < 1` — excludes separate final rounds)
+- Must have an event number (`eventnumber IS NOT NULL`)
+
+### Category matching
+An event matches a category when its age group has:
+- Same `agemin` as the category
+- Same `agemax` (with -1 meaning no upper limit)
+- Same gender (or event gender=0/3 for mixed categories)
