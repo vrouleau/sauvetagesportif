@@ -213,6 +213,24 @@ ipcMain.handle('file:restore-smb', async (event) => {
   }
 })
 
+ipcMain.handle('file:new-meet', async () => {
+  try {
+    // Flush all meet data
+    await flushMeet()
+
+    // Resolve template path (bundled resource or dev path)
+    const templatePath = app.isPackaged
+      ? join(process.resourcesPath, 'template_juniorsenior.lxf')
+      : join(__dirname, '../../../../config/template_juniorsenior.lxf')
+
+    // Import the template lenex file
+    const summary = importLenex(templatePath, getLocalDb())
+    return { ok: true, summary }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+})
+
 // ── Window ────────────────────────────────────────────────────────────────────
 
 function createWindow(): void {
@@ -270,7 +288,7 @@ function createWindow(): void {
         },
         { type: 'separator' },
         {
-          label: 'Nouveau meet (effacer les données)…',
+          label: 'Créer un nouveau meet…',
           click: () => mainWindow.webContents.send('menu:new-meet'),
         },
         { type: 'separator' },

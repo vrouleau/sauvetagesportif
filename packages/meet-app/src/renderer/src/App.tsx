@@ -29,6 +29,7 @@ function fileApi() {
         importLenex: (path: string) => Promise<{ ok: boolean; summary?: ImportSummary; error?: string }>
         saveSMB: () => Promise<{ ok: boolean; canceled?: boolean; tables?: number; rows?: number; error?: string }>
         restoreSMB: () => Promise<{ ok: boolean; canceled?: boolean; tables?: number; rows?: number; error?: string }>
+        newMeet: () => Promise<{ ok: boolean; summary?: ImportSummary; error?: string }>
       }
     }
   }).api?.file ?? null
@@ -212,7 +213,7 @@ function FlushConfirmDialog({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
       <div className="bg-white border border-gray-400 shadow-xl w-[420px] text-xs">
         <div className="flex items-center justify-between bg-red-700 text-white px-3 py-2">
-          <span className="font-semibold">Nouveau meet — Effacer toutes les données</span>
+          <span className="font-semibold">Créer un nouveau meet</span>
           {!running && (
             <button onClick={onClose} className="hover:text-red-200 text-lg leading-none">×</button>
           )}
@@ -220,18 +221,19 @@ function FlushConfirmDialog({
 
         <div className="p-5">
           {running ? (
-            <div className="text-gray-500 italic">Suppression en cours…</div>
+            <div className="text-gray-500 italic">Réinitialisation et importation en cours…</div>
           ) : error ? (
             <div className="text-red-600">Erreur: {error}</div>
           ) : (
             <>
               <p className="mb-3 font-semibold text-red-700">
-                Cette action supprimera TOUTES les données du meet:
+                Cette action supprimera TOUTES les données du meet et importera le gabarit par défaut:
               </p>
               <ul className="list-disc ml-5 space-y-0.5 text-gray-700 mb-4">
                 <li>Sessions, épreuves, catégories d'âge, vagues</li>
                 <li>Clubs et athlètes</li>
                 <li>Tous les résultats et temps chronométrés</li>
+                <li>Les styles de nage seront réimportés du gabarit</li>
               </ul>
               <p className="text-gray-500">Cette action est irréversible.</p>
             </>
@@ -259,7 +261,7 @@ function FlushConfirmDialog({
                   onClick={onConfirm}
                   className="px-4 py-1 bg-red-600 text-white hover:bg-red-700 border border-red-700"
                 >
-                  Effacer tout
+                  Créer un nouveau meet
                 </button>
               </>
             )}
@@ -352,9 +354,17 @@ function AppInner() {
 
   async function handleFlushConfirm() {
     setFlushState({ open: true, running: true })
-    const result = await dbApi()?.flushMeet()
-    if (!result || result.ok) {
+    const f = fileApi()
+    if (!f) {
+      setFlushState({ open: true, running: false, error: 'File API not available' })
+      return
+    }
+    const result = await f.newMeet()
+    if (result.ok) {
       setFlushState(null)
+      if (result.summary) {
+        setImportState({ status: 'done', summary: result.summary })
+      }
       handleRefresh()
     } else {
       setFlushState({ open: true, running: false, error: result.error })

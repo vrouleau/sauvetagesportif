@@ -121,6 +121,8 @@ const api = {
       ipcRenderer.invoke('file:save-smb'),
     restoreSMB: () =>
       ipcRenderer.invoke('file:restore-smb'),
+    newMeet: () =>
+      ipcRenderer.invoke('file:new-meet'),
   },
 }
 

@@ -330,6 +330,61 @@ async def upload_meet(file: UploadFile = File(...), db: Session = Depends(get_db
     return {"events_loaded": count, "filename": file.filename}
 
 
+@router.post("/admin/new-meet", dependencies=[Depends(require_admin)])
+def create_new_meet(db: Session = Depends(get_db)):
+    """Create a new meet by resetting all data and importing from the default template."""
+    template_path = Path(os.environ.get(
+        "MEET_DEFAULT_TEMPLATE",
+        str(Path(__file__).resolve().parent.parent.parent.parent.parent / "config" / "template_juniorsenior.lxf")
+    ))
+    if not template_path.exists():
+        raise HTTPException(404, f"Default meet template not found: {template_path}")
+
+    from ..meet_parser import parse_meet_lxf
+    try:
+        meet = parse_meet_lxf(template_path)
+    except Exception as e:
+        raise HTTPException(400, f"Invalid template .lxf: {e}")
+
+    # Wipe existing data
+    db.query(SwimResult).delete()
+    db.query(AgeGroup).delete()
+    db.query(SwimEvent).delete()
+    db.query(SwimSession).delete()
+    db.query(SwimStyle).delete()
+    db.flush()
+
+    # Import from template
+    from ..events import _load_from_parsed
+    count = _load_from_parsed(db, meet)
+
+    # Regenerate combined events XML after loading event structure
+    from ..combined_events import regenerate_combined_events
+    regenerate_combined_events(db)
+
+    # Store the template as the current meet file
+    MEET_STORAGE.parent.mkdir(parents=True, exist_ok=True)
+    MEET_STORAGE.write_bytes(template_path.read_bytes())
+
+    # Track metadata
+    import json as _json
+    for key, val in [("meet_filename", template_path.name),
+                     ("meet_uploaded_at", datetime.utcnow().isoformat()),
+                     ("meet_name", meet.meet_name),
+                     ("meet_course", meet.course),
+                     ("meet_masters", "T" if meet.masters else "F"),
+                     ("meet_currency", meet.currency or "CAD"),
+                     ("meet_fees_json", _json.dumps(meet.meet_fees)),
+                     ("age_base_date", meet.age_base_date)]:
+        _set_config(db, key, val)
+
+    # Reset closure date
+    _set_config(db, "closure_date", "")
+
+    db.commit()
+    return {"events_loaded": count, "filename": template_path.name}
+
+
 @router.get("/meet-info")
 def meet_info(db: Session = Depends(get_db)):
     import json as _json

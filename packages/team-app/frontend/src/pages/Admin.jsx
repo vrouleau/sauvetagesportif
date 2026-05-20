@@ -132,6 +132,21 @@ export default function Admin() {
           </button>
         </Section>
 
+        {/* Create New Meet */}
+        <Section title={t.create_new_meet} desc={t.create_new_meet_desc}>
+          <button onClick={async () => {
+            if (!confirm(t.confirm_create_new_meet)) return
+            setMsg(lang === 'fr' ? 'Création en cours…' : 'Creating...')
+            try {
+              const r = await api.post('/admin/new-meet', {})
+              setMsg(`${t.create_new_meet}: ${r.data.events_loaded} ${t.events}`)
+              loadStatus(); loadOrganizer()
+            } catch (e) { setMsg(e.response?.data?.detail || e.message || 'Error') }
+          }} className="px-3 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700">
+            {t.create_new_meet}
+          </button>
+        </Section>
+
         {/* Flush Meet */}
         <Section title={t.flush_meet} desc={t.flush_meet_desc}>
           <button onClick={async () => {

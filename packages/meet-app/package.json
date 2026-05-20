@@ -27,6 +27,10 @@
       {
         "from": "../../config/combined-events-config.json",
         "to": "combined-events-config.json"
+      },
+      {
+        "from": "../../config/template_juniorsenior.lxf",
+        "to": "template_juniorsenior.lxf"
       }
     ],
     "win": {
