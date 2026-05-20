@@ -138,3 +138,68 @@ export interface MeetAPI {
   // Heat generation
   generateHeats(eventId?: number, sessionId?: number): Promise<{ heatsCreated: number; entriesAssigned: number }>
 }
+
+// ─── Registration API (used by AthletesListPage & RegistrationPage) ───────────
+
+export interface Club {
+  id: number
+  name: string
+  athlete_count?: number
+}
+
+export interface AthleteListItem {
+  id: number
+  first_name: string
+  last_name: string
+  gender: string
+  birthdate: string
+  license: string
+}
+
+export interface RegistrationCategory {
+  age_code: string
+  event_id: number
+  registered: boolean
+  registration_id?: number
+  entry_time_ms?: number | null
+}
+
+export interface RegistrationStyle {
+  style_uid: string
+  style_name: string
+  best_time_lcm_ms: number | null
+  best_time_scm_ms: number | null
+  relay_count?: number
+  locked_by_name?: string
+  categories: RegistrationCategory[]
+}
+
+export interface RegistrationData {
+  athlete: {
+    first_name: string
+    last_name: string
+    gender: string
+    birthdate: string
+    license: string
+    club: string
+  }
+  individual_events: RegistrationStyle[]
+  relay_events: RegistrationStyle[]
+  club_athletes: Array<{ id: number; name: string }>
+  suggested_age_code: string
+  meet_course: string
+  closure_date?: string | null
+}
+
+export interface RegistrationAPI {
+  getClubs(): Promise<Club[]>
+  getAthletesByClub(clubId: string): Promise<AthleteListItem[]>
+  getAllAthletes(): Promise<AthleteListItem[]>
+  addAthlete(data: { first_name: string; last_name: string; gender: string; birthdate: string | null; license: string; club_id: number }): Promise<void>
+  deleteAthlete(id: number): Promise<void>
+  getRegistration(athleteId: number): Promise<RegistrationData>
+  updateAthlete(athleteId: number, data: Record<string, unknown>): Promise<void>
+  register(data: { athlete_id: number; event_id: number; entry_time_ms: number | null; age_code: string }): Promise<void>
+  unregister(registrationId: number): Promise<void>
+  resetClubPin?(clubId: string): Promise<{ pin: string }>
+}

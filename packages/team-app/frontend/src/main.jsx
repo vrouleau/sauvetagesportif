@@ -1,16 +1,17 @@
 import React, { useState, useEffect } from 'react'
 import ReactDOM from 'react-dom/client'
-import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router'
+import { BrowserRouter, Routes, Route, Link, useLocation, useParams, useNavigate } from 'react-router'
 import './index.css'
 import { LangProvider, useLang } from './i18n'
 import Login from './pages/Login'
-import Meet from './pages/Meet'
-import EventsPageShared from './shared/pages/EventsPage'
-import { ApiProvider } from './shared/context/ApiContext'
-import { LangProvider as SharedLangProvider } from './shared/context/LangContext'
+import EventsPageShared from '@shared/pages/EventsPage'
+import { ApiProvider } from '@shared/context/ApiContext'
+import { LangProvider as SharedLangProvider } from '@shared/context/LangContext'
+import { RegistrationApiProvider } from '@shared/context/RegistrationApiContext'
+import AthletesListPageShared from '@shared/pages/AthletesListPage'
+import RegistrationPageShared from '@shared/pages/RegistrationPage'
 import { meetApiHttp } from './meetApi'
-import Athletes from './pages/Athletes'
-import Register from './pages/Register'
+import { registrationApiHttp } from './registrationApi'
 import Admin from './pages/Admin'
 import Organizer from './pages/Organizer'
 import DataManagement from './pages/DataManagement'
@@ -29,6 +30,40 @@ function EventsPage() {
       <ApiProvider api={meetApiHttp}>
         <EventsPageShared />
       </ApiProvider>
+    </SharedLangProvider>
+  )
+}
+
+// Wrap the shared AthletesListPage
+function AthletesListPage({ role, clubId }) {
+  const { lang } = useLang()
+  const navigate = useNavigate()
+  return (
+    <SharedLangProvider initialLang={lang}>
+      <RegistrationApiProvider api={registrationApiHttp}>
+        <AthletesListPageShared
+          role={role}
+          clubId={clubId}
+          onNavigateToRegistration={(id) => navigate(`/athletes/${id}/register`)}
+        />
+      </RegistrationApiProvider>
+    </SharedLangProvider>
+  )
+}
+
+// Wrap the shared RegistrationPage
+function RegisterPage() {
+  const { id } = useParams()
+  const { lang } = useLang()
+  const navigate = useNavigate()
+  return (
+    <SharedLangProvider initialLang={lang}>
+      <RegistrationApiProvider api={registrationApiHttp}>
+        <RegistrationPageShared
+          athleteId={parseInt(id)}
+          onNavigateBack={() => navigate('/')}
+        />
+      </RegistrationApiProvider>
     </SharedLangProvider>
   )
 }
@@ -145,8 +180,8 @@ function AppInner() {
     <BrowserRouter>
       <AuthLayout canOrganizer={canOrganizer} canAdmin={canAdmin} meetName={meetName} toggle={toggle} lang={lang} logout={logout} auth={auth} t={t}>
         <Routes>
-          <Route path="/" element={<Athletes role={auth.role} clubId={auth.club_id} />} />
-          <Route path="/athletes/:id/register" element={<Register />} />
+          <Route path="/" element={<AthletesListPage role={auth.role} clubId={auth.club_id} />} />
+          <Route path="/athletes/:id/register" element={<RegisterPage />} />
           {canOrganizer && <Route path="/meet" element={<EventsPage />} />}
           {canOrganizer && <Route path="/invitation" element={<Organizer />} />}
           {canAdmin && <Route path="/admin" element={<Admin />} />}

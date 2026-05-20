@@ -7,7 +7,7 @@ export default defineConfig({
   plugins: [tailwindcss(), react()],
   resolve: {
     alias: {
-      '@shared': path.resolve(__dirname, 'src/shared'),
+      '@shared': path.resolve(__dirname, '../../shared-ui/src'),
     },
     // Ensure imports from symlinked shared-ui resolve node_modules from here
     preserveSymlinks: true,

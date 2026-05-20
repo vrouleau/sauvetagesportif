@@ -12,7 +12,8 @@
     "clean": "node scripts/clean-build.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "rebuild": "node scripts/rebuild.js"
+    "rebuild": "node scripts/rebuild.js",
+    "postinstall": "node scripts/rebuild.js"
   },
   "build": {
     "appId": "com.sauvetagemeet",
