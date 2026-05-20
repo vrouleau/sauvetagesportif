@@ -210,6 +210,8 @@ class SwimEvent(Base):
     swimstyle = relationship("SwimStyle")
     agegroups = relationship("AgeGroup", back_populates="event",
                              cascade="all, delete-orphan")
+    heats = relationship("Heat", back_populates="event",
+                         cascade="all, delete-orphan")
     results = relationship("SwimResult", back_populates="event")
 
 
@@ -317,6 +319,42 @@ class SwimResult(Base):
         UniqueConstraint("athleteid", "swimeventid", "age_code",
                          name="uq_swimresult_entry"),
     )
+
+
+# ---------------------------------------------------------------------------
+# heat
+# ---------------------------------------------------------------------------
+
+class Heat(Base):
+    __tablename__ = "heat"
+    heatid = Column(Integer, primary_key=True)
+    agegroupid = Column(Integer)
+    agegrouporder = Column(Integer)
+    daytime = Column(DateTime)
+    finalcode = Column(String(2))
+    heatnumber = Column(SmallInteger)
+    racestatus = Column(SmallInteger)  # 0=empty, 4=seeded, 8+=completed
+    remarks = Column(Text)
+    sortcode = Column(Integer)
+    swimeventid = Column(Integer, ForeignKey("swimevent.swimeventid", ondelete="CASCADE"))
+    name = Column(String(50))
+    seedeventid = Column(Integer)
+    code = Column(String(10))
+    reservecount = Column(SmallInteger)
+    foreigncount = Column(SmallInteger)
+
+    event = relationship("SwimEvent", back_populates="heats")
+
+
+# ---------------------------------------------------------------------------
+# split
+# ---------------------------------------------------------------------------
+
+class Split(Base):
+    __tablename__ = "split"
+    swimresultid = Column(Integer, ForeignKey("swimresult.swimresultid", ondelete="CASCADE"), primary_key=True)
+    distance = Column(SmallInteger, primary_key=True)
+    swimtime = Column(Integer)
 
 
 # ---------------------------------------------------------------------------
