@@ -6,6 +6,7 @@ const fr = {
     inscription: 'Inscription',
     heats: 'Séries / Chronométrage',
     athletes: 'Athlètes',
+    report: 'Rapports',
   },
   events: {
     columns: { name: 'Nom', datePhase: 'Date / Phase', time: 'Heure', pool: 'Bassin' },
@@ -297,6 +298,7 @@ const en = {
     inscription: 'Registration',
     heats: 'Heats / Timing',
     athletes: 'Athletes',
+    report: 'Reports',
   },
   events: {
     columns: { name: 'Name', datePhase: 'Date / Phase', time: 'Time', pool: 'Pool' },

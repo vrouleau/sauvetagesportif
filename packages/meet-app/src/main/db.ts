@@ -1639,6 +1639,16 @@ export async function testConnection(): Promise<{ ok: boolean; version?: string;
 
 // ── bsglobal: meet-level key-value store ──────────────────────────────────────
 
+export function getMeetInfo(): { name: string; city: string; nation: string } {
+  const db = getLocalDb()
+  const rows = db.prepare(
+    `SELECT name, data FROM bsglobal WHERE name IN ('MeetName','MeetCity','MeetNation')`
+  ).all() as Array<{ name: string; data: string | null }>
+  const m: Record<string, string> = {}
+  for (const r of rows) m[r.name] = r.data ?? ''
+  return { name: m['MeetName'] ?? '', city: m['MeetCity'] ?? '', nation: m['MeetNation'] ?? '' }
+}
+
 export function getMeetConfig(): Record<string, string> {
   const db = getLocalDb()
   const rows = db.prepare(`SELECT name, data FROM bsglobal`).all() as Array<{ name: string; data: string | null }>

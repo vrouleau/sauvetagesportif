@@ -1,5 +1,7 @@
 import { app, BrowserWindow, shell, ipcMain, dialog, nativeImage, Menu } from 'electron'
 import { join } from 'path'
+import { writeFileSync, unlinkSync } from 'fs'
+import { tmpdir } from 'os'
 import { QuantumBridge, type ActiveHeat, type ScheduleEvent } from './quantum'
 import {
   configureDb, getDbConfig, testConnection,
@@ -15,6 +17,7 @@ import {
   generateHeats,
   getLocalDb, closeLocalDb,
   getMeetValues, setMeetValues,
+  getMeetInfo,
   getSwimStyles,
   reorderEvents,
   type DbConfig,
@@ -236,6 +239,128 @@ ipcMain.handle('file:new-meet', async () => {
     // Import the template lenex file
     const summary = importLenex(templatePath, getLocalDb())
     return { ok: true, summary }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+})
+
+// ── Report IPC ────────────────────────────────────────────────────────────────
+
+ipcMain.handle('db:get-meet-info', () => getMeetInfo())
+
+interface PdfHeaderInfo { line1: string; line2: string; today: string }
+
+function escHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
+function buildHeaderTemplate(h: PdfHeaderInfo): string {
+  return `<div style="width:100%;font-family:Arial,Helvetica,sans-serif;font-size:10pt;` +
+    `text-align:center;padding:0 0.6in 4pt;box-sizing:border-box;` +
+    `border-bottom:1px solid black;line-height:1.5">` +
+    `${escHtml(h.line1)}<br>` +
+    `<span style="font-size:8pt">${escHtml(h.line2)}</span></div>`
+}
+
+function buildFooterTemplate(h: PdfHeaderInfo): string {
+  return `<div style="width:100%;font-family:Arial,Helvetica,sans-serif;font-size:8pt;` +
+    `display:flex;justify-content:space-between;padding:0 0.6in;box-sizing:border-box">` +
+    `<span>SauvetageMeet</span><span></span><span>${escHtml(h.today)}</span></div>`
+}
+
+async function htmlToPdfBuffer(html: string, h: PdfHeaderInfo): Promise<Buffer> {
+  const tmpPath = join(tmpdir(), `mm_rpt_${Date.now()}.html`)
+  writeFileSync(tmpPath, html, 'utf-8')
+  const hidden = new BrowserWindow({ show: false, webPreferences: { sandbox: false } })
+  try {
+    await hidden.loadFile(tmpPath)
+    const pdf = await hidden.webContents.printToPDF({
+      pageSize: 'Letter',
+      printBackground: false,
+      margins: { marginType: 'custom', top: 1.1, bottom: 0.65, left: 0.6, right: 0.6 },
+      displayHeaderFooter: true,
+      headerTemplate: buildHeaderTemplate(h),
+      footerTemplate: buildFooterTemplate(h),
+    })
+    return Buffer.from(pdf)
+  } finally {
+    hidden.destroy()
+    try { unlinkSync(tmpPath) } catch { /* ignore */ }
+  }
+}
+
+async function printHtml(html: string, h: PdfHeaderInfo): Promise<void> {
+  const tmpPath = join(tmpdir(), `mm_rpt_${Date.now()}.html`)
+  writeFileSync(tmpPath, html, 'utf-8')
+  const hidden = new BrowserWindow({ show: false, webPreferences: { sandbox: false } })
+  try {
+    await hidden.loadFile(tmpPath)
+    await new Promise<void>((resolve, reject) => {
+      hidden.webContents.print({
+        silent: false,
+        printBackground: false,
+        pageSize: 'Letter',
+        margins: { marginType: 'custom', top: 1.1, bottom: 0.65, left: 0.6, right: 0.6 },
+        displayHeaderFooter: true,
+        headerTemplate: buildHeaderTemplate(h),
+        footerTemplate: buildFooterTemplate(h),
+      }, (success, errType) => {
+        if (success) resolve()
+        else reject(new Error(errType ?? 'print-error'))
+      })
+    })
+  } finally {
+    hidden.destroy()
+    try { unlinkSync(tmpPath) } catch { /* ignore */ }
+  }
+}
+
+ipcMain.handle('report:preview-pdf', async (_event, html: string, h: PdfHeaderInfo) => {
+  try {
+    const buf = await htmlToPdfBuffer(html, h)
+    return { ok: true, data: buf.toString('base64') }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+})
+
+ipcMain.handle('report:save-html', async (event, html: string) => {
+  const win = BrowserWindow.fromWebContents(event.sender)
+  const result = await dialog.showSaveDialog(win ?? BrowserWindow.getFocusedWindow()!, {
+    title: 'Sauvegarder le rapport HTML',
+    filters: [{ name: 'HTML', extensions: ['htm', 'html'] }],
+    defaultPath: 'Liste des séries.htm',
+  })
+  if (result.canceled || !result.filePath) return { ok: false, canceled: true }
+  try {
+    writeFileSync(result.filePath, html, 'utf-8')
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+})
+
+ipcMain.handle('report:save-pdf', async (event, html: string, h: PdfHeaderInfo) => {
+  const win = BrowserWindow.fromWebContents(event.sender)
+  const result = await dialog.showSaveDialog(win ?? BrowserWindow.getFocusedWindow()!, {
+    title: 'Sauvegarder le rapport PDF',
+    filters: [{ name: 'PDF', extensions: ['pdf'] }],
+    defaultPath: 'Liste des séries.pdf',
+  })
+  if (result.canceled || !result.filePath) return { ok: false, canceled: true }
+  try {
+    const buf = await htmlToPdfBuffer(html, h)
+    writeFileSync(result.filePath, buf)
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+})
+
+ipcMain.handle('report:print', async (_event, html: string, h: PdfHeaderInfo) => {
+  try {
+    await printHtml(html, h)
+    return { ok: true }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
   }

@@ -113,6 +113,18 @@ const api = {
       ipcRenderer.invoke('db:sync-down'),
     flushMeet: () =>
       ipcRenderer.invoke('db:flush-meet'),
+    getMeetInfo: () =>
+      ipcRenderer.invoke('db:get-meet-info'),
+  },
+  report: {
+    previewPdf: (html: string, headerInfo: unknown) =>
+      ipcRenderer.invoke('report:preview-pdf', html, headerInfo),
+    saveHtml: (html: string) =>
+      ipcRenderer.invoke('report:save-html', html),
+    savePdf: (html: string, headerInfo: unknown) =>
+      ipcRenderer.invoke('report:save-pdf', html, headerInfo),
+    print: (html: string, headerInfo: unknown) =>
+      ipcRenderer.invoke('report:print', html, headerInfo),
   },
   file: {
     openLxfDialog: () =>
