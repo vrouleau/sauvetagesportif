@@ -10,8 +10,8 @@
     "preview": "electron-vite preview",
     "build:win": "npm run build && electron-builder --win",
     "clean": "node scripts/clean-build.js",
-    "test": "vitest run",
-    "test:watch": "vitest",
+    "test": "npm rebuild better-sqlite3 && vitest run",
+    "test:watch": "npm rebuild better-sqlite3 && vitest",
     "rebuild": "node scripts/rebuild.js",
     "postinstall": "node scripts/rebuild.js"
   },

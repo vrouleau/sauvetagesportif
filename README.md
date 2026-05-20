@@ -60,12 +60,10 @@ MEETMGR_SKIP_STACK=1 MEETMGR_URL=http://127.0.0.1:8001 python -m pytest tests/ -
 
 ```bash
 cd packages/meet-app
-npm install
-npm rebuild better-sqlite3   # compile for system Node (not Electron)
 npm test
 ```
 
-> Note: `npm test` uses system Node.js. If you previously ran `@electron/rebuild`, you need `npm rebuild better-sqlite3` to recompile for system Node before tests will pass.
+> Note: `npm test` automatically rebuilds `better-sqlite3` for system Node before running vitest. If you then want to run the Electron app, use `npm run rebuild` to recompile for Electron's ABI.
 
 ### Clean build (meet-app)
 

@@ -1,16 +1,15 @@
 FROM node:22-alpine AS build
 WORKDIR /app
 
-# Copy shared-ui source
+# Copy shared-ui source to /shared-ui/src
+# The vite alias @shared resolves to path.resolve(__dirname, '../../shared-ui/src')
+# which from WORKDIR /app = /shared-ui/src
 COPY packages/shared-ui/src /shared-ui/src
 
 # Copy frontend
 COPY packages/team-app/frontend/package.json ./
 RUN npm install
 COPY packages/team-app/frontend/ .
-
-# Symlink shared-ui into the frontend src
-RUN ln -sf /shared-ui/src src/shared
 
 ARG BUILD_TIMESTAMP=""
 RUN apk add --no-cache tzdata && \
