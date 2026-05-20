@@ -9,6 +9,7 @@ const fr = {
   events: {
     columns: { name: 'Nom', datePhase: 'Date / Phase', time: 'Heure', pool: 'Bassin' },
     genderLabel: (g: string) => g === 'M' ? 'Messieurs' : g === 'F' ? 'Dames' : 'Mixte',
+    youthGenderLabel: (g: string) => g === 'M' ? 'Garçons' : g === 'F' ? 'Filles' : 'Mixte',
     phaseLabel: (p: string) => p,
     poolUnit: (s: number) => `${s}m`,
     sessionLabel: (n: number, name: string) => `${n} - Session ${n} ${name}`,
@@ -24,10 +25,11 @@ const fr = {
       addAward: 'Ajouter une remise de prix',
       addBreak: 'Ajouter une pause',
       addCategory: 'Ajouter une catégorie',
-      copyJury: 'Copier le jury',
-      copyRecords: 'Copier les records et limites',
-      copyCategories: 'Copier les catégories',
-      insert: 'Insérer',
+      addCategory10: 'Ajouter catégorie 10-',
+      addCategory1112: 'Ajouter catégorie 11-12',
+      addCategory1314: 'Ajouter catégorie 13-14',
+      addCategory1518Open: 'Ajouter catégorie 15-18 / Open',
+      addCategoryMaster: 'Ajouter catégories Master',
       delete: 'Effacer',
     },
     toolbar: {
@@ -252,6 +254,7 @@ const en = {
   events: {
     columns: { name: 'Name', datePhase: 'Date / Phase', time: 'Time', pool: 'Pool' },
     genderLabel: (g: string) => g === 'M' ? 'Men' : g === 'F' ? 'Women' : 'Mixed',
+    youthGenderLabel: (g: string) => g === 'M' ? 'Boys' : g === 'F' ? 'Girls' : 'Mixed',
     phaseLabel: (p: string) =>
       p === 'Eliminatoire' ? 'Prelims' : p === 'Finale' ? 'Final' : p === 'Finale directe' ? 'Direct Final' : p,
     poolUnit: (s: number) => `${s}m`,
@@ -268,10 +271,11 @@ const en = {
       addAward: 'Add award ceremony',
       addBreak: 'Add break',
       addCategory: 'Add category',
-      copyJury: 'Copy jury',
-      copyRecords: 'Copy records & limits',
-      copyCategories: 'Copy categories',
-      insert: 'Insert',
+      addCategory10: 'Add category 10-',
+      addCategory1112: 'Add category 11-12',
+      addCategory1314: 'Add category 13-14',
+      addCategory1518Open: 'Add category 15-18 / Open',
+      addCategoryMaster: 'Add Master categories',
       delete: 'Delete',
     },
     toolbar: {

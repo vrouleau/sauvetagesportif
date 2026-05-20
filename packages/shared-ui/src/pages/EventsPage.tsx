@@ -182,6 +182,20 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
     setLoading(true)
     api.getSessions().then((sessions) => {
       setLocalSessions(sessions)
+
+      const defaultExpandedSessions = new Set<number>()
+      const defaultExpandedEvents = new Set<number>()
+      for (const session of sessions) {
+        for (const event of session.events) {
+          if (event.ageGroups.length > 0) {
+            defaultExpandedSessions.add(session.id)
+            defaultExpandedEvents.add(event.id)
+          }
+        }
+      }
+      setExpandedSessions(defaultExpandedSessions)
+      setExpandedEvents(defaultExpandedEvents)
+
       setLoading(false)
     }).catch(() => setLoading(false))
     // Load meet name from config
@@ -201,6 +215,20 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
     document.addEventListener('click', close)
     return () => document.removeEventListener('click', close)
   }, [contextMenu])
+
+  // 'd' keyboard shortcut for delete
+  const handleDeleteRef = useRef(handleDelete)
+  useEffect(() => { handleDeleteRef.current = handleDelete })
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== 'd') return
+      const target = e.target as HTMLElement
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return
+      handleDeleteRef.current()
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [])
 
   function toggleSession(id: number) {
     setExpandedSessions((prev) => {
@@ -286,16 +314,34 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
       isAdmin: true,
       ageGroups: [],
     }
-    setLocalSessions((prev) =>
-      prev.map((s) =>
-        s.id === targetSession.id ? { ...s, events: [...s.events, newEvent] } : s
-      )
-    )
+    await insertEventAfterSelected(newEvent, targetSession)
     setSelected({ type: 'event', event: newEvent, session: targetSession })
     setExpandedSessions((prev) => new Set([...prev, targetSession.id]))
   }
 
-  async function handleAddEvent() {
+  async function insertEventAfterSelected(newEvent: CompetitionEvent, targetSession: Session) {
+    let updatedEvents: CompetitionEvent[] = []
+    setLocalSessions((prev) =>
+      prev.map((s) => {
+        if (s.id !== targetSession.id) return s
+        const events = [...s.events]
+        const idx =
+          selected.type === 'event'
+            ? events.findIndex((e) => e.id === selected.event.id)
+            : -1
+        events.splice(idx + 1, 0, newEvent)
+        updatedEvents = events
+        return { ...s, events }
+      })
+    )
+    if (updatedEvents.length > 0) {
+      await api.reorderEvents(
+        updatedEvents.map((e, i) => ({ eventId: e.id, sessionId: targetSession.id, sortcode: i + 1 }))
+      )
+    }
+  }
+
+  async function handleAddEventWithPhase(phase: 'Finale directe' | 'Eliminatoire' | 'Finale') {
     const targetSession =
       selected.type === 'session'
         ? selected.session
@@ -303,24 +349,11 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
         ? selected.session
         : null
     if (!targetSession) return
-    const styleName = await prompt(t.events.toolbar.addEvent + ' (style)', 'Freestyle')
-    if (styleName === null) return
-    const distStr = await prompt('Distance (m)', '100')
-    if (distStr === null) return
-    const distance = parseInt(distStr, 10) || 100
-    const genderInput = await prompt('Genre (M/F/X)', 'M')
-    if (genderInput === null) return
-    const gender = (
-      genderInput.toUpperCase() === 'F' ? 'F' : genderInput.toUpperCase() === 'X' ? 'X' : 'M'
-    ) as 'M' | 'F' | 'X'
-
     const allNums = localSessions.flatMap((s) => s.events.map((e) => e.number))
     const newNum = Math.max(...allNums, 0) + 1
     let realId: number
     try {
-      const result = await api.createEvent(
-        targetSession.id, newNum, gender, distance, 'Finale directe', styleName,
-      )
+      const result = await api.createEvent(targetSession.id, newNum, 'M', 100, phase, 'Freestyle')
       realId = result.id
     } catch {
       window.alert("Erreur lors de la création de l'épreuve")
@@ -330,23 +363,54 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
       id: realId,
       sessionId: targetSession.id,
       number: newNum,
-      nameFr: styleName,
-      nameEn: styleName,
-      gender,
-      distance,
-      phase: 'Finale directe',
+      nameFr: 'Freestyle',
+      nameEn: 'Freestyle',
+      gender: 'M',
+      distance: 100,
+      phase,
       ageGroups: [],
     }
-    setLocalSessions((prev) =>
-      prev.map((s) =>
-        s.id === targetSession.id ? { ...s, events: [...s.events, newEvent] } : s
-      )
-    )
+    await insertEventAfterSelected(newEvent, targetSession)
     setSelected({ type: 'event', event: newEvent, session: targetSession })
     setExpandedSessions((prev) => new Set([...prev, targetSession.id]))
   }
 
-  async function handleAddCategory() {
+  async function handleAddAward() {
+    const targetSession =
+      selected.type === 'session'
+        ? selected.session
+        : selected.type === 'event'
+        ? selected.session
+        : null
+    if (!targetSession) return
+    const allNums = localSessions.flatMap((s) => s.events.map((e) => e.number))
+    const newNum = Math.max(...allNums, 0) + 1
+    let realId: number
+    try {
+      const result = await api.createBreak(targetSession.id, newNum, 'Remise des prix')
+      realId = result.id
+    } catch {
+      window.alert('Erreur lors de la création de la remise de prix')
+      return
+    }
+    const newEvent: CompetitionEvent = {
+      id: realId,
+      sessionId: targetSession.id,
+      number: newNum,
+      nameFr: 'Remise des prix',
+      nameEn: 'Award ceremony',
+      gender: 'X',
+      distance: 0,
+      phase: 'Finale directe',
+      isAdmin: true,
+      ageGroups: [],
+    }
+    await insertEventAfterSelected(newEvent, targetSession)
+    setSelected({ type: 'event', event: newEvent, session: targetSession })
+    setExpandedSessions((prev) => new Set([...prev, targetSession.id]))
+  }
+
+  async function handleAddCategoryPresets(presets: Array<{ name: string; minAge: number; maxAge: number | null }>) {
     const targetEvent =
       selected.type === 'event'
         ? selected.event
@@ -354,41 +418,81 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
         ? selected.event
         : null
     if (!targetEvent) return
-    const name = await prompt(t.events.toolbar.addCategory, 'Nouvelle catégorie')
-    if (name === null) return
-    let realId: number
-    try {
-      const result = await api.createAgeGroup(targetEvent.id, name, 0, null, targetEvent.gender)
-      realId = result.id
-    } catch {
-      window.alert('Erreur lors de la création de la catégorie')
-      return
+
+    // Skip presets that already exist (same minAge, maxAge, gender)
+    const toAdd = presets.filter(
+      (p) =>
+        !targetEvent.ageGroups.some(
+          (g) => g.minAge === p.minAge && g.maxAge === p.maxAge && g.gender === targetEvent.gender
+        )
+    )
+    if (toAdd.length === 0) return
+
+    const newGroups: AgeGroup[] = []
+    let baseNum = Math.max(...targetEvent.ageGroups.map((g) => g.number), 0)
+    for (const { name, minAge, maxAge } of toAdd) {
+      let realId: number
+      try {
+        const result = await api.createAgeGroup(targetEvent.id, name, minAge, maxAge, targetEvent.gender)
+        realId = result.id
+      } catch {
+        window.alert('Erreur lors de la création de la catégorie')
+        return
+      }
+      baseNum++
+      newGroups.push({
+        id: realId,
+        number: baseNum,
+        name,
+        minAge,
+        maxAge,
+        gender: targetEvent.gender,
+        numHeats: 1,
+        ranking: t.events.defaultRanking,
+        countForMedalStats: true,
+        usedForCombined: false,
+        alwaysSwimPrelims: true,
+        advanceByTime: false,
+        laneOrderInFinals: t.events.defaultRanking,
+      })
     }
-    const newNum = Math.max(...targetEvent.ageGroups.map((g) => g.number), 0) + 1
-    const newGroup: AgeGroup = {
-      id: realId,
-      number: newNum,
-      name,
-      minAge: 0,
-      maxAge: null,
-      gender: targetEvent.gender,
-      numHeats: 1,
-      ranking: t.events.defaultRanking,
-      countForMedalStats: true,
-      usedForCombined: false,
-      alwaysSwimPrelims: true,
-      advanceByTime: false,
-      laneOrderInFinals: t.events.defaultRanking,
-    }
-    const updatedEvent = { ...targetEvent, ageGroups: [...targetEvent.ageGroups, newGroup] }
+
+    const updatedEvent = { ...targetEvent, ageGroups: [...targetEvent.ageGroups, ...newGroups] }
     setLocalSessions((prev) =>
       prev.map((s) => ({
         ...s,
         events: s.events.map((e) => (e.id === targetEvent.id ? updatedEvent : e)),
       }))
     )
-    setSelected({ type: 'agegroup', group: newGroup, event: updatedEvent })
+    setSelected({ type: 'agegroup', group: newGroups[newGroups.length - 1], event: updatedEvent })
     setExpandedEvents((prev) => new Set([...prev, targetEvent.id]))
+  }
+
+  async function handleAddCategory() {
+    await handleAddCategoryPresets([{ name: 'Nouvelle catégorie', minAge: 0, maxAge: null }])
+  }
+
+  async function handleAddCategory1518Open() {
+    await handleAddCategoryPresets([
+      { name: '15-18', minAge: 15, maxAge: 18 },
+      { name: '19+', minAge: 19, maxAge: null },
+    ])
+  }
+
+  async function handleAddCategoryMaster() {
+    await handleAddCategoryPresets([
+      { name: '25-29', minAge: 25, maxAge: 29 },
+      { name: '30-34', minAge: 30, maxAge: 34 },
+      { name: '35-39', minAge: 35, maxAge: 39 },
+      { name: '40-44', minAge: 40, maxAge: 44 },
+      { name: '45-49', minAge: 45, maxAge: 49 },
+      { name: '50-54', minAge: 50, maxAge: 54 },
+      { name: '55-59', minAge: 55, maxAge: 59 },
+      { name: '60-64', minAge: 60, maxAge: 64 },
+      { name: '65-69', minAge: 65, maxAge: 69 },
+      { name: '70-74', minAge: 70, maxAge: 74 },
+      { name: '75+', minAge: 75, maxAge: null },
+    ])
   }
 
   async function handleDelete() {
@@ -486,7 +590,7 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
         <ToolbarBtn
           label={t.events.toolbar.addEvent}
           enabled={canAddEvent}
-          onClick={handleAddEvent}
+          onClick={() => handleAddEventWithPhase('Finale directe')}
         />
         <ToolbarBtn
           label={t.events.toolbar.addCategory}
@@ -617,8 +721,20 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
           onAction={(action) => {
             setContextMenu(null)
             if (action === 'addSession') handleAddSession()
-            else if (action === 'addEvent') handleAddEvent()
+            else if (action === 'addDirectFinal') handleAddEventWithPhase('Finale directe')
+            else if (action === 'addSemiFinal') handleAddEventWithPhase('Eliminatoire')
+            else if (action === 'addFinal') handleAddEventWithPhase('Finale')
+            else if (action === 'addMainHeat') handleAddEventWithPhase('Eliminatoire')
+            else if (action === 'addSeparateHeats') handleAddEventWithPhase('Eliminatoire')
+            else if (action === 'addTimeTrial') handleAddEventWithPhase('Finale directe')
+            else if (action === 'addAward') handleAddAward()
+            else if (action === 'addBreak') handleAddBreak()
             else if (action === 'addCategory') handleAddCategory()
+            else if (action === 'addCategory10') handleAddCategoryPresets([{ name: '10-', minAge: 0, maxAge: 10 }])
+            else if (action === 'addCategory1112') handleAddCategoryPresets([{ name: '11-12', minAge: 11, maxAge: 12 }])
+            else if (action === 'addCategory1314') handleAddCategoryPresets([{ name: '13-14', minAge: 13, maxAge: 14 }])
+            else if (action === 'addCategory1518Open') handleAddCategory1518Open()
+            else if (action === 'addCategoryMaster') handleAddCategoryMaster()
             else if (action === 'delete') handleDelete()
           }}
         />
@@ -703,7 +819,11 @@ function SortableEventItem({
           </svg>
         </span>
         <span className="flex-1 truncate">
-          {event.number}. {t.events.genderLabel(event.gender)},{' '}
+          {event.number}. {
+            event.ageGroups.length > 0 && event.ageGroups.every((g) => isYouthCategory(g.maxAge))
+              ? t.events.youthGenderLabel(event.gender)
+              : t.events.genderLabel(event.gender)
+          },{' '}
           {event.distance}m {event.nameEn}
         </span>
         <span className="w-28 text-center text-gray-600">
@@ -724,13 +844,20 @@ function SortableEventItem({
               onClick={() => onSelectGroup(group)}
               onContextMenu={(e) => onContextMenuGroup(e, group)}
             >
+              <span className="w-4 mr-1" />
               <span className="w-4 mr-1 text-gray-400">
                 <svg className="w-3 h-3 inline" fill="currentColor" viewBox="0 0 20 20">
                   <rect x="4" y="4" width="12" height="12" rx="1" />
                 </svg>
               </span>
               <span className="flex-1 truncate">
-                {group.number}. {ageRangeLabel(group.minAge, group.maxAge, t.events.genderLabel(group.gender))}
+                {group.number}. {ageRangeLabel(
+                  group.minAge,
+                  group.maxAge,
+                  isYouthCategory(group.maxAge)
+                    ? t.events.youthGenderLabel(group.gender)
+                    : t.events.genderLabel(group.gender)
+                )}
               </span>
               <span className="w-28" />
               <span className="w-14" />
@@ -774,7 +901,14 @@ function ToolbarBtn({
 
 // ─── Context Menu ──────────────────────────────────────────────────────────────
 
-type MenuAction = 'addSession' | 'addEvent' | 'addCategory' | 'addBreak' | 'delete'
+type MenuAction =
+  | 'addSession'
+  | 'addDirectFinal' | 'addSemiFinal' | 'addFinal'
+  | 'addMainHeat' | 'addSeparateHeats' | 'addTimeTrial' | 'addAward'
+  | 'addBreak'
+  | 'addCategory' | 'addCategory10' | 'addCategory1112'
+  | 'addCategory1314' | 'addCategory1518Open' | 'addCategoryMaster'
+  | 'delete'
 
 function ContextMenu({
   x,
@@ -823,6 +957,9 @@ function ContextMenu({
   const isEvent = target.type === 'event'
   const isAgeGroup = target.type === 'agegroup'
 
+  const canAddEvent = isSession || isEvent
+  const canAddCategory = isEvent || isAgeGroup
+
   return (
     <div
       style={style}
@@ -830,21 +967,23 @@ function ContextMenu({
       onClick={(e) => e.stopPropagation()}
     >
       {item(t.events.menu.addSession, !isCompetition && !isSession, 'addSession')}
-      {item(t.events.menu.addDirectFinal, !isSession, 'addEvent')}
-      {item(t.events.menu.addSemiFinal, !isSession, 'addEvent')}
-      {item(t.events.menu.addFinal, !isSession, 'addEvent')}
-      {item(t.events.menu.addMainHeat, !isSession)}
-      {item(t.events.menu.addSeparateHeats, !isSession)}
-      {item(t.events.menu.addTimeTrial, !isSession)}
-      {item(t.events.menu.addAward, !isSession)}
-      {item(t.events.menu.addBreak, !isSession, 'addBreak')}
-      {item(t.events.menu.addCategory, !isEvent && !isAgeGroup, 'addCategory')}
       <div className="my-1 border-t border-gray-200" />
-      {item(t.events.menu.copyJury, true)}
-      {item(t.events.menu.copyRecords, true)}
-      {item(t.events.menu.copyCategories, true)}
+      {item(t.events.menu.addDirectFinal, !canAddEvent, 'addDirectFinal')}
+      {item(t.events.menu.addSemiFinal, !canAddEvent, 'addSemiFinal')}
+      {item(t.events.menu.addFinal, !canAddEvent, 'addFinal')}
+      {item(t.events.menu.addMainHeat, !canAddEvent, 'addMainHeat')}
+      {item(t.events.menu.addSeparateHeats, !canAddEvent, 'addSeparateHeats')}
+      {item(t.events.menu.addTimeTrial, !canAddEvent, 'addTimeTrial')}
+      {item(t.events.menu.addAward, !canAddEvent, 'addAward')}
+      {item(t.events.menu.addBreak, !canAddEvent, 'addBreak')}
       <div className="my-1 border-t border-gray-200" />
-      {item(t.events.menu.insert, true)}
+      {item(t.events.menu.addCategory, !canAddCategory, 'addCategory')}
+      {item(t.events.menu.addCategory10, !canAddCategory, 'addCategory10')}
+      {item(t.events.menu.addCategory1112, !canAddCategory, 'addCategory1112')}
+      {item(t.events.menu.addCategory1314, !canAddCategory, 'addCategory1314')}
+      {item(t.events.menu.addCategory1518Open, !canAddCategory, 'addCategory1518Open')}
+      {item(t.events.menu.addCategoryMaster, !canAddCategory, 'addCategoryMaster')}
+      <div className="my-1 border-t border-gray-200" />
       {item(t.events.menu.delete, isCompetition, 'delete')}
     </div>
   )
@@ -1058,6 +1197,10 @@ function AgeGroupPropertiesPanel({ group, event }: { group: AgeGroup; event: Com
       </table>
     </div>
   )
+}
+
+function isYouthCategory(maxAge: number | null): boolean {
+  return maxAge !== null && maxAge <= 14
 }
 
 function ageRangeLabel(minAge: number, maxAge: number | null, genderLabel: string): string {
