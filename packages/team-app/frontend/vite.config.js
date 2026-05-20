@@ -9,12 +9,14 @@ export default defineConfig({
     alias: {
       '@shared': path.resolve(__dirname, '../../shared-ui/src'),
     },
-    // Ensure imports from symlinked shared-ui resolve node_modules from here
     preserveSymlinks: true,
   },
   server: {
     proxy: {
       '/api': 'http://localhost:8000'
-    }
-  }
+    },
+    fs: {
+      allow: [path.resolve(__dirname, '../../shared-ui/src'), '.'],
+    },
+  },
 })

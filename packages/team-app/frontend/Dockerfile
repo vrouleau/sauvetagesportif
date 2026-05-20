@@ -11,6 +11,9 @@ COPY packages/team-app/frontend/package.json ./
 RUN npm install
 COPY packages/team-app/frontend/ .
 
+# Symlink node_modules so shared-ui imports resolve from /app/node_modules
+RUN ln -s /app/node_modules /shared-ui/node_modules
+
 ARG BUILD_TIMESTAMP=""
 RUN apk add --no-cache tzdata && \
     if [ -n "${BUILD_TIMESTAMP}" ]; then echo "${BUILD_TIMESTAMP}" > /tmp/bt; \
