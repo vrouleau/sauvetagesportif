@@ -119,6 +119,14 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
   const [expandedSessions, setExpandedSessions] = useState<Set<number>>(new Set())
   const [expandedEvents, setExpandedEvents] = useState<Set<number>>(new Set())
   const [selected, setSelected] = useState<SelectedItem>({ type: 'competition' })
+  const [multiSelectedGroups, setMultiSelectedGroups] = useState<Set<number>>(new Set())
+
+  // Clear multi-selection when selecting non-agegroup items
+  useEffect(() => {
+    if (selected.type !== 'agegroup') setMultiSelectedGroups(new Set())
+  }, [selected.type])
+
+  const lastClickedGroupRef = useRef<{ eventId: number; groupId: number } | null>(null)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [meetName, setMeetName] = useState<string>('')
   const [poolSize, setPoolSize] = useState<number>(50)
@@ -183,18 +191,27 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
     api.getSessions().then((sessions) => {
       setLocalSessions(sessions)
 
-      const defaultExpandedSessions = new Set<number>()
-      const defaultExpandedEvents = new Set<number>()
-      for (const session of sessions) {
-        for (const event of session.events) {
-          if (event.ageGroups.length > 0) {
-            defaultExpandedSessions.add(session.id)
-            defaultExpandedEvents.add(event.id)
+      // Restore expanded state from sessionStorage, or expand all by default on first load
+      const storedSessions = sessionStorage.getItem('eventsPage_expandedSessions')
+      const storedEvents = sessionStorage.getItem('eventsPage_expandedEvents')
+
+      if (storedSessions && storedEvents) {
+        setExpandedSessions(new Set(JSON.parse(storedSessions)))
+        setExpandedEvents(new Set(JSON.parse(storedEvents)))
+      } else {
+        const defaultExpandedSessions = new Set<number>()
+        const defaultExpandedEvents = new Set<number>()
+        for (const session of sessions) {
+          for (const event of session.events) {
+            if (event.ageGroups.length > 0) {
+              defaultExpandedSessions.add(session.id)
+              defaultExpandedEvents.add(event.id)
+            }
           }
         }
+        setExpandedSessions(defaultExpandedSessions)
+        setExpandedEvents(defaultExpandedEvents)
       }
-      setExpandedSessions(defaultExpandedSessions)
-      setExpandedEvents(defaultExpandedEvents)
 
       setLoading(false)
     }).catch(() => setLoading(false))
@@ -234,6 +251,7 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
     setExpandedSessions((prev) => {
       const next = new Set(prev)
       next.has(id) ? next.delete(id) : next.add(id)
+      sessionStorage.setItem('eventsPage_expandedSessions', JSON.stringify([...next]))
       return next
     })
   }
@@ -242,6 +260,7 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
     setExpandedEvents((prev) => {
       const next = new Set(prev)
       next.has(id) ? next.delete(id) : next.add(id)
+      sessionStorage.setItem('eventsPage_expandedEvents', JSON.stringify([...next]))
       return next
     })
   }
@@ -497,6 +516,32 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
 
   async function handleDelete() {
     if (selected.type === 'competition') return
+
+    // Multi-delete age groups
+    if (multiSelectedGroups.size > 0 && selected.type === 'agegroup') {
+      const count = multiSelectedGroups.size
+      if (!window.confirm(`${t.events.toolbar.delete} (${count})?`)) return
+      try {
+        const { event } = selected
+        for (const groupId of multiSelectedGroups) {
+          await api.deleteAgeGroup(groupId)
+        }
+        const updatedEvent = { ...event, ageGroups: event.ageGroups.filter((g) => !multiSelectedGroups.has(g.id)) }
+        setLocalSessions((prev) =>
+          prev.map((s) => ({
+            ...s,
+            events: s.events.map((e) => (e.id === event.id ? updatedEvent : e)),
+          }))
+        )
+        setMultiSelectedGroups(new Set())
+        const parentSession = localSessions.find((s) => s.events.some((e) => e.id === event.id))
+        if (parentSession) setSelected({ type: 'event', event: updatedEvent, session: parentSession })
+      } catch {
+        window.alert('Erreur lors de la suppression')
+      }
+      return
+    }
+
     if (!window.confirm(t.events.toolbar.delete + '?')) return
     try {
       if (selected.type === 'session') {
@@ -713,10 +758,40 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
                         isSelected={selected.type === 'event' && selected.event.id === event.id}
                         isExpanded={expandedEvents.has(event.id)}
                         selected={selected}
+                        multiSelectedGroups={multiSelectedGroups}
                         onSelect={() => setSelected({ type: 'event', event, session })}
                         onToggle={() => { if (event.ageGroups.length > 0) toggleEvent(event.id) }}
                         onContextMenu={(e) => openContextMenu(e, { type: 'event', event, session })}
-                        onSelectGroup={(group) => setSelected({ type: 'agegroup', group, event })}
+                        onSelectGroup={(group, e) => {
+                          if (e.shiftKey && lastClickedGroupRef.current && lastClickedGroupRef.current.eventId === event.id) {
+                            // Range select within the same event
+                            const groups = event.ageGroups
+                            const lastIdx = groups.findIndex(g => g.id === lastClickedGroupRef.current!.groupId)
+                            const curIdx = groups.findIndex(g => g.id === group.id)
+                            if (lastIdx >= 0 && curIdx >= 0) {
+                              const from = Math.min(lastIdx, curIdx)
+                              const to = Math.max(lastIdx, curIdx)
+                              const rangeIds = groups.slice(from, to + 1).map(g => g.id)
+                              setMultiSelectedGroups(new Set(rangeIds))
+                              setSelected({ type: 'agegroup', group, event })
+                            }
+                          } else if (e.ctrlKey || e.metaKey) {
+                            // Multi-select: toggle this group in the set
+                            setMultiSelectedGroups((prev) => {
+                              const next = new Set(prev)
+                              if (next.has(group.id)) next.delete(group.id)
+                              else next.add(group.id)
+                              return next
+                            })
+                            setSelected({ type: 'agegroup', group, event })
+                            lastClickedGroupRef.current = { eventId: event.id, groupId: group.id }
+                          } else {
+                            // Single select: clear multi-selection
+                            setMultiSelectedGroups(new Set())
+                            setSelected({ type: 'agegroup', group, event })
+                            lastClickedGroupRef.current = { eventId: event.id, groupId: group.id }
+                          }
+                        }}
                         onContextMenuGroup={(e, group) => openContextMenu(e, { type: 'agegroup', group, event })}
                         t={t}
                       />
@@ -775,7 +850,7 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
 // ─── Sortable Event Item ──────────────────────────────────────────────────────
 
 function SortableEventItem({
-  event, session, isSelected, isExpanded, selected, onSelect, onToggle, onContextMenu,
+  event, session, isSelected, isExpanded, selected, multiSelectedGroups, onSelect, onToggle, onContextMenu,
   onSelectGroup, onContextMenuGroup, t,
 }: {
   event: CompetitionEvent
@@ -783,10 +858,11 @@ function SortableEventItem({
   isSelected: boolean
   isExpanded: boolean
   selected: SelectedItem
+  multiSelectedGroups: Set<number>
   onSelect: () => void
   onToggle: () => void
   onContextMenu: (e: MouseEvent) => void
-  onSelectGroup: (group: AgeGroup) => void
+  onSelectGroup: (group: AgeGroup, e: MouseEvent) => void
   onContextMenuGroup: (e: MouseEvent, group: AgeGroup) => void
   t: ReturnType<typeof useLang>['t']
 }) {
@@ -860,12 +936,12 @@ function SortableEventItem({
       {/* Age groups */}
       {isExpanded &&
         event.ageGroups.map((group) => {
-          const isGroupSelected = selected.type === 'agegroup' && selected.group.id === group.id
+          const isGroupSelected = (selected.type === 'agegroup' && selected.group.id === group.id) || multiSelectedGroups.has(group.id)
           return (
             <div
               key={group.id}
               className={`flex items-center h-6 pl-16 cursor-pointer tree-node ${isGroupSelected ? 'bg-blue-600 text-white' : ''}`}
-              onClick={() => onSelectGroup(group)}
+              onClick={(e) => onSelectGroup(group, e)}
               onContextMenu={(e) => onContextMenuGroup(e, group)}
             >
               <span className="w-4 mr-1" />

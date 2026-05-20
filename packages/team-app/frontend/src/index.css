@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* Scan shared-ui source for Tailwind classes */
+@source "../../shared-ui/src";
+
 @theme {
   --color-border: var(--color-gray-200);
 }
@@ -33,6 +36,17 @@
 ::-webkit-scrollbar-track { background: #f0f0f0; }
 ::-webkit-scrollbar-thumb { background: #aaa; border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: #888; }
+
+/* Tree node hover (shared EventsPage) */
+.tree-node:hover {
+  background: #e8f0fe;
+}
+
+/* Compact table rows (shared pages) */
+.heat-table td, .heat-table th {
+  padding: 2px 6px;
+  white-space: nowrap;
+}
 
 @media print {
   .best-times-print {

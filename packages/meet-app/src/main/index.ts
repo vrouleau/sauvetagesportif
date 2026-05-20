@@ -59,7 +59,7 @@ ipcMain.handle('db:heat-list-events', () => getHeatListEvents())
 
 ipcMain.handle('db:heat-list-sessions', () => getHeatListSessions())
 
-ipcMain.handle('db:sessions', () => getSessions().then(r => { console.log('[db:sessions]', r.length, 'sessions, events:', r.map(s => s.events.length)); return r }))
+ipcMain.handle('db:sessions', () => getSessions())
 
 ipcMain.handle('db:athletes', () => getAthletes())
 
