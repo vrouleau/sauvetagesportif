@@ -57,7 +57,7 @@ interface CombinedEventDef {
 }
 
 function loadConfig(): CombinedEventsConfig {
-  const raw = readFileSync(join(__dirname, '../resources/combined-events-config.json'), 'utf-8')
+  const raw = readFileSync(join(__dirname, '../../../config/combined-events-config.json'), 'utf-8')
   return JSON.parse(raw)
 }
 

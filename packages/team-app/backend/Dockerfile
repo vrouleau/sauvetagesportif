@@ -1,9 +1,10 @@
 FROM python:3.12-slim
 WORKDIR /app
-COPY requirements.txt .
+COPY packages/team-app/backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY app ./app
-COPY scripts ./scripts
+COPY packages/team-app/backend/app ./app
+COPY packages/team-app/backend/scripts ./scripts
+COPY config/combined-events-config.json .
 RUN mkdir -p /app/data && \
     adduser --disabled-password --no-create-home --gecos "" appuser && \
     chown -R appuser:appuser /app/data

@@ -303,6 +303,10 @@ async def upload_meet(file: UploadFile = File(...), db: Session = Depends(get_db
     from ..events import _load_from_parsed
     count = _load_from_parsed(db, meet)
 
+    # Regenerate combined events XML after loading event structure
+    from ..combined_events import regenerate_combined_events
+    regenerate_combined_events(db)
+
     # Track metadata
     import json as _json
     for key, val in [("meet_filename", file.filename or "meet.lxf"),
@@ -1244,7 +1248,7 @@ def flush_meet(db: Session = Depends(get_db)):
     db.query(SwimStyle).delete()
     for key in ("meet_filename", "meet_uploaded_at", "meet_name", "meet_course",
                 "meet_masters", "meet_currency", "meet_fees_json", "closure_date",
-                "organizer_club_id"):
+                "organizer_club_id", "COMBINEDEVENTS"):
         cfg = db.query(BsGlobal).get(key)
         if cfg:
             db.delete(cfg)

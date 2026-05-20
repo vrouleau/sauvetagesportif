@@ -66,10 +66,10 @@ export function loadCombinedEventsConfig(): CombinedEventsConfig {
   const userDataPath = app.getPath('userData')
   const userConfigPath = join(userDataPath, CONFIG_FILENAME)
 
-  // Bundled default: in resources/ directory (packaged) or project resources (dev)
+  // Bundled default: in resources/ directory (packaged) or shared config (dev)
   const bundledConfigPath = app.isPackaged
     ? join(process.resourcesPath, CONFIG_FILENAME)
-    : join(__dirname, '../../resources', CONFIG_FILENAME)
+    : join(__dirname, '../../../../config', CONFIG_FILENAME)
 
   // Copy bundled default to user data on first run (or if user deleted it)
   if (!existsSync(userConfigPath) && existsSync(bundledConfigPath)) {
