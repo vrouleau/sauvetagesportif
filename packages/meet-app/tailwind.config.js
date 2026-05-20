@@ -2,7 +2,8 @@
 module.exports = {
   content: [
     './src/renderer/src/**/*.{js,ts,jsx,tsx}',
-    './src/renderer/index.html'
+    './src/renderer/index.html',
+    '../shared-ui/src/**/*.{js,ts,jsx,tsx}'
   ],
   theme: {
     extend: {

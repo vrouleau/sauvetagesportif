@@ -402,9 +402,10 @@ export function saveSMB(filePath: string, db: Database.Database): { tables: numb
   return { tables: SMB_TABLES.length, rows: totalRows }
 }
 
-export function restoreSMB(filePath: string, db: Database.Database): { tables: number; rows: number } {
+export function restoreSMB(filePath: string, db: Database.Database): { tables: number; rows: number; detail: string } {
   const zipEntries = readZipEntries(filePath)
-  let totalRows = 0
+  const tableDetail: string[] = []
+  let totalInserted = 0
 
   // Disable FK enforcement for bulk import — Splash encodes NULL integers as 0
   // which would fail FK checks mid-load even though the data is self-consistent.
@@ -420,30 +421,40 @@ export function restoreSMB(filePath: string, db: Database.Database): { tables: n
     for (const tableDef of SMB_TABLES) {
       const fileName = `${tableDef.name}-0001.gbin`
       const gbinData = zipEntries.get(fileName)
-      if (!gbinData) continue
+      if (!gbinData) {
+        tableDetail.push(`${tableDef.name}: not found in backup`)
+        continue
+      }
 
-      const { rows } = decodeGbin(gbinData)
-      if (rows.length === 0) continue
+      const { cols: fileCols, rows } = decodeGbin(gbinData)
+      if (rows.length === 0) {
+        tableDetail.push(`${tableDef.name}: 0 rows`)
+        continue
+      }
 
-      const colNames = tableDef.cols.map(c => c.name.toLowerCase())
+      // Use intersection of file columns and our expected columns for INSERT
+      const fileColNames = new Set(fileCols.map(c => c.name.toLowerCase()))
+      const colNames = tableDef.cols.map(c => c.name.toLowerCase()).filter(c => fileColNames.has(c))
       const placeholders = colNames.map(() => '?').join(', ')
       const stmt = db.prepare(
         `INSERT OR IGNORE INTO ${tableDef.name.toLowerCase()} (${colNames.join(', ')}) VALUES (${placeholders})`
       )
 
+      let inserted = 0
       const insertAll = db.transaction((recs: Record<string, unknown>[]) => {
         for (const row of recs) {
           const vals = colNames.map(c => row[c] ?? null)
-          stmt.run(...vals)
+          inserted += stmt.run(...vals).changes
         }
       })
 
       insertAll(rows)
-      totalRows += rows.length
+      tableDetail.push(`${tableDef.name}: ${inserted}/${rows.length}`)
+      totalInserted += inserted
     }
   } finally {
     db.pragma('foreign_keys = ON')
   }
 
-  return { tables: SMB_TABLES.length, rows: totalRows }
+  return { tables: SMB_TABLES.length, rows: totalInserted, detail: tableDetail.join(', ') }
 }

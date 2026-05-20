@@ -339,7 +339,7 @@ function AppInner() {
     const result = await f.restoreSMB()
     if (result.canceled) return
     if (result.ok) {
-      window.alert(`Meet restauré: ${result.rows} enregistrements dans ${result.tables} tables.`)
+      window.alert(`Meet restauré: ${result.rows} enregistrements dans ${result.tables} tables.\n\n${(result as { detail?: string }).detail ?? ''}`)
       handleRefresh()
     } else {
       window.alert(`Erreur: ${result.error}`)
