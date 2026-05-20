@@ -3,6 +3,7 @@ dist/
 out/
 .env
 *.db
+*.tsbuildinfo
 
 env
 .env
