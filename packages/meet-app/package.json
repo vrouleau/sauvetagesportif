@@ -23,6 +23,12 @@
     "files": [
       "out/**/*"
     ],
+    "extraResources": [
+      {
+        "from": "resources/combined-events-config.json",
+        "to": "combined-events-config.json"
+      }
+    ],
     "win": {
       "target": "nsis"
     },

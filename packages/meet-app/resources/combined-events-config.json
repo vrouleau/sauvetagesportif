@@ -1,0 +1,104 @@
+{
+  "categories": [
+    {
+      "ageMin": 1,
+      "ageMax": 10,
+      "gender": 0,
+      "name": "Cumulatif 10 ans et moins - filles et garçons",
+      "pointsForPlaces": "20,18,16,14,13,12,11,10,8,7,6,5,4,3,2,1",
+      "sortbyresfirst": "F",
+      "finalusetype": "2",
+      "isSpecialNoEvents": false
+    },
+    {
+      "ageMin": 1,
+      "ageMax": 10,
+      "gender": 1,
+      "name": "Cumulatif 10 ans et moins - garçons",
+      "pointsForPlaces": "20,18,16,14,13,12,11,10,8,7,6,5,4,3,2,1",
+      "sortbyresfirst": "T",
+      "finalusetype": "1",
+      "isSpecialNoEvents": true
+    },
+    {
+      "ageMin": 11,
+      "ageMax": 12,
+      "gender": 2,
+      "name": "Cumulatif 11-12 ans - filles",
+      "pointsForPlaces": "20,18,16,14,13,12,11,10,8,7,6,5,4,3,2,1",
+      "sortbyresfirst": "F",
+      "finalusetype": "2",
+      "isSpecialNoEvents": false
+    },
+    {
+      "ageMin": 11,
+      "ageMax": 12,
+      "gender": 1,
+      "name": "Cumulatif 11-12 ans - garçons",
+      "pointsForPlaces": "20,18,16,14,13,12,11,10,8,7,6,5,4,3,2,1",
+      "sortbyresfirst": "F",
+      "finalusetype": "2",
+      "isSpecialNoEvents": false
+    },
+    {
+      "ageMin": 13,
+      "ageMax": 14,
+      "gender": 2,
+      "name": "Cumulatif 13-14 ans - filles",
+      "pointsForPlaces": "20,18,16,14,13,12,11,10,8,7,6,5,4,3,2,1",
+      "sortbyresfirst": "F",
+      "finalusetype": "2",
+      "isSpecialNoEvents": false
+    },
+    {
+      "ageMin": 13,
+      "ageMax": 14,
+      "gender": 1,
+      "name": "Cumulatif 13-14 ans - garçons",
+      "pointsForPlaces": "10,8,6,4,3,2,1",
+      "sortbyresfirst": "F",
+      "finalusetype": "2",
+      "isSpecialNoEvents": false
+    },
+    {
+      "ageMin": 15,
+      "ageMax": 18,
+      "gender": 2,
+      "name": "Cumulatif 15-18 ans - dames",
+      "pointsForPlaces": "20,18,16,14,13,12,11,10,8,7,6,5,4,3,2,1",
+      "sortbyresfirst": "F",
+      "finalusetype": "2",
+      "isSpecialNoEvents": false
+    },
+    {
+      "ageMin": 15,
+      "ageMax": 18,
+      "gender": 1,
+      "name": "Cumulatif 15-18 ans - hommes",
+      "pointsForPlaces": "20,18,16,14,13,12,11,10,8,7,6,5,4,3,2,1",
+      "sortbyresfirst": "F",
+      "finalusetype": "2",
+      "isSpecialNoEvents": false
+    },
+    {
+      "ageMin": 19,
+      "ageMax": -1,
+      "gender": 2,
+      "name": "Cumulatif 19 ans et plus - dames",
+      "pointsForPlaces": "20,18,16,14,13,12,11,10,8,7,6,5,4,3,2,1",
+      "sortbyresfirst": "F",
+      "finalusetype": "2",
+      "isSpecialNoEvents": false
+    },
+    {
+      "ageMin": 19,
+      "ageMax": -1,
+      "gender": 1,
+      "name": "Cumulatif 19 ans et plus - hommes",
+      "pointsForPlaces": "20,18,16,14,13,12,11,10,8,7,6,5,4,3,2,1",
+      "sortbyresfirst": "F",
+      "finalusetype": "2",
+      "isSpecialNoEvents": false
+    }
+  ]
+}
