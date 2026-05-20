@@ -3,13 +3,34 @@ import { electronAPI } from '@electron-toolkit/preload'
 
 const api = {
   menu: {
-    onConfigureDb: (cb: () => void) => ipcRenderer.on('menu:configure-db', cb),
-    onSyncDown: (cb: () => void) => ipcRenderer.on('menu:sync-down', cb),
-    onSyncUp: (cb: () => void) => ipcRenderer.on('menu:sync-up', cb),
-    onImportLenex: (cb: () => void) => ipcRenderer.on('menu:import-lenex', cb),
-    onSaveSMB: (cb: () => void) => ipcRenderer.on('menu:save-smb', cb),
-    onRestoreSMB: (cb: () => void) => ipcRenderer.on('menu:restore-smb', cb),
-    onNewMeet: (cb: () => void) => ipcRenderer.on('menu:new-meet', cb),
+    onConfigureDb: (cb: () => void) => {
+      ipcRenderer.on('menu:configure-db', cb)
+      return () => { ipcRenderer.removeListener('menu:configure-db', cb) }
+    },
+    onSyncDown: (cb: () => void) => {
+      ipcRenderer.on('menu:sync-down', cb)
+      return () => { ipcRenderer.removeListener('menu:sync-down', cb) }
+    },
+    onSyncUp: (cb: () => void) => {
+      ipcRenderer.on('menu:sync-up', cb)
+      return () => { ipcRenderer.removeListener('menu:sync-up', cb) }
+    },
+    onImportLenex: (cb: () => void) => {
+      ipcRenderer.on('menu:import-lenex', cb)
+      return () => { ipcRenderer.removeListener('menu:import-lenex', cb) }
+    },
+    onSaveSMB: (cb: () => void) => {
+      ipcRenderer.on('menu:save-smb', cb)
+      return () => { ipcRenderer.removeListener('menu:save-smb', cb) }
+    },
+    onRestoreSMB: (cb: () => void) => {
+      ipcRenderer.on('menu:restore-smb', cb)
+      return () => { ipcRenderer.removeListener('menu:restore-smb', cb) }
+    },
+    onNewMeet: (cb: () => void) => {
+      ipcRenderer.on('menu:new-meet', cb)
+      return () => { ipcRenderer.removeListener('menu:new-meet', cb) }
+    },
   },
   quantum: {
     configure: (folder: string) =>

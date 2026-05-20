@@ -14,8 +14,8 @@
     "rebuild": "node scripts/rebuild.js"
   },
   "build": {
-    "appId": "com.splashmeet",
-    "productName": "SplashMeet",
+    "appId": "com.sauvetagemeet",
+    "productName": "SauvetageMeet",
     "asar": true,
     "directories": {
       "buildResources": "resources"

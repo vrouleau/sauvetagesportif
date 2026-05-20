@@ -19,6 +19,7 @@ import SelfInvite from './pages/SelfInvite'
 import BestTimesPublic from './pages/BestTimesPublic'
 import Workflow from './pages/Workflow'
 import Footer from './Footer'
+import logoSrc from './logo.png'
 
 // Wrap the shared EventsPage with its required providers
 function EventsPage() {
@@ -49,7 +50,8 @@ function AuthLayout({ children, canOrganizer, canAdmin, meetName, toggle, lang, 
     <div className="flex flex-col min-h-screen bg-gray-100">
       {/* Title bar */}
       <div className="flex items-center h-8 bg-gray-800 text-white text-xs select-none shrink-0">
-        <span className="px-3 font-semibold text-gray-300">SplashTeam</span>
+        <img src={logoSrc} alt="Logo" className="h-5 w-5 ml-2 mr-1" />
+        <span className="px-1 font-semibold text-gray-300">SauvetageTeam</span>
         <span className="text-gray-500 mr-1">|</span>
         <span className="text-gray-300 truncate mr-4">
           {meetName || 'Gestion des inscriptions'}

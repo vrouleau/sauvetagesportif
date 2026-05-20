@@ -7,8 +7,8 @@ Competition management software for lifesaving sport (sauvetage sportif). Replac
 ```
 packages/
   shared-ui/      — Shared React components (EventsPage, i18n, contexts)
-  meet-app/       — Electron desktop app (SplashMeet replacement)
-  team-app/       — Web app (team registration, entries, invoices)
+  meet-app/       — Electron desktop app (SauvetageMeet — replaces SplashMeet)
+  team-app/       — Web app (SauvetageTeam — team registration, entries, invoices)
 ```
 
 ## Quick Start

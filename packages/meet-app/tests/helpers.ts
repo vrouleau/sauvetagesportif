@@ -9,7 +9,7 @@ import { unlinkSync } from 'fs'
  * Returns the db instance and a cleanup function.
  */
 export function createTestDb(): { db: Database.Database; cleanup: () => void; path: string } {
-  const dbPath = join(tmpdir(), `splashmeet-test-${randomBytes(4).toString('hex')}.db`)
+  const dbPath = join(tmpdir(), `sauvetagemeet-test-${randomBytes(4).toString('hex')}.db`)
   const db = new Database(dbPath)
   db.pragma('journal_mode = WAL')
   db.pragma('foreign_keys = ON')

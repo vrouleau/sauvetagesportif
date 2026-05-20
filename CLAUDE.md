@@ -2,8 +2,14 @@
 
 ## What this is
 Monorepo for lifesaving competition management. Two apps sharing UI components:
-- **meet-app**: Electron desktop app (replaces Splash Meet Manager)
-- **team-app**: Web app (team registration before competition)
+- **meet-app**: Electron desktop app — "SauvetageMeet" (replaces Splash Meet Manager)
+- **team-app**: Web app — "SauvetageTeam" (team registration before competition)
+
+## Branding
+- App names: **SauvetageMeet** (desktop) / **SauvetageTeam** (web)
+- Logo: Société de sauvetage stylized "S" swimmer symbol (from sauvetage.qc.ca)
+- App icon: `packages/meet-app/resources/icon.ico` / `icon.png`
+- UI logo: displayed in the title bar of both apps
 
 ## How to run
 
@@ -93,6 +99,19 @@ packages/
     docker-compose.yml      — DB + backend + frontend (context: monorepo root)
 
 ## Critical rules
+
+### IPC listener cleanup (meet-app)
+Preload `on*` methods return a cleanup function. Always collect them in `useEffect` and call them on unmount:
+```tsx
+useEffect(() => {
+  const cleanups = [
+    m.onImportLenex(() => handleImportLenex()),
+    m.onSaveSMB(() => handleSaveSMB()),
+  ]
+  return () => { cleanups.forEach(fn => fn()) }
+}, [])
+```
+Without cleanup, React StrictMode (or HMR) causes duplicate listeners → duplicate dialogs.
 
 ### Schema compatibility
 The database schema MUST match the real Splash Meet Manager exactly. NO new tables, NO renamed columns. Team-specific data goes in:

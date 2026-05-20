@@ -610,7 +610,7 @@ export function saveSMB(filePath: string, db: Database.Database): { tables: numb
   // Generate geologix.ini
   const ini = [
     '[Geologix]',
-    'Application=SplashMeet',
+    'Application=SauvetageMeet',
     'Version=1.0.0',
     'Identification=BACKUP_MM_MEET_11',
     '',

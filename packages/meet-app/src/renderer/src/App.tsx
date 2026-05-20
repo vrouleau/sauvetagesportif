@@ -5,6 +5,7 @@ import AthletesPage from './pages/AthletesPage'
 import { DbConfigDialog } from './components/DbConfigDialog'
 import { competition } from './data/mockData'
 import { LangProvider, useLang } from '@shared/context/LangContext'
+import logoSrc from './assets/logo.png'
 
 type Page = 'events' | 'heats' | 'athletes'
 
@@ -50,13 +51,13 @@ function menuApi() {
   return (window as unknown as {
     api?: {
       menu?: {
-        onConfigureDb: (cb: () => void) => void
-        onSyncDown: (cb: () => void) => void
-        onSyncUp: (cb: () => void) => void
-        onImportLenex: (cb: () => void) => void
-        onSaveSMB: (cb: () => void) => void
-        onRestoreSMB: (cb: () => void) => void
-        onNewMeet: (cb: () => void) => void
+        onConfigureDb: (cb: () => void) => () => void
+        onSyncDown: (cb: () => void) => () => void
+        onSyncUp: (cb: () => void) => () => void
+        onImportLenex: (cb: () => void) => () => void
+        onSaveSMB: (cb: () => void) => () => void
+        onRestoreSMB: (cb: () => void) => () => void
+        onNewMeet: (cb: () => void) => () => void
       }
     }
   }).api?.menu ?? null
@@ -284,13 +285,16 @@ function AppInner() {
   useEffect(() => {
     const m = menuApi()
     if (!m) return
-    m.onConfigureDb(() => setShowDbConfig(true))
-    m.onSyncDown(() => handleRefresh())
-    m.onSyncUp(() => handleSyncUp())
-    m.onImportLenex(() => handleImportLenex())
-    m.onSaveSMB(() => handleSaveSMB())
-    m.onRestoreSMB(() => handleRestoreSMB())
-    m.onNewMeet(() => setFlushState({ open: true, running: false }))
+    const cleanups = [
+      m.onConfigureDb(() => setShowDbConfig(true)),
+      m.onSyncDown(() => handleRefresh()),
+      m.onSyncUp(() => handleSyncUp()),
+      m.onImportLenex(() => handleImportLenex()),
+      m.onSaveSMB(() => handleSaveSMB()),
+      m.onRestoreSMB(() => handleRestoreSMB()),
+      m.onNewMeet(() => setFlushState({ open: true, running: false })),
+    ]
+    return () => { cleanups.forEach((fn) => fn()) }
   }, [])
 
   async function handleImportLenex() {
@@ -361,7 +365,8 @@ function AppInner() {
     <div className="flex flex-col h-full bg-gray-100">
       {/* Title bar */}
       <div className="flex items-center h-8 bg-gray-800 text-white text-xs select-none shrink-0">
-        <span className="px-3 font-semibold text-gray-300">SplashMeet</span>
+        <img src={logoSrc} alt="Logo" className="h-5 w-5 ml-2 mr-1" />
+        <span className="px-1 font-semibold text-gray-300">SauvetageMeet</span>
         <span className="text-gray-500 mr-1">|</span>
         <span className="text-gray-300 truncate mr-4">
           {competition.nameFr} — {competition.city} ({competition.nation}) {competition.poolSize}m

@@ -223,7 +223,7 @@ function createWindow(): void {
     width: 1440,
     height: 900,
     show: false,
-    title: 'SplashMeet',
+    title: 'SauvetageMeet',
     icon,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -289,6 +289,16 @@ function createWindow(): void {
         { role: 'selectAll', label: 'Tout sélectionner' },
       ],
     },
+    {
+      label: 'Affichage',
+      submenu: [
+        { role: 'resetZoom', label: 'Taille réelle' },
+        { role: 'zoomIn', label: 'Zoom avant' },
+        { role: 'zoomOut', label: 'Zoom arrière' },
+        { type: 'separator' },
+        { role: 'togglefullscreen', label: 'Plein écran' },
+      ],
+    },
   ]
   Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate))
 
@@ -323,41 +333,8 @@ function createWindow(): void {
 
 app.whenReady().then(() => {
   if (process.platform === 'win32') {
-    app.setAppUserModelId('com.splashmeet')
+    app.setAppUserModelId('com.sauvetagemeet')
   }
-
-  // Native menu
-  const menu = Menu.buildFromTemplate([
-    {
-      label: 'Fichier',
-      submenu: [
-        { label: 'Configurer la base de données…', click: () => BrowserWindow.getFocusedWindow()?.webContents.send('menu:configure-db') },
-        { type: 'separator' },
-        { label: 'Synchronisation ↓ (BD → app)', click: () => BrowserWindow.getFocusedWindow()?.webContents.send('menu:sync-down') },
-        { label: 'Synchronisation ↑ (app → BD)', click: () => BrowserWindow.getFocusedWindow()?.webContents.send('menu:sync-up') },
-        { type: 'separator' },
-        { label: 'Importer un fichier LENEX…', click: () => BrowserWindow.getFocusedWindow()?.webContents.send('menu:import-lenex') },
-        { type: 'separator' },
-        { label: 'Sauvegarder le meet (.smb)…', click: () => BrowserWindow.getFocusedWindow()?.webContents.send('menu:save-smb') },
-        { label: 'Restaurer un meet (.smb)…', click: () => BrowserWindow.getFocusedWindow()?.webContents.send('menu:restore-smb') },
-        { type: 'separator' },
-        { label: 'Nouveau meet (effacer toutes les données)…', click: () => BrowserWindow.getFocusedWindow()?.webContents.send('menu:new-meet') },
-        { type: 'separator' },
-        { role: 'quit', label: 'Quitter' },
-      ]
-    },
-    {
-      label: 'Affichage',
-      submenu: [
-        { role: 'resetZoom', label: 'Taille réelle' },
-        { role: 'zoomIn', label: 'Zoom avant' },
-        { role: 'zoomOut', label: 'Zoom arrière' },
-        { type: 'separator' },
-        { role: 'togglefullscreen', label: 'Plein écran' },
-      ]
-    },
-  ])
-  Menu.setApplicationMenu(menu)
 
   createWindow()
   app.on('activate', () => {

@@ -1,7 +1,7 @@
 // Mock electron module for unit tests (main process code imports 'electron')
 export const app = {
   getPath: (name: string) => {
-    if (name === 'userData') return process.env.TEST_USER_DATA || '/tmp/splashmeet-test'
+    if (name === 'userData') return process.env.TEST_USER_DATA || '/tmp/sauvetagemeet-test'
     return '/tmp'
   },
 }
