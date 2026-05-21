@@ -22,6 +22,7 @@ import {
   getMeetInfo,
   getSwimStyles,
   reorderEvents,
+  validateHeat, invalidateHeat,
   validateEvent, invalidateEvent, validateSession, invalidateSession,
   type DbConfig,
   type SessionUpdate,
@@ -157,6 +158,24 @@ ipcMain.handle('db:validate-event', async (_event, eventId: number) => {
 ipcMain.handle('db:invalidate-event', async (_event, eventId: number) => {
   try {
     await invalidateEvent(eventId)
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+})
+
+ipcMain.handle('db:validate-heat', async (_event, heatId: number) => {
+  try {
+    await validateHeat(heatId)
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+})
+
+ipcMain.handle('db:invalidate-heat', async (_event, heatId: number) => {
+  try {
+    await invalidateHeat(heatId)
     return { ok: true }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }

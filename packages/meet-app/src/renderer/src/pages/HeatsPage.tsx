@@ -30,6 +30,7 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
   const [expandedEvents, setExpandedEvents] = useState<Set<number>>(new Set())
   const [selectedHeatId, setSelectedHeatId] = useState<number | null>(null)
   const [selectedEventId, setSelectedEventId] = useState<number | null>(null)
+  const [selectedSessionId, setSelectedSessionId] = useState<number | null>(null)
   const [editingLane, setEditingLane] = useState<number | null>(null)
   const [editValue, setEditValue] = useState('')
   const [selectedLane, setSelectedLane] = useState<number | null>(null)
@@ -674,25 +675,17 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
   // Determine if the currently selected heat is validated (locked)
   const isSelectedHeatValidated = selectedPair?.heat.status === 'validated'
 
-  // Find which session is "active" (expanded, for session-level validate)
-  const activeSessionId = (() => {
-    // If we have a selected event, use its session
-    if (selectedEvent) {
-      const sess = sessions.find((s) => s.events.some((ev) => ev.id === selectedEvent.id))
-      return sess?.id ?? null
-    }
-    // Otherwise use the first expanded session
-    const expanded = [...expandedSessions]
-    return expanded.length === 1 ? expanded[0] : null
-  })()
-
   async function handleValidate() {
     const api = dbApi()
     if (!api) return
-    if (selectedEventId) {
-      await api.validateEvent(selectedEventId)
-    } else if (activeSessionId) {
-      await api.validateSession(activeSessionId)
+    if (selectedHeatId) {
+      await api.validateHeat(selectedHeatId)
+    } else if (selectedEventId || selectedEvent?.id) {
+      await api.validateEvent(selectedEventId || selectedEvent!.id)
+    } else if (selectedSessionId) {
+      await api.validateSession(selectedSessionId)
+    } else {
+      return
     }
     // Reload
     const sess = await api.getHeatListSessions() as HeatListSession[]
@@ -705,10 +698,14 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
   async function handleInvalidate() {
     const api = dbApi()
     if (!api) return
-    if (selectedEventId) {
-      await api.invalidateEvent(selectedEventId)
-    } else if (activeSessionId) {
-      await api.invalidateSession(activeSessionId)
+    if (selectedHeatId) {
+      await api.invalidateHeat(selectedHeatId)
+    } else if (selectedEventId || selectedEvent?.id) {
+      await api.invalidateEvent(selectedEventId || selectedEvent!.id)
+    } else if (selectedSessionId) {
+      await api.invalidateSession(selectedSessionId)
+    } else {
+      return
     }
     // Reload
     const sess = await api.getHeatListSessions() as HeatListSession[]
@@ -750,7 +747,7 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
         <div className="ml-auto flex items-center gap-2">
           <button
             onClick={handleValidate}
-            disabled={!selectedEventId && !activeSessionId}
+            disabled={!selectedHeatId && !selectedEventId && !selectedSessionId}
             className="border border-gray-400 bg-white hover:bg-green-50 disabled:opacity-50 disabled:cursor-default px-2 py-0.5 text-xs font-medium text-green-700"
             title="Valider"
           >
@@ -761,7 +758,7 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
           </button>
           <button
             onClick={handleInvalidate}
-            disabled={!selectedEventId && !activeSessionId}
+            disabled={!selectedHeatId && !selectedEventId && !selectedSessionId}
             className="border border-gray-400 bg-white hover:bg-yellow-50 disabled:opacity-50 disabled:cursor-default px-2 py-0.5 text-xs font-medium text-yellow-700"
             title="Invalider"
           >
@@ -840,7 +837,7 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
                     {/* Session row */}
                     <tr
                       className="border-b border-gray-200 cursor-pointer select-none bg-gray-50 hover:bg-gray-100 font-medium"
-                      onClick={() => toggleSession(session.id)}
+                      onClick={() => { setSelectedSessionId(session.id); setSelectedEventId(null); toggleSession(session.id) }}
                     >
                       <td className="px-2 py-0.5">
                         <span className="text-gray-500">{sessExpanded ? '▼' : '▶'}</span>
@@ -860,6 +857,11 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
                          session.events.filter((e) => !e.isAdmin).every((e) => e.heats.length > 0 && e.heats.every((h) => h.status === 'validated')) && (
                           <span className="text-green-600" title="Session validée">✓</span>
                         )}
+                        {session.events.filter((e) => !e.isAdmin).length > 0 &&
+                         !session.events.filter((e) => !e.isAdmin).every((e) => e.heats.length > 0 && e.heats.every((h) => h.status === 'validated')) &&
+                         session.events.filter((e) => !e.isAdmin).some((e) => e.heats.some((h) => h.status === 'validated' || h.status === 'completed' || (heatData[h.id] ?? []).some((en) => en.finalTime || en.status))) && (
+                          <span className="text-yellow-500" title="En cours">📌</span>
+                        )}
                       </td>
                       <td className="px-2 py-0.5 text-right">{session.time ?? ''}</td>
                     </tr>
@@ -876,6 +878,8 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
                             onClick={() => {
                               if (!ev.isAdmin) {
                                 setSelectedEventId(ev.id)
+                                setSelectedSessionId(null)
+                                setSelectedHeatId(null)
                                 if (ev.heats.length > 0) toggleEvent(ev.id)
                               }
                             }}
@@ -909,7 +913,7 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
                               {!ev.isAdmin && ev.heats.length > 0 && ev.heats.every((h) => h.status === 'validated') && (
                                 <span className="text-green-600" title="Validé">✓</span>
                               )}
-                              {!ev.isAdmin && ev.heats.length > 0 && ev.heats.some((h) => h.status === 'completed') && !ev.heats.every((h) => h.status === 'validated') && (
+                              {!ev.isAdmin && ev.heats.length > 0 && !ev.heats.every((h) => h.status === 'validated') && ev.heats.some((h) => h.status === 'completed' || (heatData[h.id] ?? []).some((e) => e.finalTime || e.status)) && (
                                 <span className="text-yellow-500" title="En attente de validation">📌</span>
                               )}
                             </td>
@@ -927,7 +931,7 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
                                 className={`border-b border-gray-100 cursor-pointer select-none ${
                                   isHeatSelected ? 'bg-blue-600 text-white' : dragSource ? 'bg-gray-50 hover:bg-green-100' : 'bg-gray-50 hover:bg-blue-100'
                                 }`}
-                                onClick={() => { setSelectedHeatId(heat.id); setEditingLane(null) }}
+                                onClick={() => { setSelectedHeatId(heat.id); setSelectedEventId(null); setSelectedSessionId(null); setEditingLane(null) }}
                                 onDragOver={(e) => {
                                   if (dragSource) {
                                     e.preventDefault()
@@ -961,7 +965,7 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
                                   {heat.status === 'validated' && (
                                     <span className={isHeatSelected ? 'text-green-200' : 'text-green-600'} title="Validé">✓</span>
                                   )}
-                                  {heat.status === 'completed' && (
+                                  {heat.status !== 'validated' && done > 0 && (
                                     <span className={isHeatSelected ? 'text-yellow-200' : 'text-yellow-500'} title="Complété">📌</span>
                                   )}
                                 </td>

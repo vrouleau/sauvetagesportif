@@ -2000,11 +2000,27 @@ export async function updateAgeGroup(agegroupId: number, data: AgeGroupUpdate): 
 
 // ── Validation: lock/unlock heats via racestatus ──────────────────────────────
 
-/** Validate all completed heats in an event (racestatus 8 → 10) */
+/** Validate a single heat (racestatus → 10) */
+export async function validateHeat(heatId: number): Promise<void> {
+  const db = getLocalDb()
+  db.prepare(
+    `UPDATE heat SET racestatus = 10 WHERE heatid = ? AND racestatus >= 4 AND racestatus < 10`
+  ).run(heatId)
+}
+
+/** Invalidate a single heat (racestatus 10 → 8) */
+export async function invalidateHeat(heatId: number): Promise<void> {
+  const db = getLocalDb()
+  db.prepare(
+    `UPDATE heat SET racestatus = 8 WHERE heatid = ? AND racestatus >= 10`
+  ).run(heatId)
+}
+
+/** Validate all seeded/completed heats in an event (racestatus 4+ → 10) */
 export async function validateEvent(eventId: number): Promise<void> {
   const db = getLocalDb()
   db.prepare(
-    `UPDATE heat SET racestatus = 10 WHERE swimeventid = ? AND racestatus >= 8 AND racestatus < 10`
+    `UPDATE heat SET racestatus = 10 WHERE swimeventid = ? AND racestatus >= 4 AND racestatus < 10`
   ).run(eventId)
 }
 
@@ -2016,13 +2032,13 @@ export async function invalidateEvent(eventId: number): Promise<void> {
   ).run(eventId)
 }
 
-/** Validate all completed heats in all events of a session */
+/** Validate all seeded/completed heats in all events of a session */
 export async function validateSession(sessionId: number): Promise<void> {
   const db = getLocalDb()
   db.prepare(
     `UPDATE heat SET racestatus = 10
      WHERE swimeventid IN (SELECT swimeventid FROM swimevent WHERE swimsessionid = ? AND internalevent = 'F')
-       AND racestatus >= 8 AND racestatus < 10`
+       AND racestatus >= 4 AND racestatus < 10`
   ).run(sessionId)
 }
 

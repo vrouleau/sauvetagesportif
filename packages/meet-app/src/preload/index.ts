@@ -109,6 +109,10 @@ const api = {
       ipcRenderer.invoke('db:validate-event', eventId),
     invalidateEvent: (eventId: number) =>
       ipcRenderer.invoke('db:invalidate-event', eventId),
+    validateHeat: (heatId: number) =>
+      ipcRenderer.invoke('db:validate-heat', heatId),
+    invalidateHeat: (heatId: number) =>
+      ipcRenderer.invoke('db:invalidate-heat', heatId),
     validateSession: (sessionId: number) =>
       ipcRenderer.invoke('db:validate-session', sessionId),
     invalidateSession: (sessionId: number) =>
