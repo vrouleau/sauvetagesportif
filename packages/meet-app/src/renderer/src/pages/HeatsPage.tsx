@@ -788,6 +788,17 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
                                   isHeatSelected ? 'bg-blue-600 text-white' : 'bg-gray-50 hover:bg-blue-100'
                                 }`}
                                 onClick={() => { setSelectedHeatId(heat.id); setEditingLane(null) }}
+                                onDragOver={(e) => {
+                                  if (dragSource) {
+                                    e.preventDefault()
+                                    e.dataTransfer.dropEffect = 'move'
+                                    // Auto-switch to this heat when dragging over it
+                                    if (selectedHeatId !== heat.id) {
+                                      setSelectedHeatId(heat.id)
+                                      setEditingLane(null)
+                                    }
+                                  }
+                                }}
                               >
                                 <td className="px-2 py-0.5 pl-10">
                                   <svg className="w-3 h-3 inline text-gray-400" fill="currentColor" viewBox="0 0 20 20">
