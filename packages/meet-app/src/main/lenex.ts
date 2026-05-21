@@ -32,11 +32,20 @@ function parseXml(xml: string): XmlElem {
   const root: XmlElem = { tag: '__root__', attrs: {}, children: [] }
   const stack: XmlElem[] = [root]
 
+  function decodeXmlEntities(s: string): string {
+    return s
+      .replace(/&apos;/g, "'")
+      .replace(/&quot;/g, '"')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&amp;/g, '&')
+  }
+
   function parseAttrs(s: string): Record<string, string> {
     const out: Record<string, string> = {}
     const re = /([\w:.-]+)="([^"]*)"/g
     let m: RegExpExecArray | null
-    while ((m = re.exec(s)) !== null) out[m[1]] = m[2]
+    while ((m = re.exec(s)) !== null) out[m[1]] = decodeXmlEntities(m[2])
     return out
   }
 
