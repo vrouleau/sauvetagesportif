@@ -219,6 +219,7 @@ export interface CompetitionEventRow {
   phase: 'Finale' | 'Eliminatoire' | 'Finale directe'
   isAdmin?: boolean
   scheduledTime?: string
+  duration?: string
   swimstyleId?: number | null
   ageGroups: AgeGroupRow[]
 }
@@ -398,7 +399,7 @@ export async function getHeatListSessions(): Promise<HeatListSessionRow[]> {
   for (const e of events) {
     if (!evMap.has(e.swimsessionid)) evMap.set(e.swimsessionid, [])
     const isAdm = e.internalevent === 'T' || e.swimstyleid == null
-    const name = isAdm ? (e.roundname ?? '') : eventName(e.stylename, e.stroke)
+    const name = isAdm ? (e.roundname || 'Pause') : eventName(e.stylename, e.stroke)
     evMap.get(e.swimsessionid)!.push({
       id: e.swimeventid,
       number: e.eventnumber ?? 0,
@@ -453,7 +454,7 @@ export async function getSessions(): Promise<SessionRow[]> {
 
   const events = db.prepare(`
     SELECT e.swimeventid, e.swimsessionid, e.eventnumber, e.gender, e.round,
-           e.internalevent, e.daytime, e.roundname AS eventname, e.swimstyleid,
+           e.internalevent, e.daytime, e.duration, e.roundname AS eventname, e.swimstyleid,
            ss.distance, ss.stroke, ss.name AS stylename
     FROM swimevent e
     LEFT JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid
@@ -463,7 +464,7 @@ export async function getSessions(): Promise<SessionRow[]> {
     swimeventid: number; swimsessionid: number; eventnumber: number | null
     gender: number | null; round: number | null; distance: number | null
     stroke: number | null; stylename: string | null; swimstyleid: number | null
-    internalevent: string | null; daytime: string | null; eventname: string | null
+    internalevent: string | null; daytime: string | null; duration: string | null; eventname: string | null
   }>
 
   const eventIds = events.map(r => r.swimeventid)
@@ -502,7 +503,7 @@ export async function getSessions(): Promise<SessionRow[]> {
   for (const e of events) {
     if (!evMap.has(e.swimsessionid)) evMap.set(e.swimsessionid, [])
     const isAdm = e.internalevent === 'T' || e.swimstyleid == null
-    const name = isAdm ? (e.eventname ?? '') : eventName(e.stylename, e.stroke)
+    const name = isAdm ? (e.eventname || 'Pause') : eventName(e.stylename, e.stroke)
     evMap.get(e.swimsessionid)!.push({
       id: e.swimeventid, sessionId: e.swimsessionid, number: e.eventnumber ?? 0,
       nameFr: name, nameEn: name,
@@ -510,6 +511,7 @@ export async function getSessions(): Promise<SessionRow[]> {
       phase: decodePhase(e.round),
       isAdmin: isAdm,
       scheduledTime: formatDaytime(e.daytime),
+      duration: formatDaytime(e.duration),
       swimstyleId: e.swimstyleid ?? null,
       ageGroups: agMap.get(e.swimeventid) ?? [],
     })
@@ -1874,6 +1876,7 @@ export interface EventUpdate {
   round?: number
   swimstyleid?: number | null
   daytime?: string | null
+  duration?: string | null
   masters?: boolean
   roundname?: string | null
 }
@@ -1891,6 +1894,11 @@ export async function updateEvent(eventId: number, data: EventUpdate): Promise<v
     const t = data.daytime
     const ts = t ? (t.includes('-') || t.includes('T') ? t : `2000-01-01 ${t}:00`) : null
     sets.push('daytime=?'); vals.push(ts)
+  }
+  if (data.duration !== undefined) {
+    const d = data.duration
+    const ds = d ? (d.includes('-') || d.includes('T') ? d : `2000-01-01 ${d}:00`) : null
+    sets.push('duration=?'); vals.push(ds)
   }
   if (data.masters !== undefined) { sets.push('masters=?'); vals.push(data.masters ? 'T' : 'F') }
   if (data.roundname !== undefined) { sets.push('roundname=?'); vals.push(data.roundname) }

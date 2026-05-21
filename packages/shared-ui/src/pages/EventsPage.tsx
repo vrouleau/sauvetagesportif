@@ -607,6 +607,33 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
     }
   }
 
+  async function handleUpdateEvent(eventId: number, sessionId: number, data: Record<string, unknown>) {
+    try {
+      await api.updateEvent(eventId, data)
+      // Map DB field names to local CompetitionEvent property names
+      const localUpdate: Record<string, unknown> = {}
+      for (const [key, val] of Object.entries(data)) {
+        if (key === 'daytime') localUpdate.scheduledTime = val as string | undefined
+        else if (key === 'duration') localUpdate.duration = val as string | undefined
+        else if (key === 'roundname') { localUpdate.nameFr = val as string; localUpdate.nameEn = val as string }
+        else if (key === 'eventnumber') localUpdate.number = val as number
+      }
+      // Update local state
+      setLocalSessions((prev) =>
+        prev.map((s) => s.id === sessionId ? {
+          ...s,
+          events: s.events.map((e) => e.id === eventId ? { ...e, ...localUpdate } : e),
+        } : s)
+      )
+      // Update selected if it's the same event
+      if (selected.type === 'event' && selected.event.id === eventId) {
+        setSelected({ type: 'event', event: { ...selected.event, ...localUpdate } as CompetitionEvent, session: selected.session })
+      }
+    } catch {
+      // silently fail
+    }
+  }
+
   // Contextual toolbar button enable logic
   const canAddSession = selected.type === 'competition' || selected.type === 'session'
   const canAddEvent = selected.type === 'session' || selected.type === 'event'
@@ -773,7 +800,7 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
 
         {/* ── Right: properties panel ── */}
         <div className="flex-1 overflow-y-auto bg-white">
-          <PropertiesPanel selected={selected} onUpdateSession={handleUpdateSession} onMeetNameChange={setMeetName} />
+          <PropertiesPanel selected={selected} onUpdateSession={handleUpdateSession} onUpdateEvent={handleUpdateEvent} onMeetNameChange={setMeetName} />
         </div>
       </div>
 
@@ -1058,7 +1085,7 @@ function ContextMenu({
 
 // ─── Properties Panel ─────────────────────────────────────────────────────────
 
-function PropertiesPanel({ selected, onUpdateSession, onMeetNameChange }: { selected: SelectedItem; onUpdateSession: (sessionId: number, data: Record<string, unknown>) => void; onMeetNameChange: (name: string) => void }) {
+function PropertiesPanel({ selected, onUpdateSession, onUpdateEvent, onMeetNameChange }: { selected: SelectedItem; onUpdateSession: (sessionId: number, data: Record<string, unknown>) => void; onUpdateEvent: (eventId: number, sessionId: number, data: Record<string, unknown>) => void; onMeetNameChange: (name: string) => void }) {
   if (selected.type === 'competition') {
     return <CompetitionPropertiesPanel onMeetNameChange={onMeetNameChange} />
   }
@@ -1069,7 +1096,10 @@ function PropertiesPanel({ selected, onUpdateSession, onMeetNameChange }: { sele
   }
 
   if (selected.type === 'event') {
-    return <EventPropertiesPanel event={selected.event} />
+    if (selected.event.isAdmin) {
+      return <PausePropertiesPanel event={selected.event} onUpdate={(data) => onUpdateEvent(selected.event.id, selected.event.sessionId, data)} />
+    }
+    return <EventPropertiesPanel event={selected.event} onUpdate={(data) => onUpdateEvent(selected.event.id, selected.event.sessionId, data)} />
   }
 
   // Age group
@@ -1292,9 +1322,86 @@ function ageRangeLabel(minAge: number, maxAge: number | null, genderLabel: strin
   return `${minAge} - ${upper} ans, ${genderLabel}`
 }
 
+// ─── Pause Properties Panel (simplified: name, time, duration) ────────────────
+
+function PausePropertiesPanel({ event, onUpdate }: { event: CompetitionEvent; onUpdate: (data: Record<string, unknown>) => void }) {
+  const { t } = useLang()
+  const [pauseName, setPauseName] = useState(event.nameFr)
+  const [scheduledTime, setScheduledTime] = useState(event.scheduledTime ?? '')
+  const [duration, setDuration] = useState(event.duration ?? '')
+
+  useEffect(() => {
+    setPauseName(event.nameFr)
+    setScheduledTime(event.scheduledTime ?? '')
+    setDuration(event.duration ?? '')
+  }, [event.id, event.nameFr, event.scheduledTime, event.duration])
+
+  function save(data: Record<string, unknown>) {
+    onUpdate(data)
+  }
+
+  return (
+    <div className="text-xs">
+      <div className="flex items-center h-7 bg-gray-50 border-b border-gray-200 px-3 font-semibold text-gray-700 sticky top-0">
+        <svg className="w-4 h-4 mr-2 text-gray-400" fill="currentColor" viewBox="0 0 20 20">
+          <path d="M10 2a8 8 0 100 16A8 8 0 0010 2zm0 3v5l3 3-1.5 1.5L8 11V5h2z" />
+        </svg>
+        Pause
+      </div>
+
+      <div className="flex border-b border-gray-200 bg-gray-50">
+        <div className="flex-1 px-3 py-0.5 font-semibold text-gray-500">{t.events.eventPanel.designationCol}</div>
+        <div className="flex-1 px-3 py-0.5 font-semibold text-gray-500">{t.events.eventPanel.valueCol}</div>
+      </div>
+
+      <table className="w-full border-collapse">
+        <tbody>
+          <tr className="border-b border-gray-100 hover:bg-gray-50">
+            <td className="px-4 py-0.5 text-gray-600 w-64">{t.events.eventPanel.name}</td>
+            <td className="px-2 py-0.5">
+              <input
+                type="text"
+                className="w-full border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
+                value={pauseName}
+                onChange={(e) => setPauseName(e.target.value)}
+                onBlur={() => save({ roundname: pauseName })}
+                onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+              />
+            </td>
+          </tr>
+          <tr className="border-b border-gray-100 hover:bg-gray-50">
+            <td className="px-4 py-0.5 text-gray-600 w-64">{t.events.eventPanel.startTime}</td>
+            <td className="px-2 py-0.5">
+              <input
+                type="time"
+                className="w-28 border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
+                value={scheduledTime}
+                onChange={(e) => setScheduledTime(e.target.value)}
+                onBlur={() => save({ daytime: scheduledTime || null })}
+              />
+            </td>
+          </tr>
+          <tr className="border-b border-gray-100 hover:bg-gray-50">
+            <td className="px-4 py-0.5 text-gray-600 w-64">{t.events.eventPanel.duration}</td>
+            <td className="px-2 py-0.5">
+              <input
+                type="time"
+                className="w-28 border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
+                value={duration}
+                onChange={(e) => setDuration(e.target.value)}
+                onBlur={() => save({ duration: duration || null })}
+              />
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 // ─── Event Properties Panel (editable, Splash-style) ──────────────────────────
 
-function EventPropertiesPanel({ event }: { event: CompetitionEvent }) {
+function EventPropertiesPanel({ event, onUpdate }: { event: CompetitionEvent; onUpdate: (data: Record<string, unknown>) => void }) {
   const { t } = useLang()
   const api = useApi()
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
@@ -1303,6 +1410,7 @@ function EventPropertiesPanel({ event }: { event: CompetitionEvent }) {
   const [evGender, setEvGender] = useState(event.gender)
   const [masters, setMasters] = useState(false)
   const [scheduledTime, setScheduledTime] = useState(event.scheduledTime ?? '')
+  const [duration, setDuration] = useState(event.duration ?? '')
   const [swimStyles, setSwimStyles] = useState<SwimStyle[]>([])
   const [selectedStyleId, setSelectedStyleId] = useState<number | null>(null)
 
@@ -1311,13 +1419,14 @@ function EventPropertiesPanel({ event }: { event: CompetitionEvent }) {
     setRoundName(event.nameFr)
     setEvGender(event.gender)
     setScheduledTime(event.scheduledTime ?? '')
+    setDuration(event.duration ?? '')
     setSelectedStyleId(event.swimstyleId ?? null)
     // Load swim styles
     api.getSwimStyles().then((styles) => setSwimStyles(styles)).catch(() => {})
   }, [event.id])
 
   function save(data: Record<string, unknown>) {
-    api.updateEvent(event.id, data)
+    onUpdate(data)
   }
 
   function toggleSection(title: string) {
@@ -1377,7 +1486,7 @@ function EventPropertiesPanel({ event }: { event: CompetitionEvent }) {
                     className="w-16 border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
                     value={evNumber}
                     onChange={(e) => setEvNumber(Number(e.target.value) || 0)}
-                    onBlur={() => save({ number: evNumber })}
+                    onBlur={() => save({ eventnumber: evNumber })}
                     onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
                   />
                 </td>
@@ -1455,7 +1564,15 @@ function EventPropertiesPanel({ event }: { event: CompetitionEvent }) {
               </tr>
               <tr className="border-b border-gray-100 hover:bg-gray-50">
                 <td className="px-4 py-0.5 text-gray-600 w-64">{t.events.eventPanel.duration}</td>
-                <td className="px-2 py-0.5 text-gray-500">—</td>
+                <td className="px-2 py-0.5">
+                  <input
+                    type="time"
+                    className="w-28 border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
+                    value={duration}
+                    onChange={(e) => setDuration(e.target.value)}
+                    onBlur={() => save({ duration: duration || null })}
+                  />
+                </td>
               </tr>
             </>
           )}

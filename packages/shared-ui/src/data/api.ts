@@ -41,6 +41,7 @@ export interface CompetitionEvent {
   phase: 'Finale' | 'Eliminatoire' | 'Finale directe'
   isAdmin?: boolean
   scheduledTime?: string
+  duration?: string
   swimstyleId?: number | null
   ageGroups: AgeGroup[]
 }

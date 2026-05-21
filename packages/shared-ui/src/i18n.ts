@@ -85,6 +85,7 @@ const fr = {
     eventPanel: {
       general: 'Général',
       number: 'Numéro',
+      name: 'Nom',
       designation: 'Désignation',
       gender: 'Sexe',
       mastersSwim: 'Nages Maîtres',
@@ -383,6 +384,7 @@ const en = {
     eventPanel: {
       general: 'General',
       number: 'Number',
+      name: 'Name',
       designation: 'Designation',
       gender: 'Gender',
       mastersSwim: 'Masters Swimming',
