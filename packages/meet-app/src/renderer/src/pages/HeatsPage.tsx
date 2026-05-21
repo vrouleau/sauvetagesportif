@@ -513,6 +513,56 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
     setDragOverLane(null)
   }
 
+  async function handleDropOnHeat(targetHeatId: number, heatLaneMin: number, heatLaneMax: number) {
+    if (!dragSource) return
+    const api = dbApi()
+    if (!api) return
+
+    const { heatId: srcHeatId, entry: srcEntry } = dragSource
+
+    // Don't drop on same heat
+    if (srcHeatId === targetHeatId) {
+      setDragSource(null)
+      return
+    }
+
+    // Find best available lane (center-out)
+    const occupiedLanes = new Set((heatData[targetHeatId] ?? []).map((e) => e.lane))
+    const laneOrder = generateCenterOutOrder(heatLaneMin, heatLaneMax)
+    const targetLane = laneOrder.find((l) => !occupiedLanes.has(l))
+
+    if (targetLane == null) {
+      // No empty lane available
+      setDragSource(null)
+      return
+    }
+
+    await api.assignToHeatLane(srcEntry.swimresultId, targetHeatId, targetLane)
+    setHeatData((prev) => {
+      const next = { ...prev }
+      // Remove from source heat
+      next[srcHeatId] = (next[srcHeatId] ?? []).filter((e) => e.swimresultId !== srcEntry.swimresultId)
+      // Add to target heat
+      next[targetHeatId] = [...(next[targetHeatId] ?? []), { ...srcEntry, lane: targetLane }]
+      return next
+    })
+    setDragSource(null)
+  }
+
+  function generateCenterOutOrder(min: number, max: number): number[] {
+    const count = max - min + 1
+    const center = Math.floor(count / 2)
+    const order: number[] = []
+    order.push(min + center)
+    for (let offset = 1; order.length < count; offset++) {
+      const right = min + center + offset
+      const left = min + center - offset
+      if (right <= max) order.push(right)
+      if (left >= min) order.push(left)
+    }
+    return order
+  }
+
   // ── Generate heats handler ──────────────────────────────────────────────────
 
   async function handleGenerateHeats() {
@@ -785,18 +835,19 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
                               <tr
                                 key={`h-${heat.id}`}
                                 className={`border-b border-gray-100 cursor-pointer select-none ${
-                                  isHeatSelected ? 'bg-blue-600 text-white' : 'bg-gray-50 hover:bg-blue-100'
+                                  isHeatSelected ? 'bg-blue-600 text-white' : dragSource ? 'bg-gray-50 hover:bg-green-100' : 'bg-gray-50 hover:bg-blue-100'
                                 }`}
                                 onClick={() => { setSelectedHeatId(heat.id); setEditingLane(null) }}
                                 onDragOver={(e) => {
                                   if (dragSource) {
                                     e.preventDefault()
                                     e.dataTransfer.dropEffect = 'move'
-                                    // Auto-switch to this heat when dragging over it
-                                    if (selectedHeatId !== heat.id) {
-                                      setSelectedHeatId(heat.id)
-                                      setEditingLane(null)
-                                    }
+                                  }
+                                }}
+                                onDrop={(e) => {
+                                  if (dragSource) {
+                                    e.preventDefault()
+                                    handleDropOnHeat(heat.id, session.laneMin, session.laneMax)
                                   }
                                 }}
                               >
