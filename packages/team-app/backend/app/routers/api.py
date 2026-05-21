@@ -330,6 +330,148 @@ async def upload_meet(file: UploadFile = File(...), db: Session = Depends(get_db
     return {"events_loaded": count, "filename": file.filename}
 
 
+@router.post("/upload/meet-smb", dependencies=[Depends(require_organizer_or_admin)])
+async def upload_meet_smb(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """Upload meet .smb — imports event structure from a Splash Meet Backup."""
+    content = await file.read()
+    if len(content) > 20 * 1024 * 1024:
+        raise HTTPException(413, "File too large (max 20MB)")
+
+    from ..smb import read_smb
+    try:
+        tables = read_smb(content)
+    except Exception as e:
+        raise HTTPException(400, f"Invalid .smb file: {e}")
+
+    # Validate required tables
+    if "SWIMSESSION" not in tables or "SWIMEVENT" not in tables:
+        raise HTTPException(400, "SMB file missing required tables (SWIMSESSION, SWIMEVENT)")
+
+    # Wipe existing event structure and registrations
+    db.query(SwimResult).delete()
+    db.query(AgeGroup).delete()
+    db.query(SwimEvent).delete()
+    db.query(SwimSession).delete()
+    db.query(SwimStyle).delete()
+    db.flush()
+
+    # Import swim styles
+    styles_imported = 0
+    for row in tables.get("SWIMSTYLE", []):
+        style_id = row.get("swimstyleid")
+        if style_id is None:
+            continue
+        db.add(SwimStyle(
+            swimstyleid=style_id,
+            code=row.get("code"),
+            distance=row.get("distance"),
+            name=row.get("name"),
+            relaycount=row.get("relaycount"),
+            stroke=row.get("stroke"),
+            sortcode=row.get("sortcode"),
+            technique=row.get("technique"),
+            uniqueid=row.get("uniqueid"),
+        ))
+        styles_imported += 1
+    db.flush()
+
+    # Import sessions
+    session_id_map: dict[int, int] = {}  # original id -> db id
+    for row in tables.get("SWIMSESSION", []):
+        sid = row.get("swimsessionid")
+        if sid is None:
+            continue
+        session = SwimSession(
+            swimsessionid=sid,
+            sessionnumber=row.get("sessionnumber"),
+            name=row.get("name"),
+            course=row.get("course"),
+            lanemin=row.get("lanemin"),
+            lanemax=row.get("lanemax"),
+        )
+        db.add(session)
+        session_id_map[sid] = sid
+    db.flush()
+
+    # Import events
+    events_imported = 0
+    for row in tables.get("SWIMEVENT", []):
+        eid = row.get("swimeventid")
+        session_id = row.get("swimsessionid")
+        if eid is None or session_id is None:
+            continue
+        style_id = row.get("swimstyleid")
+        db.add(SwimEvent(
+            swimeventid=eid,
+            swimsessionid=session_id,
+            swimstyleid=style_id if style_id else None,
+            eventnumber=row.get("eventnumber"),
+            gender=row.get("gender"),
+            round=row.get("round"),
+            sortcode=row.get("sortcode"),
+            internalevent=row.get("internalevent"),
+            roundname=row.get("roundname"),
+            masters=row.get("masters"),
+            fee=row.get("fee"),
+            combineagegroups=row.get("combineagegroups"),
+            splashmecanedit=row.get("splashmecanedit"),
+            pfineignore=row.get("pfineignore"),
+            preveventid=row.get("preveventid"),
+            twoperlane=row.get("twoperlane"),
+        ))
+        events_imported += 1
+    db.flush()
+
+    # Import age groups
+    agegroups_imported = 0
+    for row in tables.get("AGEGROUP", []):
+        agid = row.get("agegroupid")
+        event_id = row.get("swimeventid")
+        if agid is None or event_id is None:
+            continue
+        db.add(AgeGroup(
+            agegroupid=agid,
+            swimeventid=event_id,
+            name=row.get("name"),
+            code=row.get("code"),
+            agemin=row.get("agemin"),
+            agemax=row.get("agemax"),
+            gender=row.get("gender"),
+            heatcount=row.get("heatcount"),
+            sortcode=row.get("sortcode"),
+            useformedals=row.get("useformedals"),
+            useforscoring=row.get("useforscoring"),
+            finalseedtype=row.get("finalseedtype"),
+        ))
+        agegroups_imported += 1
+    db.flush()
+
+    # Regenerate combined events XML after loading event structure
+    from ..combined_events import regenerate_combined_events
+    regenerate_combined_events(db)
+
+    # Store the SMB as the meet template for later download
+    MEET_TEMPLATE.parent.mkdir(parents=True, exist_ok=True)
+    MEET_TEMPLATE.write_bytes(content)
+
+    # Track metadata
+    for key, val in [("meet_filename", file.filename or "meet.smb"),
+                     ("meet_uploaded_at", datetime.utcnow().isoformat()),
+                     ("meet_name", file.filename or "meet.smb")]:
+        _set_config(db, key, val)
+
+    # Reset closure date
+    _set_config(db, "closure_date", "")
+
+    db.commit()
+    return {
+        "events_loaded": events_imported,
+        "styles_loaded": styles_imported,
+        "agegroups_loaded": agegroups_imported,
+        "filename": file.filename,
+    }
+
+
 @router.post("/admin/new-meet", dependencies=[Depends(require_admin)])
 def create_new_meet(db: Session = Depends(get_db)):
     """Create a new meet by resetting all data and importing from the default template."""
@@ -867,7 +1009,7 @@ def list_sessions(db: Session = Depends(get_db)):
                 "gender": "M" if e.gender == 1 else "F" if e.gender == 2 else "X",
                 "distance": e.swimstyle.distance if e.swimstyle else 0,
                 "phase": "Eliminatoire" if e.round == 1 else "Finale" if e.round == 4 else "Finale directe",
-                "isAdmin": e.internalevent == "T",
+                "isAdmin": e.internalevent == "T" or e.swimstyleid is None,
                 "swimstyleId": e.swimstyleid,
                 "ageGroups": [{
                     "id": ag.agegroupid,

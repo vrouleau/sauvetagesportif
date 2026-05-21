@@ -281,7 +281,7 @@ export async function getHeatListSessions(): Promise<HeatListSessionRow[]> {
 
   const events = db.prepare(`
     SELECT e.swimeventid, e.swimsessionid, e.eventnumber, e.gender, e.round, e.sortcode, e.daytime, e.internalevent,
-           e.roundname,
+           e.roundname, e.swimstyleid,
            ss.distance, ss.stroke, ss.name AS stylename
     FROM swimevent e
     LEFT JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid
@@ -291,7 +291,7 @@ export async function getHeatListSessions(): Promise<HeatListSessionRow[]> {
     swimeventid: number; swimsessionid: number; eventnumber: number | null; gender: number | null
     round: number | null; sortcode: number | null; daytime: string | null
     internalevent: string | null; distance: number | null; stroke: number | null
-    stylename: string | null; roundname: string | null
+    stylename: string | null; roundname: string | null; swimstyleid: number | null
   }>
 
   if (events.length === 0) return sessions.map(s => ({
@@ -397,7 +397,7 @@ export async function getHeatListSessions(): Promise<HeatListSessionRow[]> {
   const evMap = new Map<number, HeatListEventRow[]>()
   for (const e of events) {
     if (!evMap.has(e.swimsessionid)) evMap.set(e.swimsessionid, [])
-    const isAdm = e.internalevent === 'T'
+    const isAdm = e.internalevent === 'T' || e.swimstyleid == null
     const name = isAdm ? (e.roundname ?? '') : eventName(e.stylename, e.stroke)
     evMap.get(e.swimsessionid)!.push({
       id: e.swimeventid,
@@ -501,7 +501,7 @@ export async function getSessions(): Promise<SessionRow[]> {
   const evMap = new Map<number, CompetitionEventRow[]>()
   for (const e of events) {
     if (!evMap.has(e.swimsessionid)) evMap.set(e.swimsessionid, [])
-    const isAdm = e.internalevent === 'T'
+    const isAdm = e.internalevent === 'T' || e.swimstyleid == null
     const name = isAdm ? (e.eventname ?? '') : eventName(e.stylename, e.stroke)
     evMap.get(e.swimsessionid)!.push({
       id: e.swimeventid, sessionId: e.swimsessionid, number: e.eventnumber ?? 0,

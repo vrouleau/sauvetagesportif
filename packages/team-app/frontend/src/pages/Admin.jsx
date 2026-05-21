@@ -103,6 +103,28 @@ export default function Admin() {
             className="file:border file:border-gray-300 file:rounded file:px-2 file:py-0.5 file:text-xs file:bg-white file:cursor-pointer text-xs" />
         </Section>
 
+        {/* Upload SMB */}
+        <Section title={t.upload_smb} desc={t.upload_smb_desc}>
+          <input type="file" accept=".smb" onChange={async (e) => {
+            const file = e.target.files[0]
+            if (!file) return
+            if (!confirm(t.confirm_upload_smb)) { e.target.value = ''; return }
+            const fd = new FormData()
+            fd.append('file', file)
+            setMsg(lang === 'fr' ? 'Importation du .smb…' : 'Importing .smb...')
+            try {
+              const r = await api.post('/upload/meet-smb', fd)
+              const d = r.data
+              setMsg(`Done: ${d.events_loaded} events, ${d.styles_loaded} styles, ${d.agegroups_loaded} age groups`)
+              loadStatus()
+            } catch (err) {
+              setMsg(err.response?.data?.detail || err.message || 'Error')
+            }
+            e.target.value = ''
+          }}
+            className="file:border file:border-gray-300 file:rounded file:px-2 file:py-0.5 file:text-xs file:bg-white file:cursor-pointer text-xs" />
+        </Section>
+
         {/* Change Admin PIN */}
         <Section title={t.change_admin_pin}>
           <form onSubmit={async e => {
