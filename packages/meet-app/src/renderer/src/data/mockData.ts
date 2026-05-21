@@ -103,6 +103,8 @@ export interface HeatListSession {
   number: number
   name: string
   time?: string
+  laneMin: number
+  laneMax: number
   events: HeatListEvent[]
 }
 

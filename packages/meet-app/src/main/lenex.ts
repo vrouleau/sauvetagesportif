@@ -95,6 +95,13 @@ function encodeRound(r: string | undefined): number {
   }
 }
 
+function encodeCourse(c: string | undefined): number | null {
+  switch ((c ?? '').toUpperCase()) {
+    case 'LCM': return 1; case 'SCY': return 2; case 'SCM': return 3
+    default: return null
+  }
+}
+
 function encodeHeatStatus(s: string | undefined): number {
   switch ((s ?? '').toUpperCase()) {
     case 'SEEDED': return 4
@@ -236,11 +243,13 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
          firstname=excluded.firstname, lastname=excluded.lastname, birthdate=excluded.birthdate,
          gender=excluded.gender, nation=excluded.nation, license=excluded.license, clubid=excluded.clubid`),
     upsertResult: db.prepare(
-      `INSERT INTO swimresult (swimresultid, athleteid, swimeventid, heatid, lane, entrytime, usetimetype)
-       VALUES (?,?,?,?,?,?,0)
+      `INSERT INTO swimresult (swimresultid, athleteid, swimeventid, agegroupid, heatid, lane, entrytime, entrycourse, usetimetype)
+       VALUES (?,?,?,?,?,?,?,?,0)
        ON CONFLICT(swimresultid) DO UPDATE SET
          athleteid=excluded.athleteid, swimeventid=excluded.swimeventid,
-         heatid=excluded.heatid, lane=excluded.lane, entrytime=excluded.entrytime`),
+         agegroupid=excluded.agegroupid,
+         heatid=excluded.heatid, lane=excluded.lane, entrytime=excluded.entrytime,
+         entrycourse=excluded.entrycourse`),
   }
 
   // ── Sessions → swimsession ─────────────────────────────────────────────
@@ -386,17 +395,48 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
         const resId = parseInt(ra.resultid ?? '0', 10)
         if (!resId) continue
         const entrytime = lenexTimeToMs(ra.entrytime)
+        const agegroupid = parseInt(ra.agegroupid ?? '0', 10) || null
+        const entrycourse = ra.entrycourse ? encodeCourse(ra.entrycourse) : null
         try {
           stmts.upsertResult.run(
             resId, athId,
             parseInt(ra.eventid ?? '0', 10),
-            parseInt(ra.heatid ?? '0', 10),
-            parseInt(ra.lane ?? '0', 10),
-            entrytime
+            agegroupid,
+            parseInt(ra.heatid ?? '0', 10) || null,
+            parseInt(ra.lane ?? '0', 10) || null,
+            entrytime,
+            entrycourse
           )
           summary.results++
         } catch (e) {
           summary.errors.push(`Result ${resId}: ${e}`)
+        }
+      }
+
+      // Also handle <ENTRY> elements (registrations without results yet)
+      const entElem = child(ath, 'ENTRIES')
+      for (const ent of children(entElem ?? ath, 'ENTRY')) {
+        const ea2 = ent.attrs
+        // ENTRY elements don't have a resultid — generate one from eventid + athleteid
+        const eventIdVal = parseInt(ea2.eventid ?? '0', 10)
+        if (!eventIdVal) continue
+        const entryId = parseInt(ea2.entryid ?? '0', 10) || (athId * 100000 + eventIdVal)
+        const entrytime = lenexTimeToMs(ea2.entrytime)
+        const agegroupid = parseInt(ea2.agegroupid ?? '0', 10) || null
+        const entrycourse = ea2.entrycourse ? encodeCourse(ea2.entrycourse) : null
+        try {
+          stmts.upsertResult.run(
+            entryId, athId,
+            eventIdVal,
+            agegroupid,
+            null,  // no heat yet
+            null,  // no lane yet
+            entrytime,
+            entrycourse
+          )
+          summary.results++
+        } catch (e) {
+          summary.errors.push(`Entry ${entryId} (athlete ${athId}, event ${eventIdVal}): ${e}`)
         }
       }
     }

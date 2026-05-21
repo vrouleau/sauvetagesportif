@@ -186,6 +186,8 @@ export interface HeatListSessionRow {
   number: number
   name: string
   time?: string
+  laneMin: number
+  laneMax: number
   events: HeatListEventRow[]
 }
 
@@ -270,8 +272,8 @@ export async function getHeatListSessions(): Promise<HeatListSessionRow[]> {
   const db = getLocalDb()
 
   const sessions = db.prepare(
-    `SELECT swimsessionid, sessionnumber, name, daytime FROM swimsession ORDER BY sessionnumber`
-  ).all() as Array<{ swimsessionid: number; sessionnumber: number | null; name: string | null; daytime: string | null }>
+    `SELECT swimsessionid, sessionnumber, name, daytime, lanemin, lanemax FROM swimsession ORDER BY sessionnumber`
+  ).all() as Array<{ swimsessionid: number; sessionnumber: number | null; name: string | null; daytime: string | null; lanemin: number | null; lanemax: number | null }>
 
   if (sessions.length === 0) return []
   const sessionIds = sessions.map(r => r.swimsessionid)
@@ -294,7 +296,7 @@ export async function getHeatListSessions(): Promise<HeatListSessionRow[]> {
 
   if (events.length === 0) return sessions.map(s => ({
     id: s.swimsessionid, number: s.sessionnumber ?? 0, name: s.name ?? '',
-    time: formatDaytime(s.daytime), events: [],
+    time: formatDaytime(s.daytime), laneMin: s.lanemin ?? 1, laneMax: s.lanemax ?? 8, events: [],
   }))
 
   const eventIds = events.map(r => r.swimeventid)
@@ -416,6 +418,8 @@ export async function getHeatListSessions(): Promise<HeatListSessionRow[]> {
     number: s.sessionnumber ?? 0,
     name: s.name ?? '',
     time: formatDaytime(s.daytime),
+    laneMin: s.lanemin ?? 1,
+    laneMax: s.lanemax ?? 8,
     events: evMap.get(s.swimsessionid) ?? [],
   }))
 }
@@ -1327,17 +1331,36 @@ export async function generateHeats(eventId?: number, sessionId?: number, inject
         totalAssigned += result.assigned
       }
     } else {
-      // Process each age group separately
-      for (const ag of ageGroups) {
-        const seedType = ag.finalseedtype ?? globalSeedMethod
-        const fastCount = ag.fastheatcount ?? globalFastHeatCount
-        const minHeats = ag.heatcount ?? 1
+      // Check if entries actually have agegroupid assigned
+      const hasAgAssigned = (db.prepare(
+        `SELECT COUNT(*) as c FROM swimresult WHERE swimeventid=? AND agegroupid IS NOT NULL`
+      ).get(evId) as { c: number }).c > 0
 
-        const entries = loadEntries(db, evId, ag.agegroupid, seedBonusLast, seedExhLast, seedLateLast, qualiFrom, qualiTo, qualiCourse, eventCourse)
+      if (!hasAgAssigned) {
+        // Entries don't have agegroupid set — treat as combined (use first age group's config)
+        const seedType = ageGroups[0].finalseedtype ?? globalSeedMethod
+        const fastCount = ageGroups[0].fastheatcount ?? globalFastHeatCount
+        const minHeats = ageGroups[0].heatcount ?? 1
+
+        const entries = loadEntries(db, evId, null, seedBonusLast, seedExhLast, seedLateLast, qualiFrom, qualiTo, qualiCourse, eventCourse)
         if (entries.length > 0) {
-          const result = seedAndAssignHeats(db, evId, ag.agegroupid, entries, laneCount, laneMin, laneMax, minHeats, seedType, fastCount, globalMinPerHeat, customLaneOrder)
+          const result = seedAndAssignHeats(db, evId, null, entries, laneCount, laneMin, laneMax, minHeats, seedType, fastCount, globalMinPerHeat, customLaneOrder)
           totalHeats += result.heats
           totalAssigned += result.assigned
+        }
+      } else {
+        // Process each age group separately
+        for (const ag of ageGroups) {
+          const seedType = ag.finalseedtype ?? globalSeedMethod
+          const fastCount = ag.fastheatcount ?? globalFastHeatCount
+          const minHeats = ag.heatcount ?? 1
+
+          const entries = loadEntries(db, evId, ag.agegroupid, seedBonusLast, seedExhLast, seedLateLast, qualiFrom, qualiTo, qualiCourse, eventCourse)
+          if (entries.length > 0) {
+            const result = seedAndAssignHeats(db, evId, ag.agegroupid, entries, laneCount, laneMin, laneMax, minHeats, seedType, fastCount, globalMinPerHeat, customLaneOrder)
+            totalHeats += result.heats
+            totalAssigned += result.assigned
+          }
         }
       }
     }
@@ -1552,11 +1575,17 @@ function seedAndAssignHeats(
     `UPDATE swimresult SET heatid=?, lane=? WHERE swimresultid=?`
   )
 
+  // Get current max heat number for this event (so multiple age groups get sequential numbers)
+  const maxHeatRow = db.prepare(
+    `SELECT COALESCE(MAX(heatnumber), 0) AS maxn FROM heat WHERE swimeventid=?`
+  ).get(eventId) as { maxn: number }
+  const heatNumberOffset = maxHeatRow.maxn
+
   for (let h = 0; h < heats.length; h++) {
     if (heats[h].length === 0) continue
     const heatIdRow = db.prepare(`SELECT COALESCE(MAX(heatid), 0) + 1 AS next FROM heat`).get() as { next: number }
     const heatId = heatIdRow.next
-    const heatNumber = h + 1
+    const heatNumber = heatNumberOffset + h + 1
     insertHeat.run(heatId, eventId, agegroupId, heatNumber, heatNumber)
     totalHeats++
 

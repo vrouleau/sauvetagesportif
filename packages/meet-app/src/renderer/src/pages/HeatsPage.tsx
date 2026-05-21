@@ -41,6 +41,7 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
   const [quantumFolder, setQuantumFolder] = useState('C:\\quantum')
   const [quantumConnected, setQuantumConnected] = useState(false)
   const [quantumVersion, setQuantumVersion] = useState('')
+  const [generating, setGenerating] = useState(false)
   const selectedHeatIdRef = useRef(selectedHeatId)
 
   // Derived flat list of all events (for Quantum schedule)
@@ -132,11 +133,21 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
 
   // ── Derived state ──────────────────────────────────────────────────────────
 
-  const allHeats: { event: HeatListEvent; heat: Heat }[] = []
-  heatListEvents.forEach((ev) => ev.heats.forEach((h) => allHeats.push({ event: ev, heat: h })))
+  const allHeats: { event: HeatListEvent; heat: Heat; session: HeatListSession }[] = []
+  sessions.forEach((s) => s.events.forEach((ev) => ev.heats.forEach((h) => allHeats.push({ event: ev, heat: h, session: s }))))
   const selectedPair = allHeats.find((p) => p.heat.id === selectedHeatId)
   const selectedEvent = selectedPair?.event
+  const selectedSession = selectedPair?.session
   const entries = selectedHeatId !== null ? (heatData[selectedHeatId] ?? []) : []
+
+  // Build full lane list (laneMin to laneMax) with entries or empty slots
+  const laneMin = selectedSession?.laneMin ?? 1
+  const laneMax = selectedSession?.laneMax ?? 8
+  const allLanes: Array<{ lane: number; entry: LaneEntry | null }> = []
+  for (let l = laneMin; l <= laneMax; l++) {
+    const entry = entries.find((e) => e.lane === l) ?? null
+    allLanes.push({ lane: l, entry })
+  }
 
   const ranked = [...entries]
     .filter((e) => e.finalTime && e.status !== 'DNS' && e.status !== 'DNF' && e.status !== 'DSQ')
@@ -351,6 +362,30 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
     })
   }
 
+  // ── Generate heats handler ──────────────────────────────────────────────────
+
+  async function handleGenerateHeats() {
+    if (!window.confirm(t.heats.generateHeatsConfirm)) return
+    setGenerating(true)
+    try {
+      const api = dbApi()
+      if (!api) return
+      const result = await api.generateHeats()
+      // Reload heat data
+      const sess = await api.getHeatListSessions() as HeatListSession[]
+      setSessions(sess)
+      const state: HeatState = {}
+      sess.forEach((s) => s.events.forEach((ev) => ev.heats.forEach((h) => { state[h.id] = h.entries.map((e) => ({ ...e })) })))
+      setHeatData(state)
+      setSelectedHeatId(null)
+      window.alert(t.heats.generateHeatsSuccess(result.heatsCreated, result.entriesAssigned))
+    } catch (e) {
+      console.error('Generate heats failed:', e)
+    } finally {
+      setGenerating(false)
+    }
+  }
+
   // ── Quantum handlers ───────────────────────────────────────────────────────
 
   function handleConnectQuantum() {
@@ -428,7 +463,7 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
   }
 
   const selectedEntry = entries.find((e) => e.lane === selectedLane)
-  const maxLane = Math.max(...entries.map((e) => e.lane), 0)
+  const maxLane = laneMax
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -460,6 +495,13 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
           />
         </label>
         <div className="ml-auto flex items-center gap-2">
+          <button
+            onClick={handleGenerateHeats}
+            disabled={generating}
+            className="border border-gray-400 bg-white hover:bg-blue-50 disabled:opacity-50 disabled:cursor-default px-2 py-0.5 text-xs font-medium text-blue-700"
+          >
+            {generating ? '…' : t.heats.generateHeats}
+          </button>
           <span className="text-gray-500">{t.heats.timingSystems}</span>
           <span className={`w-2 h-2 rounded-full ${quantumConnected ? 'bg-green-500' : 'bg-gray-300'}`} />
         </div>
@@ -665,14 +707,32 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {entries.map((entry) => {
-                    const isSelected = entry.lane === selectedLane
-                    const isEditing = entry.lane === editingLane
+                  {allLanes.map(({ lane, entry }) => {
+                    const isSelected = lane === selectedLane
+                    const isEmpty = !entry
+
+                    if (isEmpty) {
+                      return (
+                        <tr
+                          key={lane}
+                          className={`border-b border-gray-200 cursor-pointer select-none ${isSelected ? 'bg-blue-100' : 'bg-gray-50 hover:bg-blue-50'}`}
+                          onClick={() => setSelectedLane(lane)}
+                        >
+                          <td className={`px-2 text-center font-mono font-bold border-r border-gray-200 ${isSelected ? 'text-blue-700' : 'text-gray-300'}`}>
+                            {lane}
+                          </td>
+                          <td className="px-2 border-r border-gray-200 text-gray-300 italic" colSpan={10}>
+                          </td>
+                        </tr>
+                      )
+                    }
+
+                    const isEditing = lane === editingLane
                     const isDsq = entry.status === 'DSQ'
                     const isDns = entry.status === 'DNS'
                     const isDnf = entry.status === 'DNF'
                     const hasTime = !!entry.finalTime && !entry.status
-                    const rank = rankOf(entry.lane)
+                    const rank = rankOf(lane)
 
                     const rowBg = isDsq
                       ? 'bg-red-50'
@@ -686,13 +746,13 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
 
                     return (
                       <tr
-                        key={entry.lane}
+                        key={lane}
                         className={`border-b border-gray-200 cursor-pointer select-none ${rowBg}`}
-                        onClick={() => setSelectedLane(entry.lane)}
-                        onDoubleClick={() => startEdit(entry.lane)}
+                        onClick={() => setSelectedLane(lane)}
+                        onDoubleClick={() => startEdit(lane)}
                       >
                         <td className={`px-2 text-center font-mono font-bold border-r border-gray-200 ${isSelected ? 'text-blue-700' : 'text-gray-500'}`}>
-                          {entry.lane}
+                          {lane}
                         </td>
                         <td className="px-2 border-r border-gray-200 font-medium">
                           {entry.lastName}, {entry.firstName}
@@ -716,7 +776,7 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
                         {/* Final time — editable */}
                         <td
                           className={`px-1 text-center font-mono border-r border-gray-200 ${isSelected && !isEditing ? 'bg-blue-200' : 'bg-blue-50'}`}
-                          onClick={(e) => { e.stopPropagation(); startEdit(entry.lane) }}
+                          onClick={(e) => { e.stopPropagation(); startEdit(lane) }}
                         >
                           {isEditing ? (
                             <input
@@ -724,8 +784,8 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
                               className="time-input w-20"
                               value={editValue}
                               onChange={(e) => setEditValue(e.target.value)}
-                              onKeyDown={(e) => handleKeyDown(e, entry.lane, maxLane)}
-                              onBlur={() => saveEdit(entry.lane)}
+                              onKeyDown={(e) => handleKeyDown(e, lane, maxLane)}
+                              onBlur={() => saveEdit(lane)}
                               placeholder="M:SS.hh"
                             />
                           ) : (
@@ -753,8 +813,8 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
                             value={entry.status ?? ''}
                             onChange={(e) => {
                               const val = e.target.value as 'DNS' | 'DNF' | 'DSQ' | ''
-                              setSelectedLane(entry.lane)
-                              setStatus(entry.lane, val || null)
+                              setSelectedLane(lane)
+                              setStatus(lane, val || null)
                             }}
                             onClick={(e) => e.stopPropagation()}
                           >

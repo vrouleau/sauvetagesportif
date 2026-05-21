@@ -613,24 +613,6 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
   const canAddCategory = selected.type === 'event' || selected.type === 'agegroup'
   const canAddBreak = selected.type === 'session' || selected.type === 'event'
   const canDelete = selected.type !== 'competition'
-  const canGenerateHeats = selected.type === 'session' || selected.type === 'event' || selected.type === 'competition'
-
-  async function handleGenerateHeats() {
-    let eventId: number | undefined
-    let sessionId: number | undefined
-    if (selected.type === 'event') {
-      eventId = selected.event.id
-    } else if (selected.type === 'session') {
-      sessionId = selected.session.id
-    }
-    // If competition-level, pass neither (generates for all events)
-    try {
-      const result = await api.generateHeats(eventId, sessionId)
-      window.alert(`Séries générées: ${result.heatsCreated} séries, ${result.entriesAssigned} inscriptions assignées`)
-    } catch {
-      window.alert('Erreur lors de la génération des séries')
-    }
-  }
 
   return (
     <div className="flex flex-col h-full">
@@ -662,12 +644,6 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
           enabled={canDelete}
           danger
           onClick={handleDelete}
-        />
-        <div className="w-px h-4 bg-gray-300 mx-1" />
-        <ToolbarBtn
-          label="Générer séries"
-          enabled={canGenerateHeats}
-          onClick={handleGenerateHeats}
         />
       </div>
 
