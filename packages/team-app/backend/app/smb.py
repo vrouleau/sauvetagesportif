@@ -283,20 +283,56 @@ def write_smb(
     total_rows = 0
 
     if ini_text is None:
+        # All tables Splash expects in the ini (even if not all are present)
+        all_table_names = [
+            "BSGLOBAL", "BSSWKATALOGITEM", "BSPICTURE", "DSQITEM",
+            "SWIMSTYLE", "SWIMSESSION", "SWIMEVENT", "AGEGROUP",
+            "RECORDLIST", "RECORDAGEGROUP", "RECORDLISTAGEGROUP",
+            "RECORD", "RECORDSPLIT", "RECORDPOSITION",
+            "TIMESTANDARDLIST", "TIMESTANDARD",
+            "CLUB", "ATHLETE", "OFFICIAL", "EVENTRECORD",
+            "HEAT", "JUDGE", "SWIMRESULT", "SPLIT",
+            "RELAY", "RELAYPOSITION", "RELAYSPLIT",
+            "RESULTPLACE", "TIMINGDATA", "SPLASHMEMESSAGE",
+        ]
+        record_counts = {tname: len(rows) for tname, (_, rows) in table_data.items()}
+
+        # Read DDL versions from BSGLOBAL rows if available
+        ddl_app = "20260101"
+        ddl_pic = "01.01"
+        ddl_kat = "01.00"
+        if "BSGLOBAL" in table_data:
+            for row in table_data["BSGLOBAL"][1]:
+                name_val = row.get("name", "")
+                data_val = row.get("data", "")
+                if name_val == "BSDB_DDL_VERSION_APPLICATION" and data_val:
+                    ddl_app = data_val
+                elif name_val == "BSDB_DDL_VERSION_PICTURE" and data_val:
+                    ddl_pic = data_val
+                elif name_val == "BSDB_DDL_VERSION_SW_KATALOG" and data_val:
+                    ddl_kat = data_val
+
         lines = [
             "[Geologix]",
-            "Application=SplashMeet",
-            "Version=1.0.0",
+            "Application=Meet Manager 11",
+            "Version=11.84087",
             "Identification=BACKUP_MM_MEET_11",
+            "NullDateYear=1800",
+            "ExtraFiles=0",
+            "",
+            "[BSGLOBAL]",
+            f"BSDB_DDL_VERSION_APPLICATION={ddl_app}",
+            f"BSDB_DDL_VERSION_PICTURE={ddl_pic}",
+            f"BSDB_DDL_VERSION_SW_KATALOG={ddl_kat}",
             "",
             "[RecordCount]",
         ]
-        for tname, (_, rows) in table_data.items():
-            lines.append(f"{tname}={len(rows)}")
+        for tname in all_table_names:
+            lines.append(f"{tname}={record_counts.get(tname, 0)}")
         lines.append("")
         lines.append("[Tables]")
-        for tname, (_, rows) in table_data.items():
-            lines.append(f"{tname}={1 if rows else 0}")
+        for tname in all_table_names:
+            lines.append(f"{tname}={1 if record_counts.get(tname, 0) > 0 else 0}")
         lines.append("")
         ini_text = "\r\n".join(lines)
 
@@ -306,6 +342,6 @@ def write_smb(
             z.writestr(f"{tname}-0001.gbin", gbin_bytes)
             total_rows += len(rows)
 
-        z.writestr("geologix.ini", ini_text.encode("utf-8"))
+        z.writestr("geologix.ini", ini_text.encode("ascii", errors="replace"))
 
     return total_rows

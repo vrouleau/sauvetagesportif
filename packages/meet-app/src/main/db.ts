@@ -98,8 +98,8 @@ function decodeGender(g: number | null): 'M' | 'F' | 'X' {
 }
 
 function decodeHeatStatus(s: number | null): 'empty' | 'assigned' | 'completed' | 'validated' {
-  if (s != null && s >= 10) return 'validated'
   if (s != null && s >= 8) return 'completed'
+  if (s != null && s === 5) return 'validated'
   if (s != null && s >= 4) return 'assigned'
   return 'empty'
 }
@@ -633,7 +633,7 @@ function assertHeatNotValidated(db: ReturnType<typeof getLocalDb>, swimresultId:
   const row = db.prepare(
     `SELECT h.racestatus FROM swimresult r JOIN heat h ON r.heatid = h.heatid WHERE r.swimresultid=?`
   ).get(swimresultId) as { racestatus: number | null } | undefined
-  if (row && row.racestatus != null && row.racestatus >= 10) {
+  if (row && row.racestatus === 5) {
     throw new Error('Heat is validated — modifications are not allowed.')
   }
 }
@@ -641,7 +641,7 @@ function assertHeatNotValidated(db: ReturnType<typeof getLocalDb>, swimresultId:
 /** Check that a specific heat is not validated */
 function assertHeatIdNotValidated(db: ReturnType<typeof getLocalDb>, heatId: number): void {
   const row = db.prepare(`SELECT racestatus FROM heat WHERE heatid=?`).get(heatId) as { racestatus: number | null } | undefined
-  if (row && row.racestatus != null && row.racestatus >= 10) {
+  if (row && row.racestatus === 5) {
     throw new Error('Heat is validated — modifications are not allowed.')
   }
 }
@@ -1436,9 +1436,9 @@ export async function generateHeats(eventId?: number, sessionId?: number, inject
       SELECT agegroupid, heatcount, finalseedtype, fastheatcount FROM agegroup WHERE swimeventid=? ORDER BY sortcode
     `).all(evId) as Array<{ agegroupid: number; heatcount: number | null; finalseedtype: number | null; fastheatcount: number | null }>
 
-    // Skip events that have any validated heats (racestatus >= 10)
+    // Skip events that have any validated heats (racestatus = 5)
     const validatedCount = (db.prepare(
-      `SELECT COUNT(*) AS c FROM heat WHERE swimeventid = ? AND racestatus >= 10`
+      `SELECT COUNT(*) AS c FROM heat WHERE swimeventid = ? AND racestatus = 5`
     ).get(evId) as { c: number }).c
     if (validatedCount > 0) continue
 
@@ -2000,45 +2000,45 @@ export async function updateAgeGroup(agegroupId: number, data: AgeGroupUpdate): 
 
 // ── Validation: lock/unlock heats via racestatus ──────────────────────────────
 
-/** Validate a single heat (racestatus → 10) */
+/** Validate a single heat (racestatus → 5) */
 export async function validateHeat(heatId: number): Promise<void> {
   const db = getLocalDb()
   db.prepare(
-    `UPDATE heat SET racestatus = 10 WHERE heatid = ? AND racestatus >= 4 AND racestatus < 10`
+    `UPDATE heat SET racestatus = 5 WHERE heatid = ? AND racestatus != 5`
   ).run(heatId)
 }
 
-/** Invalidate a single heat (racestatus 10 → 8) */
+/** Invalidate a single heat (racestatus 5 → 4) */
 export async function invalidateHeat(heatId: number): Promise<void> {
   const db = getLocalDb()
   db.prepare(
-    `UPDATE heat SET racestatus = 8 WHERE heatid = ? AND racestatus >= 10`
+    `UPDATE heat SET racestatus = 4 WHERE heatid = ? AND racestatus = 5`
   ).run(heatId)
 }
 
-/** Validate all seeded/completed heats in an event (racestatus 4+ → 10) */
+/** Validate all heats in an event (racestatus → 5) */
 export async function validateEvent(eventId: number): Promise<void> {
   const db = getLocalDb()
   db.prepare(
-    `UPDATE heat SET racestatus = 10 WHERE swimeventid = ? AND racestatus >= 4 AND racestatus < 10`
+    `UPDATE heat SET racestatus = 5 WHERE swimeventid = ? AND racestatus != 5`
   ).run(eventId)
 }
 
-/** Invalidate all validated heats in an event (racestatus 10 → 8) */
+/** Invalidate all validated heats in an event (racestatus 5 → 4) */
 export async function invalidateEvent(eventId: number): Promise<void> {
   const db = getLocalDb()
   db.prepare(
-    `UPDATE heat SET racestatus = 8 WHERE swimeventid = ? AND racestatus >= 10`
+    `UPDATE heat SET racestatus = 4 WHERE swimeventid = ? AND racestatus = 5`
   ).run(eventId)
 }
 
-/** Validate all seeded/completed heats in all events of a session */
+/** Validate all heats in all events of a session */
 export async function validateSession(sessionId: number): Promise<void> {
   const db = getLocalDb()
   db.prepare(
-    `UPDATE heat SET racestatus = 10
+    `UPDATE heat SET racestatus = 5
      WHERE swimeventid IN (SELECT swimeventid FROM swimevent WHERE swimsessionid = ? AND internalevent = 'F')
-       AND racestatus >= 4 AND racestatus < 10`
+       AND racestatus != 5`
   ).run(sessionId)
 }
 
@@ -2046,8 +2046,8 @@ export async function validateSession(sessionId: number): Promise<void> {
 export async function invalidateSession(sessionId: number): Promise<void> {
   const db = getLocalDb()
   db.prepare(
-    `UPDATE heat SET racestatus = 8
+    `UPDATE heat SET racestatus = 4
      WHERE swimeventid IN (SELECT swimeventid FROM swimevent WHERE swimsessionid = ? AND internalevent = 'F')
-       AND racestatus >= 10`
+       AND racestatus = 5`
   ).run(sessionId)
 }

@@ -607,22 +607,49 @@ export function saveSMB(filePath: string, db: Database.Database): { tables: numb
     entries.push({ name: `${tableDef.name}-0001.gbin`, data: gbin })
   }
 
-  // Generate geologix.ini
+  // Generate geologix.ini (matching Splash Meet Manager 11 format)
+  // Read DDL versions from BSGLOBAL if available
+  const bsgRows = db.prepare(`SELECT name, data FROM bsglobal WHERE name LIKE 'BSDB_DDL_VERSION%'`).all() as Array<{ name: string; data: string | null }>
+  const ddlVersions: Record<string, string> = {}
+  for (const r of bsgRows) {
+    ddlVersions[r.name] = r.data ?? ''
+  }
+
+  // All tables Splash expects in the ini (even if we don't export them all)
+  const allTableNames = [
+    'BSGLOBAL', 'BSSWKATALOGITEM', 'BSPICTURE', 'DSQITEM',
+    'SWIMSTYLE', 'SWIMSESSION', 'SWIMEVENT', 'AGEGROUP',
+    'RECORDLIST', 'RECORDAGEGROUP', 'RECORDLISTAGEGROUP',
+    'RECORD', 'RECORDSPLIT', 'RECORDPOSITION',
+    'TIMESTANDARDLIST', 'TIMESTANDARD',
+    'CLUB', 'ATHLETE', 'OFFICIAL', 'EVENTRECORD',
+    'HEAT', 'JUDGE', 'SWIMRESULT', 'SPLIT',
+    'RELAY', 'RELAYPOSITION', 'RELAYSPLIT',
+    'RESULTPLACE', 'TIMINGDATA', 'SPLASHMEMESSAGE',
+  ]
+
   const ini = [
     '[Geologix]',
-    'Application=SauvetageMeet',
-    'Version=1.0.0',
+    'Application=Meet Manager 11',
+    'Version=11.84087',
     'Identification=BACKUP_MM_MEET_11',
+    'NullDateYear=1800',
+    'ExtraFiles=0',
+    '',
+    '[BSGLOBAL]',
+    `BSDB_DDL_VERSION_APPLICATION=${ddlVersions['BSDB_DDL_VERSION_APPLICATION'] ?? '20260101'}`,
+    `BSDB_DDL_VERSION_PICTURE=${ddlVersions['BSDB_DDL_VERSION_PICTURE'] ?? '01.01'}`,
+    `BSDB_DDL_VERSION_SW_KATALOG=${ddlVersions['BSDB_DDL_VERSION_SW_KATALOG'] ?? '01.00'}`,
     '',
     '[RecordCount]',
-    ...SMB_TABLES.map(t => `${t.name}=${recordCounts[t.name] ?? 0}`),
+    ...allTableNames.map(t => `${t}=${recordCounts[t] ?? 0}`),
     '',
     '[Tables]',
-    ...SMB_TABLES.map(t => `${t.name}=${recordCounts[t.name] > 0 ? 1 : 0}`),
+    ...allTableNames.map(t => `${t}=${(recordCounts[t] ?? 0) > 0 ? 1 : 0}`),
     '',
   ].join('\r\n')
 
-  entries.push({ name: 'geologix.ini', data: Buffer.from(ini, 'utf8') })
+  entries.push({ name: 'geologix.ini', data: Buffer.from(ini, 'ascii') })
 
   const zip = createZip(entries)
   writeFileSync(filePath, zip)

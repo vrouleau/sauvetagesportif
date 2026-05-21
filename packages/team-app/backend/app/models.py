@@ -333,7 +333,7 @@ class Heat(Base):
     daytime = Column(DateTime)
     finalcode = Column(String(2))
     heatnumber = Column(SmallInteger)
-    racestatus = Column(SmallInteger)  # 0=empty, 4=seeded, 8+=completed
+    racestatus = Column(SmallInteger)  # 0=empty, 4=seeded, 5=validated, 8+=completed
     remarks = Column(Text)
     sortcode = Column(Integer)
     swimeventid = Column(Integer, ForeignKey("swimevent.swimeventid", ondelete="CASCADE"))

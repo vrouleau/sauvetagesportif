@@ -6,7 +6,7 @@
 -- Key encoding conventions:
 --   gender      smallint  1=Male  2=Female  3=Mixed/Open
 --   round       smallint  1=Heats/Prelims  2=Semifinals  4=Finals  5=DirectFinals
---   racestatus  smallint  0=empty  4=seeded/assigned  8+=completed
+--   racestatus  smallint  0=empty  4=seeded/assigned  5=validated/official  8+=completed
 --   resultstatus smallint NULL/0=normal  1=DNS  2=DNF  3=DSQ
 --   course      smallint  1=50m(LCM)  2=25yd(SCY)  3=25m(SCM)
 --   boolean     char(1)   'T'=true  'F'=false
