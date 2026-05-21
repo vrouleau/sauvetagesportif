@@ -105,6 +105,14 @@ const api = {
       ipcRenderer.invoke('db:reorder-events', updates),
     generateHeats: (eventId?: number, sessionId?: number) =>
       ipcRenderer.invoke('db:generate-heats', eventId, sessionId),
+    removeFromHeat: (swimresultId: number) =>
+      ipcRenderer.invoke('db:remove-from-heat', swimresultId),
+    assignToHeatLane: (swimresultId: number, heatId: number, lane: number) =>
+      ipcRenderer.invoke('db:assign-to-heat-lane', swimresultId, heatId, lane),
+    swapLanes: (resultIdA: number, heatIdA: number, laneA: number, resultIdB: number, heatIdB: number, laneB: number) =>
+      ipcRenderer.invoke('db:swap-lanes', resultIdA, heatIdA, laneA, resultIdB, heatIdB, laneB),
+    addLateEntry: (athleteId: number, eventId: number, heatId: number, lane: number, entryTime: number | null) =>
+      ipcRenderer.invoke('db:add-late-entry', athleteId, eventId, heatId, lane, entryTime),
     saveAthlete: (athlete: unknown) =>
       ipcRenderer.invoke('db:save-athlete', athlete),
     syncUp: () =>

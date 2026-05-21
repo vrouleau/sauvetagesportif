@@ -7,6 +7,7 @@ import {
   configureDb, getDbConfig, testConnection,
   getHeatListEvents, getHeatListSessions, getSessions, getAthletes,
   saveResult,
+  removeFromHeat, assignToHeatLane, swapLanes, addLateEntry,
   createSession, deleteSession, updateSession,
   createBreak,
   createEvent, deleteEvent, updateEvent,
@@ -140,6 +141,26 @@ ipcMain.handle('db:generate-heats', async (_event, eventId?: number, sessionId?:
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
   }
+})
+
+ipcMain.handle('db:remove-from-heat', async (_event, swimresultId: number) => {
+  await removeFromHeat(swimresultId)
+  return { ok: true }
+})
+
+ipcMain.handle('db:assign-to-heat-lane', async (_event, swimresultId: number, heatId: number, lane: number) => {
+  await assignToHeatLane(swimresultId, heatId, lane)
+  return { ok: true }
+})
+
+ipcMain.handle('db:swap-lanes', async (_event, resultIdA: number, heatIdA: number, laneA: number, resultIdB: number, heatIdB: number, laneB: number) => {
+  await swapLanes(resultIdA, heatIdA, laneA, resultIdB, heatIdB, laneB)
+  return { ok: true }
+})
+
+ipcMain.handle('db:add-late-entry', async (_event, athleteId: number, eventId: number, heatId: number, lane: number, entryTime: number | null) => {
+  const id = await addLateEntry(athleteId, eventId, heatId, lane, entryTime)
+  return { ok: true, swimresultId: id }
 })
 
 ipcMain.handle('db:save-athlete', (_event, athlete: Parameters<typeof saveAthlete>[0]) =>

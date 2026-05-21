@@ -630,6 +630,46 @@ export async function saveResult(
   }
 }
 
+// ── Write: heat lane management ───────────────────────────────────────────────
+
+/** Remove an entry from its heat/lane (unseed it, don't delete the entry) */
+export async function removeFromHeat(swimresultId: number): Promise<void> {
+  const db = getLocalDb()
+  db.prepare(`UPDATE swimresult SET heatid=NULL, lane=NULL WHERE swimresultid=?`).run(swimresultId)
+}
+
+/** Assign an entry to a specific heat and lane */
+export async function assignToHeatLane(swimresultId: number, heatId: number, lane: number): Promise<void> {
+  const db = getLocalDb()
+  db.prepare(`UPDATE swimresult SET heatid=?, lane=? WHERE swimresultid=?`).run(heatId, lane, swimresultId)
+}
+
+/** Swap two entries' lanes (can be in same or different heats) */
+export async function swapLanes(
+  resultIdA: number, heatIdA: number, laneA: number,
+  resultIdB: number, heatIdB: number, laneB: number,
+): Promise<void> {
+  const db = getLocalDb()
+  const swap = db.transaction(() => {
+    db.prepare(`UPDATE swimresult SET heatid=?, lane=? WHERE swimresultid=?`).run(heatIdB, laneB, resultIdA)
+    db.prepare(`UPDATE swimresult SET heatid=?, lane=? WHERE swimresultid=?`).run(heatIdA, laneA, resultIdB)
+  })
+  swap()
+}
+
+/** Add a late entry: create a swimresult row and assign to heat/lane */
+export async function addLateEntry(
+  athleteId: number, eventId: number, heatId: number, lane: number, entryTime: number | null,
+): Promise<number> {
+  const db = getLocalDb()
+  const id = nextId('swimresult', 'swimresultid')
+  db.prepare(
+    `INSERT INTO swimresult (swimresultid, athleteid, swimeventid, heatid, lane, entrytime, lateentry, usetimetype)
+     VALUES (?, ?, ?, ?, ?, ?, 'T', 0)`
+  ).run(id, athleteId, eventId, heatId, lane, entryTime)
+  return id
+}
+
 // ── Write: session CRUD ───────────────────────────────────────────────────────
 
 function nextId(table: string, pkCol: string): number {

@@ -44,6 +44,18 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
   const [generating, setGenerating] = useState(false)
   const selectedHeatIdRef = useRef(selectedHeatId)
 
+  // Context menu state
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; lane: number; entry: LaneEntry | null } | null>(null)
+
+  // Late entry dialog state
+  const [lateEntryDialog, setLateEntryDialog] = useState<{ lane: number } | null>(null)
+  const [lateSearchQuery, setLateSearchQuery] = useState('')
+  const [athletes, setAthletes] = useState<Array<{ id: number; lastName: string; firstName: string; clubCode: string; nation: string }>>([])
+
+  // Drag state
+  const [dragSource, setDragSource] = useState<{ heatId: number; lane: number; entry: LaneEntry } | null>(null)
+  const [dragOverLane, setDragOverLane] = useState<number | null>(null)
+
   // Derived flat list of all events (for Quantum schedule)
   const heatListEvents: HeatListEvent[] = sessions.flatMap(s => s.events)
 
@@ -360,6 +372,148 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
       next.has(id) ? next.delete(id) : next.add(id)
       return next
     })
+  }
+
+  // ── Context menu handlers ──────────────────────────────────────────────────
+
+  function handleContextMenu(e: React.MouseEvent, lane: number, entry: LaneEntry | null) {
+    e.preventDefault()
+    setContextMenu({ x: e.clientX, y: e.clientY, lane, entry })
+  }
+
+  function closeContextMenu() {
+    setContextMenu(null)
+  }
+
+  async function handleRemoveFromHeat() {
+    if (!contextMenu?.entry?.swimresultId || selectedHeatId === null) return
+    const api = dbApi()
+    if (!api) return
+    await api.removeFromHeat(contextMenu.entry.swimresultId)
+    // Update local state: remove entry from this lane
+    setHeatData((prev) => {
+      const updated = (prev[selectedHeatId] ?? []).filter((e) => e.lane !== contextMenu.lane)
+      return { ...prev, [selectedHeatId]: updated }
+    })
+    closeContextMenu()
+  }
+
+  function handleAddLateEntry() {
+    if (!contextMenu || selectedHeatId === null) return
+    setLateEntryDialog({ lane: contextMenu.lane })
+    // Load athletes list
+    dbApi()?.getAthletes().then((aths: typeof athletes) => setAthletes(aths ?? []))
+    closeContextMenu()
+  }
+
+  async function confirmLateEntry(athleteId: number) {
+    if (!lateEntryDialog || selectedHeatId === null || !selectedEvent) return
+    const api = dbApi()
+    if (!api) return
+    const result = await api.addLateEntry(athleteId, selectedEvent.id, selectedHeatId, lateEntryDialog.lane, null)
+    if (result?.ok) {
+      // Find athlete info to add to local state
+      const ath = athletes.find((a) => a.id === athleteId)
+      if (ath) {
+        const newEntry: LaneEntry = {
+          swimresultId: result.swimresultId,
+          lane: lateEntryDialog.lane,
+          athleteId: ath.id,
+          lastName: ath.lastName,
+          firstName: ath.firstName,
+          birthYear: 2000,
+          nation: ath.nation ?? '',
+          clubCode: ath.clubCode ?? '',
+          clubName: '',
+          category: '',
+          entryTime: 'NT',
+        }
+        setHeatData((prev) => ({
+          ...prev,
+          [selectedHeatId!]: [...(prev[selectedHeatId!] ?? []), newEntry],
+        }))
+      }
+    }
+    setLateEntryDialog(null)
+    setLateSearchQuery('')
+  }
+
+  // ── Drag-and-drop handlers ─────────────────────────────────────────────────
+
+  function handleDragStart(e: React.DragEvent, heatId: number, lane: number, entry: LaneEntry) {
+    setDragSource({ heatId, lane, entry })
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', `${heatId}:${lane}`)
+  }
+
+  function handleDragOver(e: React.DragEvent, lane: number) {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    setDragOverLane(lane)
+  }
+
+  function handleDragLeave() {
+    setDragOverLane(null)
+  }
+
+  async function handleDrop(e: React.DragEvent, targetHeatId: number, targetLane: number, targetEntry: LaneEntry | null) {
+    e.preventDefault()
+    setDragOverLane(null)
+    if (!dragSource) return
+    const api = dbApi()
+    if (!api) return
+
+    const { heatId: srcHeatId, lane: srcLane, entry: srcEntry } = dragSource
+
+    // Don't drop on self
+    if (srcHeatId === targetHeatId && srcLane === targetLane) {
+      setDragSource(null)
+      return
+    }
+
+    if (targetEntry) {
+      // Swap two entries
+      await api.swapLanes(
+        srcEntry.swimresultId, srcHeatId, srcLane,
+        targetEntry.swimresultId, targetHeatId, targetLane
+      )
+      // Update local state
+      setHeatData((prev) => {
+        const next = { ...prev }
+        // Update source heat
+        next[srcHeatId] = (next[srcHeatId] ?? []).map((e) =>
+          e.swimresultId === srcEntry.swimresultId ? { ...targetEntry, lane: srcLane } : e
+        )
+        // Update target heat
+        if (srcHeatId === targetHeatId) {
+          next[targetHeatId] = next[targetHeatId].map((e) =>
+            e.swimresultId === targetEntry.swimresultId ? { ...srcEntry, lane: targetLane } : e
+          )
+        } else {
+          next[targetHeatId] = (next[targetHeatId] ?? []).map((e) =>
+            e.swimresultId === targetEntry.swimresultId ? { ...srcEntry, lane: targetLane } : e
+          )
+        }
+        return next
+      })
+    } else {
+      // Move to empty lane
+      await api.assignToHeatLane(srcEntry.swimresultId, targetHeatId, targetLane)
+      setHeatData((prev) => {
+        const next = { ...prev }
+        // Remove from source heat
+        next[srcHeatId] = (next[srcHeatId] ?? []).filter((e) => e.swimresultId !== srcEntry.swimresultId)
+        // Add to target heat
+        next[targetHeatId] = [...(next[targetHeatId] ?? []), { ...srcEntry, lane: targetLane }]
+        return next
+      })
+    }
+    setDragSource(null)
+  }
+
+  function handleDragEnd() {
+    setDragSource(null)
+    setDragOverLane(null)
   }
 
   // ── Generate heats handler ──────────────────────────────────────────────────
@@ -710,13 +864,18 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
                   {allLanes.map(({ lane, entry }) => {
                     const isSelected = lane === selectedLane
                     const isEmpty = !entry
+                    const isDragOver = dragOverLane === lane
 
                     if (isEmpty) {
                       return (
                         <tr
                           key={lane}
-                          className={`border-b border-gray-200 cursor-pointer select-none ${isSelected ? 'bg-blue-100' : 'bg-gray-50 hover:bg-blue-50'}`}
+                          className={`border-b border-gray-200 cursor-pointer select-none ${isDragOver ? 'bg-blue-200 ring-2 ring-blue-400 ring-inset' : isSelected ? 'bg-blue-100' : 'bg-gray-50 hover:bg-blue-50'}`}
                           onClick={() => setSelectedLane(lane)}
+                          onContextMenu={(e) => handleContextMenu(e, lane, null)}
+                          onDragOver={(e) => handleDragOver(e, lane)}
+                          onDragLeave={handleDragLeave}
+                          onDrop={(e) => handleDrop(e, selectedHeatId!, lane, null)}
                         >
                           <td className={`px-2 text-center font-mono font-bold border-r border-gray-200 ${isSelected ? 'text-blue-700' : 'text-gray-300'}`}>
                             {lane}
@@ -734,7 +893,9 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
                     const hasTime = !!entry.finalTime && !entry.status
                     const rank = rankOf(lane)
 
-                    const rowBg = isDsq
+                    const rowBg = isDragOver
+                      ? 'bg-blue-200 ring-2 ring-blue-400 ring-inset'
+                      : isDsq
                       ? 'bg-red-50'
                       : isDns
                       ? 'bg-gray-50 text-gray-400'
@@ -748,8 +909,15 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
                       <tr
                         key={lane}
                         className={`border-b border-gray-200 cursor-pointer select-none ${rowBg}`}
+                        draggable
                         onClick={() => setSelectedLane(lane)}
                         onDoubleClick={() => startEdit(lane)}
+                        onContextMenu={(e) => handleContextMenu(e, lane, entry)}
+                        onDragStart={(e) => handleDragStart(e, selectedHeatId!, lane, entry)}
+                        onDragEnd={handleDragEnd}
+                        onDragOver={(e) => handleDragOver(e, lane)}
+                        onDragLeave={handleDragLeave}
+                        onDrop={(e) => handleDrop(e, selectedHeatId!, lane, entry)}
                       >
                         <td className={`px-2 text-center font-mono font-bold border-r border-gray-200 ${isSelected ? 'text-blue-700' : 'text-gray-500'}`}>
                           {lane}
@@ -913,6 +1081,84 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
           </div>
         )}
       </div>
+
+      {/* ── Context menu ── */}
+      {contextMenu && (
+        <div
+          className="fixed inset-0 z-50"
+          onClick={closeContextMenu}
+          onContextMenu={(e) => { e.preventDefault(); closeContextMenu() }}
+        >
+          <div
+            className="absolute bg-white border border-gray-300 shadow-lg rounded py-1 text-xs min-w-[160px]"
+            style={{ left: contextMenu.x, top: contextMenu.y }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {contextMenu.entry ? (
+              <button
+                className="w-full text-left px-3 py-1 hover:bg-red-50 text-red-700"
+                onClick={handleRemoveFromHeat}
+              >
+                Retirer de la série
+              </button>
+            ) : (
+              <button
+                className="w-full text-left px-3 py-1 hover:bg-blue-50 text-blue-700"
+                onClick={handleAddLateEntry}
+              >
+                Ajouter inscription tardive…
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Late entry dialog ── */}
+      {lateEntryDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+          <div className="bg-white rounded shadow-xl w-96 max-h-[400px] flex flex-col">
+            <div className="px-4 py-2 border-b border-gray-200 font-medium text-sm">
+              Ajouter inscription tardive — DC {lateEntryDialog.lane}
+            </div>
+            <div className="px-4 py-2">
+              <input
+                autoFocus
+                className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
+                placeholder="Rechercher un athlète…"
+                value={lateSearchQuery}
+                onChange={(e) => setLateSearchQuery(e.target.value)}
+              />
+            </div>
+            <div className="flex-1 overflow-y-auto px-2 pb-2">
+              {athletes
+                .filter((a) => {
+                  if (!lateSearchQuery) return true
+                  const q = lateSearchQuery.toLowerCase()
+                  return a.lastName.toLowerCase().includes(q) || a.firstName.toLowerCase().includes(q) || (a.clubCode ?? '').toLowerCase().includes(q)
+                })
+                .slice(0, 50)
+                .map((a) => (
+                  <button
+                    key={a.id}
+                    className="w-full text-left px-2 py-1 text-xs hover:bg-blue-50 rounded flex justify-between"
+                    onClick={() => confirmLateEntry(a.id)}
+                  >
+                    <span className="font-medium">{a.lastName}, {a.firstName}</span>
+                    <span className="text-gray-400">{a.clubCode} {a.nation}</span>
+                  </button>
+                ))}
+            </div>
+            <div className="px-4 py-2 border-t border-gray-200 text-right">
+              <button
+                className="text-xs px-3 py-1 border border-gray-300 rounded hover:bg-gray-100"
+                onClick={() => { setLateEntryDialog(null); setLateSearchQuery('') }}
+              >
+                Annuler
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
