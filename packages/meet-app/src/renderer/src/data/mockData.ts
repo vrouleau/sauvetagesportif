@@ -80,7 +80,7 @@ export interface Heat {
   id: number
   eventId: number
   number: number
-  status: 'empty' | 'assigned' | 'completed'
+  status: 'empty' | 'assigned' | 'completed' | 'validated'
   entries: LaneEntry[]
 }
 

@@ -105,6 +105,14 @@ const api = {
       ipcRenderer.invoke('db:reorder-events', updates),
     generateHeats: (eventId?: number, sessionId?: number) =>
       ipcRenderer.invoke('db:generate-heats', eventId, sessionId),
+    validateEvent: (eventId: number) =>
+      ipcRenderer.invoke('db:validate-event', eventId),
+    invalidateEvent: (eventId: number) =>
+      ipcRenderer.invoke('db:invalidate-event', eventId),
+    validateSession: (sessionId: number) =>
+      ipcRenderer.invoke('db:validate-session', sessionId),
+    invalidateSession: (sessionId: number) =>
+      ipcRenderer.invoke('db:invalidate-session', sessionId),
     removeFromHeat: (swimresultId: number) =>
       ipcRenderer.invoke('db:remove-from-heat', swimresultId),
     assignToHeatLane: (swimresultId: number, heatId: number, lane: number) =>

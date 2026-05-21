@@ -22,6 +22,7 @@ import {
   getMeetInfo,
   getSwimStyles,
   reorderEvents,
+  validateEvent, invalidateEvent, validateSession, invalidateSession,
   type DbConfig,
   type SessionUpdate,
   type EventUpdate,
@@ -139,6 +140,42 @@ ipcMain.handle('db:generate-heats', async (_event, eventId?: number, sessionId?:
   try {
     const result = await generateHeats(eventId, sessionId)
     return { ok: true, ...result }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+})
+
+ipcMain.handle('db:validate-event', async (_event, eventId: number) => {
+  try {
+    await validateEvent(eventId)
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+})
+
+ipcMain.handle('db:invalidate-event', async (_event, eventId: number) => {
+  try {
+    await invalidateEvent(eventId)
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+})
+
+ipcMain.handle('db:validate-session', async (_event, sessionId: number) => {
+  try {
+    await validateSession(sessionId)
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+})
+
+ipcMain.handle('db:invalidate-session', async (_event, sessionId: number) => {
+  try {
+    await invalidateSession(sessionId)
+    return { ok: true }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
   }
