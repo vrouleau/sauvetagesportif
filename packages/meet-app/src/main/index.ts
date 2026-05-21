@@ -8,6 +8,7 @@ import {
   getHeatListEvents, getHeatListSessions, getSessions, getAthletes,
   saveResult,
   removeFromHeat, assignToHeatLane, swapLanes, addLateEntry,
+  getAvailableAthletesForEvent,
   createSession, deleteSession, updateSession,
   createBreak,
   createEvent, deleteEvent, updateEvent,
@@ -161,6 +162,10 @@ ipcMain.handle('db:swap-lanes', async (_event, resultIdA: number, heatIdA: numbe
 ipcMain.handle('db:add-late-entry', async (_event, athleteId: number, eventId: number, heatId: number, lane: number, entryTime: number | null) => {
   const id = await addLateEntry(athleteId, eventId, heatId, lane, entryTime)
   return { ok: true, swimresultId: id }
+})
+
+ipcMain.handle('db:available-athletes-for-event', async (_event, eventId: number) => {
+  return getAvailableAthletesForEvent(eventId)
 })
 
 ipcMain.handle('db:save-athlete', (_event, athlete: Parameters<typeof saveAthlete>[0]) =>

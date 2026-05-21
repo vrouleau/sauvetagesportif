@@ -113,6 +113,8 @@ const api = {
       ipcRenderer.invoke('db:swap-lanes', resultIdA, heatIdA, laneA, resultIdB, heatIdB, laneB),
     addLateEntry: (athleteId: number, eventId: number, heatId: number, lane: number, entryTime: number | null) =>
       ipcRenderer.invoke('db:add-late-entry', athleteId, eventId, heatId, lane, entryTime),
+    getAvailableAthletesForEvent: (eventId: number) =>
+      ipcRenderer.invoke('db:available-athletes-for-event', eventId),
     saveAthlete: (athlete: unknown) =>
       ipcRenderer.invoke('db:save-athlete', athlete),
     syncUp: () =>

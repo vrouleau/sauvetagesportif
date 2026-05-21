@@ -50,7 +50,7 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
   // Late entry dialog state
   const [lateEntryDialog, setLateEntryDialog] = useState<{ lane: number } | null>(null)
   const [lateSearchQuery, setLateSearchQuery] = useState('')
-  const [athletes, setAthletes] = useState<Array<{ id: number; lastName: string; firstName: string; clubCode: string; nation: string }>>([])
+  const [athletes, setAthletes] = useState<Array<{ id: number; lastName: string; firstName: string; clubCode: string; clubName: string; nation: string; entryTime: string | undefined }>>([])
 
   // Drag state
   const [dragSource, setDragSource] = useState<{ heatId: number; lane: number; entry: LaneEntry } | null>(null)
@@ -399,10 +399,10 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
   }
 
   function handleAddLateEntry() {
-    if (!contextMenu || selectedHeatId === null) return
+    if (!contextMenu || selectedHeatId === null || !selectedEvent) return
     setLateEntryDialog({ lane: contextMenu.lane })
-    // Load athletes list
-    dbApi()?.getAthletes().then((aths: typeof athletes) => setAthletes(aths ?? []))
+    // Load athletes not already seeded in this event
+    dbApi()?.getAvailableAthletesForEvent(selectedEvent.id).then((aths: typeof athletes) => setAthletes(aths ?? []))
     closeContextMenu()
   }
 
@@ -410,29 +410,26 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
     if (!lateEntryDialog || selectedHeatId === null || !selectedEvent) return
     const api = dbApi()
     if (!api) return
+    const ath = athletes.find((a) => a.id === athleteId)
     const result = await api.addLateEntry(athleteId, selectedEvent.id, selectedHeatId, lateEntryDialog.lane, null)
-    if (result?.ok) {
-      // Find athlete info to add to local state
-      const ath = athletes.find((a) => a.id === athleteId)
-      if (ath) {
-        const newEntry: LaneEntry = {
-          swimresultId: result.swimresultId,
-          lane: lateEntryDialog.lane,
-          athleteId: ath.id,
-          lastName: ath.lastName,
-          firstName: ath.firstName,
-          birthYear: 2000,
-          nation: ath.nation ?? '',
-          clubCode: ath.clubCode ?? '',
-          clubName: '',
-          category: '',
-          entryTime: 'NT',
-        }
-        setHeatData((prev) => ({
-          ...prev,
-          [selectedHeatId!]: [...(prev[selectedHeatId!] ?? []), newEntry],
-        }))
+    if (result?.ok && ath) {
+      const newEntry: LaneEntry = {
+        swimresultId: result.swimresultId,
+        lane: lateEntryDialog.lane,
+        athleteId: ath.id,
+        lastName: ath.lastName,
+        firstName: ath.firstName,
+        birthYear: 2000,
+        nation: ath.nation ?? '',
+        clubCode: ath.clubCode ?? '',
+        clubName: ath.clubName ?? '',
+        category: '',
+        entryTime: ath.entryTime ?? 'NT',
       }
+      setHeatData((prev) => ({
+        ...prev,
+        [selectedHeatId!]: [...(prev[selectedHeatId!] ?? []), newEntry],
+      }))
     }
     setLateEntryDialog(null)
     setLateSearchQuery('')
@@ -1134,7 +1131,7 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
                 .filter((a) => {
                   if (!lateSearchQuery) return true
                   const q = lateSearchQuery.toLowerCase()
-                  return a.lastName.toLowerCase().includes(q) || a.firstName.toLowerCase().includes(q) || (a.clubCode ?? '').toLowerCase().includes(q)
+                  return a.lastName.toLowerCase().includes(q) || a.firstName.toLowerCase().includes(q) || (a.clubCode ?? '').toLowerCase().includes(q) || (a.clubName ?? '').toLowerCase().includes(q)
                 })
                 .slice(0, 50)
                 .map((a) => (
@@ -1144,7 +1141,7 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
                     onClick={() => confirmLateEntry(a.id)}
                   >
                     <span className="font-medium">{a.lastName}, {a.firstName}</span>
-                    <span className="text-gray-400">{a.clubCode} {a.nation}</span>
+                    <span className="text-gray-400">{a.clubName || a.clubCode} {a.entryTime ?? 'NT'}</span>
                   </button>
                 ))}
             </div>

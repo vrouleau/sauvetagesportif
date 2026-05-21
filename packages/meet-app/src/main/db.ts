@@ -632,6 +632,42 @@ export async function saveResult(
 
 // ── Write: heat lane management ───────────────────────────────────────────────
 
+/** Get athletes available for late entry in a specific event (not already seeded in any heat) */
+export async function getAvailableAthletesForEvent(eventId: number): Promise<Array<{
+  id: number; lastName: string; firstName: string; clubCode: string; clubName: string; nation: string; entryTime: string | undefined
+}>> {
+  const db = getLocalDb()
+  // Athletes who have an entry for this event but are NOT assigned to a heat,
+  // OR athletes who have no entry at all for this event (truly late arrivals)
+  const rows = db.prepare(`
+    SELECT a.athleteid, a.firstname, a.lastname, a.nation,
+           c.code AS clubcode, c.name AS clubname,
+           r.entrytime
+    FROM athlete a
+    LEFT JOIN club c ON a.clubid = c.clubid
+    LEFT JOIN swimresult r ON r.athleteid = a.athleteid AND r.swimeventid = ?
+    WHERE a.athleteid NOT IN (
+      SELECT sr.athleteid FROM swimresult sr
+      WHERE sr.swimeventid = ? AND sr.heatid IS NOT NULL
+    )
+    ORDER BY a.lastname, a.firstname
+  `).all(eventId, eventId) as Array<{
+    athleteid: number; firstname: string | null; lastname: string | null
+    nation: string | null; clubcode: string | null; clubname: string | null
+    entrytime: number | null
+  }>
+
+  return rows.map(r => ({
+    id: r.athleteid,
+    lastName: r.lastname ?? '',
+    firstName: r.firstname ?? '',
+    clubCode: r.clubcode ?? '',
+    clubName: r.clubname ?? '',
+    nation: r.nation ?? '',
+    entryTime: msToDisplay(r.entrytime),
+  }))
+}
+
 /** Remove an entry from its heat/lane (unseed it, don't delete the entry) */
 export async function removeFromHeat(swimresultId: number): Promise<void> {
   const db = getLocalDb()
