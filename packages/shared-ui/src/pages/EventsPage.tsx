@@ -191,7 +191,7 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
     api.getSessions().then((sessions) => {
       setLocalSessions(sessions)
 
-      // Restore expanded state from sessionStorage, or expand all by default on first load
+      // Restore expanded state from sessionStorage, or start collapsed on first load
       const storedSessions = sessionStorage.getItem('eventsPage_expandedSessions')
       const storedEvents = sessionStorage.getItem('eventsPage_expandedEvents')
 
@@ -199,18 +199,9 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
         setExpandedSessions(new Set(JSON.parse(storedSessions)))
         setExpandedEvents(new Set(JSON.parse(storedEvents)))
       } else {
-        const defaultExpandedSessions = new Set<number>()
-        const defaultExpandedEvents = new Set<number>()
-        for (const session of sessions) {
-          for (const event of session.events) {
-            if (event.ageGroups.length > 0) {
-              defaultExpandedSessions.add(session.id)
-              defaultExpandedEvents.add(event.id)
-            }
-          }
-        }
-        setExpandedSessions(defaultExpandedSessions)
-        setExpandedEvents(defaultExpandedEvents)
+        // Start with all sessions/events collapsed by default
+        setExpandedSessions(new Set())
+        setExpandedEvents(new Set())
       }
 
       setLoading(false)

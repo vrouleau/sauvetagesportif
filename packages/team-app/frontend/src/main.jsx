@@ -5,6 +5,7 @@ import './index.css'
 import { LangProvider, useLang } from './i18n'
 import Login from './pages/Login'
 import EventsPageShared from '@shared/pages/EventsPage'
+import InscriptionPageShared from '@shared/pages/InscriptionPage'
 import { ApiProvider } from '@shared/context/ApiContext'
 import { LangProvider as SharedLangProvider } from '@shared/context/LangContext'
 import { RegistrationApiProvider } from '@shared/context/RegistrationApiContext'
@@ -45,6 +46,21 @@ function AthletesListPage({ role, clubId }) {
           role={role}
           clubId={clubId}
           onNavigateToRegistration={(id) => navigate(`/athletes/${id}/register`)}
+        />
+      </RegistrationApiProvider>
+    </SharedLangProvider>
+  )
+}
+
+// Wrap the shared InscriptionPage (new cascade tree layout)
+function InscriptionPage({ role, clubId }) {
+  const { lang } = useLang()
+  return (
+    <SharedLangProvider initialLang={lang}>
+      <RegistrationApiProvider api={registrationApiHttp}>
+        <InscriptionPageShared
+          role={role}
+          clubId={clubId}
         />
       </RegistrationApiProvider>
     </SharedLangProvider>
@@ -180,7 +196,7 @@ function AppInner() {
     <BrowserRouter>
       <AuthLayout canOrganizer={canOrganizer} canAdmin={canAdmin} meetName={meetName} toggle={toggle} lang={lang} logout={logout} auth={auth} t={t}>
         <Routes>
-          <Route path="/" element={<AthletesListPage role={auth.role} clubId={auth.club_id} />} />
+          <Route path="/" element={<InscriptionPage role={auth.role} clubId={auth.club_id} />} />
           <Route path="/athletes/:id/register" element={<RegisterPage />} />
           {canOrganizer && <Route path="/meet" element={<EventsPage />} />}
           {canOrganizer && <Route path="/invitation" element={<Organizer />} />}

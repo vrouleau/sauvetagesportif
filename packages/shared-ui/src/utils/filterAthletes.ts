@@ -1,0 +1,51 @@
+import type { AthleteListItem } from '../data/api'
+
+/**
+ * Filters athletes across all clubs by a case-insensitive substring match
+ * on their full name (first_name + ' ' + last_name).
+ *
+ * Returns the filtered map (only clubs with matching athletes) and a set of
+ * club IDs that should be auto-expanded in the cascade tree.
+ */
+export function filterAthletes(
+  athletesByClub: Map<number, AthleteListItem[]>,
+  filterText: string
+): { filtered: Map<number, AthleteListItem[]>; autoExpandClubs: Set<number> } {
+  if (!filterText) {
+    return { filtered: athletesByClub, autoExpandClubs: new Set() }
+  }
+
+  const needle = filterText.toLowerCase()
+  const filtered = new Map<number, AthleteListItem[]>()
+  const autoExpandClubs = new Set<number>()
+
+  for (const [clubId, athletes] of athletesByClub) {
+    const matching = athletes.filter(
+      (a) => `${a.first_name} ${a.last_name}`.toLowerCase().includes(needle)
+    )
+    if (matching.length > 0) {
+      filtered.set(clubId, matching)
+      autoExpandClubs.add(clubId)
+    }
+  }
+
+  return { filtered, autoExpandClubs }
+}
+
+/**
+ * Determines which clubs should be visually expanded in the cascade tree.
+ *
+ * When a filter is active, auto-expanded clubs (those with matching athletes)
+ * override the manual expansion state. When no filter is active, the manual
+ * expansion state is used.
+ */
+export function computeVisibleExpansion(
+  expandedClubs: Set<number>,
+  autoExpandClubs: Set<number>,
+  filterText: string
+): Set<number> {
+  if (filterText) {
+    return autoExpandClubs
+  }
+  return expandedClubs
+}

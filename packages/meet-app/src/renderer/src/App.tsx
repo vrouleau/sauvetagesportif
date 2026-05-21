@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import EventsPage from './pages/EventsPage'
 import HeatsPage from './pages/HeatsPage'
-import AthletesPageWrapper from './pages/AthletesPageWrapper'
+import InscriptionPageWrapper from './pages/InscriptionPageWrapper'
 import ReportPage from './pages/ReportPage'
 import { DbConfigDialog } from './components/DbConfigDialog'
 import { competition } from './data/mockData'
@@ -435,7 +435,7 @@ function AppInner() {
       {/* Page content */}
       <div className="flex-1 overflow-hidden">
         {page === 'events' && <EventsPage refreshKey={refreshKey} />}
-        {page === 'inscription' && <AthletesPageWrapper refreshKey={refreshKey} />}
+        {page === 'inscription' && <InscriptionPageWrapper refreshKey={refreshKey} />}
         {page === 'heats' && <HeatsPage refreshKey={refreshKey} />}
         {page === 'report' && <ReportPage refreshKey={refreshKey} />}
       </div>

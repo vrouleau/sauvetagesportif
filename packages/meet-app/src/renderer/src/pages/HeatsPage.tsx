@@ -57,8 +57,8 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
       const state: HeatState = {}
       sess.forEach((s) => s.events.forEach((ev) => ev.heats.forEach((h) => { state[h.id] = h.entries.map((e) => ({ ...e })) })))
       setHeatData(state)
-      // Expand all sessions by default
-      setExpandedSessions(new Set(sess.map(s => s.id)))
+      // Start with all sessions collapsed by default
+      setExpandedSessions(new Set())
       setLoading(false)
     }).catch(() => setLoading(false))
   }, [refreshKey])
