@@ -337,11 +337,31 @@ async def upload_meet_smb(file: UploadFile = File(...), db: Session = Depends(ge
     if len(content) > 20 * 1024 * 1024:
         raise HTTPException(413, "File too large (max 20MB)")
 
-    from ..smb import read_smb
+    from ..smb import read_smb, D_NULL_SENTINEL
     try:
         tables = read_smb(content)
     except Exception as e:
         raise HTTPException(400, f"Invalid .smb file: {e}")
+
+    def ole_to_datetime(val):
+        """Convert OLE Automation date double to Python datetime, or None."""
+        if val is None:
+            return None
+        if not isinstance(val, (int, float)):
+            return None
+        if val == D_NULL_SENTINEL:
+            return None
+        # OLE date: integer part = days since 1899-12-30, fractional = time of day
+        # For Splash meet events, the date part is the null sentinel (-36522 = 1800-01-01)
+        # and only the fractional part (time) matters
+        frac = abs(val) % 1
+        if frac == 0:
+            return None
+        total_minutes = round(frac * 24 * 60)
+        hours = total_minutes // 60
+        minutes = total_minutes % 60
+        # Store as a datetime with dummy date (matching meet-app convention)
+        return datetime(2000, 1, 1, hours, minutes, 0)
 
     # Validate required tables
     if "SWIMSESSION" not in tables or "SWIMEVENT" not in tables:
@@ -386,8 +406,13 @@ async def upload_meet_smb(file: UploadFile = File(...), db: Session = Depends(ge
             sessionnumber=row.get("sessionnumber"),
             name=row.get("name"),
             course=row.get("course"),
+            daytime=ole_to_datetime(row.get("daytime")),
+            endtime=ole_to_datetime(row.get("endtime")),
             lanemin=row.get("lanemin"),
             lanemax=row.get("lanemax"),
+            warmupfrom=ole_to_datetime(row.get("warmupfrom")),
+            warmupuntil=ole_to_datetime(row.get("warmupuntil")),
+            officialmeeting=ole_to_datetime(row.get("officialmeeting")),
         )
         db.add(session)
         session_id_map[sid] = sid
@@ -409,6 +434,9 @@ async def upload_meet_smb(file: UploadFile = File(...), db: Session = Depends(ge
             gender=row.get("gender"),
             round=row.get("round"),
             sortcode=row.get("sortcode"),
+            daytime=ole_to_datetime(row.get("daytime")),
+            duration=ole_to_datetime(row.get("duration")),
+            comment=row.get("comment"),
             internalevent=row.get("internalevent"),
             roundname=row.get("roundname"),
             masters=row.get("masters"),

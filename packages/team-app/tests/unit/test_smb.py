@@ -362,3 +362,192 @@ class TestSmbReadWrite:
         raw = smb_path.read_bytes()
         tables = read_smb(BytesIO(raw))
         assert len(tables["SWIMSTYLE"]) == len(SWIMSTYLE_ROWS)
+
+
+# ── Tests: OLE date handling for pause events ──────────────────────────────────
+
+class TestOleDateDecoding:
+    """Verify OLE Automation date values are decoded correctly from gbin."""
+
+    SWIMEVENT_COLS = [
+        ColDef("swimeventid", "I", 32),
+        ColDef("comment", "M", 0),
+        ColDef("daytime", "D", 32),
+        ColDef("duration", "D", 32),
+        ColDef("eventnumber", "I", 16),
+        ColDef("gender", "I", 16),
+        ColDef("round", "I", 16),
+        ColDef("sortcode", "I", 32),
+        ColDef("swimsessionid", "I", 32),
+        ColDef("swimstyleid", "I", 32),
+        ColDef("internalevent", "S", 1),
+        ColDef("roundname", "S", 50),
+    ]
+
+    def test_pause_event_with_ole_daytime(self):
+        """A pause event with OLE daytime -36522.3125 decodes to 7:30 time fraction."""
+        rows = [{
+            "swimeventid": 4532,
+            "comment": "huis clos/lock up",
+            "daytime": -36522.3125,  # 0.3125 * 24 = 7.5h = 7:30
+            "duration": None,
+            "eventnumber": None,
+            "gender": None,
+            "round": 11,
+            "sortcode": 66,
+            "swimsessionid": 1058,
+            "swimstyleid": None,
+            "internalevent": "F",
+            "roundname": None,
+        }]
+        encoded = encode_gbin(self.SWIMEVENT_COLS, rows)
+        _, decoded = decode_gbin(encoded)
+
+        assert len(decoded) == 1
+        row = decoded[0]
+        # The raw OLE double should be preserved
+        assert row["daytime"] == pytest.approx(-36522.3125)
+        # Pause fields
+        assert row["comment"] == "huis clos/lock up"
+        assert row["swimstyleid"] is None
+        assert row["internalevent"] == "F"
+        assert row["roundname"] is None
+
+    def test_ole_daytime_null_sentinel_is_none(self):
+        """OLE date exactly equal to null sentinel (-36522.0) decodes as None."""
+        rows = [{
+            "swimeventid": 1,
+            "comment": None,
+            "daytime": None,  # Will encode as -36522.0 with null flag
+            "duration": None,
+            "eventnumber": 1,
+            "gender": 1,
+            "round": 5,
+            "sortcode": 1,
+            "swimsessionid": 100,
+            "swimstyleid": 101,
+            "internalevent": "F",
+            "roundname": None,
+        }]
+        encoded = encode_gbin(self.SWIMEVENT_COLS, rows)
+        _, decoded = decode_gbin(encoded)
+
+        assert decoded[0]["daytime"] is None
+
+    def test_ole_daytime_various_times(self):
+        """Various OLE time fractions decode to expected values."""
+        # 0.25 = 6:00, 0.5 = 12:00, 0.75 = 18:00, 0.333... ≈ 8:00
+        test_cases = [
+            (-36522.25, 0.25),      # 6:00
+            (-36522.5, 0.5),        # 12:00
+            (-36522.75, 0.75),      # 18:00
+            (-36522.3125, 0.3125),  # 7:30
+            (-36522.666666666667, 0.666666666667),  # ~16:00
+        ]
+        for ole_val, expected_frac in test_cases:
+            rows = [{
+                "swimeventid": 1,
+                "comment": "test",
+                "daytime": ole_val,
+                "duration": None,
+                "eventnumber": None,
+                "gender": None,
+                "round": 11,
+                "sortcode": 1,
+                "swimsessionid": 100,
+                "swimstyleid": None,
+                "internalevent": "F",
+                "roundname": None,
+            }]
+            encoded = encode_gbin(self.SWIMEVENT_COLS, rows)
+            _, decoded = decode_gbin(encoded)
+
+            # The fractional part should be preserved
+            actual_frac = abs(decoded[0]["daytime"]) % 1
+            assert actual_frac == pytest.approx(expected_frac, abs=1e-6), (
+                f"OLE {ole_val}: expected frac {expected_frac}, got {actual_frac}"
+            )
+
+    def test_pause_event_roundtrip_through_smb(self, tmp_path):
+        """Pause events with OLE daytime survive full SMB write→read cycle."""
+        table_data = {
+            "SWIMEVENT": (self.SWIMEVENT_COLS, [
+                {
+                    "swimeventid": 100,
+                    "comment": "Remise des prix",
+                    "daytime": -36522.375,  # 9:00
+                    "duration": None,
+                    "eventnumber": None,
+                    "gender": None,
+                    "round": 11,
+                    "sortcode": 5,
+                    "swimsessionid": 1,
+                    "swimstyleid": None,
+                    "internalevent": "F",
+                    "roundname": None,
+                },
+                {
+                    "swimeventid": 101,
+                    "comment": None,
+                    "daytime": -36522.333333333336,  # 8:00
+                    "duration": None,
+                    "eventnumber": 1,
+                    "gender": 1,
+                    "round": 5,
+                    "sortcode": 1,
+                    "swimsessionid": 1,
+                    "swimstyleid": 50,
+                    "internalevent": "F",
+                    "roundname": None,
+                },
+            ]),
+        }
+        smb_path = tmp_path / "pause_test.smb"
+        write_smb(smb_path, table_data)
+        tables = read_smb(smb_path)
+
+        events = tables["SWIMEVENT"]
+        assert len(events) == 2
+
+        # Pause event
+        pause = next(e for e in events if e["swimeventid"] == 100)
+        assert pause["comment"] == "Remise des prix"
+        assert pause["swimstyleid"] is None
+        assert pause["daytime"] == pytest.approx(-36522.375)
+
+        # Regular event
+        regular = next(e for e in events if e["swimeventid"] == 101)
+        assert regular["swimstyleid"] == 50
+        assert regular["daytime"] == pytest.approx(-36522.333333333336, rel=1e-9)
+
+
+class TestOleDateConversion:
+    """Test the OLE date to time conversion logic used by the import endpoints."""
+
+    def test_ole_to_time_fractions(self):
+        """Verify OLE fractional day converts to correct hours:minutes."""
+        from app.smb import D_NULL_SENTINEL
+
+        def ole_to_time(val):
+            """Replicate the conversion logic from the API endpoint."""
+            if val is None or val == D_NULL_SENTINEL:
+                return None
+            frac = abs(val) % 1
+            if frac == 0:
+                return None
+            total_minutes = round(frac * 24 * 60)
+            hours = total_minutes // 60
+            minutes = total_minutes % 60
+            return f"{hours}:{minutes:02d}"
+
+        assert ole_to_time(-36522.3125) == "7:30"
+        assert ole_to_time(-36522.25) == "6:00"
+        assert ole_to_time(-36522.5) == "12:00"
+        assert ole_to_time(-36522.75) == "18:00"
+        assert ole_to_time(-36522.375) == "9:00"
+        assert ole_to_time(-36522.333333333336) == "8:00"
+        assert ole_to_time(-36522.291666666664) == "7:00"
+        assert ole_to_time(-36522.270833333336) == "6:30"
+        assert ole_to_time(None) == None
+        assert ole_to_time(-36522.0) == None  # null sentinel, no time
+        assert ole_to_time(0.0) == None  # zero, no fractional time

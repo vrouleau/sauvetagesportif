@@ -123,11 +123,31 @@ function encodeResultStatus(s: 'DNS' | 'DNF' | 'DSQ' | null | undefined): number
   return null
 }
 
-function formatDaytime(d: string | null): string | undefined {
-  if (!d) return undefined
+function formatDaytime(d: string | number | null): string | undefined {
+  if (d == null) return undefined
+  // If it's a number (OLE Automation date from SMB import), convert fractional part to time
+  if (typeof d === 'number') {
+    const frac = Math.abs(d) % 1
+    if (frac === 0) return undefined
+    const totalMinutes = Math.round(frac * 24 * 60)
+    const hours = Math.floor(totalMinutes / 60)
+    const minutes = totalMinutes % 60
+    return `${hours}:${String(minutes).padStart(2, '0')}`
+  }
+  const str = String(d)
   // SQLite stores as text "2000-01-01 HH:MM:00" or ISO string
-  const match = d.match(/(\d{2}):(\d{2})/)
+  const match = str.match(/(\d{2}):(\d{2})/)
   if (match) return `${parseInt(match[1])}:${match[2]}`
+  // Could be a stringified OLE double (e.g. "-36522.3125")
+  const num = parseFloat(str)
+  if (!isNaN(num)) {
+    const frac = Math.abs(num) % 1
+    if (frac === 0) return undefined
+    const totalMinutes = Math.round(frac * 24 * 60)
+    const hours = Math.floor(totalMinutes / 60)
+    const minutes = totalMinutes % 60
+    return `${hours}:${String(minutes).padStart(2, '0')}`
+  }
   return undefined
 }
 
@@ -274,7 +294,7 @@ export async function getHeatListSessions(): Promise<HeatListSessionRow[]> {
 
   const sessions = db.prepare(
     `SELECT swimsessionid, sessionnumber, name, daytime, lanemin, lanemax FROM swimsession ORDER BY sessionnumber`
-  ).all() as Array<{ swimsessionid: number; sessionnumber: number | null; name: string | null; daytime: string | null; lanemin: number | null; lanemax: number | null }>
+  ).all() as Array<{ swimsessionid: number; sessionnumber: number | null; name: string | null; daytime: string | number | null; lanemin: number | null; lanemax: number | null }>
 
   if (sessions.length === 0) return []
   const sessionIds = sessions.map(r => r.swimsessionid)
@@ -282,7 +302,7 @@ export async function getHeatListSessions(): Promise<HeatListSessionRow[]> {
 
   const events = db.prepare(`
     SELECT e.swimeventid, e.swimsessionid, e.eventnumber, e.gender, e.round, e.sortcode, e.daytime, e.internalevent,
-           e.roundname, e.swimstyleid,
+           e.roundname, e.comment, e.swimstyleid,
            ss.distance, ss.stroke, ss.name AS stylename
     FROM swimevent e
     LEFT JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid
@@ -290,9 +310,9 @@ export async function getHeatListSessions(): Promise<HeatListSessionRow[]> {
     ORDER BY e.swimsessionid, e.sortcode, e.swimeventid
   `).all(...sessionIds) as Array<{
     swimeventid: number; swimsessionid: number; eventnumber: number | null; gender: number | null
-    round: number | null; sortcode: number | null; daytime: string | null
+    round: number | null; sortcode: number | null; daytime: string | number | null
     internalevent: string | null; distance: number | null; stroke: number | null
-    stylename: string | null; roundname: string | null; swimstyleid: number | null
+    stylename: string | null; roundname: string | null; comment: string | null; swimstyleid: number | null
   }>
 
   if (events.length === 0) return sessions.map(s => ({
@@ -399,7 +419,7 @@ export async function getHeatListSessions(): Promise<HeatListSessionRow[]> {
   for (const e of events) {
     if (!evMap.has(e.swimsessionid)) evMap.set(e.swimsessionid, [])
     const isAdm = e.internalevent === 'T' || e.swimstyleid == null
-    const name = isAdm ? (e.roundname || 'Pause') : eventName(e.stylename, e.stroke)
+    const name = isAdm ? (e.comment || 'Pause') : eventName(e.stylename, e.stroke)
     evMap.get(e.swimsessionid)!.push({
       id: e.swimeventid,
       number: e.eventnumber ?? 0,
@@ -438,10 +458,10 @@ export async function getSessions(): Promise<SessionRow[]> {
     FROM swimsession ORDER BY sessionnumber
   `).all() as Array<{
     swimsessionid: number; sessionnumber: number | null; name: string | null
-    daytime: string | null; endtime: string | null; course: number | null
+    daytime: string | number | null; endtime: string | number | null; course: number | null
     lanemin: number | null; lanemax: number | null
-    warmupfrom: string | null; warmupuntil: string | null
-    officialmeeting: string | null
+    warmupfrom: string | number | null; warmupuntil: string | number | null
+    officialmeeting: string | number | null
     remarks: string | null; remarksjury: string | null
     maxentriesathlete: number | null; maxentriesrelay: number | null
     feeathlete: number | null; timing: number | null; touchpadmode: number | null
@@ -454,7 +474,7 @@ export async function getSessions(): Promise<SessionRow[]> {
 
   const events = db.prepare(`
     SELECT e.swimeventid, e.swimsessionid, e.eventnumber, e.gender, e.round,
-           e.internalevent, e.daytime, e.duration, e.roundname AS eventname, e.swimstyleid,
+           e.internalevent, e.daytime, e.duration, e.roundname AS eventname, e.comment, e.swimstyleid,
            ss.distance, ss.stroke, ss.name AS stylename
     FROM swimevent e
     LEFT JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid
@@ -464,7 +484,8 @@ export async function getSessions(): Promise<SessionRow[]> {
     swimeventid: number; swimsessionid: number; eventnumber: number | null
     gender: number | null; round: number | null; distance: number | null
     stroke: number | null; stylename: string | null; swimstyleid: number | null
-    internalevent: string | null; daytime: string | null; duration: string | null; eventname: string | null
+    internalevent: string | null; daytime: string | number | null; duration: string | number | null
+    eventname: string | null; comment: string | null
   }>
 
   const eventIds = events.map(r => r.swimeventid)
@@ -503,7 +524,7 @@ export async function getSessions(): Promise<SessionRow[]> {
   for (const e of events) {
     if (!evMap.has(e.swimsessionid)) evMap.set(e.swimsessionid, [])
     const isAdm = e.internalevent === 'T' || e.swimstyleid == null
-    const name = isAdm ? (e.eventname || 'Pause') : eventName(e.stylename, e.stroke)
+    const name = isAdm ? (e.comment || 'Pause') : eventName(e.stylename, e.stroke)
     evMap.get(e.swimsessionid)!.push({
       id: e.swimeventid, sessionId: e.swimsessionid, number: e.eventnumber ?? 0,
       nameFr: name, nameEn: name,
@@ -801,10 +822,10 @@ export async function createBreak(
   db.prepare(
     `INSERT INTO swimevent
        (swimeventid, swimsessionid, eventnumber, gender, round, sortcode,
-        internalevent, splashmecanedit, masters, pfineignore, seedbonuslast,
-        seedexhlast, seedlateentrylast, seedingglobal, twoperlane, combineagegroups, roundname)
-     VALUES (?, ?, ?, 3, 5, ?,
-             'T','F','F','F','F','F','F','F','F','F', ?)`
+        splashmecanedit, masters, pfineignore, seedbonuslast,
+        seedexhlast, seedlateentrylast, seedingglobal, twoperlane, combineagegroups, comment)
+     VALUES (?, ?, ?, NULL, 11, ?,
+             'F','F','F','F','F','F','F','F','F', ?)`
   ).run(id, sessionId, eventnumber, sortcode, name)
   return id
 }
@@ -1879,6 +1900,7 @@ export interface EventUpdate {
   duration?: string | null
   masters?: boolean
   roundname?: string | null
+  comment?: string | null
 }
 
 export async function updateEvent(eventId: number, data: EventUpdate): Promise<void> {
@@ -1902,6 +1924,7 @@ export async function updateEvent(eventId: number, data: EventUpdate): Promise<v
   }
   if (data.masters !== undefined) { sets.push('masters=?'); vals.push(data.masters ? 'T' : 'F') }
   if (data.roundname !== undefined) { sets.push('roundname=?'); vals.push(data.roundname) }
+  if (data.comment !== undefined) { sets.push('comment=?'); vals.push(data.comment) }
 
   if (sets.length === 0) return
   vals.push(eventId)

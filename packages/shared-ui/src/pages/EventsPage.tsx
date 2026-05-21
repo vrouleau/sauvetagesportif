@@ -616,6 +616,7 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
         if (key === 'daytime') localUpdate.scheduledTime = val as string | undefined
         else if (key === 'duration') localUpdate.duration = val as string | undefined
         else if (key === 'roundname') { localUpdate.nameFr = val as string; localUpdate.nameEn = val as string }
+        else if (key === 'comment') { localUpdate.nameFr = val as string; localUpdate.nameEn = val as string }
         else if (key === 'eventnumber') localUpdate.number = val as number
       }
       // Update local state
@@ -1364,7 +1365,7 @@ function PausePropertiesPanel({ event, onUpdate }: { event: CompetitionEvent; on
                 className="w-full border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
                 value={pauseName}
                 onChange={(e) => setPauseName(e.target.value)}
-                onBlur={() => save({ roundname: pauseName })}
+                onBlur={() => save({ comment: pauseName })}
                 onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
               />
             </td>
