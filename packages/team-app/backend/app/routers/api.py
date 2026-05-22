@@ -1894,6 +1894,9 @@ def export_entries_lxf(db: Session = Depends(get_db)):
 @router.get("/export/meet-smb", dependencies=[Depends(require_organizer_or_admin)])
 def export_meet_smb():
     smb_storage = Path(os.environ.get("MEET_STORAGE", "/app/data/meet.lxf")).parent / "meet.smb"
+    # Fall back to the read-only template if no uploaded SMB exists yet
+    if not smb_storage.exists():
+        smb_storage = MEET_TEMPLATE
     if not smb_storage.exists():
         raise HTTPException(404, "No SMB backup available")
     return Response(
