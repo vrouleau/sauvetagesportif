@@ -18,6 +18,7 @@ from ..database import get_db
 from pydantic import BaseModel, Field, field_validator
 from ..models import (
     Club, Athlete, SwimEvent, SwimStyle, SwimSession, AgeGroup, SwimResult, BsGlobal, SecretLink,
+    Heat, Split,
     gender_to_str, gender_from_str, fee_dollars_to_cents, fee_cents_to_dollars,
     GENDER_M, GENDER_F, ROUND_FIN, ROUND_TIM, ROUND_PRE,
 )
@@ -34,7 +35,7 @@ router = APIRouter(prefix="/api")
 _audit = logging.getLogger("audit")
 
 MEET_STORAGE = Path(os.environ.get("MEET_STORAGE", "/app/data/meet.lxf"))
-MEET_TEMPLATE = Path(os.environ.get("MEET_TEMPLATE", "/app/templates/meet.smb"))
+MEET_TEMPLATE = Path(os.environ.get("MEET_TEMPLATE", "/app/data/meet.smb"))
 _DEFAULT_ADMIN_PIN = os.environ.get("ADMIN_PIN", "000000")
 _BEST_TIME_MAX_AGE_MONTHS = int(os.environ.get("BEST_TIME_MAX_AGE_MONTHS", "18"))
 
@@ -397,7 +398,9 @@ async def upload_meet_smb(file: UploadFile = File(...), db: Session = Depends(ge
         raise HTTPException(400, "SMB file missing required tables (SWIMSESSION, SWIMEVENT)")
 
     # Wipe existing event structure and registrations
+    db.query(Split).delete()
     db.query(SwimResult).delete()
+    db.query(Heat).delete()
     db.query(AgeGroup).delete()
     db.query(SwimEvent).delete()
     db.query(SwimSession).delete()

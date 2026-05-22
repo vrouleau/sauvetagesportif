@@ -1233,7 +1233,7 @@ class TestSmbUploadNormalization:
                 headers=admin_headers,
                 timeout=60,
             )
-        r.raise_for_status()
+        assert r.status_code == 200, f"SMB upload failed ({r.status_code}): {r.text}"
         return r.json()
 
     def test_smb_upload_succeeds(self, smb_uploaded):

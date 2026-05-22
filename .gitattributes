@@ -1,0 +1,6 @@
+# Binary files — prevent line-ending conversion
+*.smb binary
+*.lxf binary
+*.mdb binary
+*.ico binary
+*.png binary
