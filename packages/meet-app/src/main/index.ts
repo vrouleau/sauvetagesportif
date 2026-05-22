@@ -337,6 +337,7 @@ function escHtml(s: string): string {
 }
 
 function buildHeaderTemplate(h: PdfHeaderInfo): string {
+  if (!h.line1 && !h.line2) return '<span></span>'
   return `<div style="width:100%;font-family:Arial,Helvetica,sans-serif;font-size:10pt;` +
     `text-align:center;padding:0 0.6in 4pt;box-sizing:border-box;` +
     `border-bottom:1px solid black;line-height:1.5">` +
@@ -356,13 +357,18 @@ async function htmlToPdfBuffer(html: string, h: PdfHeaderInfo): Promise<Buffer> 
   const hidden = new BrowserWindow({ show: false, webPreferences: { sandbox: false } })
   try {
     await hidden.loadFile(tmpPath)
+    const useHeader = !!(h.line1 || h.line2)
     const pdf = await hidden.webContents.printToPDF({
       pageSize: 'Letter',
       printBackground: false,
-      margins: { marginType: 'custom', top: 1.1, bottom: 0.65, left: 0.6, right: 0.6 },
-      displayHeaderFooter: true,
-      headerTemplate: buildHeaderTemplate(h),
-      footerTemplate: buildFooterTemplate(h),
+      margins: useHeader
+        ? { marginType: 'custom', top: 1.1, bottom: 0.65, left: 0.6, right: 0.6 }
+        : { marginType: 'custom', top: 0.4, bottom: 0.5, left: 0.6, right: 0.6 },
+      displayHeaderFooter: useHeader,
+      ...(useHeader ? {
+        headerTemplate: buildHeaderTemplate(h),
+        footerTemplate: buildFooterTemplate(h),
+      } : {}),
     })
     return Buffer.from(pdf)
   } finally {
@@ -377,15 +383,20 @@ async function printHtml(html: string, h: PdfHeaderInfo): Promise<void> {
   const hidden = new BrowserWindow({ show: false, webPreferences: { sandbox: false } })
   try {
     await hidden.loadFile(tmpPath)
+    const useHeader = !!(h.line1 || h.line2)
     await new Promise<void>((resolve, reject) => {
       hidden.webContents.print({
         silent: false,
         printBackground: false,
         pageSize: 'Letter',
-        margins: { marginType: 'custom', top: 1.1, bottom: 0.65, left: 0.6, right: 0.6 },
-        displayHeaderFooter: true,
-        headerTemplate: buildHeaderTemplate(h),
-        footerTemplate: buildFooterTemplate(h),
+        margins: useHeader
+          ? { marginType: 'custom', top: 1.1, bottom: 0.65, left: 0.6, right: 0.6 }
+          : { marginType: 'custom', top: 0.4, bottom: 0.5, left: 0.6, right: 0.6 },
+        displayHeaderFooter: useHeader,
+        ...(useHeader ? {
+          headerTemplate: buildHeaderTemplate(h),
+          footerTemplate: buildFooterTemplate(h),
+        } : {}),
       }, (success, errType) => {
         if (success) resolve()
         else reject(new Error(errType ?? 'print-error'))

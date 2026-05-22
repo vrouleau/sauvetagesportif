@@ -39,6 +39,8 @@ interface ReportEventSection {
   heats: HeatListEventRow['heats']
 }
 
+type ReportType = 'heatList' | 'startList'
+
 // ── HTML generator ────────────────────────────────────────────────────────────
 
 function esc(s: string): string {
@@ -90,9 +92,7 @@ function buildPdfHeaderInfo(meetInfo: MeetInfo, sections: ReportEventSection[]):
 function generatePdfHtml(
   sections: ReportEventSection[],
 ): string {
-  const meetYear = Number(
-    sections.find(s => s.sessionDate)?.sessionDate?.slice(0, 4) ?? new Date().getFullYear()
-  )
+  const meetYear = new Date().getFullYear()
 
   function buildEventHtml(s: ReportEventSection): string {
     const totalHeats = s.heats.length
@@ -174,6 +174,304 @@ ${eventsHtml}
 </center>
 </body>
 </html>`
+}
+
+// ── Start List (Fiche de Départs) PDF generator ──────────────────────────────
+
+/** Rows-per-page capacity (tunable). Accounts for page header taking ~3 rows. */
+const STARTLIST_ROWS_PER_PAGE = 36
+
+interface StartListLaneEvent {
+  eventNumber: number
+  eventName: string
+  gender: 'M' | 'F' | 'X'
+  ageMin: number
+  ageMax: number | null
+  /** Heats that have an entry in this lane */
+  heats: Array<{
+    heatNumber: number
+    totalHeats: number
+    lastName: string
+    firstName: string
+    birthYear: number
+    clubCode: string
+    entryTime: string
+  }>
+}
+
+/**
+ * Compute how many "rows" an event occupies for a given lane.
+ * Always at least 1 row for the event header (even if no swimmer in this lane).
+ * Plus 1 row per heat entry.
+ */
+function eventRowCount(ev: StartListLaneEvent): number {
+  return 1 + ev.heats.length
+}
+
+/**
+ * Build per-lane event data from the report sections.
+ */
+function buildLaneData(
+  sections: ReportEventSection[],
+  laneMin: number,
+  laneMax: number,
+): Map<number, StartListLaneEvent[]> {
+  const laneData = new Map<number, StartListLaneEvent[]>()
+  for (let lane = laneMin; lane <= laneMax; lane++) {
+    const events: StartListLaneEvent[] = []
+    for (const section of sections) {
+      const laneHeats: StartListLaneEvent['heats'] = []
+      for (const heat of section.heats) {
+        const entry = heat.entries.find(e => e.lane === lane)
+        if (entry) {
+          laneHeats.push({
+            heatNumber: heat.number,
+            totalHeats: section.heats.length,
+            lastName: entry.lastName,
+            firstName: entry.firstName,
+            birthYear: entry.birthYear,
+            clubCode: entry.clubCode || entry.clubName,
+            entryTime: entry.status ? entry.status : (entry.entryTime ?? 'NT'),
+          })
+        }
+      }
+      events.push({
+        eventNumber: section.eventNumber,
+        eventName: section.eventName,
+        gender: section.gender,
+        ageMin: section.ageMin,
+        ageMax: section.ageMax,
+        heats: laneHeats,
+      })
+    }
+    laneData.set(lane, events)
+  }
+  return laneData
+}
+
+/**
+ * Compute synchronized page breaks.
+ *
+ * Algorithm: walk through events one by one. For each event, compute its row
+ * count for EVERY lane (always >= 1 since we print the header even if empty).
+ * Accumulate rows per lane. As soon as ANY lane would overflow the page
+ * capacity by adding the next event, ALL lanes page-break.
+ */
+function computePageBreaks(
+  laneData: Map<number, StartListLaneEvent[]>,
+): number[] {
+  if (laneData.size === 0) return []
+
+  const numEvents = laneData.values().next().value!.length
+  const lanes = [...laneData.values()]
+
+  const pageBreaks: number[] = []
+  const rowsOnPage = new Array(lanes.length).fill(0)
+
+  for (let i = 0; i < numEvents; i++) {
+    const eventRows = lanes.map(events => eventRowCount(events[i]))
+
+    let wouldOverflow = false
+    for (let l = 0; l < lanes.length; l++) {
+      if (rowsOnPage[l] > 0 && rowsOnPage[l] + eventRows[l] > STARTLIST_ROWS_PER_PAGE) {
+        wouldOverflow = true
+        break
+      }
+    }
+
+    if (wouldOverflow) {
+      pageBreaks.push(i)
+      for (let l = 0; l < lanes.length; l++) {
+        rowsOnPage[l] = eventRows[l]
+      }
+    } else {
+      for (let l = 0; l < lanes.length; l++) {
+        rowsOnPage[l] += eventRows[l]
+      }
+    }
+  }
+
+  return pageBreaks
+}
+
+/**
+ * Per-lane merge pass: given the global page breaks, determine which breaks
+ * this lane actually needs. If two consecutive pages can be combined for THIS
+ * lane without overflowing, merge them (skip the break).
+ */
+function mergeLanePageBreaks(
+  events: StartListLaneEvent[],
+  globalBreaks: number[],
+): number[] {
+  if (globalBreaks.length === 0) return []
+
+  const boundaries = [0, ...globalBreaks, events.length]
+  const merged: number[] = []
+
+  let p = 0
+  while (p < boundaries.length - 1) {
+    const pageStart = boundaries[p]
+
+    // Try to merge with the next page
+    if (p + 2 < boundaries.length) {
+      const nextEnd = boundaries[p + 2]
+      // Compute total rows for this lane across both pages
+      let total = 0
+      for (let i = pageStart; i < nextEnd; i++) {
+        total += eventRowCount(events[i])
+      }
+
+      if (total <= STARTLIST_ROWS_PER_PAGE) {
+        // Merge: remove the boundary between them
+        boundaries.splice(p + 1, 1)
+        // Don't advance — try to merge again with the next page
+        continue
+      }
+    }
+
+    // Can't merge — keep the break
+    if (p + 1 < boundaries.length - 1) {
+      merged.push(boundaries[p + 1])
+    }
+    p++
+  }
+
+  return merged
+}
+
+function generateStartListPdfHtml(
+  sections: ReportEventSection[],
+  laneMin: number,
+  laneMax: number,
+  meetInfo: MeetInfo,
+): string {
+  const laneData = buildLaneData(sections, laneMin, laneMax)
+  const globalBreaks = computePageBreaks(laneData)
+  const currentYear = new Date().getFullYear()
+
+  let html = ''
+
+  for (let lane = laneMin; lane <= laneMax; lane++) {
+    const events = laneData.get(lane)!
+
+    // Per-lane merge: collapse pages that fit for this lane
+    const laneBreaks = mergeLanePageBreaks(events, globalBreaks)
+    const laneBreakSet = new Set(laneBreaks)
+    const totalPages = 1 + laneBreaks.length
+    let pageNum = 1
+
+    // Lane start (page break between lanes, not before first)
+    if (html.length > 0) {
+      html += `<div class="lane-break"></div>\n`
+    }
+
+    // Page header for first page of this lane
+    html += buildStartListPageHeader(meetInfo, lane, pageNum, totalPages)
+
+    for (let i = 0; i < events.length; i++) {
+      // Check if we need a page break before this event
+      if (laneBreakSet.has(i)) {
+        pageNum++
+        html += `<div class="page-break"></div>\n`
+        html += buildStartListPageHeader(meetInfo, lane, pageNum, totalPages)
+      }
+
+      const ev = events[i]
+      const prefix = genderPrefix(ev.gender, ev.ageMin)
+      const evLabel = ev.gender === 'X'
+        ? esc(ev.eventName)
+        : `${esc(prefix)}, ${esc(ev.eventName)}`
+      const ageRange = esc(formatAgeRange(ev.ageMin, ev.ageMax))
+
+      // Always print event header (even if no swimmer in this lane)
+      html += `<div class="sl-event">
+<table width="100%" cellspacing="0" cellpadding="0" border="0">
+<tr>
+  <td width="15%"><b>&Eacute;pr. ${ev.eventNumber}</b></td>
+  <td width="55%"><b>${evLabel}</b></td>
+  <td width="30%" align="right"><em class="f8">${ageRange}</em></td>
+</tr>
+</table>\n`
+
+      if (ev.heats.length > 0) {
+        html += `<table width="100%" cellspacing="0" cellpadding="1" border="0" class="sl-heats">
+<tr class="sl-hdr">
+  <td width="7%"><em class="f8">S&eacute;rie</em></td>
+  <td width="28%"><em class="f8">Nom</em></td>
+  <td width="5%"><em class="f8">Age</em></td>
+  <td width="9%"><em class="f8">Club</em></td>
+  <td width="12%" align="right"><em class="f8">Inscr.</em></td>
+  <td width="20%" align="right"><em class="f8">Temps 1</em></td>
+  <td width="19%" align="right"><em class="f8">Temps 2</em></td>
+</tr>
+`
+        for (const h of ev.heats) {
+          const age = currentYear - h.birthYear
+          const ageStr = (age > 0 && age < 120) ? String(age) : '?'
+          html += `<tr class="sl-row">
+  <td>${h.heatNumber}/${h.totalHeats}</td>
+  <td><b>${esc(h.lastName + ', ' + h.firstName)}</b></td>
+  <td>${ageStr}</td>
+  <td>${esc(h.clubCode)}</td>
+  <td align="right">${esc(h.entryTime)}</td>
+  <td align="right" class="sl-time-cell"></td>
+  <td align="right" class="sl-time-cell"></td>
+</tr>\n`
+        }
+        html += `</table>\n`
+      } else {
+        html += `<hr class="sl-empty-sep">\n`
+      }
+
+      html += `</div>\n`
+    }
+  }
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+BODY, TABLE, TD { font-family: Arial, Helvetica, sans-serif; font-size: 10pt; color: black; }
+.f8 { font-size: 8pt; }
+body { margin: 0; padding: 10px; }
+.sl-event { margin-bottom: 4pt; break-inside: avoid; page-break-inside: avoid; }
+.sl-heats { border-collapse: collapse; }
+.sl-heats td { border-bottom: 1px solid #ccc; padding: 1px 3px; }
+.sl-hdr td { border-bottom: 2px solid #333; padding: 1px 3px; }
+.sl-time-cell { min-width: 70px; height: 18px; }
+.sl-empty-sep { border: none; border-top: 1px solid #ccc; margin: 2px 0 0 0; }
+.sl-page-hdr { margin-bottom: 10pt; border-bottom: 2px solid black; padding-bottom: 4pt; margin-top: 0; }
+.page-break { break-before: page; page-break-before: always; }
+.lane-break { break-before: page; page-break-before: always; }
+@page { size: Letter portrait; margin: 0; }
+</style>
+</head>
+<body>
+${html}
+</body>
+</html>`
+}
+
+function buildStartListPageHeader(
+  meetInfo: MeetInfo,
+  lane: number,
+  pageNum: number,
+  totalPages: number,
+): string {
+  const meetName = meetInfo.name || 'Compétition'
+  return `<div class="sl-page-hdr">
+<table width="100%" cellspacing="0" cellpadding="2" border="0">
+<tr>
+  <td colspan="3" align="center"><b>${esc(meetName)}</b></td>
+</tr>
+<tr>
+  <td width="35%">Fiche de d&eacute;parts</td>
+  <td width="30%" align="center"><b style="font-size:12pt">Couloir ${lane}</b></td>
+  <td width="35%" align="right">Page ${pageNum} / ${totalPages}</td>
+</tr>
+</table>
+</div>\n`
 }
 
 // ── HTML export generator (TOC + hyperlinks, matches reference .htm format) ────
@@ -368,6 +666,7 @@ export default function ReportPage({ refreshKey = 0 }: { refreshKey?: number }) 
   const [heatSessions, setHeatSessions]   = useState<HeatListSessionRow[]>([])
   const [fullSessions, setFullSessions]   = useState<SessionRow[]>([])
   const [meetInfo, setMeetInfo]           = useState<MeetInfo>({ name: '', city: '', nation: '' })
+  const [reportType, setReportType]       = useState<ReportType>('heatList')
   const [loading, setLoading]             = useState(true)
 
   const [selectedEventIds, setSelectedEventIds] = useState<Set<number>>(new Set())
@@ -554,9 +853,32 @@ export default function ReportPage({ refreshKey = 0 }: { refreshKey?: number }) 
   async function handleGenerate() {
     const sections = buildSections()
     if (sections.length === 0) return
-    const exported = generateHeatListHtml(meetInfo, sections, true)
-    const pdf = generatePdfHtml(sections)
-    const hdrInfo = buildPdfHeaderInfo(meetInfo, sections)
+
+    let pdf: string
+    let exported: string
+    let hdrInfo: PdfHeaderInfo
+
+    if (reportType === 'startList') {
+      // Determine lane range from sessions
+      let laneMin = 1
+      let laneMax = 8
+      for (const hs of heatSessions) {
+        if (hs.laneMin < laneMin) laneMin = hs.laneMin
+        if (hs.laneMax > laneMax) laneMax = hs.laneMax
+      }
+      if (heatSessions.length > 0) {
+        laneMin = Math.min(...heatSessions.map(s => s.laneMin))
+        laneMax = Math.max(...heatSessions.map(s => s.laneMax))
+      }
+      pdf = generateStartListPdfHtml(sections, laneMin, laneMax, meetInfo)
+      exported = '' // No HTML export for startList
+      hdrInfo = { line1: '', line2: '', today: new Date().toLocaleDateString('fr-CA') }
+    } else {
+      exported = generateHeatListHtml(meetInfo, sections, true)
+      pdf = generatePdfHtml(sections)
+      hdrInfo = buildPdfHeaderInfo(meetInfo, sections)
+    }
+
     setExportHtml(exported)
     setPdfHtml(pdf)
     setPdfHeaderInfo(hdrInfo)
@@ -608,8 +930,13 @@ export default function ReportPage({ refreshKey = 0 }: { refreshKey?: number }) 
       {/* ── Top toolbar ── */}
       <div className="flex items-center gap-2 px-3 py-2 bg-gray-200 border-b border-gray-300 shrink-0">
         <label className="text-xs font-medium text-gray-600">Rapport:</label>
-        <select className="text-xs border border-gray-400 bg-white px-2 py-0.5 h-6">
-          <option>Liste des Séries</option>
+        <select
+          className="text-xs border border-gray-400 bg-white px-2 py-0.5 h-6"
+          value={reportType}
+          onChange={e => setReportType(e.target.value as ReportType)}
+        >
+          <option value="heatList">Liste des Séries</option>
+          <option value="startList">Fiche de Départs</option>
         </select>
         <button
           onClick={handleGenerate}
@@ -701,7 +1028,7 @@ export default function ReportPage({ refreshKey = 0 }: { refreshKey?: number }) 
             </button>
             <button
               onClick={handleSaveHtml}
-              disabled={!exportHtml || generating}
+              disabled={!exportHtml || generating || reportType === 'startList'}
               className="px-3 py-0.5 text-xs border border-gray-400 bg-white hover:bg-gray-100 disabled:opacity-40"
             >
               HTML

@@ -346,7 +346,28 @@ export function encodeGbin(tableDef: { name: string; cols: ColDef[] }, rows: Rec
         chunks.push(lenBuf)
         if (strBuf.length > 0) chunks.push(strBuf)
       } else if (col.type === 'D') {
-        const dblVal = val != null ? Number(val) : D_NULL_SENTINEL
+        let dblVal: number
+        if (val == null) {
+          dblVal = D_NULL_SENTINEL
+        } else if (typeof val === 'number') {
+          dblVal = val
+        } else {
+          // Could be an ISO date string (from syncDown) or a stringified OLE double
+          const str = String(val).trim()
+          const asNum = parseFloat(str)
+          if (!isNaN(asNum) && !/^\d{4}-/.test(str)) {
+            // Looks like a plain number (OLE double as text)
+            dblVal = asNum
+          } else {
+            // Try parsing as ISO date → convert to OLE double
+            const dt = new Date(str)
+            if (!isNaN(dt.getTime())) {
+              dblVal = (dt.getTime() - OLE_EPOCH_MS) / 86400000
+            } else {
+              dblVal = D_NULL_SENTINEL
+            }
+          }
+        }
         const b = Buffer.alloc(8)
         b.writeDoubleLE(dblVal)
         chunks.push(b)
@@ -380,6 +401,9 @@ export function encodeGbin(tableDef: { name: string; cols: ColDef[] }, rows: Rec
 // ── Null sentinel constants ────────────────────────────────────────────────────
 
 export const D_NULL_SENTINEL = -36522.0 // OLE date for 1800-01-01 00:00:00
+
+/** OLE Automation epoch: 1899-12-30 in milliseconds since Unix epoch */
+const OLE_EPOCH_MS = Date.UTC(1899, 11, 30)
 
 // ── GBIN decoding ─────────────────────────────────────────────────────────────
 

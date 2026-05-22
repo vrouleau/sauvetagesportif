@@ -1665,6 +1665,36 @@ function CompetitionPropertiesPanel({ onMeetNameChange }: { onMeetNameChange: (n
     )
   }
 
+  function DateFieldRow({ label, fieldKey }: { label: string; fieldKey: string }) {
+    // Splash date format: YYYYMMDDHHMMSSMMM → display as YYYY-MM-DD
+    const raw = meetValues[fieldKey] ?? ''
+    const toIso = (v: string): string => {
+      if (/^\d{4}-\d{2}-\d{2}/.test(v)) return v.slice(0, 10)
+      if (/^\d{8,}/.test(v)) return `${v.slice(0, 4)}-${v.slice(4, 6)}-${v.slice(6, 8)}`
+      return v
+    }
+    const toSplash = (iso: string): string => {
+      // YYYY-MM-DD → YYYYMMDD000000000
+      return iso.replace(/-/g, '') + '000000000'
+    }
+    const [val, setVal] = useState(toIso(raw))
+    useEffect(() => { setVal(toIso(meetValues[fieldKey] ?? '')) }, [meetValues[fieldKey]])
+    return (
+      <tr className="border-b border-gray-100 hover:bg-gray-50">
+        <td className="px-4 py-0.5 text-gray-600 w-64">{label}</td>
+        <td className="px-2 py-0.5">
+          <input
+            type="date"
+            className="w-40 border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
+            value={val}
+            onChange={(e) => setVal(e.target.value)}
+            onBlur={() => saveField(fieldKey, toSplash(val), 'D')}
+          />
+        </td>
+      </tr>
+    )
+  }
+
   function CheckFieldRow({ label, fieldKey }: { label: string; fieldKey: string }) {
     const checked = meetValues[fieldKey] === 'T' || meetValues[fieldKey] === '1'
     return (
@@ -1778,7 +1808,7 @@ function CompetitionPropertiesPanel({ onMeetNameChange }: { onMeetNameChange: (n
           {!collapsed.has(t.events.meetPanel.ageCalc) && (
             <>
               <SelectFieldRow label={t.events.meetPanel.ageCalcType} fieldKey="AGECALCTYPE" options={ageCalcOptions} />
-              <TextFieldRow label={t.events.meetPanel.ageDate} fieldKey="AGEDATE" />
+              <DateFieldRow label={t.events.meetPanel.ageDate} fieldKey="AGEDATE" />
               <TextFieldRow label={t.events.meetPanel.ageDisplay} fieldKey="AGEDISPLAY" />
             </>
           )}
@@ -1810,7 +1840,7 @@ function CompetitionPropertiesPanel({ onMeetNameChange }: { onMeetNameChange: (n
             <>
               <TextFieldRow label={t.events.meetPanel.startMethod} fieldKey="STARTMETHOD" />
               <NumberFieldRow label={t.events.meetPanel.reserveCount} fieldKey="RESERVECOUNT" />
-              <TextFieldRow label={t.events.meetPanel.deadline} fieldKey="DEADLINE" />
+              <DateFieldRow label={t.events.meetPanel.deadline} fieldKey="DEADLINE" />
             </>
           )}
 

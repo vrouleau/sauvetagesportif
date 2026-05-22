@@ -162,6 +162,174 @@ function eventName(styleName: string | null, stroke: number | null): string {
   return (stroke && STROKE_EN[stroke]) ? STROKE_EN[stroke] : ''
 }
 
+/** OLE Automation epoch: 1899-12-30 in milliseconds since Unix epoch */
+const OLE_EPOCH_MS = Date.UTC(1899, 11, 30) // month is 0-indexed
+
+/**
+ * Parse an OLE Automation date (or ISO date string) into a YYYY-MM-DD string.
+ * Returns undefined if the value is null, zero, or the null sentinel.
+ */
+function parseOleDate(d: string | number | null): string | undefined {
+  if (d == null) return undefined
+
+  if (typeof d === 'number') {
+    if (d <= 0 || d === -36522) return undefined // null sentinel or invalid
+    const ms = OLE_EPOCH_MS + d * 86400000
+    const dt = new Date(ms)
+    const y = dt.getUTCFullYear()
+    if (y < 1900 || y > 2100) return undefined
+    const m = String(dt.getUTCMonth() + 1).padStart(2, '0')
+    const day = String(dt.getUTCDate()).padStart(2, '0')
+    return `${y}-${m}-${day}`
+  }
+
+  const str = String(d).trim()
+  // Already an ISO date
+  if (/^\d{4}-\d{2}-\d{2}/.test(str)) return str.slice(0, 10)
+  // Stringified OLE double
+  const num = parseFloat(str)
+  if (!isNaN(num) && num > 0 && num < 200000) {
+    const ms = OLE_EPOCH_MS + num * 86400000
+    const dt = new Date(ms)
+    const y = dt.getUTCFullYear()
+    if (y < 1900 || y > 2100) return undefined
+    const m = String(dt.getUTCMonth() + 1).padStart(2, '0')
+    const day = String(dt.getUTCDate()).padStart(2, '0')
+    return `${y}-${m}-${day}`
+  }
+  return undefined
+}
+
+/**
+ * Convert an OLE Automation date (or ISO string) to a full ISO timestamp for PG.
+ * Handles: number (OLE double), string "28725.0" (OLE as text), string "2026-06-15 08:00:00" (ISO).
+ * Returns null if the value is a null sentinel or unparseable.
+ */
+function oleToIsoTimestamp(v: unknown): string | null {
+  if (v == null) return null
+
+  if (typeof v === 'number') {
+    if (v === 0 || v === -36522) return null
+    const ms = OLE_EPOCH_MS + v * 86400000
+    const dt = new Date(ms)
+    if (dt.getUTCFullYear() < 1900 || dt.getUTCFullYear() > 2100) return null
+    return dt.toISOString().replace('T', ' ').slice(0, 19)
+  }
+
+  const str = String(v).trim()
+  // Already an ISO timestamp
+  if (/^\d{4}-\d{2}-\d{2}/.test(str)) return str.slice(0, 19)
+  // Stringified OLE double
+  const num = parseFloat(str)
+  if (!isNaN(num) && num !== 0 && num !== -36522) {
+    const ms = OLE_EPOCH_MS + num * 86400000
+    const dt = new Date(ms)
+    if (dt.getUTCFullYear() < 1900 || dt.getUTCFullYear() > 2100) return null
+    return dt.toISOString().replace('T', ' ').slice(0, 19)
+  }
+  return null
+}
+
+/**
+ * Convert an ISO timestamp (from PG/syncDown) back to an OLE Automation double for SMB export.
+ */
+function isoToOle(v: unknown): number {
+  if (v == null) return -36522 // D_NULL_SENTINEL
+  const str = String(v).trim()
+  // Already a number (OLE double stored in SQLite)
+  const num = parseFloat(str)
+  if (!isNaN(num) && !/^\d{4}-/.test(str)) return num
+  // ISO date/timestamp → OLE double
+  const dt = new Date(str)
+  if (isNaN(dt.getTime())) return -36522
+  return (dt.getTime() - OLE_EPOCH_MS) / 86400000
+}
+
+/** Set of table.column pairs that are TIMESTAMP in PG (need OLE→ISO conversion on syncUp) */
+const DATE_COLS = new Set([
+  'swimsession.daytime', 'swimsession.endtime', 'swimsession.officialmeeting',
+  'swimsession.startdate', 'swimsession.tlmeeting', 'swimsession.warmupfrom', 'swimsession.warmupuntil',
+  'athlete.birthdate',
+  'swimevent.daytime', 'swimevent.duration',
+  'heat.daytime',
+  'swimresult.dsqdaytime', 'swimresult.qtdate',
+])
+
+/**
+ * Extract birth year from a birthdate value that may be:
+ * - An ISO date string like "1978-08-23" or "1978-08-23 00:00:00" (from Lenex import)
+ * - A numeric string representing an OLE Automation date (days since 1899-12-30) from SMB restore
+ * Returns the 4-digit year, or 2000 as fallback.
+ */
+function parseBirthYear(birthdate: string | number | null): number {
+  if (birthdate == null) return 2000
+
+  // If it's already a number (SQLite may return OLE double as number)
+  if (typeof birthdate === 'number') {
+    if (birthdate > 0 && birthdate < 200000) {
+      const ms = OLE_EPOCH_MS + birthdate * 86400000
+      const d = new Date(ms)
+      const y = d.getUTCFullYear()
+      if (y > 1900 && y < 2100) return y
+    }
+    return 2000
+  }
+
+  const s = String(birthdate).trim()
+  // If it looks like an ISO date (starts with 4-digit year followed by '-')
+  if (/^\d{4}-/.test(s)) {
+    const y = parseInt(s.slice(0, 4), 10)
+    if (y > 1900 && y < 2100) return y
+  }
+  // Otherwise try to interpret as OLE Automation double
+  const dbl = parseFloat(s)
+  if (!isNaN(dbl) && dbl > 0 && dbl < 200000) {
+    const ms = OLE_EPOCH_MS + dbl * 86400000
+    const d = new Date(ms)
+    const y = d.getUTCFullYear()
+    if (y > 1900 && y < 2100) return y
+  }
+  return 2000
+}
+
+/**
+ * Parse a birthdate value into an ISO date string (YYYY-MM-DD).
+ * Handles both ISO strings and OLE Automation doubles.
+ */
+function parseBirthDate(birthdate: string | number | null): string {
+  if (birthdate == null) return '2000-01-01'
+
+  // If it's already a number (SQLite may return OLE double as number)
+  if (typeof birthdate === 'number') {
+    if (birthdate > 0 && birthdate < 200000) {
+      const ms = OLE_EPOCH_MS + birthdate * 86400000
+      const d = new Date(ms)
+      const y = d.getUTCFullYear()
+      const m = String(d.getUTCMonth() + 1).padStart(2, '0')
+      const day = String(d.getUTCDate()).padStart(2, '0')
+      return `${y}-${m}-${day}`
+    }
+    return '2000-01-01'
+  }
+
+  const s = String(birthdate).trim()
+  // If it looks like an ISO date already
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+    return s.slice(0, 10)
+  }
+  // Otherwise try to interpret as OLE Automation double
+  const dbl = parseFloat(s)
+  if (!isNaN(dbl) && dbl > 0 && dbl < 200000) {
+    const ms = OLE_EPOCH_MS + dbl * 86400000
+    const d = new Date(ms)
+    const y = d.getUTCFullYear()
+    const m = String(d.getUTCMonth() + 1).padStart(2, '0')
+    const day = String(d.getUTCDate()).padStart(2, '0')
+    return `${y}-${m}-${day}`
+  }
+  return '2000-01-01'
+}
+
 // ── Shared frontend-compatible return types ────────────────────────────────────
 
 export interface LaneEntryRow {
@@ -340,7 +508,7 @@ export async function getHeatListSessions(): Promise<HeatListSessionRow[]> {
     entrytime: number | null; swimtime: number | null
     reactiontime: number | null; resultstatus: number | null; agegroupid: number | null
     athleteid: number; firstname: string | null; lastname: string | null
-    birthdate: string | null; nation: string | null
+    birthdate: string | number | null; nation: string | null
     clubcode: string | null; clubname: string | null; agegroupname: string | null
   }> = []
 
@@ -383,7 +551,7 @@ export async function getHeatListSessions(): Promise<HeatListSessionRow[]> {
   for (const r of entries) {
     if (!entryMap.has(r.heatid)) entryMap.set(r.heatid, [])
     const status = decodeResultStatus(r.resultstatus)
-    const birthYear = r.birthdate ? parseInt(r.birthdate.slice(0, 4), 10) || 2000 : 2000
+    const birthYear = parseBirthYear(r.birthdate)
     entryMap.get(r.heatid)!.push({
       swimresultId: r.swimresultid,
       lane: r.lane ?? 0,
@@ -452,14 +620,15 @@ export async function getSessions(): Promise<SessionRow[]> {
   const db = getLocalDb()
 
   const sessions = db.prepare(`
-    SELECT swimsessionid, sessionnumber, name, daytime, endtime, course,
+    SELECT swimsessionid, sessionnumber, name, daytime, startdate, endtime, course,
            lanemin, lanemax, warmupfrom, warmupuntil, officialmeeting,
            remarks, remarksjury, maxentriesathlete, maxentriesrelay,
            feeathlete, timing, touchpadmode, roundtotenths
     FROM swimsession ORDER BY sessionnumber
   `).all() as Array<{
     swimsessionid: number; sessionnumber: number | null; name: string | null
-    daytime: string | number | null; endtime: string | number | null; course: number | null
+    daytime: string | number | null; startdate: string | number | null
+    endtime: string | number | null; course: number | null
     lanemin: number | null; lanemax: number | null
     warmupfrom: string | number | null; warmupuntil: string | number | null
     officialmeeting: string | number | null
@@ -541,7 +710,7 @@ export async function getSessions(): Promise<SessionRow[]> {
 
   return sessions.map(s => ({
     id: s.swimsessionid, number: s.sessionnumber ?? 0, name: s.name ?? '',
-    date: s.daytime ? s.daytime.slice(0, 10) : undefined,
+    date: parseOleDate(s.startdate),
     time: formatDaytime(s.daytime),
     endTime: formatDaytime(s.endtime),
     poolSize: s.course === 3 ? 25 : s.course === 2 ? 25 : 50,
@@ -575,7 +744,7 @@ export async function getAthletes(): Promise<AthleteRow[]> {
     ORDER BY a.lastname, a.firstname
   `).all() as Array<{
     athleteid: number; firstname: string | null; lastname: string | null
-    birthdate: string | null; gender: number | null; nation: string | null
+    birthdate: string | number | null; gender: number | null; nation: string | null
     license: string | null; domicile: string | null
     clubcode: string | null; clubname: string | null
   }>
@@ -615,7 +784,7 @@ export async function getAthletes(): Promise<AthleteRow[]> {
     id: a.athleteid,
     lastName: a.lastname ?? '',
     firstName: a.firstname ?? '',
-    birthDate: a.birthdate ? a.birthdate.slice(0, 10) : '2000-01-01',
+    birthDate: parseBirthDate(a.birthdate),
     gender: (a.gender === 2 ? 'F' : 'M') as 'M' | 'F',
     nation: a.nation ?? '',
     clubCode: a.clubcode ?? '',
@@ -1256,7 +1425,15 @@ export async function syncUp(): Promise<{ tablesCreated: string[] }> {
     // Delete remote data for this table, then insert
     await pg.query(`DELETE FROM ${table.name}`)
     for (const row of rows) {
-      const vals = table.cols.map(c => row[c] ?? null)
+      const vals = table.cols.map(c => {
+        const v = row[c]
+        if (v == null) return null
+        // Convert OLE doubles in date columns to ISO timestamps for PG
+        if (DATE_COLS.has(`${table.name}.${c}`)) {
+          return oleToIsoTimestamp(v)
+        }
+        return v
+      })
       const placeholders = table.cols.map((_, i) => `$${i + 1}`).join(',')
       await pg.query(
         `INSERT INTO ${table.name} (${table.cols.join(',')}) VALUES (${placeholders})`,
@@ -1800,12 +1977,24 @@ export async function testConnection(): Promise<{ ok: boolean; version?: string;
 
 export function getMeetInfo(): { name: string; city: string; nation: string } {
   const db = getLocalDb()
+  // Try separate bsglobal keys first (set by Lenex import)
   const rows = db.prepare(
     `SELECT name, data FROM bsglobal WHERE name IN ('MeetName','MeetCity','MeetNation')`
   ).all() as Array<{ name: string; data: string | null }>
   const m: Record<string, string> = {}
   for (const r of rows) m[r.name] = r.data ?? ''
-  return { name: m['MeetName'] ?? '', city: m['MeetCity'] ?? '', nation: m['MeetNation'] ?? '' }
+
+  if (m['MeetName']) {
+    return { name: m['MeetName'], city: m['MeetCity'] ?? '', nation: m['MeetNation'] ?? '' }
+  }
+
+  // Fall back to MEETVALUES (SMB restore stores meet info there)
+  const mv = readMeetValuesFromDb(db)
+  return {
+    name: mv['NAME'] ?? '',
+    city: mv['CITY'] ?? '',
+    nation: mv['NATION'] ?? '',
+  }
 }
 
 export function getMeetConfig(): Record<string, string> {
