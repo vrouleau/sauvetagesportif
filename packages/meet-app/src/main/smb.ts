@@ -324,7 +324,13 @@ export function encodeGbin(tableDef: { name: string; cols: ColDef[] }, rows: Rec
       const val = row[col.name.toLowerCase()]
 
       if (col.type === 'I') {
-        const numVal = val != null ? Number(val) : 0
+        let numVal = val != null ? Number(val) : 0
+        let isNull = val == null
+        // Treat Splash "no time" sentinel (max int32) as null
+        if (col.size > 16 && numVal === 2147483647) {
+          numVal = 0
+          isNull = true
+        }
         if (col.size <= 16) {
           const b = Buffer.alloc(2)
           b.writeInt16LE(numVal)
@@ -336,7 +342,7 @@ export function encodeGbin(tableDef: { name: string; cols: ColDef[] }, rows: Rec
         }
         // Null disambiguation flag when value is 0
         if (numVal === 0) {
-          chunks.push(Buffer.from([val == null ? 0x01 : 0x00]))
+          chunks.push(Buffer.from([isNull ? 0x01 : 0x00]))
         }
       } else if (col.type === 'S') {
         const strVal = val != null ? String(val) : ''
@@ -437,6 +443,9 @@ export function decodeGbin(data: Buffer): { cols: ColDef[]; rows: Record<string,
           } else {
             row[key] = val
           }
+        } else if (bytes === 4 && val === 2147483647) {
+          // Splash "no time" sentinel (max int32) → treat as null
+          row[key] = null
         } else {
           row[key] = val
         }
@@ -746,6 +755,13 @@ export function restoreSMB(filePath: string, db: Database.Database): { tables: n
       tableDetail.push(`${tableDef.name}: ${inserted}/${rows.length}`)
       totalInserted += inserted
     }
+
+    // ── Post-import normalization: Splash time sentinel → NULL ──
+    // Splash uses 2147483647 (0x7FFFFFFF, max int32) as "no time" for time fields.
+    // This is an application-level convention, not a GBIN null sentinel (which is 0).
+    // Normalize these to NULL so msToDisplay() returns undefined → "NT".
+    db.prepare(`UPDATE swimresult SET entrytime = NULL WHERE entrytime >= 2147483647`).run()
+    db.prepare(`UPDATE swimresult SET swimtime = NULL WHERE swimtime >= 2147483647`).run()
 
     // ── Post-import normalization: Splash MDB round encoding → canonical ──
     // Splash MDB uses: 1=TimedFinal, 2=Prelim, 9=Final, 11=Break/Pause

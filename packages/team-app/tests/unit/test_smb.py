@@ -226,18 +226,23 @@ class TestGbinRoundtrip:
             assert dec["name"] == orig["name"]
 
     def test_large_integer_values(self):
-        """Large 32-bit integers encode/decode correctly."""
+        """Large 32-bit integers encode/decode correctly.
+        Note: 2147483647 (max int32) is Splash's "no time" sentinel and is
+        normalized to None on decode and encoded as GBIN null.
+        """
         cols = [ColDef("id", "I", 32), ColDef("time_ms", "I", 32)]
         rows = [
             {"id": 1, "time_ms": 3600000},   # 1 hour in ms
             {"id": 2, "time_ms": 65430},      # ~1:05.43
-            {"id": 3, "time_ms": 2147483647}, # max int32
+            {"id": 3, "time_ms": 2147483647}, # max int32 = Splash NT sentinel
         ]
         encoded = encode_gbin(cols, rows)
         _, decoded = decode_gbin(encoded)
 
-        for orig, dec in zip(rows, decoded):
-            assert dec["time_ms"] == orig["time_ms"]
+        assert decoded[0]["time_ms"] == 3600000
+        assert decoded[1]["time_ms"] == 65430
+        # Splash sentinel is normalized to None
+        assert decoded[2]["time_ms"] is None
 
     def test_empty_table_roundtrip(self):
         """An empty table (no rows) roundtrips correctly."""

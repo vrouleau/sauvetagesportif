@@ -302,7 +302,6 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
       const round = encodeRound(ea.round)
       const sortcode = parseInt(ea.order ?? ea.number ?? '0', 10)
       const isMasters = ea.type === 'MASTERS' ? 'T' : 'F'
-      const isInternal = (ea.type === 'ADMIN' || ea.type === 'PAUSE') ? 'T' : 'F'
       const evName = ea.name ?? styleName
       try {
         stmts.upsertEvent.run(

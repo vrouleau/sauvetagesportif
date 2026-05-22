@@ -392,12 +392,11 @@ async function printHtml(html: string, h: PdfHeaderInfo): Promise<void> {
         margins: useHeader
           ? { marginType: 'custom', top: 1.1, bottom: 0.65, left: 0.6, right: 0.6 }
           : { marginType: 'custom', top: 0.4, bottom: 0.5, left: 0.6, right: 0.6 },
-        displayHeaderFooter: useHeader,
         ...(useHeader ? {
           headerTemplate: buildHeaderTemplate(h),
           footerTemplate: buildFooterTemplate(h),
         } : {}),
-      }, (success, errType) => {
+      } as any, (success, errType) => {
         if (success) resolve()
         else reject(new Error(errType ?? 'print-error'))
       })

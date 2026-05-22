@@ -70,6 +70,8 @@ export function getPool(): InstanceType<typeof Pool> { return remoteDb() }
 
 export function msToDisplay(ms: number | null | undefined): string | undefined {
   if (ms == null) return undefined
+  // Treat max-int sentinel (2147483647) and unreasonably large values as "no time"
+  if (ms >= 2147483647 || ms < 0) return undefined
   const totalCs = Math.round(ms / 10)
   const cs = totalCs % 100
   const totalSec = Math.floor(totalCs / 100)
@@ -233,6 +235,8 @@ function oleToIsoTimestamp(v: unknown): string | null {
 /**
  * Convert an ISO timestamp (from PG/syncDown) back to an OLE Automation double for SMB export.
  */
+// @ts-ignore: reserved for future SMB export use
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function isoToOle(v: unknown): number {
   if (v == null) return -36522 // D_NULL_SENTINEL
   const str = String(v).trim()

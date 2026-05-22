@@ -26,6 +26,12 @@ from typing import Any
 
 D_NULL_SENTINEL = -36522.0
 
+# Splash uses max int32 (0x7FFFFFFF) as "no time" for integer time fields
+# (entrytime, swimtime, etc.). This is an application-level convention, not
+# the GBIN null sentinel (which is 0). We treat it as None on decode and
+# write the proper GBIN null (0 + flag 0x01) on encode.
+I_TIME_SENTINEL = 2147483647
+
 
 # ── Column definition ──────────────────────────────────────────────────────────
 
@@ -86,6 +92,9 @@ def decode_gbin(data: bytes | bytearray | memoryview) -> tuple[list[ColDef], lis
                         row[key] = None if flag == 0x01 else val
                     else:
                         row[key] = val
+                elif col.size > 16 and val == I_TIME_SENTINEL:
+                    # Splash "no time" sentinel → treat as NULL
+                    row[key] = None
                 else:
                     row[key] = val
 
@@ -166,6 +175,10 @@ def encode_gbin(cols: list[ColDef], rows: list[dict[str, Any]]) -> bytes:
 
             if col.type == "I":
                 num_val = int(val) if val is not None else 0
+                # Treat Splash "no time" sentinel as null
+                if col.size > 16 and num_val == I_TIME_SENTINEL:
+                    num_val = 0
+                    val = None
                 if col.size <= 16:
                     parts.append(struct.pack("<h", num_val))
                 else:
