@@ -116,7 +116,7 @@ function generatePdfHtml(
 <hr class="ev-rule">
 <table width="100%" cellspacing="0" cellpadding="0" border="0">
 <tr>
-  <td width="1%"></td><td width="3%"></td><td width="1%"></td><td width="34%"></td>
+  <td width="2%"><em class="f8">Ex</em></td><td width="1%"></td><td width="3%"></td><td width="1%"></td><td width="32%"></td>
   <td width="5%"><em class="f8">Age</em></td>
   <td width="35%"></td><td width="20%"></td><td width="1%"></td>
 </tr>
@@ -131,11 +131,13 @@ function generatePdfHtml(
 ${sorted.map(e => {
   const age = computeAge(e.birthYear, meetYear)
   const t = e.status ? e.status : (e.finalTime ?? e.entryTime ?? 'NT')
+  const ex = e.handicapex ? esc(e.handicapex) : ''
   return `<tr>
+  <td width="2%"><i><b>${ex}</b></i></td>
   <td width="1%"></td>
   <td width="3%" align="right"><i><b>${e.lane}</b></i></td>
   <td width="1%"></td>
-  <td width="34%"><i><b>${esc(e.lastName + ', ' + e.firstName)}</b></i></td>
+  <td width="32%"><i><b>${esc(e.lastName + ', ' + e.firstName)}</b></i></td>
   <td width="5%"><i><b>${age}</b></i></td>
   <td width="35%"><i><b>${esc(e.clubName || e.clubCode)}</b></i></td>
   <td width="20%" align="right"><i><b>${esc(t)}</b></i></td>
@@ -553,9 +555,9 @@ ${HR}
     // Column header (Age label)
     html += `<table width=100% border=0 cellspacing=0 cellpadding=0>
 <tr valign=top>
-<td width=1%></td><td width=3%></td><td width=1%></td><td width=34%></td>
+<td width=2%><em id=f8>Ex</em></td><td width=1%></td><td width=3%></td><td width=1%></td><td width=32%></td>
 <td width=5%><em id=f8>Age</em></td>
-<td width=35%></td><td width=20%></td><td width=1%></td><td width=2%></td>
+<td width=35%></td><td width=20%></td><td width=1%></td>
 </tr>
 </table>
 `
@@ -570,6 +572,7 @@ ${HR}
 
       const sorted = [...heat.entries].sort((a, b) => a.lane - b.lane)
 
+      const exceptions = sorted.map(e => `<i><b>${e.handicapex ? esc(e.handicapex) : ''}</b></i>`).join('<br>')
       const lanes = sorted.map(e => `<i><b>${e.lane}</b></i>`).join('<br>')
       const names = sorted.map(e => `<i><b>${esc(e.lastName + ', ' + e.firstName)}</b></i>`).join('<br>')
       const ages  = sorted.map(e => `<i><b>${computeAge(e.birthYear, Number(meetYear))}</b></i>`).join('<br>')
@@ -582,10 +585,11 @@ ${HR}
 
       html += `<table width=100% border=0 cellspacing=0 cellpadding=0>
 <tr valign=top>
+<td width=2%>${exceptions}<br><br><br></td>
 <td width=1%></td>
 <td align=right width=3%>${lanes}<br><br><br></td>
 <td width=1%></td>
-<td width=34%>${names}<br><br><br></td>
+<td width=32%>${names}<br><br><br></td>
 <td width=5%>${ages}</td>
 <td width=35%>${clubs}<br><br></td>
 <td align=right width=20%>${times}<br><br><br></td>

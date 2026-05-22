@@ -184,6 +184,7 @@ export interface RegistrationData {
     birthdate: string
     license: string
     club: string
+    handicapex: string
   }
   individual_events: RegistrationStyle[]
   relay_events: RegistrationStyle[]

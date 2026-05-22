@@ -59,6 +59,12 @@ export default function AthleteDetailPanel({ athlete, athleteId, onSave }: Athle
           onSave={(value) => onSave('license', value)}
           width="w-20"
         />
+        <ExceptionCheckbox
+          key={`${athleteId}-handicapex`}
+          label={tr.exception}
+          checked={athlete.handicapex === 'X'}
+          onSave={(checked) => onSave('handicapex', checked ? 'X' : '')}
+        />
         <div className="flex items-center gap-1">
           <label className="text-xs text-gray-500">{tr.club}:</label>
           <span className="text-xs text-gray-600">{athlete.club}</span>
@@ -180,6 +186,29 @@ function DateField({
           if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
         }}
         onBlur={handleBlur}
+      />
+    </div>
+  )
+}
+
+/** Checkbox for exception code (X or empty) */
+function ExceptionCheckbox({
+  label,
+  checked,
+  onSave,
+}: {
+  label: string
+  checked: boolean
+  onSave: (checked: boolean) => void
+}) {
+  return (
+    <div className="flex items-center gap-1">
+      <label className="text-xs text-gray-500">{label}:</label>
+      <input
+        type="checkbox"
+        className="h-3.5 w-3.5"
+        checked={checked}
+        onChange={(e) => onSave(e.target.checked)}
       />
     </div>
   )

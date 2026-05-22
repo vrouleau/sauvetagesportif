@@ -101,7 +101,7 @@ describe('InscriptionPage - Property 3: Coach Role Isolation', () => {
             addAthlete: async () => {},
             deleteAthlete: async () => {},
             getRegistration: async () => ({
-              athlete: { first_name: '', last_name: '', gender: '', birthdate: '', license: '', club: '' },
+              athlete: { first_name: '', last_name: '', gender: '', birthdate: '', license: '', club: '', handicapex: '' },
               individual_events: [],
               relay_events: [],
               club_athletes: [],
@@ -157,7 +157,7 @@ describe('InscriptionPage - Property 3: Coach Role Isolation', () => {
             addAthlete: async () => {},
             deleteAthlete: async () => {},
             getRegistration: async () => ({
-              athlete: { first_name: '', last_name: '', gender: '', birthdate: '', license: '', club: '' },
+              athlete: { first_name: '', last_name: '', gender: '', birthdate: '', license: '', club: '', handicapex: '' },
               individual_events: [],
               relay_events: [],
               club_athletes: [],
@@ -205,7 +205,7 @@ describe('InscriptionPage - Property 3: Coach Role Isolation', () => {
             addAthlete: async () => {},
             deleteAthlete: async () => {},
             getRegistration: async () => ({
-              athlete: { first_name: '', last_name: '', gender: '', birthdate: '', license: '', club: '' },
+              athlete: { first_name: '', last_name: '', gender: '', birthdate: '', license: '', club: '', handicapex: '' },
               individual_events: [],
               relay_events: [],
               club_athletes: [],

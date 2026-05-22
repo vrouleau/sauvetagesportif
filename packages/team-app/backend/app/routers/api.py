@@ -73,6 +73,7 @@ class AthleteUpdate(BaseModel):
     gender: str | None = None
     birthdate: str | None = None
     license: str | None = None
+    handicapex: str | None = None
 
     @field_validator("gender")
     @classmethod
@@ -1108,6 +1109,8 @@ def update_athlete(athlete_id: int, data: AthleteUpdate, request: Request, db: S
         athlete.birthdate = d.fromisoformat(data.birthdate) if data.birthdate else None
     if data.license is not None:
         athlete.license = data.license
+    if data.handicapex is not None:
+        athlete.handicapex = data.handicapex or None
     db.commit()
     return {"ok": True}
 
@@ -1348,6 +1351,7 @@ def get_registration(athlete_id: int, db: Session = Depends(get_db)):
             "birthdate": str(athlete.birthdate.date()) if athlete.birthdate else "",
             "license": athlete.license or "",
             "club": athlete.club.name, "club_id": athlete.clubid,
+            "handicapex": athlete.handicapex or "",
         },
         "suggested_age_code": suggested_age_code,
         "meet_course": meet_course,

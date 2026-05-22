@@ -351,6 +351,7 @@ export interface LaneEntryRow {
   finalTime?: string
   splitTimes?: Record<number, string>
   status?: 'DNS' | 'DNF' | 'DSQ' | null
+  handicapex?: string
 }
 
 export interface HeatRow {
@@ -453,6 +454,7 @@ export interface AthleteRow {
   clubName: string
   licence?: string
   birthPlace?: string
+  handicapex?: string
   entries: Array<{ eventId: number; eventName: string; category: string; entryTime?: string }>
 }
 
@@ -513,7 +515,7 @@ export async function getHeatListSessions(): Promise<HeatListSessionRow[]> {
     entrytime: number | null; swimtime: number | null
     reactiontime: number | null; resultstatus: number | null; agegroupid: number | null
     athleteid: number; firstname: string | null; lastname: string | null
-    birthdate: string | number | null; nation: string | null
+    birthdate: string | number | null; nation: string | null; handicapex: string | null
     clubcode: string | null; clubname: string | null; agegroupname: string | null
   }> = []
 
@@ -522,7 +524,7 @@ export async function getHeatListSessions(): Promise<HeatListSessionRow[]> {
     entries = db.prepare(`
       SELECT r.swimresultid, r.heatid, r.lane,
              r.entrytime, r.swimtime, r.reactiontime, r.resultstatus, r.agegroupid,
-             a.athleteid, a.firstname, a.lastname, a.birthdate, a.nation,
+             a.athleteid, a.firstname, a.lastname, a.birthdate, a.nation, a.handicapex,
              c.code AS clubcode, c.name AS clubname,
              COALESCE(ag.name, CASE WHEN ag.agemin IS NOT NULL THEN ag.agemin || '-' || ag.agemax END, '???') AS agegroupname
       FROM swimresult r
@@ -572,6 +574,7 @@ export async function getHeatListSessions(): Promise<HeatListSessionRow[]> {
       finalTime: status ? undefined : msToDisplay(r.swimtime),
       splitTimes: splitMap.get(r.swimresultid),
       status,
+      handicapex: r.handicapex ?? undefined,
     })
   }
 
@@ -745,14 +748,14 @@ export async function getAthletes(): Promise<AthleteRow[]> {
 
   const athletes = db.prepare(`
     SELECT a.athleteid, a.firstname, a.lastname, a.birthdate, a.gender, a.nation, a.license, a.domicile,
-           c.code AS clubcode, c.name AS clubname
+           a.handicapex, c.code AS clubcode, c.name AS clubname
     FROM athlete a
     LEFT JOIN club c ON a.clubid = c.clubid
     ORDER BY a.lastname, a.firstname
   `).all() as Array<{
     athleteid: number; firstname: string | null; lastname: string | null
     birthdate: string | number | null; gender: number | null; nation: string | null
-    license: string | null; domicile: string | null
+    license: string | null; domicile: string | null; handicapex: string | null
     clubcode: string | null; clubname: string | null
   }>
 
@@ -799,6 +802,7 @@ export async function getAthletes(): Promise<AthleteRow[]> {
     clubName: a.clubname ?? '',
     licence: a.license ?? undefined,
     birthPlace: a.domicile ?? undefined,
+    handicapex: a.handicapex ?? undefined,
     entries: entMap.get(a.athleteid) ?? [],
   }))
 }
@@ -1120,7 +1124,7 @@ export async function deleteAgeGroup(agegroupId: number): Promise<void> {
 export async function saveAthlete(a: {
   id: number; lastName: string; firstName: string; birthDate: string
   gender: 'M' | 'F'; nation: string; clubCode: string; clubName: string
-  licence?: string; birthPlace?: string
+  licence?: string; birthPlace?: string; handicapex?: string
 }): Promise<void> {
   const db = getLocalDb()
   const gNum = a.gender === 'F' ? 2 : 1
@@ -1140,10 +1144,10 @@ export async function saveAthlete(a: {
   db.prepare(
     `UPDATE athlete
      SET firstname=?, lastname=?, birthdate=?, gender=?, nation=?,
-         license=?, domicile=?, clubid=?
+         license=?, domicile=?, clubid=?, handicapex=?
      WHERE athleteid=?`
   ).run(a.firstName, a.lastName, a.birthDate || null, gNum, a.nation,
-        a.licence || null, a.birthPlace || null, clubId, a.id)
+        a.licence || null, a.birthPlace || null, clubId, a.handicapex || null, a.id)
 }
 
 // ── Local SQLite schema (same tables/columns as PG, SQLite-compatible DDL) ───

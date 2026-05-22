@@ -27,6 +27,7 @@ interface LocalAthlete {
   clubCode: string
   clubName: string
   licence?: string
+  handicapex?: string
   entries: Array<{ eventId: number; eventName: string; category: string; entryTime?: string }>
 }
 
@@ -265,6 +266,7 @@ export const registrationApiElectron: RegistrationAPI = {
         birthdate: athlete.birthDate,
         license: athlete.licence ?? '',
         club: athlete.clubName,
+        handicapex: athlete.handicapex ?? '',
       },
       individual_events: individualEvents,
       relay_events: relayEvents,
@@ -288,6 +290,7 @@ export const registrationApiElectron: RegistrationAPI = {
       clubCode: athlete.clubCode,
       clubName: athlete.clubName,
       licence: data.license ?? athlete.licence,
+      handicapex: data.handicapex ?? athlete.handicapex,
     })
   },
 
