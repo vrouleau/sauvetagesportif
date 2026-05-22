@@ -343,25 +343,53 @@ async def upload_meet_smb(file: UploadFile = File(...), db: Session = Depends(ge
     except Exception as e:
         raise HTTPException(400, f"Invalid .smb file: {e}")
 
+    # OLE Automation epoch
+    OLE_EPOCH = datetime(1899, 12, 30)
+
     def ole_to_datetime(val):
-        """Convert OLE Automation date double to Python datetime, or None."""
+        """Convert OLE Automation date double to full Python datetime, or None.
+        Handles both full dates (e.g. 46200.333 = 2026-06-15 08:00) and
+        time-only values (null sentinel date + fractional time).
+        """
         if val is None:
             return None
         if not isinstance(val, (int, float)):
             return None
-        if val == D_NULL_SENTINEL:
+        if val == D_NULL_SENTINEL or val == 0:
             return None
-        # OLE date: integer part = days since 1899-12-30, fractional = time of day
-        # For Splash meet events, the date part is the null sentinel (-36522 = 1800-01-01)
-        # and only the fractional part (time) matters
-        frac = abs(val) % 1
-        if frac == 0:
+        # Check if the date part is the null sentinel (time-only field)
+        int_part = int(val)
+        if int_part == -36522 or int_part == 0:
+            # Time-only: extract fractional part as time of day
+            frac = abs(val) % 1
+            if frac == 0:
+                return None
+            total_minutes = round(frac * 24 * 60)
+            hours = total_minutes // 60
+            minutes = total_minutes % 60
+            return datetime(2000, 1, 1, hours, minutes, 0)
+        # Full date+time
+        from datetime import timedelta
+        dt = OLE_EPOCH + timedelta(days=val)
+        if dt.year < 1900 or dt.year > 2100:
             return None
-        total_minutes = round(frac * 24 * 60)
-        hours = total_minutes // 60
-        minutes = total_minutes % 60
-        # Store as a datetime with dummy date (matching meet-app convention)
-        return datetime(2000, 1, 1, hours, minutes, 0)
+        return dt
+
+    def ole_to_date_only(val):
+        """Convert OLE Automation date double to a date-only datetime, or None.
+        Used for fields like startdate that carry a date without meaningful time.
+        """
+        if val is None:
+            return None
+        if not isinstance(val, (int, float)):
+            return None
+        if val == D_NULL_SENTINEL or val == 0 or val <= 0:
+            return None
+        from datetime import timedelta
+        dt = OLE_EPOCH + timedelta(days=int(val))
+        if dt.year < 1900 or dt.year > 2100:
+            return None
+        return dt
 
     # Validate required tables
     if "SWIMSESSION" not in tables or "SWIMEVENT" not in tables:
@@ -407,12 +435,14 @@ async def upload_meet_smb(file: UploadFile = File(...), db: Session = Depends(ge
             name=row.get("name"),
             course=row.get("course"),
             daytime=ole_to_datetime(row.get("daytime")),
+            startdate=ole_to_date_only(row.get("startdate")),
             endtime=ole_to_datetime(row.get("endtime")),
             lanemin=row.get("lanemin"),
             lanemax=row.get("lanemax"),
             warmupfrom=ole_to_datetime(row.get("warmupfrom")),
             warmupuntil=ole_to_datetime(row.get("warmupuntil")),
             officialmeeting=ole_to_datetime(row.get("officialmeeting")),
+            tlmeeting=ole_to_datetime(row.get("tlmeeting")),
         )
         db.add(session)
         session_id_map[sid] = sid

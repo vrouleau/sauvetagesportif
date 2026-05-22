@@ -1684,7 +1684,7 @@ interface EntryRow {
   bonusentry: string | null
   lateentry: string | null
   infocode: string | null
-  qtdate: string | null
+  qtdate: string | number | null
   entrycourse: number | null
 }
 
@@ -1721,7 +1721,8 @@ function loadEntries(
   if (qualiFrom || qualiTo) {
     for (const e of entries) {
       if (e.entrytime != null && e.qtdate) {
-        const qtd = e.qtdate.slice(0, 10) // normalize to YYYY-MM-DD
+        const qtd = parseOleDate(e.qtdate) // handles both OLE doubles and ISO strings
+        if (!qtd) continue
         if (qualiFrom && qtd < qualiFrom) e.entrytime = null
         if (qualiTo && qtd > qualiTo) e.entrytime = null
       }
