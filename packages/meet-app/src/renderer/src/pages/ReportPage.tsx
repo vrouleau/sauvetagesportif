@@ -436,7 +436,7 @@ function generateStartListPdfHtml(
 <style>
 BODY, TABLE, TD { font-family: Arial, Helvetica, sans-serif; font-size: 10pt; color: black; }
 .f8 { font-size: 8pt; }
-body { margin: 0; padding: 10px; }
+body { margin: 0; padding: 0; }
 .sl-event { margin-bottom: 4pt; break-inside: avoid; page-break-inside: avoid; }
 .sl-heats { border-collapse: collapse; }
 .sl-heats td { border-bottom: 1px solid #ccc; padding: 1px 3px; }
@@ -446,7 +446,7 @@ body { margin: 0; padding: 10px; }
 .sl-page-hdr { margin-bottom: 10pt; border-bottom: 2px solid black; padding-bottom: 4pt; margin-top: 0; }
 .page-break { break-before: page; page-break-before: always; }
 .lane-break { break-before: page; page-break-before: always; }
-@page { size: Letter portrait; margin: 0; }
+@page { size: Letter portrait; }
 </style>
 </head>
 <body>
@@ -456,17 +456,13 @@ ${html}
 }
 
 function buildStartListPageHeader(
-  meetInfo: MeetInfo,
+  _meetInfo: MeetInfo,
   lane: number,
   pageNum: number,
   totalPages: number,
 ): string {
-  const meetName = meetInfo.name || 'Compétition'
   return `<div class="sl-page-hdr">
 <table width="100%" cellspacing="0" cellpadding="2" border="0">
-<tr>
-  <td colspan="3" align="center"><b>${esc(meetName)}</b></td>
-</tr>
 <tr>
   <td width="35%">Fiche de d&eacute;parts</td>
   <td width="30%" align="center"><b style="font-size:12pt">Couloir ${lane}</b></td>
@@ -876,7 +872,7 @@ export default function ReportPage({ refreshKey = 0 }: { refreshKey?: number }) 
       }
       pdf = generateStartListPdfHtml(sections, laneMin, laneMax, meetInfo)
       exported = '' // No HTML export for startList
-      hdrInfo = { line1: '', line2: '', today: new Date().toLocaleDateString('fr-CA') }
+      hdrInfo = buildPdfHeaderInfo(meetInfo, sections)
     } else {
       exported = generateHeatListHtml(meetInfo, sections, true)
       pdf = generatePdfHtml(sections)
