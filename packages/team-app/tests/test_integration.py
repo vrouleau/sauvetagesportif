@@ -1090,7 +1090,8 @@ class TestSessions:
                     found = True
                     ag = ev["ageGroups"][0]
                     assert "id" in ag
-                    assert "name" in ag or ag["name"] == ""
+                    assert "name" in ag
+                    assert ag["name"] != "", "Age group name should not be empty"
                     assert "minAge" in ag
                     assert "maxAge" in ag
                     assert "gender" in ag
@@ -1098,6 +1099,23 @@ class TestSessions:
                     break
             if found:
                 break
+
+    def test_age_group_name_never_empty(self, uploaded):
+        """Age group name should fall back to 'agemin-agemax' or '???' — never empty string."""
+        r = requests.get(f"{BASE_URL}/api/sessions", timeout=10)
+        r.raise_for_status()
+        sessions = r.json()
+        for s in sessions:
+            for ev in s["events"]:
+                for ag in ev["ageGroups"]:
+                    assert ag["name"] != "", (
+                        f"Event {ev['id']} agegroup {ag['id']} has empty name. "
+                        f"Expected 'agemin-agemax' fallback or '???' placeholder."
+                    )
+                    # If minAge is set, name should contain the age range or a real name
+                    if ag["minAge"] and ag["minAge"] > 0 and ag["name"] != "???":
+                        # Either a real name or the agemin-agemax pattern
+                        assert ag["name"], f"Agegroup {ag['id']} has no name"
         assert found, "No event has age groups"
 
     def test_age_group_gender_inherits_from_event(self, uploaded):

@@ -524,7 +524,7 @@ export async function getHeatListSessions(): Promise<HeatListSessionRow[]> {
              r.entrytime, r.swimtime, r.reactiontime, r.resultstatus, r.agegroupid,
              a.athleteid, a.firstname, a.lastname, a.birthdate, a.nation,
              c.code AS clubcode, c.name AS clubname,
-             ag.name AS agegroupname
+             COALESCE(ag.name, CASE WHEN ag.agemin IS NOT NULL THEN ag.agemin || '-' || ag.agemax END, '???') AS agegroupname
       FROM swimresult r
       JOIN athlete a ON r.athleteid = a.athleteid
       LEFT JOIN club c ON a.clubid = c.clubid
@@ -686,7 +686,7 @@ export async function getSessions(): Promise<SessionRow[]> {
     if (!agMap.has(ag.swimeventid)) { agMap.set(ag.swimeventid, []); agSeq = 0 }
     agSeq++
     agMap.get(ag.swimeventid)!.push({
-      id: ag.agegroupid, number: agSeq, name: ag.name ?? '',
+      id: ag.agegroupid, number: agSeq, name: ag.name || (ag.agemin != null ? `${ag.agemin}-${ag.agemax}` : '???'),
       minAge: ag.agemin ?? 0, maxAge: ag.agemax ?? null,
       gender: decodeGender(ag.gender),
       numHeats: ag.heatcount ?? 1, ranking: 'Selon temps nagé',
@@ -762,7 +762,8 @@ export async function getAthletes(): Promise<AthleteRow[]> {
 
   const entries = db.prepare(`
     SELECT r.athleteid, r.swimeventid, r.entrytime,
-           ag.name AS agegroupname, e.eventnumber,
+           COALESCE(ag.name, CASE WHEN ag.agemin IS NOT NULL THEN ag.agemin || '-' || ag.agemax END, '???') AS agegroupname,
+           e.eventnumber,
            ss.distance, ss.stroke, ss.name AS stylename
     FROM swimresult r
     JOIN swimevent e ON r.swimeventid = e.swimeventid
@@ -2372,7 +2373,7 @@ export function getFinalCandidates(finalEventId: number): FinalCandidateRow[] {
     SELECT r.swimresultid, r.athleteid, r.swimtime, r.resultstatus, r.agegroupid,
            a.lastname, a.firstname, a.birthdate,
            c.code AS clubcode,
-           ag.name AS agegroupname
+           COALESCE(ag.name, CASE WHEN ag.agemin IS NOT NULL THEN ag.agemin || '-' || ag.agemax END, '???') AS agegroupname
     FROM swimresult r
     JOIN athlete a ON r.athleteid = a.athleteid
     LEFT JOIN club c ON a.clubid = c.clubid
@@ -2445,29 +2446,68 @@ export function setQualification(
   ).get(finalEventId, athleteId) as { swimresultid: number } | undefined
 
   if (existing) {
-    db.prepare(
-      `UPDATE swimresult SET qualcode = ?, noadvance = ? WHERE swimresultid = ?`
-    ).run(qualCode || null, noAdvance ? 'T' : 'F', existing.swimresultid)
+    // Also ensure agegroupid is set if missing
+    const currentRow = db.prepare(
+      `SELECT agegroupid FROM swimresult WHERE swimresultid = ?`
+    ).get(existing.swimresultid) as { agegroupid: number | null } | undefined
+
+    if (!currentRow?.agegroupid) {
+      const evRow = db.prepare(
+        `SELECT preveventid FROM swimevent WHERE swimeventid = ?`
+      ).get(finalEventId) as { preveventid: number | null } | undefined
+
+      let agId: number | null = null
+      if (evRow?.preveventid) {
+        const pRes = db.prepare(
+          `SELECT agegroupid FROM swimresult WHERE swimeventid = ? AND athleteid = ?`
+        ).get(evRow.preveventid, athleteId) as { agegroupid: number | null } | undefined
+        agId = pRes?.agegroupid ?? null
+      }
+      if (!agId) {
+        const fAg = db.prepare(
+          `SELECT agegroupid FROM agegroup WHERE swimeventid = ? ORDER BY sortcode LIMIT 1`
+        ).get(finalEventId) as { agegroupid: number } | undefined
+        agId = fAg?.agegroupid ?? null
+      }
+
+      db.prepare(
+        `UPDATE swimresult SET qualcode = ?, noadvance = ?, agegroupid = ? WHERE swimresultid = ?`
+      ).run(qualCode || null, noAdvance ? 'T' : 'F', agId, existing.swimresultid)
+    } else {
+      db.prepare(
+        `UPDATE swimresult SET qualcode = ?, noadvance = ? WHERE swimresultid = ?`
+      ).run(qualCode || null, noAdvance ? 'T' : 'F', existing.swimresultid)
+    }
   } else {
     // Create a new swimresult row on the final event
-    // Copy entry time from the prelim result
+    // Copy entry time and agegroupid from the prelim result
     const finalEvent = db.prepare(
       `SELECT preveventid FROM swimevent WHERE swimeventid = ?`
     ).get(finalEventId) as { preveventid: number | null } | undefined
 
     let entryTime: number | null = null
+    let agegroupId: number | null = null
     if (finalEvent?.preveventid) {
       const prelimResult = db.prepare(
-        `SELECT swimtime FROM swimresult WHERE swimeventid = ? AND athleteid = ?`
-      ).get(finalEvent.preveventid, athleteId) as { swimtime: number | null } | undefined
+        `SELECT swimtime, agegroupid FROM swimresult WHERE swimeventid = ? AND athleteid = ?`
+      ).get(finalEvent.preveventid, athleteId) as { swimtime: number | null; agegroupid: number | null } | undefined
       entryTime = prelimResult?.swimtime ?? null
+      agegroupId = prelimResult?.agegroupid ?? null
+    }
+
+    // If no agegroupid from prelim, try to get it from the final event's own age groups
+    if (!agegroupId) {
+      const finalAg = db.prepare(
+        `SELECT agegroupid FROM agegroup WHERE swimeventid = ? ORDER BY sortcode LIMIT 1`
+      ).get(finalEventId) as { agegroupid: number } | undefined
+      agegroupId = finalAg?.agegroupid ?? null
     }
 
     const id = nextId('swimresult', 'swimresultid')
     db.prepare(
-      `INSERT INTO swimresult (swimresultid, athleteid, swimeventid, entrytime, qualcode, noadvance, usetimetype)
-       VALUES (?, ?, ?, ?, ?, ?, 0)`
-    ).run(id, athleteId, finalEventId, entryTime, qualCode || null, noAdvance ? 'T' : 'F')
+      `INSERT INTO swimresult (swimresultid, athleteid, swimeventid, entrytime, qualcode, noadvance, agegroupid, usetimetype)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 0)`
+    ).run(id, athleteId, finalEventId, entryTime, qualCode || null, noAdvance ? 'T' : 'F', agegroupId)
   }
 }
 

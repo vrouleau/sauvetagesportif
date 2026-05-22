@@ -1019,7 +1019,7 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
                     <th className="px-2 py-0.5 text-center w-14 font-medium border-r border-gray-300">{t.heats.columns.clubCode}</th>
                     <th className="px-2 py-0.5 text-left font-medium border-r border-gray-300 min-w-[150px]">{t.heats.columns.clubName}</th>
                     <th className="px-2 py-0.5 text-center w-14 font-medium border-r border-gray-300">{t.heats.columns.category}</th>
-                    <th className="px-2 py-0.5 text-center w-20 font-medium border-r border-gray-300">{t.heats.columns.seedTime}</th>
+                    <th className="px-2 py-0.5 text-center w-20 font-medium border-r border-gray-300">{selectedEvent?.phase === 'Finale' ? t.heats.columns.prelimTime : t.heats.columns.seedTime}</th>
                     <th className="px-2 py-0.5 text-center w-24 font-medium border-r border-gray-300">{t.heats.columns.splitTime}</th>
                     <th className="px-2 py-0.5 text-center w-24 font-medium border-r border-gray-300 bg-blue-50">{t.heats.columns.finalTime}</th>
                     <th className="px-2 py-0.5 text-center w-8 font-medium border-r border-gray-300">{t.heats.columns.rank}</th>

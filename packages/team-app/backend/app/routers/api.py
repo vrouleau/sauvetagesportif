@@ -1138,7 +1138,7 @@ def list_sessions(db: Session = Depends(get_db)):
                 "ageGroups": [{
                     "id": ag.agegroupid,
                     "number": i + 1,
-                    "name": ag.name or "",
+                    "name": ag.name or (f"{ag.agemin}-{ag.agemax}" if ag.agemin is not None else "???"),
                     "minAge": ag.agemin or 0,
                     "maxAge": ag.agemax,
                     "gender": "M" if ag.gender == 1 else "F" if ag.gender == 2 else ("M" if e.gender == 1 else "F" if e.gender == 2 else "X"),
