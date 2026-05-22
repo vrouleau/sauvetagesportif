@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, type PointerEvent as ReactPointerEvent } from 'react'
 import { useLang } from '../context/LangContext'
 import { useRegistrationApi } from '../context/RegistrationApiContext'
 import type { RegistrationAPI, Club, AthleteListItem, RegistrationData } from '../data/api'
@@ -293,6 +293,61 @@ function useInscriptionPage(api: RegistrationAPI, role: string, clubId?: string,
   }
 }
 
+// ─── SplitPanel Component ─────────────────────────────────────────────────────
+
+const DEFAULT_SPLIT = 35 // percent for top panel
+const MIN_SPLIT = 15
+const MAX_SPLIT = 70
+
+function SplitPanel({ topPanel, bottomPanel }: { topPanel: React.ReactNode; bottomPanel: React.ReactNode }) {
+  const [splitPct, setSplitPct] = useState(DEFAULT_SPLIT)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const dragging = useRef(false)
+
+  const onPointerDown = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    dragging.current = true
+    ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
+  }, [])
+
+  const onPointerMove = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!dragging.current || !containerRef.current) return
+    const rect = containerRef.current.getBoundingClientRect()
+    const y = e.clientY - rect.top
+    const pct = Math.min(MAX_SPLIT, Math.max(MIN_SPLIT, (y / rect.height) * 100))
+    setSplitPct(pct)
+  }, [])
+
+  const onPointerUp = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
+    dragging.current = false
+    ;(e.target as HTMLElement).releasePointerCapture(e.pointerId)
+  }, [])
+
+  return (
+    <div ref={containerRef} className="flex-1 flex flex-col overflow-hidden relative">
+      {/* Top panel */}
+      <div className="overflow-auto" style={{ height: `${splitPct}%` }}>
+        {topPanel}
+      </div>
+
+      {/* Draggable divider */}
+      <div
+        className="shrink-0 h-1.5 bg-gray-300 hover:bg-blue-400 cursor-row-resize flex items-center justify-center transition-colors"
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+      >
+        <div className="w-8 h-0.5 bg-gray-500 rounded" />
+      </div>
+
+      {/* Bottom panel */}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {bottomPanel}
+      </div>
+    </div>
+  )
+}
+
 // ─── InscriptionPage Component ────────────────────────────────────────────────
 
 export default function InscriptionPage({ role, clubId, refreshKey }: InscriptionPageProps) {
@@ -358,10 +413,9 @@ export default function InscriptionPage({ role, clubId, refreshKey }: Inscriptio
         />
       </div>
 
-      {/* Split-panel layout */}
-      <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Top panel: Cascade Tree (~40%) */}
-        <div className="h-[40%] overflow-auto border-b border-gray-300">
+      {/* Split-panel layout with draggable divider */}
+      <SplitPanel
+        topPanel={
           <CascadeTree
             clubs={state.clubs}
             athletesByClub={filteredAthletesByClub}
@@ -373,11 +427,9 @@ export default function InscriptionPage({ role, clubId, refreshKey }: Inscriptio
             onDeleteAthlete={handleDeleteAthlete}
             role={role}
           />
-        </div>
-
-        {/* Bottom panel: Detail + Registration (~60%) */}
-        <div className="h-[60%] flex flex-col overflow-hidden">
-          {state.selectedAthleteId && state.registrationData ? (
+        }
+        bottomPanel={
+          state.selectedAthleteId && state.registrationData ? (
             <>
               <AthleteDetailPanel
                 athlete={state.registrationData.athlete}
@@ -398,9 +450,9 @@ export default function InscriptionPage({ role, clubId, refreshKey }: Inscriptio
             <div className="flex items-center justify-center h-full text-gray-400 text-xs italic">
               {tr.noAthleteSelected}
             </div>
-          )}
-        </div>
-      </div>
+          )
+        }
+      />
 
       {/* Inline error toast (when data is loaded but an operation fails) */}
       {state.error && state.clubs.length > 0 && (
