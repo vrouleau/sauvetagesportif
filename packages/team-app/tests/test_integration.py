@@ -1105,9 +1105,11 @@ class TestSessions:
         r = requests.get(f"{BASE_URL}/api/sessions", timeout=10)
         r.raise_for_status()
         sessions = r.json()
+        found = False
         for s in sessions:
             for ev in s["events"]:
                 for ag in ev["ageGroups"]:
+                    found = True
                     assert ag["name"] != "", (
                         f"Event {ev['id']} agegroup {ag['id']} has empty name. "
                         f"Expected 'agemin-agemax' fallback or '???' placeholder."
