@@ -622,7 +622,21 @@ export function saveSMB(filePath: string, db: Database.Database): { tables: numb
   for (const tableDef of SMB_TABLES) {
     const tableName = tableDef.name.toLowerCase()
     const colNames = tableDef.cols.map(c => c.name.toLowerCase()).join(', ')
-    const rows = db.prepare(`SELECT ${colNames} FROM ${tableName}`).all() as Record<string, unknown>[]
+    let rows = db.prepare(`SELECT ${colNames} FROM ${tableName}`).all() as Record<string, unknown>[]
+
+    // Reverse-map canonical round encoding → Splash MDB encoding for SWIMEVENT
+    // so that Splash can read the exported SMB correctly.
+    // Canonical: 1=PRE, 2=SEM, 4=FIN, 5=TIM
+    // Splash:    2=PRE, 2=SEM, 9=FIN, 1=TIM
+    if (tableName === 'swimevent') {
+      rows = rows.map(row => {
+        const round = row['round'] as number | null
+        if (round === 1) return { ...row, round: 2 }   // PRE → MDB 2
+        if (round === 4) return { ...row, round: 9 }   // FIN → MDB 9
+        if (round === 5) return { ...row, round: 1 }   // TIM → MDB 1
+        return row
+      })
+    }
 
     recordCounts[tableDef.name] = rows.length
     totalRows += rows.length
@@ -731,9 +745,101 @@ export function restoreSMB(filePath: string, db: Database.Database): { tables: n
       tableDetail.push(`${tableDef.name}: ${inserted}/${rows.length}`)
       totalInserted += inserted
     }
+
+    // ── Post-import normalization: Splash MDB round encoding → canonical ──
+    // Splash MDB uses: 1=TimedFinal, 2=Prelim, 9=Final, 11=Break/Pause
+    // Our canonical:   1=Prelim,     2=Semi,   4=Final, 5=TimedFinal
+    // Detect MDB encoding by presence of round=9 or round=11 (never used in canonical)
+    normalizeRoundEncoding(db)
   } finally {
     db.pragma('foreign_keys = ON')
   }
 
   return { tables: SMB_TABLES.length, rows: totalInserted, detail: tableDetail.join(', ') }
+}
+
+// ── Round encoding normalization ──────────────────────────────────────────────
+//
+// Splash Meet Manager (MDB) uses a different round encoding than our canonical
+// Lenex-based encoding. When restoring an SMB from Splash, we detect and convert.
+//
+// Splash MDB encoding:
+//   1 = Timed Final (MASTERS heats that are swum as timed finals)
+//   2 = Prelim/Heats (preliminary round)
+//   9 = Final (linked to a prelim via preveventid)
+//  11 = Break/Pause/Admin event (no swimstyle, internal)
+//
+// Canonical encoding (matches Lenex and our app's createEvent logic):
+//   1 = Prelim (PRE)
+//   2 = Semifinal (SEM)
+//   4 = Final (FIN)
+//   5 = Timed Final / Direct Final (TIM)
+//  11 = Break/Pause (unchanged, handled via internalevent flag)
+
+function normalizeRoundEncoding(db: Database.Database): void {
+  // SMB files always use Splash MDB round encoding (written by saveSMB or by Splash itself).
+  // Normalize to our canonical encoding on restore.
+  //
+  // Safety check: if no events use MDB-specific values (9=Final, 11=Break),
+  // and no events have round=1 or round=2, skip normalization (empty or pre-normalized DB).
+  const hasEvents = db.prepare(
+    `SELECT COUNT(*) AS c FROM swimevent WHERE round IS NOT NULL`
+  ).get() as { c: number }
+
+  if (hasEvents.c === 0) return
+
+  // Map round values: MDB → canonical
+  // 1 (MDB TimedFinal) → 5 (canonical TIM)
+  // 2 (MDB Prelim)     → 1 (canonical PRE)
+  // 9 (MDB Final)      → 4 (canonical FIN)
+  // 11 (MDB Break)     → 11 (unchanged, admin events)
+  // Use a temp value to avoid collisions during remapping (1→5, 2→1 would collide)
+  db.prepare(`UPDATE swimevent SET round = -1 WHERE round = 1`).run()
+  db.prepare(`UPDATE swimevent SET round = -2 WHERE round = 2`).run()
+  db.prepare(`UPDATE swimevent SET round = -9 WHERE round = 9`).run()
+  db.prepare(`UPDATE swimevent SET round = 5 WHERE round = -1`).run()  // MDB 1 → TIM
+  db.prepare(`UPDATE swimevent SET round = 1 WHERE round = -2`).run()  // MDB 2 → PRE
+  db.prepare(`UPDATE swimevent SET round = 4 WHERE round = -9`).run()  // MDB 9 → FIN
+
+  // Fix PRE events that have gender=0 and/or eventnumber=0.
+  // In Splash MDB, prelim events store gender=0 and eventnumber=0 because
+  // the display values are derived from the paired Timed Final event.
+  // The TIM event always immediately precedes its PRE event (sortcode - 1).
+  // Fallback: use the FIN event that references this PRE via preveventid.
+  const preEvents = db.prepare(`
+    SELECT e.swimeventid, e.swimsessionid, e.swimstyleid, e.eventnumber, e.gender, e.sortcode
+    FROM swimevent e
+    WHERE e.round = 1 AND e.gender = 0 AND e.swimstyleid IS NOT NULL
+  `).all() as Array<{
+    swimeventid: number; swimsessionid: number; swimstyleid: number
+    eventnumber: number; gender: number; sortcode: number
+  }>
+
+  for (const pre of preEvents) {
+    // Strategy 1: paired TIM event at sortcode - 1 (same session, same swimstyle)
+    let gender: number | null = null
+    const timEvent = db.prepare(`
+      SELECT gender FROM swimevent
+      WHERE swimsessionid = ? AND swimstyleid = ? AND round = 5 AND sortcode = ?
+      LIMIT 1
+    `).get(pre.swimsessionid, pre.swimstyleid, pre.sortcode - 1) as { gender: number } | undefined
+
+    if (timEvent && timEvent.gender !== 0) {
+      gender = timEvent.gender
+    }
+
+    // Strategy 2: FIN event that references this PRE via preveventid
+    if (!gender) {
+      const finEvent = db.prepare(`
+        SELECT gender FROM swimevent WHERE preveventid = ? AND round = 4 LIMIT 1
+      `).get(pre.swimeventid) as { gender: number } | undefined
+      if (finEvent && finEvent.gender !== 0) {
+        gender = finEvent.gender
+      }
+    }
+
+    if (gender) {
+      db.prepare(`UPDATE swimevent SET gender = ? WHERE swimeventid = ?`).run(gender, pre.swimeventid)
+    }
+  }
 }

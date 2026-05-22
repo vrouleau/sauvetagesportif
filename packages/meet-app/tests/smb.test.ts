@@ -99,4 +99,42 @@ describe('SMB save/restore', () => {
     expect(existsSync(smbPath)).toBe(true)
     expect(result.rows).toBe(0)
   })
+
+  it('normalizes Splash MDB round encoding on restore', () => {
+    // Simulate a Splash-native SMB: insert data with MDB round encoding directly,
+    // then save raw (saveSMB will reverse-map canonical→MDB, but we already have MDB values,
+    // so we need to insert canonical values that saveSMB will convert to MDB for us).
+    // Instead, let's use canonical values, save (produces MDB in file), restore, verify canonical.
+    db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount, stroke) VALUES (1, 100, 'Freestyle', 1, 1)`)
+    db.exec(`INSERT INTO swimsession (swimsessionid, sessionnumber, name, course) VALUES (1, 1, 'Session 1', 1)`)
+    // TIM event (canonical round=5)
+    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode, internalevent) VALUES (100, 1, 1, 10, 2, 5, 1, 'F')`)
+    // PRE event (canonical round=1)
+    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode, internalevent, preveventid) VALUES (200, 1, 1, 11, 2, 1, 2, 'F', -1)`)
+    // FIN event (canonical round=4, references PRE)
+    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode, internalevent, preveventid) VALUES (300, 1, 1, 12, 2, 4, 5, 'F', 200)`)
+
+    // Save — file will contain Splash MDB encoding (5→1, 1→2, 4→9)
+    saveSMB(smbPath, db)
+
+    // Wipe
+    db.exec('DELETE FROM swimevent')
+    db.exec('DELETE FROM swimsession')
+    db.exec('DELETE FROM swimstyle')
+
+    // Restore — should detect MDB encoding (round=9 in file) and normalize back
+    restoreSMB(smbPath, db)
+
+    // Verify round values are back to canonical
+    const timEvent = db.prepare('SELECT round, gender FROM swimevent WHERE swimeventid=100').get() as { round: number; gender: number }
+    expect(timEvent.round).toBe(5)  // Restored to canonical TIM
+    expect(timEvent.gender).toBe(2) // F, unchanged
+
+    const preEvent = db.prepare('SELECT round, gender FROM swimevent WHERE swimeventid=200').get() as { round: number; gender: number }
+    expect(preEvent.round).toBe(1)  // Restored to canonical PRE
+    expect(preEvent.gender).toBe(2) // F, unchanged (was already set)
+
+    const finEvent = db.prepare('SELECT round FROM swimevent WHERE swimeventid=300').get() as { round: number }
+    expect(finEvent.round).toBe(4)  // Restored to canonical FIN
+  })
 })

@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field, field_validator
 from ..models import (
     Club, Athlete, SwimEvent, SwimStyle, SwimSession, AgeGroup, SwimResult, BsGlobal, SecretLink,
     gender_to_str, gender_from_str, fee_dollars_to_cents, fee_cents_to_dollars,
-    GENDER_M, GENDER_F, ROUND_FIN, ROUND_TIM,
+    GENDER_M, GENDER_F, ROUND_FIN, ROUND_TIM, ROUND_PRE,
 )
 from ..seed import seed_from_lxf
 from ..best_times import (
@@ -479,6 +479,54 @@ async def upload_meet_smb(file: UploadFile = File(...), db: Session = Depends(ge
         ))
         events_imported += 1
     db.flush()
+
+    # ── Normalize Splash MDB round encoding → canonical ──
+    # Splash MDB uses: 1=TimedFinal, 2=Prelim, 9=Final, 11=Break/Pause
+    # Our canonical:   1=Prelim(PRE), 2=Semi, 4=Final(FIN), 5=TimedFinal(TIM)
+    # Detect MDB encoding by presence of round=9 or round=11
+    has_mdb_encoding = db.query(SwimEvent).filter(SwimEvent.round.in_([9, 11])).count() > 0
+    if has_mdb_encoding:
+        # Remap: MDB 1→TIM(5), MDB 2→PRE(1), MDB 9→FIN(4), 11 unchanged
+        for ev in db.query(SwimEvent).filter(SwimEvent.round == 1).all():
+            ev.round = -1  # temp
+        for ev in db.query(SwimEvent).filter(SwimEvent.round == 2).all():
+            ev.round = -2  # temp
+        for ev in db.query(SwimEvent).filter(SwimEvent.round == 9).all():
+            ev.round = -9  # temp
+        db.flush()
+        for ev in db.query(SwimEvent).filter(SwimEvent.round == -1).all():
+            ev.round = ROUND_TIM  # MDB 1 → 5
+        for ev in db.query(SwimEvent).filter(SwimEvent.round == -2).all():
+            ev.round = ROUND_PRE  # MDB 2 → 1
+        for ev in db.query(SwimEvent).filter(SwimEvent.round == -9).all():
+            ev.round = ROUND_FIN  # MDB 9 → 4
+        db.flush()
+
+        # Fix PRE events with gender=0: derive from paired TIM (sortcode-1) or FIN (preveventid)
+        pre_events = db.query(SwimEvent).filter(
+            SwimEvent.round == ROUND_PRE,
+            SwimEvent.gender == 0,
+            SwimEvent.swimstyleid.isnot(None),
+        ).all()
+        for pre in pre_events:
+            # Strategy 1: TIM event at sortcode - 1, same session + style
+            tim = db.query(SwimEvent).filter(
+                SwimEvent.swimsessionid == pre.swimsessionid,
+                SwimEvent.swimstyleid == pre.swimstyleid,
+                SwimEvent.round == ROUND_TIM,
+                SwimEvent.sortcode == (pre.sortcode or 0) - 1,
+            ).first()
+            if tim and tim.gender and tim.gender != 0:
+                pre.gender = tim.gender
+                continue
+            # Strategy 2: FIN event referencing this PRE via preveventid
+            fin = db.query(SwimEvent).filter(
+                SwimEvent.preveventid == pre.swimeventid,
+                SwimEvent.round == ROUND_FIN,
+            ).first()
+            if fin and fin.gender and fin.gender != 0:
+                pre.gender = fin.gender
+        db.flush()
 
     # Import age groups
     agegroups_imported = 0

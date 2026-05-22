@@ -9,6 +9,7 @@ import re
 import zipfile
 from datetime import date
 from io import BytesIO
+from pathlib import Path
 
 import pytest
 import requests
@@ -1189,3 +1190,95 @@ class TestSwimStyles:
                         f"Event {ev['id']} references swimstyleId={ev['swimstyleId']} "
                         f"which is not in /swim-styles"
                     )
+
+
+# ---------------------------------------------------------------------------
+# SMB upload round normalization
+# ---------------------------------------------------------------------------
+
+SMB_FILE = Path(__file__).resolve().parent / "fixtures" / "meet.smb"
+
+
+class TestSmbUploadNormalization:
+    """Verify that uploading a Splash-native SMB normalizes MDB round encoding."""
+
+    @pytest.fixture(scope="class")
+    def smb_uploaded(self, admin_headers):
+        """Upload the Splash meet.smb and return the response."""
+        assert SMB_FILE.exists(), f"meet.smb not found at {SMB_FILE}"
+        with open(SMB_FILE, "rb") as f:
+            r = requests.post(
+                f"{BASE_URL}/api/upload/meet-smb",
+                files={"file": ("meet.smb", f, "application/octet-stream")},
+                headers=admin_headers,
+                timeout=60,
+            )
+        r.raise_for_status()
+        return r.json()
+
+    def test_smb_upload_succeeds(self, smb_uploaded):
+        assert smb_uploaded["events_loaded"] > 0
+
+    def test_tim_events_have_correct_phase(self, smb_uploaded, admin_headers):
+        """Timed Final events (round=5 canonical) must show phase='Finale directe'."""
+        r = requests.get(f"{BASE_URL}/api/sessions", headers=admin_headers, timeout=10)
+        r.raise_for_status()
+        sessions = r.json()
+        # Find non-admin events with phase "Finale directe" (TIM or direct final)
+        tim_events = [
+            ev for s in sessions for ev in s["events"]
+            if ev["phase"] == "Finale directe" and not ev["isAdmin"]
+        ]
+        assert len(tim_events) > 0, "Expected Timed Final events after SMB upload"
+
+    def test_pre_events_have_correct_phase(self, smb_uploaded, admin_headers):
+        """Prelim events (round=1 canonical) must show phase='Eliminatoire'."""
+        r = requests.get(f"{BASE_URL}/api/sessions", headers=admin_headers, timeout=10)
+        r.raise_for_status()
+        sessions = r.json()
+        pre_events = [
+            ev for s in sessions for ev in s["events"]
+            if ev["phase"] == "Eliminatoire" and not ev["isAdmin"]
+        ]
+        assert len(pre_events) > 0, "Expected Prelim events after SMB upload"
+
+    def test_fin_events_have_correct_phase(self, smb_uploaded, admin_headers):
+        """Final events (round=4 canonical) must show phase='Finale'."""
+        r = requests.get(f"{BASE_URL}/api/sessions", headers=admin_headers, timeout=10)
+        r.raise_for_status()
+        sessions = r.json()
+        fin_events = [
+            ev for s in sessions for ev in s["events"]
+            if ev["phase"] == "Finale" and not ev["isAdmin"]
+        ]
+        assert len(fin_events) > 0, "Expected Final events after SMB upload"
+
+    def test_no_events_have_unknown_round(self, smb_uploaded, admin_headers):
+        """No non-admin event should have round values outside canonical set."""
+        r = requests.get(f"{BASE_URL}/api/sessions", headers=admin_headers, timeout=10)
+        r.raise_for_status()
+        sessions = r.json()
+        valid_phases = {"Eliminatoire", "Finale", "Finale directe"}
+        for s in sessions:
+            for ev in s["events"]:
+                if not ev["isAdmin"]:
+                    assert ev["phase"] in valid_phases, (
+                        f"Event {ev['id']} has unexpected phase '{ev['phase']}'"
+                    )
+
+    def test_pre_events_have_valid_gender(self, smb_uploaded, admin_headers):
+        """PRE events must not have gender='X' when they should be M or F
+        (gender=0 in MDB should be fixed by normalization)."""
+        r = requests.get(f"{BASE_URL}/api/sessions", headers=admin_headers, timeout=10)
+        r.raise_for_status()
+        sessions = r.json()
+        pre_events = [
+            ev for s in sessions for ev in s["events"]
+            if ev["phase"] == "Eliminatoire" and not ev["isAdmin"]
+        ]
+        # At least some PRE events should have M or F gender (not all X)
+        gendered = [ev for ev in pre_events if ev["gender"] in ("M", "F")]
+        assert len(gendered) > 0, (
+            "Expected PRE events with M/F gender after normalization, "
+            f"but all {len(pre_events)} PRE events have gender='X'"
+        )
