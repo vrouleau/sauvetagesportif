@@ -1282,3 +1282,21 @@ class TestSmbUploadNormalization:
             "Expected PRE events with M/F gender after normalization, "
             f"but all {len(pre_events)} PRE events have gender='X'"
         )
+
+    def test_pre_events_have_nonzero_eventnumber(self, smb_uploaded, admin_headers):
+        """PRE events with eventnumber=0 in MDB should get auto-assigned
+        sequential numbers (1, 2, 3...) after normalization."""
+        r = requests.get(f"{BASE_URL}/api/sessions", headers=admin_headers, timeout=10)
+        r.raise_for_status()
+        sessions = r.json()
+        pre_events = [
+            ev for s in sessions for ev in s["events"]
+            if ev["phase"] == "Eliminatoire" and not ev["isAdmin"]
+        ]
+        assert len(pre_events) > 0, "Expected PRE events after SMB upload"
+        # All prelim events should have a non-zero event number
+        zero_num = [ev for ev in pre_events if ev["number"] == 0]
+        assert len(zero_num) == 0, (
+            f"{len(zero_num)} PRE events still have eventnumber=0 after normalization: "
+            f"{[ev['id'] for ev in zero_num[:5]]}"
+        )

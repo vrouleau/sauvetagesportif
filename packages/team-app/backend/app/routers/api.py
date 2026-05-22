@@ -528,6 +528,24 @@ async def upload_meet_smb(file: UploadFile = File(...), db: Session = Depends(ge
                 pre.gender = fin.gender
         db.flush()
 
+        # Fix PRE events with eventnumber=0: Splash auto-assigns sequential numbers
+        # (1, 2, 3...) to prelim events that have eventnumber=0 in the MDB.
+        # Replicate by numbering them in session-number + sortcode order.
+        zero_num_prelims = (
+            db.query(SwimEvent)
+            .join(SwimSession, SwimEvent.swimsessionid == SwimSession.swimsessionid)
+            .filter(
+                SwimEvent.round == ROUND_PRE,
+                SwimEvent.swimstyleid.isnot(None),
+                ((SwimEvent.eventnumber == 0) | (SwimEvent.eventnumber.is_(None))),
+            )
+            .order_by(SwimSession.sessionnumber, SwimEvent.sortcode)
+            .all()
+        )
+        for seq, pre in enumerate(zero_num_prelims, start=1):
+            pre.eventnumber = seq
+        db.flush()
+
     # Import age groups
     agegroups_imported = 0
     for row in tables.get("AGEGROUP", []):

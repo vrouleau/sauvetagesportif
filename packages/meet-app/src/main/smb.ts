@@ -631,10 +631,11 @@ export function saveSMB(filePath: string, db: Database.Database): { tables: numb
     if (tableName === 'swimevent') {
       rows = rows.map(row => {
         const round = row['round'] as number | null
-        if (round === 1) return { ...row, round: 2 }   // PRE → MDB 2
-        if (round === 4) return { ...row, round: 9 }   // FIN → MDB 9
-        if (round === 5) return { ...row, round: 1 }   // TIM → MDB 1
-        return row
+        let newRow = row
+        if (round === 1) newRow = { ...newRow, round: 2, eventnumber: 0, gender: 0 }   // PRE → MDB 2 (reset eventnumber & gender)
+        else if (round === 4) newRow = { ...newRow, round: 9 }   // FIN → MDB 9
+        else if (round === 5) newRow = { ...newRow, round: 1 }   // TIM → MDB 1
+        return newRow
       })
     }
 
@@ -840,6 +841,28 @@ function normalizeRoundEncoding(db: Database.Database): void {
 
     if (gender) {
       db.prepare(`UPDATE swimevent SET gender = ? WHERE swimeventid = ?`).run(gender, pre.swimeventid)
+    }
+  }
+
+  // Fix PRE events with eventnumber=0.
+  // Splash auto-assigns sequential numbers (1, 2, 3...) to prelim events that
+  // have eventnumber=0 in the MDB. We replicate this by numbering them in
+  // session-number + sortcode order.
+  const zeroNumPrelims = db.prepare(`
+    SELECT e.swimeventid, e.sortcode, s.sessionnumber
+    FROM swimevent e
+    JOIN swimsession s ON s.swimsessionid = e.swimsessionid
+    WHERE e.round = 1 AND (e.eventnumber = 0 OR e.eventnumber IS NULL)
+      AND e.swimstyleid IS NOT NULL
+    ORDER BY s.sessionnumber, e.sortcode
+  `).all() as Array<{ swimeventid: number; sortcode: number; sessionnumber: number }>
+
+  if (zeroNumPrelims.length > 0) {
+    const updateNum = db.prepare(`UPDATE swimevent SET eventnumber = ? WHERE swimeventid = ?`)
+    let seq = 1
+    for (const pre of zeroNumPrelims) {
+      updateNum.run(seq, pre.swimeventid)
+      seq++
     }
   }
 }
