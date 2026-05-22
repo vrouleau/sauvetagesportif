@@ -307,7 +307,9 @@ async def upload_meet(file: UploadFile = File(...), db: Session = Depends(get_db
 
     # Regenerate combined events XML after loading event structure
     from ..combined_events import regenerate_combined_events
+    from ..point_scores import regenerate_point_scores
     regenerate_combined_events(db)
+    regenerate_point_scores(db)
 
     # Track metadata
     import json as _json
@@ -576,7 +578,9 @@ async def upload_meet_smb(file: UploadFile = File(...), db: Session = Depends(ge
 
     # Regenerate combined events XML after loading event structure
     from ..combined_events import regenerate_combined_events
+    from ..point_scores import regenerate_point_scores
     regenerate_combined_events(db)
+    regenerate_point_scores(db)
 
     # Store the uploaded SMB in the writable data directory for later download
     smb_storage = Path(os.environ.get("MEET_STORAGE", "/app/data/meet.lxf")).parent / "meet.smb"
@@ -631,7 +635,9 @@ def create_new_meet(db: Session = Depends(get_db)):
 
     # Regenerate combined events XML after loading event structure
     from ..combined_events import regenerate_combined_events
+    from ..point_scores import regenerate_point_scores
     regenerate_combined_events(db)
+    regenerate_point_scores(db)
 
     # Store the template as the current meet file
     MEET_STORAGE.parent.mkdir(parents=True, exist_ok=True)
@@ -1131,16 +1137,18 @@ def list_sessions(db: Session = Depends(get_db)):
         events_data = []
         for e in sorted(s.events, key=lambda x: x.sortcode or x.eventnumber or 0):
             ags = db.query(AgeGroup).filter(AgeGroup.swimeventid == e.swimeventid).order_by(AgeGroup.sortcode).all()
+            is_admin = e.internalevent == "T" or e.swimstyleid is None
+            name = (e.comment or "Pause") if is_admin else (e.roundname or (e.swimstyle.name if e.swimstyle else ""))
             events_data.append({
                 "id": e.swimeventid,
                 "sessionId": s.swimsessionid,
                 "number": e.eventnumber or 0,
-                "nameFr": e.roundname or (e.swimstyle.name if e.swimstyle else ""),
-                "nameEn": e.roundname or (e.swimstyle.name if e.swimstyle else ""),
+                "nameFr": name,
+                "nameEn": name,
                 "gender": "M" if e.gender == 1 else "F" if e.gender == 2 else "X",
                 "distance": e.swimstyle.distance if e.swimstyle else 0,
                 "phase": "Eliminatoire" if e.round == 1 else "Finale" if e.round == 4 else "Finale directe",
-                "isAdmin": e.internalevent == "T" or e.swimstyleid is None,
+                "isAdmin": is_admin,
                 "swimstyleId": e.swimstyleid,
                 "ageGroups": [{
                     "id": ag.agegroupid,

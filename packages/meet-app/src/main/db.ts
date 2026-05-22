@@ -4,6 +4,7 @@ import { join } from 'path'
 import pkg from 'pg'
 const { Pool } = pkg
 import { regenerateCombinedEvents } from './combinedEvents'
+import { regeneratePointScores } from './pointScores'
 
 // ── Local SQLite database (self-contained, like the .mdb) ─────────────────────
 
@@ -1077,6 +1078,7 @@ export async function createEvent(
              'F','F','F','F','F','F','F','F','F','F')`
   ).run(id, sessionId, eventnumber, gNum, round, swimstyleid, sortcode)
   regenerateCombinedEvents(db)
+  regeneratePointScores(db)
   return id
 }
 
@@ -1084,6 +1086,7 @@ export async function deleteEvent(eventId: number): Promise<void> {
   const db = getLocalDb()
   db.prepare(`DELETE FROM swimevent WHERE swimeventid=?`).run(eventId)
   regenerateCombinedEvents(db)
+  regeneratePointScores(db)
 }
 
 export async function createAgeGroup(
@@ -1110,6 +1113,7 @@ export async function createAgeGroup(
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'T','T','T','F','F','F')`
   ).run(id, eventId, name, minAge, maxAge, gNum, heatcount, sortcode)
   regenerateCombinedEvents(db)
+  regeneratePointScores(db)
   return id
 }
 
@@ -1117,6 +1121,7 @@ export async function deleteAgeGroup(agegroupId: number): Promise<void> {
   const db = getLocalDb()
   db.prepare(`DELETE FROM agegroup WHERE agegroupid=?`).run(agegroupId)
   regenerateCombinedEvents(db)
+  regeneratePointScores(db)
 }
 
 // ── Write: athlete ────────────────────────────────────────────────────────────
@@ -2171,6 +2176,7 @@ export async function updateEvent(eventId: number, data: EventUpdate): Promise<v
   // Regenerate combined events when relevant fields change
   if (data.gender !== undefined || data.swimstyleid !== undefined) {
     regenerateCombinedEvents(db)
+    regeneratePointScores(db)
   }
 }
 
@@ -2204,6 +2210,7 @@ export async function updateAgeGroup(agegroupId: number, data: AgeGroupUpdate): 
   // Regenerate combined events when relevant fields change
   if (data.agemin !== undefined || data.agemax !== undefined || data.gender !== undefined) {
     regenerateCombinedEvents(db)
+    regeneratePointScores(db)
   }
 }
 

@@ -1,0 +1,28 @@
+{
+  "description": "Point scoring definitions stored in BSGLOBAL as POINTSCORES XML. Applied to age groups (via agegroup.scoretype) when creating a meet from scratch. Exported in SMB and used for report generation.",
+  "definitions": [
+    {
+      "pointscoreid": 1,
+      "name": "Standard 16 places",
+      "points": [20, 18, 16, 14, 13, 12, 11, 10, 8, 7, 6, 5, 4, 3, 2, 1]
+    },
+    {
+      "pointscoreid": 2,
+      "name": "Standard 7 places",
+      "points": [10, 8, 6, 4, 3, 2, 1]
+    }
+  ],
+  "assignments": [
+    { "ageMin": 1,  "ageMax": 10, "gender": 0, "pointscoreid": 1 },
+    { "ageMin": 1,  "ageMax": 10, "gender": 1, "pointscoreid": 1 },
+    { "ageMin": 1,  "ageMax": 10, "gender": 2, "pointscoreid": 1 },
+    { "ageMin": 11, "ageMax": 12, "gender": 1, "pointscoreid": 1 },
+    { "ageMin": 11, "ageMax": 12, "gender": 2, "pointscoreid": 1 },
+    { "ageMin": 13, "ageMax": 14, "gender": 1, "pointscoreid": 2 },
+    { "ageMin": 13, "ageMax": 14, "gender": 2, "pointscoreid": 1 },
+    { "ageMin": 15, "ageMax": 18, "gender": 1, "pointscoreid": 1 },
+    { "ageMin": 15, "ageMax": 18, "gender": 2, "pointscoreid": 1 },
+    { "ageMin": 19, "ageMax": -1, "gender": 1, "pointscoreid": 1 },
+    { "ageMin": 19, "ageMax": -1, "gender": 2, "pointscoreid": 1 }
+  ]
+}
