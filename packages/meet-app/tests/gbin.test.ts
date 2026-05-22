@@ -313,15 +313,16 @@ describe('gbin encode/decode roundtrip', () => {
     const rows = [
       { id: 1, time_ms: 3600000 },     // 1 hour in ms
       { id: 2, time_ms: 65430 },        // ~1:05.43
-      { id: 3, time_ms: 2147483647 },   // max int32
+      { id: 3, time_ms: 2147483647 },   // max int32 → Splash "no time" sentinel → null
       { id: 4, time_ms: -2147483648 },  // min int32
     ]
     const encoded = encodeGbin(tableDef(cols), rows)
     const { rows: decoded } = decodeGbin(encoded)
 
-    for (let i = 0; i < rows.length; i++) {
-      expect(decoded[i].time_ms).toBe(rows[i].time_ms)
-    }
+    expect(decoded[0].time_ms).toBe(3600000)
+    expect(decoded[1].time_ms).toBe(65430)
+    expect(decoded[2].time_ms).toBe(null)  // max int32 is the "no time" sentinel
+    expect(decoded[3].time_ms).toBe(-2147483648)
   })
 
   it('large 16-bit integer values encode/decode correctly', () => {
