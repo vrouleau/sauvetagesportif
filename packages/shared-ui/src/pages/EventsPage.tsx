@@ -132,6 +132,34 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
   const [poolSize, setPoolSize] = useState<number>(50)
   const { prompt, promptState, handleConfirm, handleCancel } = usePromptDialog()
 
+  // Resizable left panel
+  const [leftPanelWidth, setLeftPanelWidth] = useState(480)
+  const draggingPanel = useRef(false)
+
+  useEffect(() => {
+    function onMouseMove(e: globalThis.MouseEvent) {
+      if (!draggingPanel.current) return
+      setLeftPanelWidth(Math.max(300, Math.min(900, e.clientX)))
+    }
+    function onMouseUp() {
+      draggingPanel.current = false
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+    document.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseup', onMouseUp)
+    return () => {
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
+    }
+  }, [])
+
+  function startPanelDrag() {
+    draggingPanel.current = true
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+  }
+
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
   )
@@ -618,6 +646,7 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
         else if (key === 'roundname') { localUpdate.nameFr = val as string; localUpdate.nameEn = val as string }
         else if (key === 'comment') { localUpdate.nameFr = val as string; localUpdate.nameEn = val as string }
         else if (key === 'eventnumber') localUpdate.number = val as number
+        else if (key === 'finalorder') localUpdate.finalOrder = val as number | null
       }
       // Update local state
       setLocalSessions((prev) =>
@@ -678,7 +707,7 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
       <div className="flex flex-1 min-h-0">
         {/* ── Left: tree ── */}
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-        <div className="w-[480px] shrink-0 border-r border-gray-300 overflow-y-auto bg-white select-none text-xs">
+        <div style={{ width: leftPanelWidth }} className="shrink-0 border-r border-gray-300 overflow-y-auto bg-white select-none text-xs">
           {/* Column headers */}
           <div className="flex items-center h-6 bg-gray-100 border-b border-gray-300 text-gray-500 font-medium px-2 sticky top-0 z-10">
             <span className="flex-1">{t.events.columns.name}</span>
@@ -798,6 +827,12 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
           })}
         </div>
         </DndContext>
+
+        {/* Resizable divider */}
+        <div
+          onMouseDown={startPanelDrag}
+          className="w-1.5 cursor-col-resize bg-gray-200 hover:bg-blue-400 active:bg-blue-500 transition-colors shrink-0"
+        />
 
         {/* ── Right: properties panel ── */}
         <div className="flex-1 overflow-y-auto bg-white">
@@ -1117,12 +1152,14 @@ function AgeGroupPropertiesPanel({ group, event }: { group: AgeGroup; event: Com
   const [minAge, setMinAge] = useState(group.minAge)
   const [maxAge, setMaxAge] = useState<number | null>(group.maxAge)
   const [gender, setGender] = useState(group.gender)
+  const [numHeats, setNumHeats] = useState(group.numHeats)
 
   useEffect(() => {
     setMinAge(group.minAge)
     setMaxAge(group.maxAge)
     setGender(group.gender)
-  }, [group.id, group.minAge, group.maxAge, group.gender])
+    setNumHeats(group.numHeats)
+  }, [group.id, group.minAge, group.maxAge, group.gender, group.numHeats])
 
   function toggleSection(title: string) {
     setCollapsed((prev) => {
@@ -1274,7 +1311,24 @@ function AgeGroupPropertiesPanel({ group, event }: { group: AgeGroup; event: Com
               <Row label={t.events.props.ranking} value={group.ranking ?? t.events.defaultRanking} />
               <Row label={t.events.props.countForMedals} value={group.countForMedalStats} />
               <Row label={t.events.props.usedForCombined} value={group.usedForCombined} />
-              <Row label={t.events.props.numHeats} value={group.numHeats} />
+              <tr className="border-b border-gray-100 hover:bg-gray-50">
+                <td className="px-4 py-0.5 text-gray-600 w-64">{t.events.props.numHeats}</td>
+                <td className="px-2 py-0.5">
+                  <input
+                    type="number"
+                    min={1}
+                    max={26}
+                    className="w-16 border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
+                    value={numHeats}
+                    onChange={(e) => setNumHeats(Math.max(1, Math.min(26, parseInt(e.target.value, 10) || 1)))}
+                    onBlur={() => {
+                      if (numHeats !== group.numHeats) {
+                        api.updateAgeGroup(group.id, { heatcount: numHeats } as unknown as Record<string, unknown>)
+                      }
+                    }}
+                  />
+                </td>
+              </tr>
               <tr className="border-b border-gray-100 hover:bg-gray-50">
                 <td className="px-4 py-0.5 text-gray-600 w-64">Type de répartition (finales)</td>
                 <td className="px-2 py-0.5">
@@ -1414,6 +1468,7 @@ function EventPropertiesPanel({ event, onUpdate }: { event: CompetitionEvent; on
   const [duration, setDuration] = useState(event.duration ?? '')
   const [swimStyles, setSwimStyles] = useState<SwimStyle[]>([])
   const [selectedStyleId, setSelectedStyleId] = useState<number | null>(null)
+  const [finalOrder, setFinalOrder] = useState<number>(event.finalOrder ?? 2)
 
   useEffect(() => {
     setEvNumber(event.number)
@@ -1422,6 +1477,7 @@ function EventPropertiesPanel({ event, onUpdate }: { event: CompetitionEvent; on
     setScheduledTime(event.scheduledTime ?? '')
     setDuration(event.duration ?? '')
     setSelectedStyleId(event.swimstyleId ?? null)
+    setFinalOrder(event.finalOrder ?? 2)
     // Load swim styles
     api.getSwimStyles().then((styles) => setSwimStyles(styles)).catch(() => {})
   }, [event.id])
@@ -1575,6 +1631,25 @@ function EventPropertiesPanel({ event, onUpdate }: { event: CompetitionEvent; on
                   />
                 </td>
               </tr>
+              {event.phase === 'Finale' && (
+                <tr className="border-b border-gray-100 hover:bg-gray-50">
+                  <td className="px-4 py-0.5 text-gray-600 w-64">Ordre des finales</td>
+                  <td className="px-2 py-0.5">
+                    <select
+                      className="border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
+                      value={finalOrder}
+                      onChange={(e) => {
+                        const v = parseInt(e.target.value, 10)
+                        setFinalOrder(v)
+                        save({ finalorder: v })
+                      }}
+                    >
+                      <option value={2}>Lent en premier (A dernier)</option>
+                      <option value={1}>Rapide en premier (A premier)</option>
+                    </select>
+                  </td>
+                </tr>
+              )}
             </>
           )}
         </tbody>

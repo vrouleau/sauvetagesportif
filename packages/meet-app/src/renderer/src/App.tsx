@@ -2,13 +2,14 @@ import { useState, useEffect } from 'react'
 import EventsPage from './pages/EventsPage'
 import HeatsPage from './pages/HeatsPage'
 import InscriptionPageWrapper from './pages/InscriptionPageWrapper'
+import FinalsPage from './pages/FinalsPage'
 import ReportPage from './pages/ReportPage'
 import { DbConfigDialog } from './components/DbConfigDialog'
 import { competition } from './data/mockData'
 import { LangProvider, useLang } from '@shared/context/LangContext'
 import logoSrc from './assets/logo.png'
 
-type Page = 'events' | 'inscription' | 'heats' | 'report'
+type Page = 'events' | 'inscription' | 'finals' | 'heats' | 'report'
 
 interface ImportSummary {
   sessions: number; events: number; ageGroups: number
@@ -409,10 +410,11 @@ function AppInner() {
 
       {/* Tab bar */}
       <div className="flex h-8 bg-gray-700 shrink-0 border-b border-gray-900">
-        {(['events', 'inscription', 'heats', 'report'] as Page[]).map((p) => {
+        {(['events', 'inscription', 'finals', 'heats', 'report'] as Page[]).map((p) => {
           const labels: Record<Page, string> = {
             events: t.nav.events,
             inscription: t.nav.inscription,
+            finals: t.nav.finals,
             heats: t.nav.heats,
             report: t.nav.report,
           }
@@ -436,6 +438,7 @@ function AppInner() {
       <div className="flex-1 overflow-hidden">
         {page === 'events' && <EventsPage refreshKey={refreshKey} />}
         {page === 'inscription' && <InscriptionPageWrapper refreshKey={refreshKey} />}
+        {page === 'finals' && <FinalsPage refreshKey={refreshKey} />}
         {page === 'heats' && <HeatsPage refreshKey={refreshKey} />}
         {page === 'report' && <ReportPage refreshKey={refreshKey} />}
       </div>

@@ -24,6 +24,8 @@ import {
   reorderEvents,
   validateHeat, invalidateHeat,
   validateEvent, invalidateEvent, validateSession, invalidateSession,
+  getFinalEvents, getFinalCandidates, setQualification, autoQualify,
+  clearFinalSeeding, seedFinals,
   type DbConfig,
   type SessionUpdate,
   type EventUpdate,
@@ -227,6 +229,33 @@ ipcMain.handle('db:available-athletes-for-event', async (_event, eventId: number
 ipcMain.handle('db:save-athlete', (_event, athlete: Parameters<typeof saveAthlete>[0]) =>
   saveAthlete(athlete).then(() => ({ ok: true }))
 )
+
+// ── Finals IPC ────────────────────────────────────────────────────────────────
+
+ipcMain.handle('db:get-final-events', () => getFinalEvents())
+
+ipcMain.handle('db:get-final-candidates', (_event, finalEventId: number) =>
+  getFinalCandidates(finalEventId)
+)
+
+ipcMain.handle('db:set-qualification', (_event, finalEventId: number, athleteId: number, qualCode: string | null, noAdvance: boolean) => {
+  setQualification(finalEventId, athleteId, qualCode, noAdvance)
+  return { ok: true }
+})
+
+ipcMain.handle('db:auto-qualify', (_event, finalEventId: number) => {
+  const result = autoQualify(finalEventId)
+  return { ok: true, ...result }
+})
+
+ipcMain.handle('db:clear-final-seeding', (_event, finalEventId: number) => {
+  clearFinalSeeding(finalEventId)
+  return { ok: true }
+})
+
+ipcMain.handle('db:seed-finals', (_event, finalEventId: number) => {
+  return seedFinals(finalEventId)
+})
 
 ipcMain.handle('db:sync-up', async () => {
   try {

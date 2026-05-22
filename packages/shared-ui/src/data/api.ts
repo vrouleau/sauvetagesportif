@@ -43,6 +43,7 @@ export interface CompetitionEvent {
   scheduledTime?: string
   duration?: string
   swimstyleId?: number | null
+  finalOrder?: number | null  // 1=fast-first (A swum first), 2=slow-first (A swum last, standard)
   ageGroups: AgeGroup[]
 }
 

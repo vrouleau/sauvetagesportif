@@ -4,6 +4,7 @@ const fr = {
   nav: {
     events: 'Épreuves / Sessions',
     inscription: 'Inscription',
+    finals: 'Finales',
     heats: 'Séries / Chronométrage',
     athletes: 'Athlètes',
     report: 'Rapports',
@@ -302,6 +303,7 @@ const en = {
   nav: {
     events: 'Events / Sessions',
     inscription: 'Registration',
+    finals: 'Finals',
     heats: 'Heats / Timing',
     athletes: 'Athletes',
     report: 'Reports',

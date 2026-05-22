@@ -137,6 +137,19 @@ const api = {
       ipcRenderer.invoke('db:flush-meet'),
     getMeetInfo: () =>
       ipcRenderer.invoke('db:get-meet-info'),
+    // Finals
+    getFinalEvents: () =>
+      ipcRenderer.invoke('db:get-final-events'),
+    getFinalCandidates: (finalEventId: number) =>
+      ipcRenderer.invoke('db:get-final-candidates', finalEventId),
+    setQualification: (finalEventId: number, athleteId: number, qualCode: string | null, noAdvance: boolean) =>
+      ipcRenderer.invoke('db:set-qualification', finalEventId, athleteId, qualCode, noAdvance),
+    autoQualify: (finalEventId: number) =>
+      ipcRenderer.invoke('db:auto-qualify', finalEventId),
+    clearFinalSeeding: (finalEventId: number) =>
+      ipcRenderer.invoke('db:clear-final-seeding', finalEventId),
+    seedFinals: (finalEventId: number) =>
+      ipcRenderer.invoke('db:seed-finals', finalEventId),
   },
   report: {
     previewPdf: (html: string, headerInfo: unknown) =>
