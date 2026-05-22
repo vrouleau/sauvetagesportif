@@ -2,5 +2,7 @@ services:
   backend:
     ports:
       - "8000:8000"
+    environment:
+      MEET_TEMPLATE: /app/data/meet.smb
     volumes:
       - ./templates:/app/templates
