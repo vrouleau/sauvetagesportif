@@ -35,7 +35,7 @@ router = APIRouter(prefix="/api")
 _audit = logging.getLogger("audit")
 
 MEET_STORAGE = Path(os.environ.get("MEET_STORAGE", "/app/data/meet.lxf"))
-MEET_TEMPLATE = Path(os.environ.get("MEET_TEMPLATE", "/app/data/meet.smb"))
+MEET_TEMPLATE = Path(os.environ.get("MEET_TEMPLATE", "/app/templates/meet.smb"))
 _DEFAULT_ADMIN_PIN = os.environ.get("ADMIN_PIN", "000000")
 _BEST_TIME_MAX_AGE_MONTHS = int(os.environ.get("BEST_TIME_MAX_AGE_MONTHS", "18"))
 
@@ -578,9 +578,10 @@ async def upload_meet_smb(file: UploadFile = File(...), db: Session = Depends(ge
     from ..combined_events import regenerate_combined_events
     regenerate_combined_events(db)
 
-    # Store the SMB as the meet template for later download
-    MEET_TEMPLATE.parent.mkdir(parents=True, exist_ok=True)
-    MEET_TEMPLATE.write_bytes(content)
+    # Store the uploaded SMB in the writable data directory for later download
+    smb_storage = Path(os.environ.get("MEET_STORAGE", "/app/data/meet.lxf")).parent / "meet.smb"
+    smb_storage.parent.mkdir(parents=True, exist_ok=True)
+    smb_storage.write_bytes(content)
 
     # Track metadata
     for key, val in [("meet_filename", file.filename or "meet.smb"),
@@ -1892,10 +1893,11 @@ def export_entries_lxf(db: Session = Depends(get_db)):
 
 @router.get("/export/meet-smb", dependencies=[Depends(require_organizer_or_admin)])
 def export_meet_smb():
-    if not MEET_TEMPLATE.exists():
-        raise HTTPException(404, "Meet template not found")
+    smb_storage = Path(os.environ.get("MEET_STORAGE", "/app/data/meet.lxf")).parent / "meet.smb"
+    if not smb_storage.exists():
+        raise HTTPException(404, "No SMB backup available")
     return Response(
-        content=MEET_TEMPLATE.read_bytes(),
+        content=smb_storage.read_bytes(),
         media_type="application/octet-stream",
         headers={"Content-Disposition": "attachment; filename=meet.smb"},
     )
