@@ -42,12 +42,10 @@ import {
   clearAllScans, deleteScan,
   type ScanStatus,
 } from './timingScanDb'
-import { decodeBarcode } from './timingBarcode'
-import { processTimingImage } from './timingImageProcess'
 import { generateTimingSheetsHtml, buildTimingSheetPages } from './timingSheets'
-import { parseTimeToMs, formatMsToTime, assembleTimeString, type OcrEngine, type TimeOcrResult } from './ocrEngine'
+import { type OcrEngine } from './ocrEngine'
 import { startGeminiBackground, setGeminiBackgroundEnabled, isGeminiBackgroundEnabled, resetGeminiAttempted } from './geminiBackground'
-import { GeminiOcrEngine, getCurrentGeminiTier, loadGeminiKeys, saveGeminiKeys, saveGeminiApiKey } from './ocrGemini'
+import { GeminiOcrEngine, getCurrentGeminiTier, loadGeminiKeys, saveGeminiKeys } from './ocrGemini'
 
 let quantum: QuantumBridge | null = null
 
@@ -569,94 +567,35 @@ ipcMain.handle('timing:get-scans-for-processing', (_event, filter: ScanStatus | 
   return getScansByStatus(filter).map(scanToDto)
 })
 
-ipcMain.handle('timing:run-ocr', async (_event, scanId: number, engineName: string) => {
+ipcMain.handle('timing:run-ocr', async (_event, scanId: number, _engineName: string) => {
   try {
     const scan = getScanById(scanId)
     if (!scan) return { ok: false, error: 'Scan not found' }
 
-    // Ollama and Gemini use the full image directly (vision model)
-    if (engineName === 'ollama' || engineName === 'gemini') {
-      let visionResult: { time1: string; time2: string; confidence: number }
-
-      if (engineName === 'ollama') {
-        const { OllamaOcrEngine } = await import('./ocrOllama')
-        let ollamaEngine = activeOcrEngine as InstanceType<typeof OllamaOcrEngine> | null
-        if (!ollamaEngine || ollamaEngine.name !== 'ollama') {
-          ollamaEngine = new OllamaOcrEngine()
-          await ollamaEngine.initialize()
-          if (activeOcrEngine) await activeOcrEngine.dispose()
-          activeOcrEngine = ollamaEngine as unknown as OcrEngine
-        }
-        visionResult = await ollamaEngine.recognizeFullImage(scan.imageBlob)
-      } else {
-        let geminiEngine = activeOcrEngine as InstanceType<typeof GeminiOcrEngine> | null
-        if (!geminiEngine || (geminiEngine as any).name !== 'gemini') {
-          geminiEngine = new GeminiOcrEngine()
-          await geminiEngine.initialize()
-          if (activeOcrEngine) await activeOcrEngine.dispose()
-          activeOcrEngine = geminiEngine as unknown as OcrEngine
-        }
-        visionResult = await geminiEngine.recognizeFullImage(scan.imageBlob)
-      }
-
-      updateScanOcrResult(scanId, {
-        recognizedTime1: visionResult.time1,
-        recognizedTime2: visionResult.time2,
-        ocrEngine: engineName,
-        ocrConfidence: visionResult.confidence,
-      })
-
-      return {
-        ok: true,
-        result: {
-          time1: visionResult.time1,
-          time2: visionResult.time2,
-          digitResults1: [],
-          digitResults2: [],
-          overallConfidence: visionResult.confidence,
-        },
-      }
+    // Use Gemini vision (only engine)
+    let geminiEngine = activeOcrEngine as InstanceType<typeof GeminiOcrEngine> | null
+    if (!geminiEngine || (geminiEngine as any).name !== 'gemini') {
+      geminiEngine = new GeminiOcrEngine()
+      await geminiEngine.initialize()
+      if (activeOcrEngine) await activeOcrEngine.dispose()
+      activeOcrEngine = geminiEngine as unknown as OcrEngine
     }
 
-    // Other engines use the digit cropping pipeline
-    const engine = await getOcrEngine(engineName as 'tesseract' | 'paddle' | 'onnx' | 'ollama')
-    if (!engine) return { ok: false, error: `OCR engine "${engineName}" not available` }
+    const visionResult = await geminiEngine.recognizeFullImage(scan.imageBlob)
 
-    // Process image — extracts two time rows (Chrono 1 and Chrono 2)
-    const processed = await processTimingImage(scan.imageBlob)
-    if (!processed || processed.digits.length === 0) {
-      return { ok: false, error: 'Could not extract digits from image' }
-    }
-
-    // The image has two rows of 5 digits each.
-    // First 5 digits = Chrono 1, next 5 = Chrono 2
-    const digits1 = processed.digits.slice(0, 5)
-    const digits2 = processed.digits.slice(5, 10)
-
-    const result1 = digits1.length > 0 ? await engine.recognizeTime(digits1) : null
-    const result2 = digits2.length > 0 ? await engine.recognizeTime(digits2) : null
-
-    const overallConfidence = Math.min(
-      result1?.overallConfidence ?? 0,
-      result2?.overallConfidence ?? 0
-    )
-
-    // Save result
     updateScanOcrResult(scanId, {
-      recognizedTime1: result1?.timeString ?? '',
-      recognizedTime2: result2?.timeString ?? '',
-      ocrEngine: engineName,
-      ocrConfidence: overallConfidence,
+      recognizedTime1: visionResult.time1,
+      recognizedTime2: visionResult.time2,
+      ocrEngine: 'gemini',
+      ocrConfidence: visionResult.confidence,
     })
 
     return {
       ok: true,
       result: {
-        time1: result1?.timeString ?? '',
-        time2: result2?.timeString ?? '',
-        digitResults1: result1?.digitResults ?? [],
-        digitResults2: result2?.digitResults ?? [],
-        overallConfidence,
+        time1: visionResult.time1,
+        time2: visionResult.time2,
+        overallConfidence: visionResult.confidence,
       },
     }
   } catch (e) {
@@ -884,47 +823,17 @@ function scanToDto(scan: ReturnType<typeof getScanById> & {}) {
   }
 }
 
-/** Get or create an OCR engine instance */
-async function getOcrEngine(name: 'tesseract' | 'paddle' | 'onnx' | 'ollama' | 'gemini'): Promise<OcrEngine | null> {
-  // Dispose previous engine if switching
-  if (activeOcrEngine && activeOcrEngine.name !== name) {
-    await activeOcrEngine.dispose()
-    activeOcrEngine = null
-  }
-
+/** Get or create the Gemini OCR engine instance */
+async function getOcrEngine(name: string): Promise<OcrEngine | null> {
   if (activeOcrEngine) return activeOcrEngine
 
   try {
-    switch (name) {
-      case 'tesseract': {
-        const { TesseractOcrEngine } = await import('./ocrTesseract')
-        activeOcrEngine = new TesseractOcrEngine()
-        break
-      }
-      case 'paddle': {
-        const { PaddleOcrEngine } = await import('./ocrPaddle')
-        activeOcrEngine = new PaddleOcrEngine()
-        break
-      }
-      case 'onnx': {
-        const { OnnxOcrEngine } = await import('./ocrOnnx')
-        activeOcrEngine = new OnnxOcrEngine()
-        break
-      }
-      case 'ollama': {
-        const { OllamaOcrEngine } = await import('./ocrOllama')
-        activeOcrEngine = new OllamaOcrEngine()
-        break
-      }
-      case 'gemini': {
-        activeOcrEngine = new GeminiOcrEngine()
-        break
-      }
-    }
-    if (activeOcrEngine) await activeOcrEngine.initialize()
+    const engine = new GeminiOcrEngine()
+    await engine.initialize()
+    activeOcrEngine = engine as unknown as OcrEngine
     return activeOcrEngine
   } catch (e) {
-    console.error(`Failed to load OCR engine "${name}":`, e)
+    console.error('Failed to load Gemini OCR engine:', e)
     return null
   }
 }

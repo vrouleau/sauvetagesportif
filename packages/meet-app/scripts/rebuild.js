@@ -12,7 +12,7 @@ if (platform() === 'win32' && !process.env.GYP_MSVS_OVERRIDE_PATH) {
 }
 
 // Rebuild all native modules for Electron's Node version
-const nativeModules = ['better-sqlite3', 'sharp']
+const nativeModules = ['better-sqlite3']
 
 for (const mod of nativeModules) {
   try {
@@ -26,13 +26,4 @@ for (const mod of nativeModules) {
   } catch {
     // Module not installed, skip
   }
-}
-
-// onnxruntime-node ships pre-built binaries, no rebuild needed
-// but verify it's accessible
-try {
-  require.resolve('onnxruntime-node')
-  console.log('onnxruntime-node: pre-built binaries OK')
-} catch {
-  // Not installed, skip
 }

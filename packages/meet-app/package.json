@@ -20,9 +20,6 @@
     "productName": "SauvetageMeet",
     "asar": true,
     "asarUnpack": [
-      "node_modules/sharp/**/*",
-      "node_modules/@img/**/*",
-      "node_modules/onnxruntime-node/**/*",
       "node_modules/better-sqlite3/**/*"
     ],
     "directories": {
@@ -39,14 +36,6 @@
       {
         "from": "../../config/template_juniorsenior.lxf",
         "to": "template_juniorsenior.lxf"
-      },
-      {
-        "from": "resources/mnist_digit_model.onnx",
-        "to": "mnist_digit_model.onnx"
-      },
-      {
-        "from": "scripts/paddle_ocr_server.py",
-        "to": "paddle_ocr_server.py"
       }
     ],
     "win": {
@@ -69,13 +58,9 @@
     "@electron-toolkit/utils": "^3.0.0",
     "@ericblade/quagga2": "^1.12.1",
     "better-sqlite3": "^12.10.0",
-    "onnxruntime-node": "^1.26.0",
     "pg": "^8.11.5",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "sharp": "^0.34.5",
-    "tesseract.js": "^7.0.0",
-    "zxing-wasm": "^3.0.3"
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@electron-toolkit/tsconfig": "^1.0.1",
@@ -85,7 +70,6 @@
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
     "autoprefixer": "^10.4.19",
-    "canvas": "^3.2.3",
     "electron": "^33.4.11",
     "electron-builder": "^24.9.1",
     "electron-vite": "^2.3.0",
