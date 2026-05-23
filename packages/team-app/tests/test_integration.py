@@ -20,6 +20,8 @@ from conftest import (
     export_bundle, export_lxf,
 )
 
+SMB_FILE = Path(__file__).resolve().parent / "fixtures" / "meet.smb"
+
 
 # ---------------------------------------------------------------------------
 # Setup / smoke
@@ -492,6 +494,16 @@ class TestExportEntries:
 
 class TestExportMeetLxf:
     def test_returns_zip_content(self, uploaded, admin_headers):
+        # Upload the SMB fixture first so the export endpoint has something to serve
+        with open(SMB_FILE, "rb") as f:
+            r = requests.post(
+                f"{BASE_URL}/api/upload/meet-smb",
+                files={"file": ("meet.smb", f, "application/octet-stream")},
+                headers=admin_headers,
+                timeout=60,
+            )
+        assert r.status_code == 200, f"smb upload: {r.status_code} {r.text}"
+
         r = requests.get(f"{BASE_URL}/api/export/meet-smb",
                          headers=admin_headers, timeout=30)
         r.raise_for_status()
@@ -1215,8 +1227,6 @@ class TestSwimStyles:
 # ---------------------------------------------------------------------------
 # SMB upload round normalization
 # ---------------------------------------------------------------------------
-
-SMB_FILE = Path(__file__).resolve().parent / "fixtures" / "meet.smb"
 
 
 class TestSmbUploadNormalization:
