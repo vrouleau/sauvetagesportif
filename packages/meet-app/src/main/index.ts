@@ -933,6 +933,22 @@ function createWindow(): void {
         },
       ],
     },
+    {
+      label: 'Aide',
+      submenu: [
+        {
+          label: `À propos de SauvetageMeet v${app.getVersion()}`,
+          click: () => {
+            dialog.showMessageBox(mainWindow, {
+              type: 'info',
+              title: 'SauvetageMeet',
+              message: `SauvetageMeet v${app.getVersion()}`,
+              detail: 'Logiciel de gestion de compétitions de sauvetage sportif.\n\n© Société de sauvetage',
+            })
+          },
+        },
+      ],
+    },
   ]
   Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate))
 

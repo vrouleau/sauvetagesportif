@@ -323,7 +323,7 @@ export default function Admin() {
 
       {/* Footer */}
       <div className="px-3 py-1 border-t border-gray-300 bg-gray-50 text-center text-xs text-gray-400 shrink-0">
-        build: {BUILD_TIMESTAMP}
+        v{typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '?'} · build: {BUILD_TIMESTAMP}
       </div>
     </div>
   )
