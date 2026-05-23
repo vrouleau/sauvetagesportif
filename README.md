@@ -202,6 +202,8 @@ The `COMBINEDEVENTS` row in `bsglobal` stores an XML definition that tells Splas
 
 The meet-app implements FINA/World Aquatics SW 3.1-compliant heat seeding. Full documentation: [`packages/meet-app/docs/HEAT_GENERATION_RULES.md`](packages/meet-app/docs/HEAT_GENERATION_RULES.md).
 
+### Pool meets (timed events)
+
 ### Seeding methods
 - **Circle seeding** (default) — round-robin distribution for balanced prelim heats
 - **Pyramid seeding** — fastest swimmers in last heat (timed finals)
@@ -222,6 +224,18 @@ Meet-level seeding config is stored in `MEETVALUES` (bsglobal):
 - `QUALIFROM`, `QUALITO`, `QUALICOURSE`
 
 Per-age-group overrides: `agegroup.finalseedtype`, `agegroup.fastheatcount`
+
+### Beach meets (ranked events)
+
+Beach events use positions (1st, 2nd, 3rd) instead of times. Heat generation works differently:
+- **No lanes** — athletes are assigned sequentially, not center-out
+- **Random seeding** — athletes shuffled randomly into heats
+- **Max participants** from `swimevent.maxentries` (override) or `swimstyle.distance` (template default)
+- **Finals** qualify by best position from prelims (lowest value = best)
+
+Meet type is stored in `bsglobal` as `MEET_TYPE` (`POOL` or `BEACH`). Templates:
+- `config/template_pool.lxf` — swimstyleids 501-540
+- `config/template_beach.lxf` — swimstyleids 601-605
 
 ### Configuration
 

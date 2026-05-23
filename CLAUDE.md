@@ -63,6 +63,8 @@ MEETMGR_SKIP_STACK=1 MEETMGR_URL=http://127.0.0.1:8001 python -m pytest tests/ -
 ```
 config/
   combined-events-config.json  — Shared category/points config (both apps)
+  template_pool.lxf            — Pool meet template (swimstyleids 501-540)
+  template_beach.lxf           — Beach meet template (swimstyleids 601-605)
 
 packages/
   shared-ui/src/
@@ -96,6 +98,7 @@ packages/
     src/renderer/src/
       App.tsx               — App shell (title bar, tabs, modals)
       meetApiElectron.ts    — MeetAPI adapter (IPC → SQLite)
+      registrationApiElectron.ts — RegistrationAPI adapter (IPC → SQLite, register/unregister/relay members)
       pages/EventsPage.tsx  — Thin wrapper: ApiProvider + shared EventsPage
       pages/HeatsPage.tsx   — Heat runner + Quantum toolbar + Print timing sheets
       pages/AthletesPage.tsx— Athlete list + editor
@@ -201,6 +204,12 @@ Team-app frontend Dockerfile uses monorepo root as context (`context: ../..`) to
 | `timing:get-gemini-key` | Get masked API keys |
 | `timing:set-gemini-key` | Set free/paid API keys |
 | `timing:clear-all-scans` | Delete all scan records |
+| `db:get-meet-type` | Get meet type (POOL/BEACH) from BSGLOBAL |
+| `db:register` | Register athlete for event (create swimresult) |
+| `db:unregister` | Unregister athlete from event (delete unseeded swimresult) |
+| `db:get-relay-members` | Get relay position members by relay ID |
+| `db:get-relay-members-by-event` | Get relay members for event+club |
+| `db:set-relay-member` | Set/clear a relay position member |
 
 ## API endpoints (team-app)
 
@@ -217,9 +226,55 @@ Team-app frontend Dockerfile uses monorepo root as context (`context: ../..`) to
 | `POST /api/auth` | PIN authentication |
 | `GET /api/admin/gemini-keys` | Get masked Gemini API keys (admin) |
 | `POST /api/admin/gemini-keys` | Set free/paid Gemini API keys (admin) |
+| `POST /api/admin/new-meet` | Create new meet from template (accepts `{"meet_type": "pool"\|"beach"}`) |
 
 ## Best times storage
-Stored in `bsglobal` as `bt_{athlete_id}` keys with JSON: `{style_uid: {course: {time_ms, date, source}}}`. Updated on results upload, expired after 18 months.
+Stored in `bsglobal` as `bt_{athlete_id}` keys with JSON: `{style_uid: {course: {time_ms, date, source}}}`. Updated on results upload, expired after 18 months. **Not updated for beach meets** (positions are not times). Pool styles use 5xx IDs, beach styles use 6xx — no collisions.
+
+## Beach Meets
+
+Beach events are **ranked** (positions 1st, 2nd, 3rd) instead of **timed**. The DB model is unchanged — positions are stored as integer milliseconds (position 1 = 1000ms, position 2 = 2000ms).
+
+### Meet type flag
+- Stored in `bsglobal` as `MEET_TYPE` (`POOL` or `BEACH`, default `POOL` if missing)
+- Set at meet creation via "Create Pool" / "Create Beach" buttons
+- One meet type per database at a time (pool = winter, beach = summer)
+
+### Templates
+- `config/template_pool.lxf` — Pool meet structure (swimstyleids 501-540)
+- `config/template_beach.lxf` — Beach meet structure (swimstyleids 601-605)
+- Docker env vars: `MEET_TEMPLATE_POOL`, `MEET_TEMPLATE_BEACH`
+
+### Key differences from pool
+| Aspect | Pool | Beach |
+|--------|------|-------|
+| Results | Time in ms | Position as integer (×1000ms) |
+| Lanes | Center-out assignment | No lanes (sequential numbering) |
+| Heat capacity | `session.lanemax - lanemin + 1` | `swimevent.maxentries` or `swimstyle.distance` |
+| Heat seeding | By entry time (circle/pyramid/straight) | Random assignment |
+| Finals qualification | By fastest prelim time | By best prelim position (lowest) |
+| Timing input | `M:SS.cc` format | Integer position (1, 2, 3...) |
+| Scanner/OCR tabs | Visible | Hidden |
+| Best times | Stored and displayed | Skipped (not applicable) |
+| Inscription | Checkbox + best time + entry time | Checkbox only |
+
+### Heat generation (beach mode)
+- Max participants per heat = `swimevent.maxentries` (override) → `swimstyle.distance` (default) → 16 (fallback)
+- Athletes shuffled randomly and distributed evenly across heats
+- No lane assignment (uses sequential numbers as placeholders)
+
+### Position entry UX
+- Click empty cell → pre-fills with next available position, text selected for override
+- Duplicate position → **swaps** the two athletes' positions
+- Gap prevention: can't enter position > total athletes with positions
+- Rank column hidden (redundant — position IS the result)
+
+### ID ranges (no overlap between pool and beach)
+| Entity | Pool range | Beach range |
+|--------|-----------|-------------|
+| swimstyleid | 501-540 | 601-605 |
+| eventid | 1065-1234 | 6001-6105 |
+| agegroupid | 1066-1236 | 6002-6106 |
 
 ## Combined Events (COMBINEDEVENTS)
 
