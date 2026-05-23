@@ -99,15 +99,29 @@ export default function TimingProcessPage() {
 
   const currentScan = scans[currentIndex] ?? null
 
-  // When current scan changes, update edit fields and focus input
+  // When current scan changes OR Gemini fills in times, update edit fields
+  useEffect(() => {
+    if (currentScan) {
+      const newTime1 = currentScan.recognizedTime1 ?? currentScan.validatedTime1 ?? ''
+      const newTime2 = currentScan.recognizedTime2 ?? currentScan.validatedTime2 ?? ''
+      // Only update if fields are empty (don't overwrite user edits)
+      setEditTime1((prev) => prev || newTime1)
+      setEditTime2((prev) => prev || newTime2)
+      // Auto-focus the first time input
+      setTimeout(() => time1InputRef.current?.focus(), 50)
+    }
+  }, [currentIndex, currentScan?.scanId, currentScan?.recognizedTime1, currentScan?.recognizedTime2])
+
+  // When switching scans, always reset fields
   useEffect(() => {
     if (currentScan) {
       setEditTime1(currentScan.recognizedTime1 ?? currentScan.validatedTime1 ?? '')
       setEditTime2(currentScan.recognizedTime2 ?? currentScan.validatedTime2 ?? '')
-      // Auto-focus the first time input
-      setTimeout(() => time1InputRef.current?.focus(), 50)
     }
   }, [currentIndex, currentScan?.scanId])
+
+  // Backlog count (unprocessed scans waiting for Gemini)
+  const backlogCount = scans.filter((s) => s.status === 'unprocessed' && !s.recognizedTime1).length
 
   // Navigation
   const goNext = useCallback(() => {
@@ -239,7 +253,7 @@ export default function TimingProcessPage() {
             }`}
           >
             {geminiEnabled
-              ? `🤖 Gemini ${geminiTier === 'paid' ? '(payant)' : '(gratuit)'}`
+              ? `🤖 Gemini ${geminiTier === 'paid' ? '(payant)' : '(gratuit)'}${backlogCount > 0 ? ` · ${backlogCount}` : ''}`
               : '🤖 Gemini OFF'}
           </button>
 
