@@ -51,7 +51,7 @@ jobs:
           node-version: 22
 
       - name: Install dependencies (from monorepo root)
-        run: npm install
+        run: npm install --include=optional
 
       - name: Rebuild better-sqlite3 for Electron
         working-directory: packages/meet-app
@@ -59,7 +59,7 @@ jobs:
 
       - name: Build & package
         working-directory: packages/meet-app
-        run: npx electron-vite build && npx electron-builder --mac
+        run: npx electron-vite build && npx electron-builder --mac --arm64
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
