@@ -591,6 +591,30 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
     }
   }
 
+  // ── Print timing sheets handler ────────────────────────────────────────────
+
+  async function handlePrintTimingSheets() {
+    const api = (window as any).api?.timing
+    const reportApi = (window as any).api?.report
+    if (!api || !reportApi) return
+
+    // Determine which session to print for
+    const sessionId = selectedSession?.id ?? sessions[0]?.id
+    if (!sessionId) {
+      window.alert('Aucune session disponible.')
+      return
+    }
+
+    const result = await api.generateSheets(sessionId)
+    if (!result.ok) {
+      window.alert(`Erreur: ${result.error}`)
+      return
+    }
+
+    // Use the existing report print/preview flow
+    await reportApi.print(result.html, { line1: '', line2: '', today: '' })
+  }
+
   // ── Quantum handlers ───────────────────────────────────────────────────────
 
   function handleConnectQuantum() {
@@ -774,6 +798,13 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
             className="border border-gray-400 bg-white hover:bg-blue-50 disabled:opacity-50 disabled:cursor-default px-2 py-0.5 text-xs font-medium text-blue-700"
           >
             {generating ? '…' : t.heats.generateHeats}
+          </button>
+          <button
+            onClick={handlePrintTimingSheets}
+            className="border border-gray-400 bg-white hover:bg-purple-50 px-2 py-0.5 text-xs font-medium text-purple-700"
+            title="Imprimer les fiches de chronométrage pour la session"
+          >
+            🖨 Fiches chrono
           </button>
           <span className="text-gray-500">{t.heats.timingSystems}</span>
           <span className={`w-2 h-2 rounded-full ${quantumConnected ? 'bg-green-500' : 'bg-gray-300'}`} />

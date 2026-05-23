@@ -18,6 +18,18 @@ if (existsSync(outDir)) {
   rmSync(outDir, { recursive: true, force: true })
 }
 
+// 2. Remove timing scans SQLite database (userData)
+const appDataPath = process.env.APPDATA || join(require('os').homedir(), 'AppData', 'Roaming')
+const scanDbPath = join(appDataPath, '@meetmgr', 'meet-app', 'timing_scans.sqlite')
+if (existsSync(scanDbPath)) {
+  console.log('🧹 Removing timing_scans.sqlite ...')
+  try {
+    rmSync(scanDbPath, { force: true })
+  } catch (e) {
+    console.warn('  ⚠ Could not delete (app might be running):', e.message)
+  }
+}
+
 // 2. Rebuild native modules (better-sqlite3) for Electron
 console.log('🔨 Rebuilding native modules for Electron ...')
 if (platform() === 'win32' && !process.env.GYP_MSVS_OVERRIDE_PATH) {

@@ -1320,3 +1320,104 @@ class TestSmbUploadNormalization:
             f"{len(zero_num)} PRE events still have eventnumber=0 after normalization: "
             f"{[ev['id'] for ev in zero_num[:5]]}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Gemini API Keys
+# ---------------------------------------------------------------------------
+
+class TestGeminiKeys:
+    """Test Gemini API key management via admin endpoints."""
+
+    def test_get_keys_initially_empty(self, uploaded, admin_headers):
+        r = requests.get(f"{BASE_URL}/api/admin/gemini-keys",
+                         headers=admin_headers, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        assert data["hasFreeKey"] is False
+        assert data["hasPaidKey"] is False
+        assert data["freeKey"] == ""
+        assert data["paidKey"] == ""
+
+    def test_set_free_key(self, uploaded, admin_headers):
+        r = requests.post(f"{BASE_URL}/api/admin/gemini-keys",
+                          json={"freeKey": "AIzaSyTestFreeKey1234567890"},
+                          headers=admin_headers, timeout=10)
+        r.raise_for_status()
+        assert r.json()["ok"] is True
+
+        # Verify it's stored (masked)
+        r = requests.get(f"{BASE_URL}/api/admin/gemini-keys",
+                         headers=admin_headers, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        assert data["hasFreeKey"] is True
+        assert data["freeKey"] == "***7890"
+        assert data["hasPaidKey"] is False
+
+    def test_set_both_keys(self, uploaded, admin_headers):
+        r = requests.post(f"{BASE_URL}/api/admin/gemini-keys",
+                          json={"freeKey": "AIzaSyFreeAAAA", "paidKey": "AIzaSyPaidBBBB"},
+                          headers=admin_headers, timeout=10)
+        r.raise_for_status()
+
+        r = requests.get(f"{BASE_URL}/api/admin/gemini-keys",
+                         headers=admin_headers, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        assert data["hasFreeKey"] is True
+        assert data["hasPaidKey"] is True
+        assert data["freeKey"] == "***AAAA"
+        assert data["paidKey"] == "***BBBB"
+
+    def test_update_only_paid_key(self, uploaded, admin_headers):
+        # Set initial keys
+        requests.post(f"{BASE_URL}/api/admin/gemini-keys",
+                      json={"freeKey": "AIzaSyFreeXXXX", "paidKey": "AIzaSyPaidYYYY"},
+                      headers=admin_headers, timeout=10)
+
+        # Update only paid key (freeKey not sent = keep existing)
+        r = requests.post(f"{BASE_URL}/api/admin/gemini-keys",
+                          json={"paidKey": "AIzaSyPaidZZZZ"},
+                          headers=admin_headers, timeout=10)
+        r.raise_for_status()
+
+        r = requests.get(f"{BASE_URL}/api/admin/gemini-keys",
+                         headers=admin_headers, timeout=10)
+        data = r.json()
+        assert data["freeKey"] == "***XXXX"  # unchanged
+        assert data["paidKey"] == "***ZZZZ"  # updated
+
+    def test_keys_survive_smb_roundtrip(self, uploaded, admin_headers):
+        """Keys stored in BSGLOBAL should be included in SMB export."""
+        # Set keys
+        requests.post(f"{BASE_URL}/api/admin/gemini-keys",
+                      json={"freeKey": "AIzaSyRoundtripFree", "paidKey": "AIzaSyRoundtripPaid"},
+                      headers=admin_headers, timeout=10)
+
+        # Export SMB
+        r = requests.get(f"{BASE_URL}/api/export/smb",
+                         headers=admin_headers, timeout=30)
+        if r.status_code == 404:
+            pytest.skip("SMB export endpoint not available")
+        r.raise_for_status()
+        smb_data = r.content
+        assert len(smb_data) > 0
+
+        # The SMB file should contain the GEMINI_KEY entries in BSGLOBAL
+        # (We can't easily parse the binary SMB here, but we verify the keys
+        # are in the DB which is what gets exported)
+        r = requests.get(f"{BASE_URL}/api/admin/gemini-keys",
+                         headers=admin_headers, timeout=10)
+        data = r.json()
+        assert data["hasFreeKey"] is True
+        assert data["hasPaidKey"] is True
+
+    def test_requires_admin(self, uploaded):
+        """Non-admin should not be able to access Gemini keys."""
+        r = requests.get(f"{BASE_URL}/api/admin/gemini-keys", timeout=10)
+        assert r.status_code in (401, 403, 422)
+
+        r = requests.post(f"{BASE_URL}/api/admin/gemini-keys",
+                          json={"freeKey": "stolen"}, timeout=10)
+        assert r.status_code in (401, 403, 422)

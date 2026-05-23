@@ -39,7 +39,7 @@ interface ReportEventSection {
   heats: HeatListEventRow['heats']
 }
 
-type ReportType = 'heatList' | 'startList'
+type ReportType = 'heatList' | 'startList' | 'combinedResults'
 
 // ── HTML generator ────────────────────────────────────────────────────────────
 
@@ -472,6 +472,105 @@ function buildStartListPageHeader(
 </div>\n`
 }
 
+// ── Combined Results PDF generator ───────────────────────────────────────────
+
+interface CombinedResultCategory {
+  name: string
+  subtitle: string
+  athletes: Array<{
+    athleteId: number
+    lastName: string
+    firstName: string
+    age: number
+    clubName: string
+    totalPoints: number
+    eventCount: number
+  }>
+}
+
+function generateCombinedResultsPdfHtml(categories: CombinedResultCategory[]): string {
+  function buildCategoryHtml(cat: CombinedResultCategory): string {
+    let html = `<div class="cr-category">
+<div class="cr-title">${esc(cat.name)}</div>\n`
+
+    if (cat.subtitle) {
+      html += `<div class="cr-subtitle">${esc(cat.subtitle)}</div>\n`
+    }
+
+    if (cat.athletes.length === 0) {
+      html += `</div>\n`
+      return html
+    }
+
+    html += `<table width="100%" cellspacing="0" cellpadding="1" border="0" class="cr-table">\n`
+
+    // Assign ranks (tied athletes share the same rank, next rank skips)
+    let rank = 1
+    let lastPoints: number | null = null
+    let sameCount = 0
+
+    for (let i = 0; i < cat.athletes.length; i++) {
+      const a = cat.athletes[i]
+
+      if (a.totalPoints !== lastPoints) {
+        rank = i + 1
+        sameCount = 1
+        lastPoints = a.totalPoints
+      } else {
+        sameCount++
+      }
+
+      // Only show rank number if it's the first athlete at this point level
+      const rankStr = (sameCount === 1) ? `${rank}.` : ''
+
+      html += `<tr>
+  <td width="5%" align="right" class="cr-rank">${rankStr}</td>
+  <td width="1%"></td>
+  <td width="34%"><i><b>${esc(a.lastName + ', ' + a.firstName)}</b></i></td>
+  <td width="5%" align="right"><i><b>${a.age}</b></i></td>
+  <td width="3%"></td>
+  <td width="32%"><i><b>${esc(a.clubName)}</b></i></td>
+  <td width="12%" align="right"><b>${a.totalPoints}</b></td>
+  <td width="8%" align="right">${a.eventCount}</td>
+</tr>\n`
+    }
+
+    html += `</table>\n</div>\n`
+    return html
+  }
+
+  const categoriesHtml = categories.map(buildCategoryHtml).join('\n')
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+BODY, TABLE, TD { font-family: Arial, Helvetica, sans-serif; font-size: 10pt; color: black; }
+body { margin: 0; padding: 0; }
+.cr-category { margin-bottom: 16pt; }
+.cr-title { font-size: 12pt; font-weight: normal; margin-bottom: 6pt; border-bottom: 1px solid black; padding-bottom: 2pt; }
+.cr-subtitle { font-size: 10pt; margin-bottom: 4pt; }
+.cr-table { border-collapse: collapse; }
+.cr-table td { padding: 1px 2px; }
+.cr-rank { font-size: 10pt; }
+@page { size: Letter portrait; }
+</style>
+</head>
+<body>
+${categoriesHtml}
+</body>
+</html>`
+}
+
+function buildCombinedResultsPdfHeaderInfo(meetInfo: MeetInfo): PdfHeaderInfo {
+  return {
+    line1: meetInfo.name || 'Compétition',
+    line2: meetInfo.city || '',
+    today: new Date().toLocaleDateString('fr-CA'),
+  }
+}
+
 // ── HTML export generator (TOC + hyperlinks, matches reference .htm format) ────
 
 function generateHeatListHtml(
@@ -852,13 +951,22 @@ export default function ReportPage({ refreshKey = 0 }: { refreshKey?: number }) 
 
   async function handleGenerate() {
     const sections = buildSections()
-    if (sections.length === 0) return
+    if (sections.length === 0 && reportType !== 'combinedResults') return
 
     let pdf: string
     let exported: string
     let hdrInfo: PdfHeaderInfo
 
-    if (reportType === 'startList') {
+    if (reportType === 'combinedResults') {
+      // Fetch combined results from main process
+      const eventIds = [...selectedEventIds]
+      if (eventIds.length === 0) return
+      const categories = await dbApi()?.getCombinedResults(eventIds) as CombinedResultCategory[] | undefined
+      if (!categories || categories.length === 0) return
+      pdf = generateCombinedResultsPdfHtml(categories)
+      exported = '' // No HTML export for combinedResults
+      hdrInfo = buildCombinedResultsPdfHeaderInfo(meetInfo)
+    } else if (reportType === 'startList') {
       // Determine lane range from sessions
       let laneMin = 1
       let laneMax = 8
@@ -937,6 +1045,7 @@ export default function ReportPage({ refreshKey = 0 }: { refreshKey?: number }) 
         >
           <option value="heatList">Liste des Séries</option>
           <option value="startList">Fiche de Départs</option>
+          <option value="combinedResults">Résultat Combiné</option>
         </select>
         <button
           onClick={handleGenerate}
@@ -1028,7 +1137,7 @@ export default function ReportPage({ refreshKey = 0 }: { refreshKey?: number }) 
             </button>
             <button
               onClick={handleSaveHtml}
-              disabled={!exportHtml || generating || reportType === 'startList'}
+              disabled={!exportHtml || generating || reportType === 'startList' || reportType === 'combinedResults'}
               className="px-3 py-0.5 text-xs border border-gray-400 bg-white hover:bg-gray-100 disabled:opacity-40"
             >
               HTML

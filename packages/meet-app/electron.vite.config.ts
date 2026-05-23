@@ -16,6 +16,15 @@ export default defineConfig({
         '@shared': resolve('../shared-ui/src')
       }
     },
-    plugins: [react()]
+    plugins: [react()],
+    optimizeDeps: {
+      exclude: ['zxing-wasm']
+    },
+    server: {
+      fs: {
+        // Allow serving WASM files from node_modules
+        allow: ['../..']
+      }
+    }
   }
 })

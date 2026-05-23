@@ -92,6 +92,7 @@ Electron desktop app for running competitions at the venue.
 - **LENEX import** — .lxf file import for meet structure + results
 - **Swiss Timing Quantum** — file-based protocol bridge for live timing
 - **Heat generation** — FINA/World Aquatics-compliant seeding (circle, pyramid, straight) with qualification period, entry priority, and configurable lane order
+- **Timing sheet OCR** — camera barcode scanning + Gemini vision for handwritten time recognition
 - **Data adapter**: `meetApiElectron.ts` wraps `window.api.db.*` (Electron IPC → SQLite)
 
 ### Team App (`packages/team-app`)
@@ -138,6 +139,39 @@ Team-specific fields (`pin`, `email`, `invite_send_count`, `stripe_account_id`) 
 | Boolean | CHAR(1): 'T'/'F' |
 | Times | INTEGER milliseconds |
 | Stroke | 1=Free, 2=Back, 3=Breast, 4=Fly, 5=IM, 6=Relay |
+
+## Timing Sheet OCR Scanning
+
+Replaces manual time entry from handwritten timing sheets with a camera-based workflow.
+
+### How it works
+1. **Print** timing sheets from HeatsPage — portrait, 3 strips/page, full-width Code128 barcode per lane
+2. **Scan** sheets in batch (Scanner tab) — camera reads barcode, captures image, hands-free
+3. **Process** (Traitement tab) — Gemini 2.5 Flash Lite reads handwritten times (~1.4s/scan), operator validates
+4. **Accept** → writes `backuptime1`, `backuptime2`, averaged `swimtime` to `swimresult`
+
+### Gemini API key management
+- Two keys: free tier (15 req/min, 1500/day) + paid tier (fallback on rate limit)
+- Keys stored in `bsglobal` as `GEMINI_KEY_FREE` / `GEMINI_KEY_PAID`
+- Admin sets keys in team-app (Admin page → "Clés API Gemini")
+- Keys travel with `.smb` export/import — transparent to meet-app users
+- Auto-fallback: free → paid on 429 → back to free after 60s
+- Background processing runs in main process (works on any page)
+- Toggle ON/OFF in Traitement page header
+
+### Sheet format
+- Barcode: `E{eventNumber}-H{heatNumber}-L{lane}` (Code128, full-width SVG)
+- Two time rows: "Chrono 1" / "Chrono 2" (5 digit boxes each: M:SS.HH)
+- Athlete name + club code for timer reference
+
+### Timing scan storage
+Separate SQLite file (`%APPDATA%/@meetmgr/meet-app/timing_scans.sqlite`) stores scanned images and processing state. Cleared via "Vider les scans" button or `npm run clean`.
+
+### Dependencies (timing/OCR)
+```bash
+cd packages/meet-app
+npm install sharp tesseract.js onnxruntime-node @ericblade/quagga2
+```
 
 ## Combined Events (Cumulative Point Standings)
 

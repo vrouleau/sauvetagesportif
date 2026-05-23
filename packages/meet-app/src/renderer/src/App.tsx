@@ -4,12 +4,15 @@ import HeatsPage from './pages/HeatsPage'
 import InscriptionPageWrapper from './pages/InscriptionPageWrapper'
 import FinalsPage from './pages/FinalsPage'
 import ReportPage from './pages/ReportPage'
+import TimingScanPage from './pages/TimingScanPage'
+import TimingProcessPage from './pages/TimingProcessPage'
 import { DbConfigDialog } from './components/DbConfigDialog'
+import { GeminiKeyDialog } from './components/GeminiKeyDialog'
 import { competition } from './data/mockData'
 import { LangProvider, useLang } from '@shared/context/LangContext'
 import logoSrc from './assets/logo.png'
 
-type Page = 'events' | 'inscription' | 'finals' | 'heats' | 'report'
+type Page = 'events' | 'inscription' | 'finals' | 'heats' | 'report' | 'scan' | 'process'
 
 interface ImportSummary {
   sessions: number; events: number; ageGroups: number
@@ -280,6 +283,7 @@ function AppInner() {
   const [page, setPage] = useState<Page>('events')
   const { lang, setLang, t } = useLang()
   const [showDbConfig, setShowDbConfig] = useState(false)
+  const [showGeminiConfig, setShowGeminiConfig] = useState(false)
   const [importState, setImportState] = useState<ImportState | null>(null)
   const [flushState, setFlushState] = useState<{ open: boolean; running: boolean; error?: string } | null>(null)
   const [syncUpState, setSyncUpState] = useState<SyncUpState | null>(null)
@@ -291,6 +295,7 @@ function AppInner() {
     if (!m) return
     const cleanups = [
       m.onConfigureDb(() => setShowDbConfig(true)),
+      m.onConfigureGemini(() => setShowGeminiConfig(true)),
       m.onSyncDown(() => handleRefresh()),
       m.onSyncUp(() => handleSyncUp()),
       m.onImportLenex(() => handleImportLenex()),
@@ -410,13 +415,15 @@ function AppInner() {
 
       {/* Tab bar */}
       <div className="flex h-8 bg-gray-700 shrink-0 border-b border-gray-900">
-        {(['events', 'inscription', 'finals', 'heats', 'report'] as Page[]).map((p) => {
+        {(['events', 'inscription', 'finals', 'heats', 'report', 'scan', 'process'] as Page[]).map((p) => {
           const labels: Record<Page, string> = {
             events: t.nav.events,
             inscription: t.nav.inscription,
             finals: t.nav.finals,
             heats: t.nav.heats,
             report: t.nav.report,
+            scan: 'Scanner',
+            process: 'Traitement',
           }
           return (
             <button
@@ -441,10 +448,13 @@ function AppInner() {
         {page === 'finals' && <FinalsPage refreshKey={refreshKey} />}
         {page === 'heats' && <HeatsPage refreshKey={refreshKey} />}
         {page === 'report' && <ReportPage refreshKey={refreshKey} />}
+        {page === 'scan' && <TimingScanPage />}
+        {page === 'process' && <TimingProcessPage />}
       </div>
 
       {/* Modals */}
       {showDbConfig && <DbConfigDialog onClose={() => setShowDbConfig(false)} />}
+      {showGeminiConfig && <GeminiKeyDialog onClose={() => setShowGeminiConfig(false)} />}
       {syncUpState && (
         <SyncUpDialog
           state={syncUpState}

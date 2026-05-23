@@ -81,13 +81,26 @@ packages/
       lenex.ts              — LENEX .lxf importer
       quantum.ts            — Swiss Timing Quantum protocol bridge
       smb.ts                — SMB save/restore (Splash Meet Backup format)
+      timingBarcode.ts      — Barcode encode/decode (E{n}-H{n}-L{n} format)
+      timingSheets.ts       — Timing sheet PDF generator (HTML + Code128 SVG)
+      timingScanDb.ts       — Local SQLite for scanned images + processing state
+      timingImageProcess.ts — Image crop/preprocessing for OCR
+      ocrEngine.ts          — OCR engine interface + time parsing utilities
+      ocrGemini.ts          — Gemini 2.5 Flash Lite vision OCR (primary)
+      ocrOllama.ts          — Ollama local vision model (fallback)
+      ocrTesseract.ts       — Tesseract.js (prototype)
+      ocrOnnx.ts            — ONNX digit model (prototype)
+      ocrPaddle.ts          — PaddleOCR subprocess (prototype)
+      geminiBackground.ts   — Background Gemini processing loop (main process)
     src/preload/index.ts    — contextBridge API
     src/renderer/src/
       App.tsx               — App shell (title bar, tabs, modals)
       meetApiElectron.ts    — MeetAPI adapter (IPC → SQLite)
       pages/EventsPage.tsx  — Thin wrapper: ApiProvider + shared EventsPage
-      pages/HeatsPage.tsx   — Heat runner + Quantum toolbar
+      pages/HeatsPage.tsx   — Heat runner + Quantum toolbar + Print timing sheets
       pages/AthletesPage.tsx— Athlete list + editor
+      pages/TimingScanPage.tsx — Camera barcode scanner (batch mode)
+      pages/TimingProcessPage.tsx — OCR processing queue + manual time entry
     docs/
       HEAT_GENERATION_RULES.md — Full heat seeding rules documentation
       GBIN_FORMAT.md        — SMB binary format documentation
@@ -98,6 +111,7 @@ packages/
       schema.test.ts        — Schema/query tests
       smb.test.ts           — SMB save/restore tests
       meetvalues.test.ts    — MEETVALUES parser tests
+      timing-scan.test.ts   — Barcode, time parsing, Gemini key roundtrip tests
     scripts/
       clean-build.js        — Clean build (wipe out/, rebuild native, vite build)
       rebuild.js            — Rebuild native modules for Electron
@@ -178,6 +192,15 @@ Team-app frontend Dockerfile uses monorepo root as context (`context: ../..`) to
 | `file:save-smb` | Save meet as .smb |
 | `file:restore-smb` | Restore meet from .smb |
 | `file:import-lenex` | Import .lxf file |
+| `timing:save-scan` | Store scanned image + barcode metadata |
+| `timing:get-scans-for-processing` | List scans by status filter |
+| `timing:run-ocr` | Run OCR engine on a scan (Gemini/Ollama/etc) |
+| `timing:validate-scan` | Accept times → write to swimresult |
+| `timing:generate-sheets` | Generate timing sheet HTML for a session |
+| `timing:set-gemini-background` | Enable/disable background Gemini processing |
+| `timing:get-gemini-key` | Get masked API keys |
+| `timing:set-gemini-key` | Set free/paid API keys |
+| `timing:clear-all-scans` | Delete all scan records |
 
 ## API endpoints (team-app)
 
@@ -192,6 +215,8 @@ Team-app frontend Dockerfile uses monorepo root as context (`context: ../..`) to
 | `GET /api/export` | Export registrations as .lxf bundle |
 | `GET /api/athletes` | Athlete list |
 | `POST /api/auth` | PIN authentication |
+| `GET /api/admin/gemini-keys` | Get masked Gemini API keys (admin) |
+| `POST /api/admin/gemini-keys` | Set free/paid Gemini API keys (admin) |
 
 ## Best times storage
 Stored in `bsglobal` as `bt_{athlete_id}` keys with JSON: `{style_uid: {course: {time_ms, date, source}}}`. Updated on results upload, expired after 18 months.
@@ -265,3 +290,51 @@ Custom: `swimsession.lanesbyplace` (comma-separated lane numbers).
 3. Bonus entries (`swimresult.bonusentry='T'`)
 4. Exhibition entries (`swimresult.infocode` contains 'EXH')
 5. No-time entries (NT)
+
+
+## Timing Sheet OCR Scanning
+
+### Overview
+Camera-based workflow to replace manual time entry from handwritten timing sheets. Lane timers write two stopwatch times (Chrono 1 / Chrono 2) on printed strips with barcodes.
+
+### Workflow
+1. **Print** timing sheets from HeatsPage ("🖨 Fiches chrono") — portrait, 3 strips/page
+2. **Scan** sheets in batch (Scanner tab) — camera reads Code128 barcode, captures image
+3. **Process** (Traitement tab) — Gemini reads times in background, operator validates/corrects
+4. **Accept** → writes `backuptime1`, `backuptime2`, averaged `swimtime` to `swimresult`
+
+### Sheet layout
+- Full-width Code128 barcode SVG (format: `E{eventNumber}-H{heatNumber}-L{lane}`)
+- Event name, heat, lane, athlete name + club code
+- Two rows of 5 digit boxes (M:SS.HH) labeled "Chrono 1" / "Chrono 2"
+- Corner registration marks for future perspective correction
+
+### Barcode format
+`E{n}-H{n}-L{n}` — e.g. `E5-H2-L3` = Event 5, Heat 2, Lane 3
+
+### Scan storage
+Separate SQLite: `{userData}/timing_scans.sqlite`
+- `timing_scan` table: image blob, barcode, event/heat/lane, status, recognized/validated times
+- Statuses: `unprocessed` → `recognized` (Gemini filled) → `validated` (operator confirmed)
+- Cleared via "Vider les scans" button or `npm run clean`
+
+### Gemini OCR
+- Model: `gemini-2.5-flash-lite` (1.4s/scan, no thinking overhead)
+- Fallback: `gemini-2.5-flash` if lite unavailable
+- Background processing in main process (runs on any page)
+- Dual API keys in BSGLOBAL: `GEMINI_KEY_FREE` + `GEMINI_KEY_PAID`
+- Auto-fallback: free → paid on 429 → back to free after 60s
+- Keys managed in team-app Admin page, travel with .smb export
+
+### Key management flow
+1. Admin sets keys in team-app (Admin page → "Clés API Gemini")
+2. Keys stored in PostgreSQL `bsglobal` table
+3. Export `.smb` → keys included
+4. Organizer imports `.smb` in meet-app → keys in local SQLite
+5. Gemini OCR works automatically (transparent to end users)
+
+### Time entry
+- Manual: type `14500` → parsed as `1:45.00` (same parser as HeatsPage)
+- Gemini: auto-fills fields, operator confirms with Enter
+- Both chronos required to accept
+- Accept immediately writes to meet DB (`swimresult.backuptime1/2 + swimtime`)

@@ -7,3 +7,11 @@ out/
 
 env
 .env
+
+# Test artifacts
+packages/meet-app/scan_*.png
+packages/meet-app/debug_*.png
+packages/meet-app/test_barcode.png
+packages/meet-app/eng.traineddata
+packages/meet-app/*_lower.png
+packages/meet-app/*_enhanced.png

@@ -31,6 +31,10 @@ const api = {
       ipcRenderer.on('menu:new-meet', cb)
       return () => { ipcRenderer.removeListener('menu:new-meet', cb) }
     },
+    onConfigureGemini: (cb: () => void) => {
+      ipcRenderer.on('menu:configure-gemini', cb)
+      return () => { ipcRenderer.removeListener('menu:configure-gemini', cb) }
+    },
   },
   quantum: {
     configure: (folder: string) =>
@@ -137,6 +141,8 @@ const api = {
       ipcRenderer.invoke('db:flush-meet'),
     getMeetInfo: () =>
       ipcRenderer.invoke('db:get-meet-info'),
+    getCombinedResults: (selectedEventIds: number[]) =>
+      ipcRenderer.invoke('db:get-combined-results', selectedEventIds),
     // Finals
     getFinalEvents: () =>
       ipcRenderer.invoke('db:get-final-events'),
@@ -160,6 +166,42 @@ const api = {
       ipcRenderer.invoke('report:save-pdf', html, headerInfo),
     print: (html: string, headerInfo: unknown) =>
       ipcRenderer.invoke('report:print', html, headerInfo),
+  },
+  timing: {
+    saveScan: (data: {
+      eventNumber: number; heatNumber: number; lane: number;
+      barcodeRaw: string; imageBase64: string
+    }) => ipcRenderer.invoke('timing:save-scan', data),
+    getUnprocessed: () =>
+      ipcRenderer.invoke('timing:get-unprocessed'),
+    getScansForHeat: (eventNumber: number, heatNumber: number) =>
+      ipcRenderer.invoke('timing:get-scans-for-heat', eventNumber, heatNumber),
+    getScanSummary: () =>
+      ipcRenderer.invoke('timing:get-scan-summary'),
+    getScansForProcessing: (filter: string) =>
+      ipcRenderer.invoke('timing:get-scans-for-processing', filter),
+    runOcr: (scanId: number, engine: string) =>
+      ipcRenderer.invoke('timing:run-ocr', scanId, engine),
+    validateScan: (scanId: number, time1: string, timeMs1: number, time2: string, timeMs2: number) =>
+      ipcRenderer.invoke('timing:validate-scan', scanId, time1, timeMs1, time2, timeMs2),
+    markError: (scanId: number, notes: string) =>
+      ipcRenderer.invoke('timing:mark-error', scanId, notes),
+    commitHeatResults: (eventNumber: number, heatNumber: number) =>
+      ipcRenderer.invoke('timing:commit-heat-results', eventNumber, heatNumber),
+    generateSheets: (sessionId: number) =>
+      ipcRenderer.invoke('timing:generate-sheets', sessionId),
+    saveDebugImage: (imageBase64: string) =>
+      ipcRenderer.invoke('timing:save-debug-image', imageBase64),
+    getGeminiKey: () =>
+      ipcRenderer.invoke('timing:get-gemini-key'),
+    setGeminiKey: (freeKey: string | null, paidKey: string | null) =>
+      ipcRenderer.invoke('timing:set-gemini-key', freeKey, paidKey),
+    clearAllScans: () =>
+      ipcRenderer.invoke('timing:clear-all-scans'),
+    setGeminiBackground: (enabled: boolean) =>
+      ipcRenderer.invoke('timing:set-gemini-background', enabled),
+    getGeminiBackground: () =>
+      ipcRenderer.invoke('timing:get-gemini-background'),
   },
   file: {
     openLxfDialog: () =>

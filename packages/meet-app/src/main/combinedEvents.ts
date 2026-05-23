@@ -19,6 +19,7 @@ import type Database from 'better-sqlite3'
 export interface CategoryConfig {
   ageMin: number
   ageMax: number // -1 = no upper limit
+  ageRanges?: Array<{ ageMin: number; ageMax: number }> // optional multi-range matching
   gender: number // 0=mixed, 1=male, 2=female
   name: string
   pointsForPlaces: string
@@ -126,15 +127,28 @@ export function findMatchingEvents(
 ): number[] {
   const matchedIds = new Set<number>()
 
-  for (const event of events) {
-    // Check age range match
-    const ageMinMatch = event.agemin === category.ageMin
-    const ageMaxMatch =
-      category.ageMax === -1
-        ? event.agemax === -1 || event.agemax === 99
-        : event.agemax === category.ageMax
+  // Build list of age ranges to match against
+  const ranges = category.ageRanges && category.ageRanges.length > 0
+    ? category.ageRanges
+    : [{ ageMin: category.ageMin, ageMax: category.ageMax }]
 
-    if (!ageMinMatch || !ageMaxMatch) continue
+  for (const event of events) {
+    // Check if event matches any of the age ranges
+    let ageMatch = false
+    for (const range of ranges) {
+      const ageMinMatch = event.agemin === range.ageMin
+      const ageMaxMatch =
+        range.ageMax === -1
+          ? event.agemax === -1 || event.agemax === 99
+          : event.agemax === range.ageMax
+
+      if (ageMinMatch && ageMaxMatch) {
+        ageMatch = true
+        break
+      }
+    }
+
+    if (!ageMatch) continue
 
     // Check gender match
     // Mixed category (gender=0): matches events with event-level gender=0 (mixed)

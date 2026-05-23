@@ -2672,6 +2672,212 @@ export function seedFinals(finalEventId: number): { ok: boolean; heatsCreated: n
   return { ok: overflow === 0, heatsCreated, assigned, overflow }
 }
 
+// ── Combined Results Report ───────────────────────────────────────────────────
+
+export interface CombinedResultCategory {
+  name: string           // e.g. "Cumulatif 11-12 ans - filles"
+  subtitle: string       // e.g. "Filles, 11 - 12 ans"
+  athletes: CombinedResultAthlete[]
+}
+
+export interface CombinedResultAthlete {
+  athleteId: number
+  lastName: string
+  firstName: string
+  age: number
+  clubName: string
+  totalPoints: number
+  eventCount: number
+}
+
+/**
+ * Parse the COMBINEDEVENTS XML from bsglobal and compute cumulative point
+ * standings for each category based on selected event IDs.
+ *
+ * Algorithm:
+ * - Parse COMBINEDEVENTS XML to get category definitions (name, pointsforplaces, event list)
+ * - For each category, for each event in the category that is also in selectedEventIds:
+ *   - Rank athletes by swimtime (only valid results: no DNS/DNF/DSQ)
+ *   - Award points based on place using the pointsforplaces scale
+ * - Sum points per athlete, count events completed
+ * - Sort by total points descending
+ */
+export function getCombinedResults(selectedEventIds: number[]): CombinedResultCategory[] {
+  const db = getLocalDb()
+  const meetYear = new Date().getFullYear()
+
+  // Read COMBINEDEVENTS XML from bsglobal
+  const row = db.prepare(`SELECT data FROM bsglobal WHERE name = 'COMBINEDEVENTS'`).get() as { data: string } | undefined
+  if (!row || !row.data) return []
+
+  const xml = row.data
+
+  // Parse the XML to extract combined event definitions
+  // Each COMBINEDEVENT has: name, pointsforplaces, sortbyresfirst, finalusetype, and child EVENT elements
+  const categories: CombinedResultCategory[] = []
+
+  // Simple regex-based XML parsing (no external dep needed)
+  const ceRegex = /<COMBINEDEVENT\s([^>]*?)(?:\/>|>([\s\S]*?)<\/COMBINEDEVENT>)/g
+  let ceMatch: RegExpExecArray | null
+
+  while ((ceMatch = ceRegex.exec(xml)) !== null) {
+    const attrs = ceMatch[1]
+    const body = ceMatch[2] ?? ''
+
+    const nameMatch = attrs.match(/name="([^"]*)"/)
+    const pointsMatch = attrs.match(/pointsforplaces="([^"]*)"/)
+    const sortbyresfirstMatch = attrs.match(/sortbyresfirst="([^"]*)"/)
+
+    if (!nameMatch || !pointsMatch) continue
+
+    const categoryName = nameMatch[1]
+      .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+    const pointsScale = pointsMatch[1].split(',').map(Number)
+    const sortByResFirst = sortbyresfirstMatch?.[1] === 'T'
+
+    // Extract event IDs from child EVENT elements
+    const eventIds: number[] = []
+    const evRegex = /eventid="(\d+)"/g
+    let evMatch: RegExpExecArray | null
+    while ((evMatch = evRegex.exec(body)) !== null) {
+      eventIds.push(Number(evMatch[1]))
+    }
+
+    // Filter to only selected events
+    const filteredEventIds = eventIds.filter(id => selectedEventIds.includes(id))
+
+    // If no events match (either no events defined or none selected), still show the category header
+    // but with empty athletes (like "Cumulatif 10 ans et moins - garçons" which is a special no-events category)
+    if (filteredEventIds.length === 0 && eventIds.length === 0) {
+      // Special category with no events — just show the title
+      categories.push({ name: categoryName, subtitle: '', athletes: [] })
+      continue
+    }
+
+    if (filteredEventIds.length === 0) {
+      // Category has events but none are selected — skip
+      continue
+    }
+
+    // Build subtitle from the age group of the first event
+    const firstEventId = filteredEventIds[0]
+    const agRow = db.prepare(
+      `SELECT ag.agemin, ag.agemax, ag.gender
+       FROM agegroup ag WHERE ag.swimeventid = ? ORDER BY ag.sortcode LIMIT 1`
+    ).get(firstEventId) as { agemin: number; agemax: number; gender: number } | undefined
+
+    let subtitle = ''
+    if (agRow) {
+      const genderPrefix = agRow.gender === 2
+        ? (agRow.agemin >= 15 ? 'Dames' : 'Filles')
+        : agRow.gender === 1
+          ? (agRow.agemin >= 15 ? 'Messieurs' : 'Garçons')
+          : (agRow.agemin >= 15 ? 'Mixte' : 'Tous')
+      const ageRange = (agRow.agemax === -1 || agRow.agemax === 99)
+        ? `${agRow.agemin} ans et plus`
+        : `${agRow.agemin} - ${agRow.agemax} ans`
+      subtitle = `${genderPrefix}, ${ageRange}`
+    }
+
+    // For each event, compute places and award points
+    const athletePoints = new Map<number, { totalPoints: number; eventCount: number }>()
+    const athleteInfo = new Map<number, { lastName: string; firstName: string; birthdate: string | number | null; clubName: string }>()
+
+    for (const eventId of filteredEventIds) {
+      // Get all valid results for this event, ordered by time
+      const results = db.prepare(`
+        SELECT r.athleteid, r.swimtime, r.resultstatus,
+               a.lastname, a.firstname, a.birthdate,
+               COALESCE(c.shortname, c.code, c.name, '') AS clubname
+        FROM swimresult r
+        JOIN athlete a ON r.athleteid = a.athleteid
+        LEFT JOIN club c ON a.clubid = c.clubid
+        WHERE r.swimeventid = ?
+          AND r.swimtime IS NOT NULL
+          AND r.swimtime > 0
+          AND (r.resultstatus IS NULL OR r.resultstatus = 0)
+        ORDER BY r.swimtime ASC
+      `).all(eventId) as Array<{
+        athleteid: number; swimtime: number; resultstatus: number | null
+        lastname: string; firstname: string; birthdate: string | number | null
+        clubname: string
+      }>
+
+      // Award points based on place
+      let place = 0
+      let lastTime: number | null = null
+      let sameTimeCount = 0
+
+      for (let i = 0; i < results.length; i++) {
+        const r = results[i]
+
+        if (r.swimtime !== lastTime) {
+          place = i + 1
+          sameTimeCount = 1
+          lastTime = r.swimtime
+        } else {
+          sameTimeCount++
+        }
+
+        // Points for this place (0-indexed in the scale)
+        const pts = (place - 1 < pointsScale.length) ? pointsScale[place - 1] : 0
+
+        if (pts > 0) {
+          const existing = athletePoints.get(r.athleteid) ?? { totalPoints: 0, eventCount: 0 }
+          existing.totalPoints += pts
+          existing.eventCount += 1
+          athletePoints.set(r.athleteid, existing)
+        } else {
+          // Still count the event even if 0 points
+          const existing = athletePoints.get(r.athleteid) ?? { totalPoints: 0, eventCount: 0 }
+          existing.eventCount += 1
+          athletePoints.set(r.athleteid, existing)
+        }
+
+        // Store athlete info
+        if (!athleteInfo.has(r.athleteid)) {
+          athleteInfo.set(r.athleteid, {
+            lastName: r.lastname ?? '',
+            firstName: r.firstname ?? '',
+            birthdate: r.birthdate,
+            clubName: r.clubname ?? '',
+          })
+        }
+      }
+    }
+
+    // Build sorted athlete list (exclude athletes with 0 points)
+    const athletes: CombinedResultAthlete[] = []
+    for (const [athleteId, pts] of athletePoints) {
+      if (pts.totalPoints <= 0) continue
+      const info = athleteInfo.get(athleteId)!
+      const age = meetYear - parseBirthYear(info.birthdate)
+      athletes.push({
+        athleteId,
+        lastName: info.lastName,
+        firstName: info.firstName,
+        age,
+        clubName: info.clubName,
+        totalPoints: pts.totalPoints,
+        eventCount: pts.eventCount,
+      })
+    }
+
+    // Sort: by total points descending, then by name for ties
+    if (sortByResFirst) {
+      // sortbyresfirst = T means sort by results first (used for special categories)
+      athletes.sort((a, b) => b.totalPoints - a.totalPoints || a.lastName.localeCompare(b.lastName))
+    } else {
+      athletes.sort((a, b) => b.totalPoints - a.totalPoints || a.lastName.localeCompare(b.lastName))
+    }
+
+    categories.push({ name: categoryName, subtitle, athletes })
+  }
+
+  return categories
+}
+
 /** Build center-out lane order for a given lane range */
 function buildCenterOutLanes(laneMin: number, laneMax: number): number[] {
   const laneCount = laneMax - laneMin + 1

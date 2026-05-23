@@ -1649,6 +1649,36 @@ def change_admin_pin(data: PinChange, db: Session = Depends(get_db)):
 
 
 # ---------------------------------------------------------------------------
+# Gemini API Keys
+# ---------------------------------------------------------------------------
+
+@router.get("/admin/gemini-keys", dependencies=[Depends(require_admin)])
+def get_gemini_keys(db: Session = Depends(get_db)):
+    """Get Gemini API keys (masked)."""
+    free_key = _get_config(db, "GEMINI_KEY_FREE") or ""
+    paid_key = _get_config(db, "GEMINI_KEY_PAID") or ""
+    return {
+        "freeKey": ("***" + free_key[-4:]) if free_key else "",
+        "paidKey": ("***" + paid_key[-4:]) if paid_key else "",
+        "hasFreeKey": bool(free_key),
+        "hasPaidKey": bool(paid_key),
+    }
+
+
+@router.post("/admin/gemini-keys", dependencies=[Depends(require_admin)])
+def set_gemini_keys(data: dict, db: Session = Depends(get_db)):
+    """Set Gemini API keys. Pass null to keep existing value."""
+    free_key = data.get("freeKey")
+    paid_key = data.get("paidKey")
+    if free_key is not None:
+        _set_config(db, "GEMINI_KEY_FREE", free_key)
+    if paid_key is not None:
+        _set_config(db, "GEMINI_KEY_PAID", paid_key)
+    db.commit()
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
 # Stripe
 # ---------------------------------------------------------------------------
 

@@ -12,13 +12,26 @@ export default function Admin() {
   const [newClubCode, setNewClubCode] = useState('')
   const [newClubEmail, setNewClubEmail] = useState('')
   const [msg, setMsg] = useState('')
+  const [geminiFreeKey, setGeminiFreeKey] = useState('')
+  const [geminiPaidKey, setGeminiPaidKey] = useState('')
+  const [geminiHasFree, setGeminiHasFree] = useState(false)
+  const [geminiHasPaid, setGeminiHasPaid] = useState(false)
   const { t, lang } = useLang()
 
-  useEffect(() => { loadStatus(); loadClubs(); loadOrganizer() }, [])
+  useEffect(() => { loadStatus(); loadClubs(); loadOrganizer(); loadGeminiKeys() }, [])
 
   async function loadStatus() { const r = await api.get('/status'); setStatus(r.data) }
   async function loadClubs() { const r = await api.get('/clubs'); setClubs(r.data) }
   async function loadOrganizer() { const r = await api.get('/admin/organizer'); setOrganizer(r.data) }
+  async function loadGeminiKeys() {
+    try {
+      const r = await api.get('/admin/gemini-keys')
+      setGeminiFreeKey(r.data.freeKey || '')
+      setGeminiPaidKey(r.data.paidKey || '')
+      setGeminiHasFree(r.data.hasFreeKey)
+      setGeminiHasPaid(r.data.hasPaidKey)
+    } catch { /* not admin or endpoint not available */ }
+  }
 
   async function uploadEntries(e) {
     const file = e.target.files[0]
@@ -140,6 +153,44 @@ export default function Admin() {
               className="border border-gray-300 px-2 py-0.5 rounded text-xs w-28" required />
             <button type="submit" className="px-3 py-1 bg-gray-700 text-white text-xs rounded hover:bg-gray-800">Change</button>
           </form>
+        </Section>
+
+        {/* Gemini API Keys */}
+        <Section title="Clés API Gemini (OCR)" desc="Clés pour la reconnaissance automatique des temps manuscrits. Obtenir sur aistudio.google.com/apikey">
+          <div className="space-y-2">
+            <div>
+              <label className="text-xs text-gray-600 block mb-0.5">Clé gratuite (free tier)</label>
+              <div className="flex gap-2 items-center">
+                <input type="text" placeholder="AIza..."
+                  value={geminiFreeKey}
+                  onChange={e => setGeminiFreeKey(e.target.value)}
+                  onFocus={() => { if (geminiFreeKey.startsWith('***')) setGeminiFreeKey('') }}
+                  className="border border-gray-300 px-2 py-0.5 rounded text-xs font-mono flex-1" />
+                {geminiHasFree && <span className="text-green-600 text-xs">✓</span>}
+              </div>
+            </div>
+            <div>
+              <label className="text-xs text-gray-600 block mb-0.5">Clé payante (paid tier) — optionnelle</label>
+              <div className="flex gap-2 items-center">
+                <input type="text" placeholder="AIza..."
+                  value={geminiPaidKey}
+                  onChange={e => setGeminiPaidKey(e.target.value)}
+                  onFocus={() => { if (geminiPaidKey.startsWith('***')) setGeminiPaidKey('') }}
+                  className="border border-gray-300 px-2 py-0.5 rounded text-xs font-mono flex-1" />
+                {geminiHasPaid && <span className="text-green-600 text-xs">✓</span>}
+              </div>
+            </div>
+            <button onClick={async () => {
+              const payload = {}
+              if (!geminiFreeKey.startsWith('***')) payload.freeKey = geminiFreeKey
+              if (!geminiPaidKey.startsWith('***')) payload.paidKey = geminiPaidKey
+              await api.post('/admin/gemini-keys', payload)
+              setMsg('Clés Gemini sauvegardées')
+              loadGeminiKeys()
+            }} className="px-3 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700">
+              Sauvegarder les clés
+            </button>
+          </div>
         </Section>
 
         {/* Regenerate PINs */}

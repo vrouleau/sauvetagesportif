@@ -26,6 +26,7 @@ import {
   validateEvent, invalidateEvent, validateSession, invalidateSession,
   getFinalEvents, getFinalCandidates, setQualification, autoQualify,
   clearFinalSeeding, seedFinals,
+  getCombinedResults,
   type DbConfig,
   type SessionUpdate,
   type EventUpdate,
@@ -33,6 +34,20 @@ import {
 } from './db'
 import { importLenex } from './lenex'
 import { saveSMB, restoreSMB } from './smb'
+import {
+  getScanDb, closeScanDb, insertScan, getUnprocessedScans,
+  getScansForHeat, getScanById, findExistingScan,
+  updateScanOcrResult, validateScan, markScanError,
+  getScanSummary, getValidatedScansForHeat, getScansByStatus,
+  clearAllScans, deleteScan,
+  type ScanStatus,
+} from './timingScanDb'
+import { decodeBarcode } from './timingBarcode'
+import { processTimingImage } from './timingImageProcess'
+import { generateTimingSheetsHtml, buildTimingSheetPages } from './timingSheets'
+import { parseTimeToMs, formatMsToTime, assembleTimeString, type OcrEngine, type TimeOcrResult } from './ocrEngine'
+import { startGeminiBackground, setGeminiBackgroundEnabled, isGeminiBackgroundEnabled, resetGeminiAttempted } from './geminiBackground'
+import { GeminiOcrEngine, getCurrentGeminiTier, loadGeminiKeys, saveGeminiKeys, saveGeminiApiKey } from './ocrGemini'
 
 let quantum: QuantumBridge | null = null
 
@@ -359,6 +374,10 @@ ipcMain.handle('file:new-meet', async () => {
 
 ipcMain.handle('db:get-meet-info', () => getMeetInfo())
 
+ipcMain.handle('db:get-combined-results', (_event, selectedEventIds: number[]) =>
+  getCombinedResults(selectedEventIds)
+)
+
 interface PdfHeaderInfo { line1: string; line2: string; today: string }
 
 function escHtml(s: string): string {
@@ -487,6 +506,429 @@ ipcMain.handle('report:print', async (_event, html: string, h: PdfHeaderInfo) =>
   }
 })
 
+// ── Timing Sheet IPC ──────────────────────────────────────────────────────────
+
+// Active OCR engine instance (lazy-loaded)
+let activeOcrEngine: OcrEngine | null = null
+
+ipcMain.handle('timing:save-scan', async (_event, data: {
+  eventNumber: number
+  heatNumber: number
+  lane: number
+  barcodeRaw: string
+  imageBase64: string
+}) => {
+  try {
+    const imageBlob = Buffer.from(data.imageBase64, 'base64')
+
+    // If this barcode was already scanned, delete the old one (rescan)
+    const existing = findExistingScan(data.barcodeRaw)
+    if (existing) {
+      deleteScan(existing.scanId)
+    }
+
+    const scanId = insertScan({
+      eventNumber: data.eventNumber,
+      heatNumber: data.heatNumber,
+      lane: data.lane,
+      barcodeRaw: data.barcodeRaw,
+      imageBlob,
+      scannedAt: new Date().toISOString(),
+    })
+    return { ok: true, scanId, duplicate: false }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+})
+
+ipcMain.handle('timing:get-unprocessed', () => {
+  return getUnprocessedScans().map(scanToDto)
+})
+
+ipcMain.handle('timing:get-scans-for-heat', (_event, eventNumber: number, heatNumber: number) => {
+  return getScansForHeat(eventNumber, heatNumber).map(scanToDto)
+})
+
+ipcMain.handle('timing:get-scan-summary', () => {
+  return getScanSummary()
+})
+
+ipcMain.handle('timing:get-scans-for-processing', (_event, filter: ScanStatus | 'all') => {
+  if (filter === 'all') {
+    const unprocessed = getScansByStatus('unprocessed')
+    const recognized = getScansByStatus('recognized')
+    const validated = getScansByStatus('validated')
+    return [...unprocessed, ...recognized, ...validated].map(scanToDto)
+  }
+  if (filter === 'unprocessed') {
+    // "Non traités" = unprocessed + recognized (not yet confirmed by operator)
+    const unprocessed = getScansByStatus('unprocessed')
+    const recognized = getScansByStatus('recognized')
+    return [...unprocessed, ...recognized].map(scanToDto)
+  }
+  return getScansByStatus(filter).map(scanToDto)
+})
+
+ipcMain.handle('timing:run-ocr', async (_event, scanId: number, engineName: string) => {
+  try {
+    const scan = getScanById(scanId)
+    if (!scan) return { ok: false, error: 'Scan not found' }
+
+    // Ollama and Gemini use the full image directly (vision model)
+    if (engineName === 'ollama' || engineName === 'gemini') {
+      let visionResult: { time1: string; time2: string; confidence: number }
+
+      if (engineName === 'ollama') {
+        const { OllamaOcrEngine } = await import('./ocrOllama')
+        let ollamaEngine = activeOcrEngine as InstanceType<typeof OllamaOcrEngine> | null
+        if (!ollamaEngine || ollamaEngine.name !== 'ollama') {
+          ollamaEngine = new OllamaOcrEngine()
+          await ollamaEngine.initialize()
+          if (activeOcrEngine) await activeOcrEngine.dispose()
+          activeOcrEngine = ollamaEngine as unknown as OcrEngine
+        }
+        visionResult = await ollamaEngine.recognizeFullImage(scan.imageBlob)
+      } else {
+        let geminiEngine = activeOcrEngine as InstanceType<typeof GeminiOcrEngine> | null
+        if (!geminiEngine || (geminiEngine as any).name !== 'gemini') {
+          geminiEngine = new GeminiOcrEngine()
+          await geminiEngine.initialize()
+          if (activeOcrEngine) await activeOcrEngine.dispose()
+          activeOcrEngine = geminiEngine as unknown as OcrEngine
+        }
+        visionResult = await geminiEngine.recognizeFullImage(scan.imageBlob)
+      }
+
+      updateScanOcrResult(scanId, {
+        recognizedTime1: visionResult.time1,
+        recognizedTime2: visionResult.time2,
+        ocrEngine: engineName,
+        ocrConfidence: visionResult.confidence,
+      })
+
+      return {
+        ok: true,
+        result: {
+          time1: visionResult.time1,
+          time2: visionResult.time2,
+          digitResults1: [],
+          digitResults2: [],
+          overallConfidence: visionResult.confidence,
+        },
+      }
+    }
+
+    // Other engines use the digit cropping pipeline
+    const engine = await getOcrEngine(engineName as 'tesseract' | 'paddle' | 'onnx' | 'ollama')
+    if (!engine) return { ok: false, error: `OCR engine "${engineName}" not available` }
+
+    // Process image — extracts two time rows (Chrono 1 and Chrono 2)
+    const processed = await processTimingImage(scan.imageBlob)
+    if (!processed || processed.digits.length === 0) {
+      return { ok: false, error: 'Could not extract digits from image' }
+    }
+
+    // The image has two rows of 5 digits each.
+    // First 5 digits = Chrono 1, next 5 = Chrono 2
+    const digits1 = processed.digits.slice(0, 5)
+    const digits2 = processed.digits.slice(5, 10)
+
+    const result1 = digits1.length > 0 ? await engine.recognizeTime(digits1) : null
+    const result2 = digits2.length > 0 ? await engine.recognizeTime(digits2) : null
+
+    const overallConfidence = Math.min(
+      result1?.overallConfidence ?? 0,
+      result2?.overallConfidence ?? 0
+    )
+
+    // Save result
+    updateScanOcrResult(scanId, {
+      recognizedTime1: result1?.timeString ?? '',
+      recognizedTime2: result2?.timeString ?? '',
+      ocrEngine: engineName,
+      ocrConfidence: overallConfidence,
+    })
+
+    return {
+      ok: true,
+      result: {
+        time1: result1?.timeString ?? '',
+        time2: result2?.timeString ?? '',
+        digitResults1: result1?.digitResults ?? [],
+        digitResults2: result2?.digitResults ?? [],
+        overallConfidence,
+      },
+    }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+})
+
+ipcMain.handle('timing:validate-scan', (_event, scanId: number, time1: string, timeMs1: number, time2: string, timeMs2: number) => {
+  try {
+    validateScan(scanId, time1, timeMs1, time2, timeMs2)
+
+    // Also write directly to the meet database
+    const scan = getScanById(scanId)
+    if (scan) {
+      const db = getLocalDb()
+      const avgTime = Math.round((timeMs1 + timeMs2) / 2)
+
+      const row = db.prepare(`
+        SELECT sr.swimresultid
+        FROM swimresult sr
+        JOIN heat h ON sr.heatid = h.heatid
+        JOIN swimevent e ON h.swimeventid = e.swimeventid
+        WHERE e.eventnumber = ? AND h.heatnumber = ? AND sr.lane = ?
+        LIMIT 1
+      `).get(scan.eventNumber, scan.heatNumber, scan.lane) as { swimresultid: number } | undefined
+
+      if (row) {
+        db.prepare(`
+          UPDATE swimresult
+          SET backuptime1 = ?, backuptime2 = ?, swimtime = ?
+          WHERE swimresultid = ?
+        `).run(timeMs1, timeMs2, avgTime, row.swimresultid)
+      }
+    }
+
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+})
+
+ipcMain.handle('timing:mark-error', (_event, scanId: number, _notes: string) => {
+  try {
+    deleteScan(scanId)
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+})
+
+ipcMain.handle('timing:commit-heat-results', async (_event, eventNumber: number, heatNumber: number) => {
+  try {
+    const scans = getValidatedScansForHeat(eventNumber, heatNumber)
+    if (scans.length === 0) {
+      return { ok: false, error: 'No validated scans for this heat' }
+    }
+
+    // Each scan is one lane with both chrono times
+    const db = getLocalDb()
+    for (const scan of scans) {
+      const time1 = scan.timeMs1
+      const time2 = scan.timeMs2
+
+      // Average if both present
+      const avgTime = (time1 !== null && time2 !== null)
+        ? Math.round((time1 + time2) / 2)
+        : (time1 ?? time2)
+
+      // Find the swimresult row for this event/heat/lane
+      const row = db.prepare(`
+        SELECT sr.swimresultid
+        FROM swimresult sr
+        JOIN heat h ON sr.heatid = h.heatid
+        JOIN swimevent e ON h.swimeventid = e.swimeventid
+        WHERE e.eventnumber = ? AND h.heatnumber = ? AND sr.lane = ?
+        LIMIT 1
+      `).get(eventNumber, heatNumber, scan.lane) as { swimresultid: number } | undefined
+
+      if (row) {
+        db.prepare(`
+          UPDATE swimresult
+          SET backuptime1 = ?, backuptime2 = ?, swimtime = ?
+          WHERE swimresultid = ?
+        `).run(time1, time2, avgTime, row.swimresultid)
+      }
+    }
+
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+})
+
+ipcMain.handle('timing:save-debug-image', (_event, imageBase64: string) => {
+  try {
+    const filePath = join(app.getPath('userData'), 'debug_capture.png')
+    writeFileSync(filePath, Buffer.from(imageBase64, 'base64'))
+    console.log('[Timing] Debug image saved to:', filePath)
+    return { ok: true, path: filePath }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+})
+
+ipcMain.handle('timing:clear-all-scans', () => {
+  const deleted = clearAllScans()
+  resetGeminiAttempted()
+  return { ok: true, deleted }
+})
+
+ipcMain.handle('timing:set-gemini-background', (_event, value: boolean) => {
+  setGeminiBackgroundEnabled(value)
+  return { ok: true }
+})
+
+ipcMain.handle('timing:get-gemini-background', () => {
+  return { enabled: isGeminiBackgroundEnabled(), tier: getCurrentGeminiTier() }
+})
+
+ipcMain.handle('timing:get-gemini-key', () => {
+  const keys = loadGeminiKeys()
+  return {
+    freeKey: keys.freeKey ? '***' + keys.freeKey.slice(-4) : '',
+    paidKey: keys.paidKey ? '***' + keys.paidKey.slice(-4) : '',
+    hasFreeKey: !!keys.freeKey,
+    hasPaidKey: !!keys.paidKey,
+  }
+})
+
+ipcMain.handle('timing:set-gemini-key', (_event, freeKey: string | null, paidKey: string | null) => {
+  const current = loadGeminiKeys()
+  saveGeminiKeys(
+    freeKey !== null ? freeKey : current.freeKey,
+    paidKey !== null ? paidKey : current.paidKey
+  )
+  // Reset engine so it picks up the new keys
+  if (activeOcrEngine && (activeOcrEngine as any).name === 'gemini') {
+    activeOcrEngine.dispose()
+    activeOcrEngine = null
+  }
+  return { ok: true }
+})
+
+ipcMain.handle('timing:generate-sheets', async (_event, sessionId: number) => {
+  try {
+    const db = getLocalDb()
+    // Get all heats for the session
+    const heats = db.prepare(`
+      SELECT e.eventnumber, e.swimeventid, h.heatnumber, h.heatid,
+             ss.name as stylename, ss.distance
+      FROM heat h
+      JOIN swimevent e ON h.swimeventid = e.swimeventid
+      JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid
+      WHERE e.swimsessionid = ?
+      ORDER BY e.eventnumber, h.heatnumber
+    `).all(sessionId) as Array<{
+      eventnumber: number; swimeventid: number; heatnumber: number; heatid: number
+      stylename: string; distance: number
+    }>
+
+    const allPages: ReturnType<typeof buildTimingSheetPages> = []
+
+    for (const heat of heats) {
+      // Get lanes for this heat (exclude lane 0 = unseeded)
+      const lanes = db.prepare(`
+        SELECT DISTINCT sr.lane FROM swimresult sr WHERE sr.heatid = ? AND sr.lane > 0 ORDER BY sr.lane
+      `).all(heat.heatid) as Array<{ lane: number }>
+
+      const laneNumbers = lanes.map((l) => l.lane)
+      if (laneNumbers.length === 0) continue // skip heats with no seeded lanes
+      const eventName = `${heat.distance}m ${heat.stylename}`
+
+      // Get athlete names and club codes for each lane
+      const entries = db.prepare(`
+        SELECT sr.lane, a.firstname, a.lastname, c.code as clubcode
+        FROM swimresult sr
+        LEFT JOIN athlete a ON sr.athleteid = a.athleteid
+        LEFT JOIN club c ON a.clubid = c.clubid
+        WHERE sr.heatid = ? AND sr.lane > 0
+        ORDER BY sr.lane
+      `).all(heat.heatid) as Array<{ lane: number; firstname: string | null; lastname: string | null; clubcode: string | null }>
+
+      const athleteNames = new Map<number, string>()
+      const clubCodes = new Map<number, string>()
+      for (const entry of entries) {
+        const name = [entry.lastname, entry.firstname].filter(Boolean).join(', ')
+        if (name) athleteNames.set(entry.lane, name)
+        if (entry.clubcode) clubCodes.set(entry.lane, entry.clubcode)
+      }
+
+      // One strip per lane (both chronos on same strip)
+      const pages = buildTimingSheetPages(
+        heat.eventnumber, eventName, heat.heatnumber, laneNumbers, undefined, athleteNames, clubCodes
+      )
+      allPages.push(...pages)
+    }
+
+    const html = generateTimingSheetsHtml(allPages)
+    return { ok: true, html }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+})
+
+/** Convert a scan record to a DTO (with base64 image for renderer) */
+function scanToDto(scan: ReturnType<typeof getScanById> & {}) {
+  return {
+    scanId: scan.scanId,
+    eventNumber: scan.eventNumber,
+    heatNumber: scan.heatNumber,
+    lane: scan.lane,
+    barcodeRaw: scan.barcodeRaw,
+    imageBase64: scan.imageBlob.toString('base64'),
+    scannedAt: scan.scannedAt,
+    status: scan.status,
+    recognizedTime1: scan.recognizedTime1,
+    recognizedTime2: scan.recognizedTime2,
+    validatedTime1: scan.validatedTime1,
+    validatedTime2: scan.validatedTime2,
+    timeMs1: scan.timeMs1,
+    timeMs2: scan.timeMs2,
+    ocrEngine: scan.ocrEngine,
+    ocrConfidence: scan.ocrConfidence,
+    notes: scan.notes,
+  }
+}
+
+/** Get or create an OCR engine instance */
+async function getOcrEngine(name: 'tesseract' | 'paddle' | 'onnx' | 'ollama' | 'gemini'): Promise<OcrEngine | null> {
+  // Dispose previous engine if switching
+  if (activeOcrEngine && activeOcrEngine.name !== name) {
+    await activeOcrEngine.dispose()
+    activeOcrEngine = null
+  }
+
+  if (activeOcrEngine) return activeOcrEngine
+
+  try {
+    switch (name) {
+      case 'tesseract': {
+        const { TesseractOcrEngine } = await import('./ocrTesseract')
+        activeOcrEngine = new TesseractOcrEngine()
+        break
+      }
+      case 'paddle': {
+        const { PaddleOcrEngine } = await import('./ocrPaddle')
+        activeOcrEngine = new PaddleOcrEngine()
+        break
+      }
+      case 'onnx': {
+        const { OnnxOcrEngine } = await import('./ocrOnnx')
+        activeOcrEngine = new OnnxOcrEngine()
+        break
+      }
+      case 'ollama': {
+        const { OllamaOcrEngine } = await import('./ocrOllama')
+        activeOcrEngine = new OllamaOcrEngine()
+        break
+      }
+      case 'gemini': {
+        activeOcrEngine = new GeminiOcrEngine()
+        break
+      }
+    }
+    if (activeOcrEngine) await activeOcrEngine.initialize()
+    return activeOcrEngine
+  } catch (e) {
+    console.error(`Failed to load OCR engine "${name}":`, e)
+    return null
+  }
+}
+
 // ── Window ────────────────────────────────────────────────────────────────────
 
 function createWindow(): void {
@@ -573,6 +1015,15 @@ function createWindow(): void {
         { role: 'togglefullscreen', label: 'Plein écran' },
       ],
     },
+    {
+      label: 'Outils',
+      submenu: [
+        {
+          label: 'Clés API Gemini…',
+          click: () => mainWindow.webContents.send('menu:configure-gemini'),
+        },
+      ],
+    },
   ]
   Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate))
 
@@ -610,6 +1061,9 @@ app.whenReady().then(() => {
     app.setAppUserModelId('com.sauvetagemeet')
   }
 
+  // Start background Gemini OCR processing
+  startGeminiBackground()
+
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -618,5 +1072,10 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   closeLocalDb()
+  closeScanDb()
+  if (activeOcrEngine) {
+    activeOcrEngine.dispose().catch(() => {})
+    activeOcrEngine = null
+  }
   if (process.platform !== 'darwin') app.quit()
 })
