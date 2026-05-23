@@ -1406,7 +1406,7 @@ class TestGeminiKeys:
                       headers=admin_headers, timeout=10)
 
         # Export SMB
-        r = requests.get(f"{BASE_URL}/api/export/smb",
+        r = requests.get(f"{BASE_URL}/api/export/meet-smb",
                          headers=admin_headers, timeout=30)
         if r.status_code == 404:
             pytest.skip("SMB export endpoint not available")

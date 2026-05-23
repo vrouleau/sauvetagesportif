@@ -66,6 +66,26 @@ export default function Organizer() {
     loadMeetInfo(); loadClubs()
   }
 
+  async function createMeet(meetType) {
+    const label = meetType === 'beach'
+      ? (lang === 'fr' ? 'plage' : 'beach')
+      : (lang === 'fr' ? 'piscine' : 'pool')
+    const confirmMsg = meetInfo?.filename
+      ? (lang === 'fr'
+        ? `Remplacer le meet actuel par un nouveau meet ${label} ?`
+        : `Replace current meet with a new ${label} meet?`)
+      : null
+    if (confirmMsg && !confirm(confirmMsg)) return
+    setMsg(lang === 'fr' ? 'Création...' : 'Creating...')
+    try {
+      const r = await api.post('/admin/new-meet', { meet_type: meetType })
+      setMsg(`${r.data.events_loaded} ${t.events}`)
+      loadMeetInfo(); loadClubs()
+    } catch (e) {
+      setMsg(e.response?.data?.detail || e.message || 'Error')
+    }
+  }
+
   async function sendSelectedInvites() {
     const ids = Object.entries(checked).filter(([,v]) => v).map(([k]) => k)
     if (!ids.length) return
@@ -159,6 +179,11 @@ export default function Organizer() {
           <span className="text-xs text-gray-600">
             <strong>{meetInfo.meet_name || meetInfo.filename}</strong>
             {' '}— {({'LCM':'50m','SCM':'25m'})[meetInfo.course] || '?'} — {meetInfo.events} {t.events}
+            {meetInfo.meet_type === 'BEACH' && (
+              <span className="ml-1 px-1.5 py-0.5 bg-orange-100 text-orange-700 rounded text-[10px] font-semibold">
+                {lang === 'fr' ? 'PLAGE' : 'BEACH'}
+              </span>
+            )}
           </span>
         )}
         {meetInfo && !meetInfo.filename && (
@@ -192,10 +217,14 @@ export default function Organizer() {
           {buttonLabel} {checkedCount > 0 && `(${checkedCount})`}
         </button>
         <div className="w-px h-4 bg-gray-300" />
-        <label className="text-xs text-gray-600 cursor-pointer hover:text-blue-600">
-          {t.upload_meet}
-          <input type="file" accept=".lxf" onChange={uploadMeet} className="hidden" />
-        </label>
+        <button onClick={() => createMeet('pool')}
+          className="text-xs text-blue-600 hover:underline">
+          {lang === 'fr' ? 'Créer meet piscine' : 'Create Pool Meet'}
+        </button>
+        <button onClick={() => createMeet('beach')}
+          className="text-xs text-orange-600 hover:underline">
+          {lang === 'fr' ? 'Créer meet plage' : 'Create Beach Meet'}
+        </button>
         <div className="w-px h-4 bg-gray-300" />
         <button onClick={exportLxf} className="text-xs text-blue-600 hover:underline">{t.download_lxf}</button>
         {stripeStatus?.connected && (

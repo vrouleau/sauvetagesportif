@@ -45,8 +45,9 @@ function getQualLabel(code: string, lang: string): string {
   return code
 }
 
-export default function FinalsPage({ refreshKey = 0 }: { refreshKey?: number }) {
+export default function FinalsPage({ refreshKey = 0, meetType = 'POOL' }: { refreshKey?: number; meetType?: string }) {
   const { lang } = useLang()
+  const isBeach = meetType === 'BEACH'
 
   const [events, setEvents] = useState<FinalEvent[]>([])
   const [selectedEventId, setSelectedEventId] = useState<number | null>(null)
@@ -311,8 +312,7 @@ export default function FinalsPage({ refreshKey = 0 }: { refreshKey?: number }) 
           </button>
           {selectedEvent && (
             <span className="ml-auto text-xs text-gray-500">
-              {selectedEvent.laneCount} {lang === 'en' ? 'lanes' : 'couloirs'}
-              {' · '}
+              {!isBeach && <>{selectedEvent.laneCount} {lang === 'en' ? 'lanes' : 'couloirs'}{' · '}</>}
               {selectedEvent.heatCount} {lang === 'en' ? 'heat(s)' : 'série(s)'}
               {' · '}
               {selectedEvent.finalOrder === 2
@@ -343,7 +343,7 @@ export default function FinalsPage({ refreshKey = 0 }: { refreshKey?: number }) 
                   <th className="px-2 py-1 text-left">{lang === 'en' ? 'Athlete' : 'Athlète'}</th>
                   <th className="px-2 py-1 text-left w-16">{lang === 'en' ? 'Club' : 'Club'}</th>
                   <th className="px-2 py-1 text-left w-16">{lang === 'en' ? 'Cat.' : 'Cat.'}</th>
-                  <th className="px-2 py-1 text-right w-20">{lang === 'en' ? 'Prelim' : 'Élim.'}</th>
+                  <th className="px-2 py-1 text-right w-20">{isBeach ? 'Pos.' : (lang === 'en' ? 'Prelim' : 'Élim.')}</th>
                   <th className="px-2 py-1 text-center w-12">{lang === 'en' ? 'Status' : 'Statut'}</th>
                   <th className="px-2 py-1 text-center w-28">{lang === 'en' ? 'Qualify' : 'Qualif.'}</th>
                 </tr>
@@ -373,7 +373,7 @@ export default function FinalsPage({ refreshKey = 0 }: { refreshKey?: number }) 
                       <td className="px-2 py-1 text-gray-600">{c.clubCode}</td>
                       <td className="px-2 py-1 text-gray-500">{c.ageGroupName}</td>
                       <td className="px-2 py-1 text-right font-mono">
-                        {c.prelimTime ?? 'NT'}
+                        {isBeach ? (c.prelimRank > 0 ? c.prelimRank : '—') : (c.prelimTime ?? 'NT')}
                       </td>
                       <td className="px-2 py-1 text-center">
                         {c.resultStatus && (

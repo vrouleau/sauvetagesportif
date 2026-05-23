@@ -9,6 +9,9 @@
  */
 import type { RegistrationAPI, Club, AthleteListItem, RegistrationData, RegistrationStyle } from '@shared/data/api'
 
+// Track the last athlete ID for unregister (which only receives registrationId/eventId)
+let _lastAthleteId = 0
+
 function ipc() {
   return (window as unknown as {
     api?: {
@@ -69,12 +72,27 @@ function displayToMs(t: string | undefined): number | null {
   return null
 }
 
-function ageCodeFromGroup(name: string): string {
-  if (/10/.test(name) && /under|moins|-/.test(name.toLowerCase())) return '10-'
-  if (/11.*12/.test(name)) return '11-12'
-  if (/13.*14/.test(name)) return '13-14'
-  if (/15.*18/.test(name)) return '15-18'
-  if (/master/i.test(name)) return 'Masters'
+function ageCodeFromGroup(name: string, minAge?: number, maxAge?: number | null): string {
+  // Try name-based matching first
+  if (name) {
+    if (/10/.test(name) && /under|moins|-/.test(name.toLowerCase())) return '10-'
+    if (/11.*12/.test(name)) return '11-12'
+    if (/13.*14/.test(name)) return '13-14'
+    if (/15.*18/.test(name)) return '15-18'
+    if (/master/i.test(name)) return 'Masters'
+  }
+  // Fall back to numeric age range
+  if (minAge != null && maxAge != null) {
+    if (maxAge <= 10) return '10-'
+    if (minAge === 11 && maxAge === 12) return '11-12'
+    if (minAge === 13 && maxAge === 14) return '13-14'
+    if (minAge === 15 && maxAge <= 18) return '15-18'
+    if (minAge >= 19) return 'Open'
+  }
+  if (minAge != null && (maxAge == null || maxAge === -1 || maxAge >= 99)) {
+    if (minAge >= 19) return 'Open'
+    if (minAge >= 15) return '15-18'
+  }
   return 'Open'
 }
 
@@ -192,6 +210,7 @@ export const registrationApiElectron: RegistrationAPI = {
 
     const athlete = athletes.find(a => a.id === athleteId)
     if (!athlete) throw new Error('Athlete not found')
+    _lastAthleteId = athleteId
 
     const course = meetConfig.COURSE === '3' ? 'SCM' : 'LCM'
     const age = calcAge(athlete.birthDate)
@@ -231,7 +250,7 @@ export const registrationApiElectron: RegistrationAPI = {
         const style = styleMap.get(styleUid)!
 
         for (const ag of event.ageGroups) {
-          const ageCode = ageCodeFromGroup(ag.name)
+          const ageCode = ageCodeFromGroup(ag.name, ag.minAge, ag.maxAge)
           // Check if athlete is registered for this event
           const entry = athlete.entries.find(e => e.eventId === event.id)
           style.categories.push({
@@ -247,6 +266,12 @@ export const registrationApiElectron: RegistrationAPI = {
 
     for (const [, style] of styleMap) {
       if ((style.relay_count ?? 1) > 1) {
+        // Load relay members for this event
+        const reg = style.categories.find(c => c.registered)
+        if (reg) {
+          const members = (await ipc()?.getRelayMembersByEvent(reg.event_id, athleteId)) as Array<{ position: number; athleteId: number }> ?? []
+          style.relay_members = members.map(m => ({ position: m.position, athleteId: m.athleteId }))
+        }
         relayEvents.push(style)
       } else {
         individualEvents.push(style)
@@ -273,6 +298,7 @@ export const registrationApiElectron: RegistrationAPI = {
       club_athletes: clubAthletes,
       suggested_age_code: suggestedAgeCode,
       meet_course: course,
+      meet_type: ((await ipc()?.getMeetType()) as string) || 'POOL',
     }
   },
 
@@ -294,14 +320,15 @@ export const registrationApiElectron: RegistrationAPI = {
     })
   },
 
-  async register(_data) {
-    // Registration in meet-app would require creating a swimresult entry
-    // This is a complex operation — stub for now
-    console.warn('register() not yet implemented for meet-app local DB')
+  async register(data) {
+    await ipc()?.register(data)
   },
 
-  async unregister(_registrationId) {
-    // Would require deleting a swimresult entry
-    console.warn('unregister() not yet implemented for meet-app local DB')
+  async unregister(registrationId) {
+    await ipc()?.unregister(_lastAthleteId, registrationId)
+  },
+
+  async setRelayMember(eventId, position, athleteId) {
+    await ipc()?.setRelayMember(eventId, _lastAthleteId, position, athleteId)
   },
 }

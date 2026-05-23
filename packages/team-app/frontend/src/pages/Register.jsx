@@ -140,7 +140,8 @@ export default function Register() {
     </div>
   )
 
-  const { athlete, individual_events, relay_events, club_athletes, suggested_age_code, meet_course } = data
+  const { athlete, individual_events, relay_events, club_athletes, suggested_age_code, meet_course, meet_type } = data
+  const isBeach = meet_type === 'BEACH'
   const bestKey = meet_course === 'SCM' ? 'best_time_scm_ms' : 'best_time_lcm_ms'
   const activeCategory = category || suggested_age_code
 
@@ -240,9 +241,9 @@ export default function Register() {
               <tr className="bg-gray-100">
                 <th className="border border-gray-300 px-2 py-1 w-6 text-center">✓</th>
                 <th className="border border-gray-300 px-2 py-1 text-left">{t.event}</th>
-                <th className="border border-gray-300 px-2 py-1 text-right w-20">{t.bt_50}</th>
-                <th className="border border-gray-300 px-2 py-1 text-right w-20">{t.bt_25}</th>
-                <th className="border border-gray-300 px-2 py-1 text-left w-24">{t.entry_time}</th>
+                {!isBeach && <th className="border border-gray-300 px-2 py-1 text-right w-20">{t.bt_50}</th>}
+                {!isBeach && <th className="border border-gray-300 px-2 py-1 text-right w-20">{t.bt_25}</th>}
+                {!isBeach && <th className="border border-gray-300 px-2 py-1 text-left w-24">{t.entry_time}</th>}
               </tr>
             </thead>
             <tbody>
@@ -259,28 +260,30 @@ export default function Register() {
                           if (reg) unregister(reg.registration_id)
                           else {
                             const cat = style.categories.find(c => c.age_code === activeCategory) || style.categories[0]
-                            registerEvent(cat.event_id, bestMs, cat.age_code)
+                            registerEvent(cat.event_id, isBeach ? null : bestMs, cat.age_code)
                           }
                         }} />
                     </td>
                     <td className="border border-gray-300 px-2 py-0.5">{style.style_name}</td>
-                    <td className="border border-gray-300 px-2 py-0.5 text-right font-mono text-gray-500">{msToTime(style.best_time_lcm_ms)}</td>
-                    <td className="border border-gray-300 px-2 py-0.5 text-right font-mono text-gray-500">{msToTime(style.best_time_scm_ms)}</td>
-                    <td className="border border-gray-300 px-2 py-0.5">
-                      {reg && (
-                        <TimeInput defaultValue={msToTime(reg.entry_time_ms || bestMs)}
-                          key={`${reg.registration_id}-${reg.entry_time_ms}`}
-                          onSave={async v => {
-                            const ms = parseTime(v)
-                            if (ms === undefined) return
-                            await api.post('/registrations', {
-                              athlete_id: parseInt(id), event_id: reg.event_id,
-                              age_code: reg.age_code, entry_time_ms: ms
-                            })
-                            load()
-                          }} />
-                      )}
-                    </td>
+                    {!isBeach && <td className="border border-gray-300 px-2 py-0.5 text-right font-mono text-gray-500">{msToTime(style.best_time_lcm_ms)}</td>}
+                    {!isBeach && <td className="border border-gray-300 px-2 py-0.5 text-right font-mono text-gray-500">{msToTime(style.best_time_scm_ms)}</td>}
+                    {!isBeach && (
+                      <td className="border border-gray-300 px-2 py-0.5">
+                        {reg && (
+                          <TimeInput defaultValue={msToTime(reg.entry_time_ms || bestMs)}
+                            key={`${reg.registration_id}-${reg.entry_time_ms}`}
+                            onSave={async v => {
+                              const ms = parseTime(v)
+                              if (ms === undefined) return
+                              await api.post('/registrations', {
+                                athlete_id: parseInt(id), event_id: reg.event_id,
+                                age_code: reg.age_code, entry_time_ms: ms
+                              })
+                              load()
+                            }} />
+                        )}
+                      </td>
+                    )}
                   </tr>
                 )
               })}
@@ -297,9 +300,9 @@ export default function Register() {
                 <tr className="bg-gray-100">
                   <th className="border border-gray-300 px-2 py-1 w-6 text-center">✓</th>
                   <th className="border border-gray-300 px-2 py-1 text-left">{t.event}</th>
-                  <th className="border border-gray-300 px-2 py-1 text-right w-20">{t.bt_50}</th>
-                  <th className="border border-gray-300 px-2 py-1 text-right w-20">{t.bt_25}</th>
-                  <th className="border border-gray-300 px-2 py-1 text-left w-24">{t.entry_time}</th>
+                  {!isBeach && <th className="border border-gray-300 px-2 py-1 text-right w-20">{t.bt_50}</th>}
+                  {!isBeach && <th className="border border-gray-300 px-2 py-1 text-right w-20">{t.bt_25}</th>}
+                  {!isBeach && <th className="border border-gray-300 px-2 py-1 text-left w-24">{t.entry_time}</th>}
                   <th className="border border-gray-300 px-2 py-1 text-left">{t.teammates}</th>
                 </tr>
               </thead>
@@ -321,7 +324,7 @@ export default function Register() {
                             if (reg) unregister(reg.registration_id)
                             else {
                               const cat = style.categories.find(c => c.age_code === activeCategory) || style.categories[0]
-                              registerEvent(cat.event_id, bestMs, cat.age_code)
+                              registerEvent(cat.event_id, isBeach ? null : bestMs, cat.age_code)
                             }
                           }} />
                       </td>
@@ -333,23 +336,25 @@ export default function Register() {
                           </span>
                         )}
                       </td>
-                      <td className="border border-gray-300 px-2 py-0.5 text-right font-mono text-gray-500">{msToTime(style.best_time_lcm_ms)}</td>
-                      <td className="border border-gray-300 px-2 py-0.5 text-right font-mono text-gray-500">{msToTime(style.best_time_scm_ms)}</td>
-                      <td className="border border-gray-300 px-2 py-0.5">
-                        {!lockedBy && reg && (
-                          <TimeInput defaultValue={msToTime(reg.entry_time_ms || bestMs)}
-                            key={`r-${reg.registration_id}-${reg.entry_time_ms}`}
-                            onSave={async v => {
-                              const ms = parseTime(v)
-                              if (ms === undefined) return
-                              await api.post('/registrations', {
-                                athlete_id: parseInt(id), event_id: reg.event_id,
-                                age_code: reg.age_code, entry_time_ms: ms
-                              })
-                              load()
-                            }} />
-                        )}
-                      </td>
+                      {!isBeach && <td className="border border-gray-300 px-2 py-0.5 text-right font-mono text-gray-500">{msToTime(style.best_time_lcm_ms)}</td>}
+                      {!isBeach && <td className="border border-gray-300 px-2 py-0.5 text-right font-mono text-gray-500">{msToTime(style.best_time_scm_ms)}</td>}
+                      {!isBeach && (
+                        <td className="border border-gray-300 px-2 py-0.5">
+                          {!lockedBy && reg && (
+                            <TimeInput defaultValue={msToTime(reg.entry_time_ms || bestMs)}
+                              key={`r-${reg.registration_id}-${reg.entry_time_ms}`}
+                              onSave={async v => {
+                                const ms = parseTime(v)
+                                if (ms === undefined) return
+                                await api.post('/registrations', {
+                                  athlete_id: parseInt(id), event_id: reg.event_id,
+                                  age_code: reg.age_code, entry_time_ms: ms
+                                })
+                                load()
+                              }} />
+                          )}
+                        </td>
+                      )}
                       <td className="border border-gray-300 px-2 py-0.5">
                         {!lockedBy && reg && (
                           <div className="flex flex-wrap gap-1">

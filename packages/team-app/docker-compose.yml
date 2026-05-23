@@ -27,6 +27,8 @@ services:
       STRIPE_API_KEY: "${STRIPE_API_KEY:-}"
       SUPPORT_EMAIL: "${SUPPORT_EMAIL:-}"
       TURNSTILE_SECRET_KEY: "${TURNSTILE_SECRET_KEY:-}"
+      MEET_TEMPLATE_POOL: "/app/templates/template_pool.lxf"
+      MEET_TEMPLATE_BEACH: "/app/templates/template_beach.lxf"
     depends_on:
       db:
         condition: service_healthy

@@ -19,8 +19,9 @@ const quantumApi = () => (window as any).api?.quantum
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const dbApi = () => (window as any).api?.db
 
-export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
+export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refreshKey?: number; meetType?: string }) {
   const { t } = useLang()
+  const isBeach = meetType === 'BEACH'
 
   const [sessions, setSessions] = useState<HeatListSession[]>([])
   const [heatData, setHeatData] = useState<HeatState>({})
@@ -281,6 +282,13 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
     const trimmed = raw.trim()
     if (!trimmed) return null
 
+    // Beach mode: validate as integer position (1, 2, 3, ...)
+    if (isBeach) {
+      const n = parseInt(trimmed, 10)
+      if (isNaN(n) || n < 1 || String(n) !== trimmed) return null
+      return String(n)
+    }
+
     // Split by spaces or commas to detect multiple times
     const parts = trimmed.split(/[\s,]+/).filter(Boolean)
 
@@ -311,11 +319,74 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
     if (!entry) return
     setSelectedLane(lane)
     setEditingLane(lane)
-    setEditValue(entry.finalTime ?? '')
+
+    if (isBeach) {
+      // Pre-fill with next available position if cell is empty
+      if (!entry.finalTime) {
+        const usedPositions = entries
+          .filter(e => e.finalTime && !e.status)
+          .map(e => parseInt(e.finalTime!, 10))
+          .filter(n => !isNaN(n))
+        const nextPos = usedPositions.length > 0 ? Math.max(...usedPositions) + 1 : 1
+        setEditValue(String(nextPos))
+      } else {
+        setEditValue(entry.finalTime)
+      }
+    } else {
+      setEditValue(entry.finalTime ?? '')
+    }
   }
 
   function saveEdit(lane: number) {
     const parsed = parseTimeInput(editValue)
+
+    // Beach validation: swap on duplicate, no gaps in final sequence
+    if (isBeach && parsed) {
+      const pos = parseInt(parsed, 10)
+      const currentEntry = entries.find(e => e.lane === lane)
+      const hadPosition = currentEntry?.finalTime && !currentEntry?.status
+      const otherEntries = entries.filter(e => e.lane !== lane && e.finalTime && !e.status)
+      const otherPositions = otherEntries.map(e => ({ lane: e.lane, pos: parseInt(e.finalTime!, 10) })).filter(p => !isNaN(p.pos))
+
+      // Max allowed = number of athletes that will have a position after this edit
+      const totalWithPosition = otherPositions.length + 1 // others + this one
+      if (pos > totalWithPosition) {
+        setEditingLane(null)
+        return
+      }
+
+      // Duplicate? Swap positions
+      const conflict = otherPositions.find(p => p.pos === pos)
+      if (conflict) {
+        const currentEntry = entries.find(e => e.lane === lane)
+        const currentPos = currentEntry?.finalTime ?? null
+        // Swap: give the conflicting athlete our old position (or clear if we had none)
+        setHeatData((prev) => {
+          if (selectedHeatId === null) return prev
+          const updated = (prev[selectedHeatId] ?? []).map((e) => {
+            if (e.lane === lane) {
+              const next: LaneEntry = { ...e, finalTime: parsed || undefined, status: null }
+              if (next.swimresultId) {
+                dbApi()?.saveResult(next.swimresultId, next.finalTime, null, null, next.splitTimes).catch(console.error)
+              }
+              return next
+            }
+            if (e.lane === conflict.lane) {
+              const next: LaneEntry = { ...e, finalTime: currentPos || undefined, status: null }
+              if (next.swimresultId) {
+                dbApi()?.saveResult(next.swimresultId, next.finalTime, null, null, next.splitTimes).catch(console.error)
+              }
+              return next
+            }
+            return e
+          })
+          return { ...prev, [selectedHeatId]: updated }
+        })
+        setEditingLane(null)
+        return
+      }
+    }
+
     setHeatData((prev) => {
       if (selectedHeatId === null) return prev
       const updated = (prev[selectedHeatId] ?? []).map((e) => {
@@ -1044,16 +1115,16 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
               <table className="w-full border-collapse heat-table">
                 <thead className="sticky top-0 z-10">
                   <tr className="bg-gray-100 border-b border-gray-400 text-gray-600">
-                    <th className="px-2 py-0.5 text-center w-8 font-medium border-r border-gray-300">{t.heats.columns.lane}</th>
+                    <th className="px-2 py-0.5 text-center w-8 font-medium border-r border-gray-300">{isBeach ? '#' : t.heats.columns.lane}</th>
                     <th className="px-2 py-0.5 text-left font-medium border-r border-gray-300 min-w-[160px]">{t.heats.columns.name}</th>
                     <th className="px-2 py-0.5 text-center w-10 font-medium border-r border-gray-300">{t.heats.columns.nation}</th>
                     <th className="px-2 py-0.5 text-center w-14 font-medium border-r border-gray-300">{t.heats.columns.clubCode}</th>
                     <th className="px-2 py-0.5 text-left font-medium border-r border-gray-300 min-w-[150px]">{t.heats.columns.clubName}</th>
                     <th className="px-2 py-0.5 text-center w-14 font-medium border-r border-gray-300">{t.heats.columns.category}</th>
-                    <th className="px-2 py-0.5 text-center w-20 font-medium border-r border-gray-300">{selectedEvent?.phase === 'Finale' ? t.heats.columns.prelimTime : t.heats.columns.seedTime}</th>
-                    <th className="px-2 py-0.5 text-center w-24 font-medium border-r border-gray-300">{t.heats.columns.splitTime}</th>
-                    <th className="px-2 py-0.5 text-center w-24 font-medium border-r border-gray-300 bg-blue-50">{t.heats.columns.finalTime}</th>
-                    <th className="px-2 py-0.5 text-center w-8 font-medium border-r border-gray-300">{t.heats.columns.rank}</th>
+                    {!isBeach && <th className="px-2 py-0.5 text-center w-20 font-medium border-r border-gray-300">{selectedEvent?.phase === 'Finale' ? t.heats.columns.prelimTime : t.heats.columns.seedTime}</th>}
+                    {!isBeach && <th className="px-2 py-0.5 text-center w-24 font-medium border-r border-gray-300">{t.heats.columns.splitTime}</th>}
+                    <th className="px-2 py-0.5 text-center w-24 font-medium border-r border-gray-300 bg-blue-50">{isBeach ? 'Position' : t.heats.columns.finalTime}</th>
+                    {!isBeach && <th className="px-2 py-0.5 text-center w-8 font-medium border-r border-gray-300">{t.heats.columns.rank}</th>}
                     <th className="px-2 py-0.5 text-center w-16 font-medium">{t.heats.columns.status}</th>
                   </tr>
                 </thead>
@@ -1132,13 +1203,17 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
                         <td className={`px-2 text-center border-r border-gray-200 ${isSelected ? 'text-gray-700' : 'text-gray-600'}`}>
                           {entry.category}
                         </td>
-                        <td className={`px-2 text-center font-mono border-r border-gray-200 ${isSelected ? 'text-gray-600' : 'text-gray-500'}`}>
-                          {entry.entryTime ?? 'NT'}
-                        </td>
-                        <td className={`px-2 text-center font-mono border-r border-gray-200 ${isSelected ? 'text-gray-500' : 'text-gray-400'}`}>
-                          {entry.splitTimes ? Object.values(entry.splitTimes)[0] ?? '—' : '—'}
-                        </td>
-                        {/* Final time — editable */}
+                        {!isBeach && (
+                          <td className={`px-2 text-center font-mono border-r border-gray-200 ${isSelected ? 'text-gray-600' : 'text-gray-500'}`}>
+                            {entry.entryTime ?? 'NT'}
+                          </td>
+                        )}
+                        {!isBeach && (
+                          <td className={`px-2 text-center font-mono border-r border-gray-200 ${isSelected ? 'text-gray-500' : 'text-gray-400'}`}>
+                            {entry.splitTimes ? Object.values(entry.splitTimes)[0] ?? '—' : '—'}
+                          </td>
+                        )}
+                        {/* Final time / Position — editable */}
                         <td
                           className={`px-1 text-center font-mono border-r border-gray-200 ${isSelected && !isEditing ? 'bg-blue-200' : 'bg-blue-50'}`}
                           onClick={(e) => { e.stopPropagation(); startEdit(lane) }}
@@ -1151,7 +1226,7 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
                               onChange={(e) => setEditValue(e.target.value)}
                               onKeyDown={(e) => handleKeyDown(e, lane, maxLane)}
                               onBlur={() => saveEdit(lane)}
-                              placeholder="M:SS.hh"
+                              placeholder={isBeach ? '#' : 'M:SS.hh'}
                             />
                           ) : (
                             <span
@@ -1169,9 +1244,11 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
                             </span>
                           )}
                         </td>
-                        <td className={`px-2 text-center font-bold border-r border-gray-200 ${rank === 1 ? 'text-yellow-600' : 'text-gray-600'}`}>
-                          {rank ?? ''}
-                        </td>
+                        {!isBeach && (
+                          <td className={`px-2 text-center font-bold border-r border-gray-200 ${rank === 1 ? 'text-yellow-600' : 'text-gray-600'}`}>
+                            {rank ?? ''}
+                          </td>
+                        )}
                         <td className="px-1 text-center">
                           <select
                             className={`text-xs border border-gray-300 rounded px-1 ${isSelected ? 'bg-blue-100 border-blue-300' : 'bg-white'}`}

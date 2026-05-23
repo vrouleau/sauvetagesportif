@@ -2,6 +2,10 @@ import { app, BrowserWindow, shell, ipcMain, dialog, nativeImage, Menu } from 'e
 import { join } from 'path'
 import { writeFileSync, unlinkSync } from 'fs'
 import { tmpdir } from 'os'
+
+// Set app name early so userData path is consistent in dev and production
+app.setName('SauvetageMeet')
+
 import { QuantumBridge, type ActiveHeat, type ScheduleEvent } from './quantum'
 import {
   configureDb, getDbConfig, testConnection,
@@ -27,6 +31,7 @@ import {
   getFinalEvents, getFinalCandidates, setQualification, autoQualify,
   clearFinalSeeding, seedFinals,
   getCombinedResults,
+  nextId,
   type DbConfig,
   type SessionUpdate,
   type EventUpdate,
@@ -147,6 +152,139 @@ ipcMain.handle('db:set-meet-config', (_event, entries: Record<string, { type: st
 })
 
 ipcMain.handle('db:get-swim-styles', () => getSwimStyles())
+
+ipcMain.handle('db:get-meet-type', () => {
+  const db = getLocalDb()
+  const row = db.prepare(`SELECT data FROM bsglobal WHERE name = 'MEET_TYPE'`).get() as { data: string } | undefined
+  return (row?.data || 'POOL').toUpperCase()
+})
+
+ipcMain.handle('db:register', (_event, data: { athlete_id: number; event_id: number; entry_time_ms: number | null; age_code: string }) => {
+  const db = getLocalDb()
+  // Check if already registered
+  const existing = db.prepare(
+    `SELECT swimresultid FROM swimresult WHERE athleteid = ? AND swimeventid = ?`
+  ).get(data.athlete_id, data.event_id) as { swimresultid: number } | undefined
+  if (existing) {
+    // Update entry time
+    db.prepare(`UPDATE swimresult SET entrytime = ? WHERE swimresultid = ?`).run(data.entry_time_ms, existing.swimresultid)
+    return { ok: true, id: existing.swimresultid }
+  }
+  // Find the best matching age group for this event
+  // Try to match by age range based on athlete's birthdate
+  const athlete = db.prepare(`SELECT birthdate FROM athlete WHERE athleteid = ?`).get(data.athlete_id) as { birthdate: string | number | null } | undefined
+  let agegroupId: number | null = null
+
+  const ageGroups = db.prepare(
+    `SELECT agegroupid, agemin, agemax FROM agegroup WHERE swimeventid = ? ORDER BY sortcode`
+  ).all(data.event_id) as Array<{ agegroupid: number; agemin: number | null; agemax: number | null }>
+
+  if (ageGroups.length === 1) {
+    agegroupId = ageGroups[0].agegroupid
+  } else if (ageGroups.length > 1 && athlete?.birthdate) {
+    // Calculate athlete age
+    const bd = typeof athlete.birthdate === 'string' ? new Date(athlete.birthdate) : null
+    if (bd && !isNaN(bd.getTime())) {
+      const now = new Date()
+      let age = now.getFullYear() - bd.getFullYear()
+      if (now.getMonth() < bd.getMonth() || (now.getMonth() === bd.getMonth() && now.getDate() < bd.getDate())) age--
+      // Find matching age group
+      for (const ag of ageGroups) {
+        const min = ag.agemin ?? 0
+        const max = ag.agemax == null || ag.agemax < 0 ? 999 : ag.agemax
+        if (age >= min && age <= max) {
+          agegroupId = ag.agegroupid
+          break
+        }
+      }
+    }
+    if (!agegroupId) agegroupId = ageGroups[0].agegroupid
+  } else if (ageGroups.length > 0) {
+    agegroupId = ageGroups[0].agegroupid
+  }
+
+  const id = nextId('swimresult', 'swimresultid')
+  db.prepare(
+    `INSERT INTO swimresult (swimresultid, athleteid, swimeventid, agegroupid, entrytime, usetimetype)
+     VALUES (?, ?, ?, ?, ?, 0)`
+  ).run(id, data.athlete_id, data.event_id, agegroupId, data.entry_time_ms)
+  return { ok: true, id }
+})
+
+ipcMain.handle('db:unregister', (_event, athleteId: number, eventId: number) => {
+  const db = getLocalDb()
+  db.prepare(
+    `DELETE FROM swimresult WHERE athleteid = ? AND swimeventid = ? AND heatid IS NULL`
+  ).run(athleteId, eventId)
+  return { ok: true }
+})
+
+ipcMain.handle('db:get-relay-members', (_event, relayId: number) => {
+  const db = getLocalDb()
+  const rows = db.prepare(
+    `SELECT rp.relaynumber, rp.athleteid, a.firstname, a.lastname
+     FROM relayposition rp
+     LEFT JOIN athlete a ON rp.athleteid = a.athleteid
+     WHERE rp.relayid = ?
+     ORDER BY rp.relaynumber`
+  ).all(relayId) as Array<{ relaynumber: number; athleteid: number; firstname: string | null; lastname: string | null }>
+  return rows.map(r => ({ position: r.relaynumber, athleteId: r.athleteid, name: `${r.lastname}, ${r.firstname}` }))
+})
+
+ipcMain.handle('db:get-relay-members-by-event', (_event, eventId: number, athleteId: number) => {
+  const db = getLocalDb()
+  const athRow = db.prepare(`SELECT clubid FROM athlete WHERE athleteid = ?`).get(athleteId) as { clubid: number | null } | undefined
+  const clubId = athRow?.clubid ?? 0
+  const relay = db.prepare(
+    `SELECT relayid FROM relay WHERE swimeventid = ? AND clubid = ?`
+  ).get(eventId, clubId) as { relayid: number } | undefined
+  if (!relay) return []
+  const rows = db.prepare(
+    `SELECT rp.relaynumber, rp.athleteid
+     FROM relayposition rp
+     WHERE rp.relayid = ?
+     ORDER BY rp.relaynumber`
+  ).all(relay.relayid) as Array<{ relaynumber: number; athleteid: number }>
+  return rows.map(r => ({ position: r.relaynumber, athleteId: r.athleteid }))
+})
+
+ipcMain.handle('db:set-relay-member', (_event, eventId: number, athleteId: number, position: number, memberAthleteId: number | null) => {
+  const db = getLocalDb()
+
+  // Get the club from the athlete
+  const athRow = db.prepare(`SELECT clubid FROM athlete WHERE athleteid = ?`).get(athleteId) as { clubid: number | null } | undefined
+  const clubId = athRow?.clubid ?? 0
+
+  // Find or create the relay entry for this club+event
+  let relay = db.prepare(
+    `SELECT relayid FROM relay WHERE swimeventid = ? AND clubid = ?`
+  ).get(eventId, clubId) as { relayid: number } | undefined
+
+  if (!relay) {
+    const relayId = nextId('relay', 'relayid')
+    const agRow = db.prepare(
+      `SELECT agegroupid FROM agegroup WHERE swimeventid = ? ORDER BY sortcode LIMIT 1`
+    ).get(eventId) as { agegroupid: number } | undefined
+    db.prepare(
+      `INSERT INTO relay (relayid, clubid, swimeventid, agegroupid, teamnumber) VALUES (?, ?, ?, ?, 1)`
+    ).run(relayId, clubId, eventId, agRow?.agegroupid ?? null)
+    relay = { relayid: relayId }
+  }
+
+  // Remove existing position entry
+  db.prepare(
+    `DELETE FROM relayposition WHERE relayid = ? AND relaynumber = ?`
+  ).run(relay.relayid, position)
+
+  // Insert new member if provided
+  if (memberAthleteId) {
+    db.prepare(
+      `INSERT INTO relayposition (relayid, relaynumber, athleteid) VALUES (?, ?, ?)`
+    ).run(relay.relayid, position, memberAthleteId)
+  }
+
+  return { ok: true, relayId: relay.relayid }
+})
 
 ipcMain.handle('db:reorder-events', (_event, updates: Array<{ eventId: number; sessionId: number; sortcode: number }>) =>
   reorderEvents(updates).then(() => ({ ok: true }))
@@ -350,19 +488,37 @@ ipcMain.handle('file:restore-smb', async (event) => {
   }
 })
 
-ipcMain.handle('file:new-meet', async () => {
+ipcMain.handle('file:new-meet', async (_event, meetType?: string) => {
   try {
-    // Flush all meet data
-    await flushMeet()
+    const type = (meetType || 'pool').toLowerCase()
+    const db = getLocalDb()
 
-    // Resolve template path (bundled resource or dev path)
+    // Wipe event structure only (preserve clubs and athletes)
+    db.exec(`DELETE FROM split`)
+    db.exec(`DELETE FROM swimresult`)
+    db.exec(`DELETE FROM heat`)
+    db.exec(`DELETE FROM agegroup`)
+    db.exec(`DELETE FROM swimevent`)
+    db.exec(`DELETE FROM swimsession`)
+    db.exec(`DELETE FROM swimstyle`)
+    db.exec(`DELETE FROM bsglobal`)
+
+    // Resolve template path based on meet type
+    const templateFile = type === 'beach' ? 'template_beach.lxf' : 'template_pool.lxf'
     const templatePath = app.isPackaged
-      ? join(process.resourcesPath, 'template_pool.lxf')
-      : join(__dirname, '../../../../config/template_pool.lxf')
+      ? join(process.resourcesPath, templateFile)
+      : join(__dirname, '../../../../config', templateFile)
 
     // Import the template lenex file
-    const summary = importLenex(templatePath, getLocalDb())
-    return { ok: true, summary }
+    const summary = importLenex(templatePath, db)
+
+    // Set MEET_TYPE in BSGLOBAL
+    db.prepare(
+      `INSERT INTO bsglobal (name, data) VALUES ('MEET_TYPE', ?)
+       ON CONFLICT(name) DO UPDATE SET data = excluded.data`
+    ).run(type.toUpperCase())
+
+    return { ok: true, summary, meetType: type.toUpperCase() }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
   }
@@ -895,8 +1051,12 @@ function createWindow(): void {
         },
         { type: 'separator' },
         {
-          label: 'Créer un nouveau meet…',
-          click: () => mainWindow.webContents.send('menu:new-meet'),
+          label: 'Nouveau meet piscine…',
+          click: () => mainWindow.webContents.send('menu:new-meet', 'pool'),
+        },
+        {
+          label: 'Nouveau meet plage…',
+          click: () => mainWindow.webContents.send('menu:new-meet', 'beach'),
         },
         { type: 'separator' },
         { label: 'Quitter', role: 'quit' },

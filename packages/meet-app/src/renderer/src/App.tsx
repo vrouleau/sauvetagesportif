@@ -34,7 +34,7 @@ function fileApi() {
         importLenex: (path: string) => Promise<{ ok: boolean; summary?: ImportSummary; error?: string }>
         saveSMB: () => Promise<{ ok: boolean; canceled?: boolean; tables?: number; rows?: number; error?: string }>
         restoreSMB: () => Promise<{ ok: boolean; canceled?: boolean; tables?: number; rows?: number; error?: string }>
-        newMeet: () => Promise<{ ok: boolean; summary?: ImportSummary; error?: string }>
+        newMeet: (meetType?: string) => Promise<{ ok: boolean; summary?: ImportSummary; meetType?: string; error?: string }>
       }
     }
   }).api?.file ?? null
@@ -46,6 +46,7 @@ function dbApi() {
       db?: {
         syncUp: () => Promise<{ ok: boolean; tablesCreated?: string[]; error?: string }>
         flushMeet: () => Promise<{ ok: boolean; error?: string }>
+        getMeetType: () => Promise<string>
       }
     }
   }).api?.db ?? null
@@ -58,12 +59,13 @@ function menuApi() {
     api?: {
       menu?: {
         onConfigureDb: (cb: () => void) => () => void
+        onConfigureGemini: (cb: () => void) => () => void
         onSyncDown: (cb: () => void) => () => void
         onSyncUp: (cb: () => void) => () => void
         onImportLenex: (cb: () => void) => () => void
         onSaveSMB: (cb: () => void) => () => void
         onRestoreSMB: (cb: () => void) => () => void
-        onNewMeet: (cb: () => void) => () => void
+        onNewMeet: (cb: (meetType: string) => void) => () => void
       }
     }
   }).api?.menu ?? null
@@ -208,17 +210,21 @@ function FlushConfirmDialog({
   onClose,
   running,
   error,
+  meetType,
 }: {
   onConfirm: () => void
   onClose: () => void
   running: boolean
   error?: string
+  meetType?: string
 }) {
+  const isBeach = meetType === 'beach'
+  const typeLabel = isBeach ? 'plage' : 'piscine'
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
       <div className="bg-white border border-gray-400 shadow-xl w-[420px] text-xs">
-        <div className="flex items-center justify-between bg-red-700 text-white px-3 py-2">
-          <span className="font-semibold">Créer un nouveau meet</span>
+        <div className={`flex items-center justify-between text-white px-3 py-2 ${isBeach ? 'bg-orange-700' : 'bg-red-700'}`}>
+          <span className="font-semibold">Nouveau meet {typeLabel}</span>
           {!running && (
             <button onClick={onClose} className="hover:text-red-200 text-lg leading-none">×</button>
           )}
@@ -232,7 +238,7 @@ function FlushConfirmDialog({
           ) : (
             <>
               <p className="mb-3 font-semibold text-red-700">
-                Cette action supprimera TOUTES les données du meet et importera le gabarit par défaut:
+                Cette action supprimera TOUTES les données du meet et importera le gabarit {typeLabel}:
               </p>
               <ul className="list-disc ml-5 space-y-0.5 text-gray-700 mb-4">
                 <li>Sessions, épreuves, catégories d'âge, vagues</li>
@@ -264,9 +270,9 @@ function FlushConfirmDialog({
                 </button>
                 <button
                   onClick={onConfirm}
-                  className="px-4 py-1 bg-red-600 text-white hover:bg-red-700 border border-red-700"
+                  className={`px-4 py-1 text-white border ${isBeach ? 'bg-orange-600 hover:bg-orange-700 border-orange-700' : 'bg-red-600 hover:bg-red-700 border-red-700'}`}
                 >
-                  Créer un nouveau meet
+                  Créer meet {typeLabel}
                 </button>
               </>
             )}
@@ -285,9 +291,15 @@ function AppInner() {
   const [showDbConfig, setShowDbConfig] = useState(false)
   const [showGeminiConfig, setShowGeminiConfig] = useState(false)
   const [importState, setImportState] = useState<ImportState | null>(null)
-  const [flushState, setFlushState] = useState<{ open: boolean; running: boolean; error?: string } | null>(null)
+  const [flushState, setFlushState] = useState<{ open: boolean; running: boolean; meetType?: string; error?: string } | null>(null)
   const [syncUpState, setSyncUpState] = useState<SyncUpState | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
+  const [meetType, setMeetType] = useState<string>('POOL')
+
+  // Load meet type on mount and after refresh
+  useEffect(() => {
+    dbApi()?.getMeetType().then((t) => setMeetType(t || 'POOL'))
+  }, [refreshKey])
 
   // Listen for native menu events
   useEffect(() => {
@@ -301,7 +313,7 @@ function AppInner() {
       m.onImportLenex(() => handleImportLenex()),
       m.onSaveSMB(() => handleSaveSMB()),
       m.onRestoreSMB(() => handleRestoreSMB()),
-      m.onNewMeet(() => setFlushState({ open: true, running: false })),
+      m.onNewMeet((meetType) => setFlushState({ open: true, running: false, meetType: meetType || 'pool' })),
     ]
     return () => { cleanups.forEach((fn) => fn()) }
   }, [])
@@ -360,13 +372,14 @@ function AppInner() {
   }
 
   async function handleFlushConfirm() {
-    setFlushState({ open: true, running: true })
+    const meetType = flushState?.meetType || 'pool'
+    setFlushState({ open: true, running: true, meetType })
     const f = fileApi()
     if (!f) {
-      setFlushState({ open: true, running: false, error: 'File API not available' })
+      setFlushState({ open: true, running: false, error: 'File API not available', meetType })
       return
     }
-    const result = await f.newMeet()
+    const result = await f.newMeet(meetType)
     if (result.ok) {
       setFlushState(null)
       if (result.summary) {
@@ -374,7 +387,7 @@ function AppInner() {
       }
       handleRefresh()
     } else {
-      setFlushState({ open: true, running: false, error: result.error })
+      setFlushState({ open: true, running: false, error: result.error, meetType })
     }
   }
 
@@ -415,7 +428,7 @@ function AppInner() {
 
       {/* Tab bar */}
       <div className="flex h-8 bg-gray-700 shrink-0 border-b border-gray-900">
-        {(['events', 'inscription', 'finals', 'heats', 'report', 'scan', 'process'] as Page[]).map((p) => {
+        {(['events', 'inscription', 'finals', 'heats', 'report', ...(meetType !== 'BEACH' ? ['scan', 'process'] : [])] as Page[]).map((p) => {
           const labels: Record<Page, string> = {
             events: t.nav.events,
             inscription: t.nav.inscription,
@@ -439,14 +452,19 @@ function AppInner() {
             </button>
           )
         })}
+        {meetType === 'BEACH' && (
+          <span className="ml-auto flex items-center px-3 text-xs text-orange-300 font-semibold">
+            🏖 PLAGE
+          </span>
+        )}
       </div>
 
       {/* Page content */}
       <div className="flex-1 overflow-hidden">
         {page === 'events' && <EventsPage refreshKey={refreshKey} />}
         {page === 'inscription' && <InscriptionPageWrapper refreshKey={refreshKey} />}
-        {page === 'finals' && <FinalsPage refreshKey={refreshKey} />}
-        {page === 'heats' && <HeatsPage refreshKey={refreshKey} />}
+        {page === 'finals' && <FinalsPage refreshKey={refreshKey} meetType={meetType} />}
+        {page === 'heats' && <HeatsPage refreshKey={refreshKey} meetType={meetType} />}
         {page === 'report' && <ReportPage refreshKey={refreshKey} />}
         {page === 'scan' && <TimingScanPage />}
         {page === 'process' && <TimingProcessPage />}
@@ -465,6 +483,7 @@ function AppInner() {
         <FlushConfirmDialog
           running={flushState.running}
           error={flushState.error}
+          meetType={flushState.meetType}
           onConfirm={handleFlushConfirm}
           onClose={() => setFlushState(null)}
         />

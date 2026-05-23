@@ -955,6 +955,9 @@ function SortableEventItem({
               : t.events.genderLabel(event.gender)
           },{' '}
           {event.distance}m {event.nameEn}
+          {event.maxEntries != null && (
+            <span className="ml-1 text-orange-600 text-[10px]">[max:{event.maxEntries}]</span>
+          )}
         </span>
         <span className="w-28 text-center text-gray-600">
           {t.events.phaseLabel(event.phase)}
@@ -1650,6 +1653,24 @@ function EventPropertiesPanel({ event, onUpdate }: { event: CompetitionEvent; on
                   </td>
                 </tr>
               )}
+              <tr className="border-b border-gray-100 hover:bg-gray-50">
+                <td className="px-4 py-0.5 text-gray-600 w-64">Max participants / vague</td>
+                <td className="px-2 py-0.5">
+                  <input
+                    type="number"
+                    min={1}
+                    className="border border-gray-200 rounded px-1 py-0 text-xs w-16 focus:border-blue-400 focus:outline-none"
+                    defaultValue={event.maxEntries ?? ''}
+                    placeholder={String(event.distance)}
+                    onBlur={(e) => {
+                      const v = e.target.value ? parseInt(e.target.value, 10) : null
+                      save({ maxentries: v })
+                    }}
+                    onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                  />
+                  <span className="ml-1 text-gray-400 text-[10px]">(défaut: {event.distance})</span>
+                </td>
+              </tr>
             </>
           )}
         </tbody>

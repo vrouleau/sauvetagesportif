@@ -8,7 +8,7 @@ import string
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, UploadFile, File, HTTPException, Request
 from fastapi.responses import Response
 from sqlalchemy.orm import Session, joinedload
 from collections import defaultdict
@@ -605,14 +605,27 @@ async def upload_meet_smb(file: UploadFile = File(...), db: Session = Depends(ge
 
 
 @router.post("/admin/new-meet", dependencies=[Depends(require_admin)])
-def create_new_meet(db: Session = Depends(get_db)):
-    """Create a new meet by resetting all data and importing from the default template."""
-    template_path = Path(os.environ.get(
-        "MEET_DEFAULT_TEMPLATE",
-        str(Path(__file__).resolve().parent.parent.parent.parent.parent / "config" / "template_pool.lxf")
-    ))
+def create_new_meet(data: dict = Body(default={}), db: Session = Depends(get_db)):
+    """Create a new meet by resetting all data and importing from the appropriate template.
+
+    Accepts optional JSON body: {"meet_type": "pool"|"beach"}
+    Defaults to "pool" if not specified.
+    """
+    meet_type = (data.get("meet_type") or "pool").lower()
+    if meet_type not in ("pool", "beach"):
+        raise HTTPException(400, f"Invalid meet_type: {meet_type}. Must be 'pool' or 'beach'.")
+
+    # Resolve template path based on meet type
+    if meet_type == "beach":
+        env_var = "MEET_TEMPLATE_BEACH"
+        fallback = str(Path(__file__).resolve().parent.parent.parent.parent.parent / "config" / "template_beach.lxf")
+    else:
+        env_var = "MEET_TEMPLATE_POOL"
+        fallback = str(Path(__file__).resolve().parent.parent.parent.parent.parent / "config" / "template_pool.lxf")
+
+    template_path = Path(os.environ.get(env_var, os.environ.get("MEET_DEFAULT_TEMPLATE", fallback)))
     if not template_path.exists():
-        raise HTTPException(404, f"Default meet template not found: {template_path}")
+        raise HTTPException(404, f"Meet template not found: {template_path}")
 
     from ..meet_parser import parse_meet_lxf
     try:
@@ -642,6 +655,9 @@ def create_new_meet(db: Session = Depends(get_db)):
     MEET_STORAGE.parent.mkdir(parents=True, exist_ok=True)
     MEET_STORAGE.write_bytes(template_path.read_bytes())
 
+    # Set meet type in BSGLOBAL
+    _set_config(db, "meet_type", meet_type.upper())
+
     # Track metadata
     import json as _json
     for key, val in [("meet_filename", template_path.name),
@@ -658,7 +674,7 @@ def create_new_meet(db: Session = Depends(get_db)):
     _set_config(db, "closure_date", "")
 
     db.commit()
-    return {"events_loaded": count, "filename": template_path.name}
+    return {"events_loaded": count, "filename": template_path.name, "meet_type": meet_type}
 
 
 @router.get("/meet-info")
@@ -700,6 +716,7 @@ def meet_info(db: Session = Depends(get_db)):
         "currency": currency or "CAD",
         "meet_fees": meet_fees,
         "event_fees": event_fees,
+        "meet_type": (_get_config(db, "meet_type") or "POOL").upper(),
     }
 
 
@@ -1353,6 +1370,7 @@ def get_registration(athlete_id: int, db: Session = Depends(get_db)):
             suggested_age_code = "15-18"
 
     meet_course = _get_config(db, "meet_course") or "LCM"
+    meet_type = (_get_config(db, "meet_type") or "POOL").upper()
     closure = _get_config(db, "closure_date")
 
     return {
@@ -1366,6 +1384,7 @@ def get_registration(athlete_id: int, db: Session = Depends(get_db)):
         },
         "suggested_age_code": suggested_age_code,
         "meet_course": meet_course,
+        "meet_type": meet_type,
         "closure_date": closure,
         "individual_events": individual_events,
         "relay_events": relay_events,
@@ -1527,7 +1546,12 @@ async def upload_entries(file: UploadFile = File(...), db: Session = Depends(get
     if len(content) > 10 * 1024 * 1024:
         raise HTTPException(413, "File too large (max 10MB)")
     seed_result = seed_from_lxf(db, content)
-    times_result = load_best_times(db, content, source=file.filename or "upload")
+    # Skip best-time import for beach meets (positions are not times)
+    meet_type = (_get_config(db, "meet_type") or "POOL").upper()
+    if meet_type != "BEACH":
+        times_result = load_best_times(db, content, source=file.filename or "upload")
+    else:
+        times_result = {"times_updated": 0, "athletes_skipped": 0, "athletes_created": 0}
     events_loaded = 0
     if not db.query(SwimEvent).first():
         from ..meet_parser import parse_meet_lxf
@@ -1548,7 +1572,12 @@ async def upload_results(file: UploadFile = File(...), db: Session = Depends(get
     if len(content) > 10 * 1024 * 1024:
         raise HTTPException(413, "File too large (max 10MB)")
     seed_result = seed_from_lxf(db, content)
-    times_result = load_best_times(db, content, source=file.filename or "upload")
+    # Skip best-time import for beach meets (positions are not times)
+    meet_type = (_get_config(db, "meet_type") or "POOL").upper()
+    if meet_type != "BEACH":
+        times_result = load_best_times(db, content, source=file.filename or "upload")
+    else:
+        times_result = {"times_updated": 0, "athletes_skipped": 0, "athletes_created": 0}
     return {**seed_result, **times_result}
 
 
