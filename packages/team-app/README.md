@@ -64,11 +64,8 @@ TURNSTILE_SECRET_KEY=0x4AAA...
 
 ### 4. Add meet template
 
-```bash
-mkdir templates
-# Copy your meet.smb file (exported from SauvetageMeet)
-cp /path/to/meet.smb templates/meet.smb
-```
+The meet template `.lxf` file is included in the shared `config/` directory and mounted
+automatically by docker-compose. No manual copy needed.
 
 ### 5. Start
 
@@ -126,7 +123,6 @@ python -m pytest tests/ -v
 | `RESEND_API_KEY` | No | Resend.com API key for email delivery |
 | `RESEND_FROM_EMAIL` | No | Sender email address |
 | `STRIPE_API_KEY` | No | Stripe secret key for invoicing |
-| `MEET_TEMPLATE` | No | Path to .smb template (default: `/app/templates/meet.smb`) |
 | `BEST_TIME_MAX_AGE_MONTHS` | No | Expiry window for best times (default: 18) |
 | `SUPPORT_EMAIL` | No | Shown in footer and emails |
 | `TURNSTILE_SITE_KEY` | No | Cloudflare Turnstile public key |

@@ -25,14 +25,13 @@ services:
       APP_BASE_URL: "${APP_BASE_URL:-http://localhost:8001}"
       SECRET_KEY: "${SECRET_KEY:-change-me-to-a-random-string}"
       STRIPE_API_KEY: "${STRIPE_API_KEY:-}"
-      MEET_TEMPLATE: "${MEET_TEMPLATE:-/app/templates/meet.smb}"
       SUPPORT_EMAIL: "${SUPPORT_EMAIL:-}"
       TURNSTILE_SECRET_KEY: "${TURNSTILE_SECRET_KEY:-}"
     depends_on:
       db:
         condition: service_healthy
     volumes:
-      - ./templates:/app/templates:ro
+      - ../../config:/app/templates:ro
       - appdata:/app/data
 
   frontend:

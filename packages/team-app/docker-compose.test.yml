@@ -3,4 +3,4 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./templates:/app/templates
+      - ../../config:/app/templates

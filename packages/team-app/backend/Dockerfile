@@ -6,12 +6,12 @@ COPY packages/team-app/backend/app ./app
 COPY packages/team-app/backend/scripts ./scripts
 COPY config/combined-events-config.json .
 COPY config/point-scores-config.json .
-COPY config/template_juniorsenior.lxf ./templates/template_juniorsenior.lxf
+COPY config/template_pool.lxf ./templates/template_pool.lxf
+COPY config/meet.lxf ./templates/meet.lxf
 RUN mkdir -p /app/data && \
     adduser --disabled-password --no-create-home --gecos "" appuser && \
     chown -R appuser:appuser /app/data
 ENV MEET_STORAGE=/app/data/meet.lxf
-ENV MEET_TEMPLATE=/app/templates/meet.lxf
-ENV MEET_DEFAULT_TEMPLATE=/app/templates/template_juniorsenior.lxf
+ENV MEET_DEFAULT_TEMPLATE=/app/templates/template_pool.lxf
 USER appuser
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

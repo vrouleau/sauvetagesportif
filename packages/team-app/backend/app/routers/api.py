@@ -35,7 +35,6 @@ router = APIRouter(prefix="/api")
 _audit = logging.getLogger("audit")
 
 MEET_STORAGE = Path(os.environ.get("MEET_STORAGE", "/app/data/meet.lxf"))
-MEET_TEMPLATE = Path(os.environ.get("MEET_TEMPLATE", "/app/templates/meet.smb"))
 _DEFAULT_ADMIN_PIN = os.environ.get("ADMIN_PIN", "000000")
 _BEST_TIME_MAX_AGE_MONTHS = int(os.environ.get("BEST_TIME_MAX_AGE_MONTHS", "18"))
 
@@ -610,7 +609,7 @@ def create_new_meet(db: Session = Depends(get_db)):
     """Create a new meet by resetting all data and importing from the default template."""
     template_path = Path(os.environ.get(
         "MEET_DEFAULT_TEMPLATE",
-        str(Path(__file__).resolve().parent.parent.parent.parent.parent / "config" / "template_juniorsenior.lxf")
+        str(Path(__file__).resolve().parent.parent.parent.parent.parent / "config" / "template_pool.lxf")
     ))
     if not template_path.exists():
         raise HTTPException(404, f"Default meet template not found: {template_path}")
@@ -1932,9 +1931,6 @@ def export_entries_lxf(db: Session = Depends(get_db)):
 @router.get("/export/meet-smb", dependencies=[Depends(require_organizer_or_admin)])
 def export_meet_smb():
     smb_storage = Path(os.environ.get("MEET_STORAGE", "/app/data/meet.lxf")).parent / "meet.smb"
-    # Fall back to the read-only template if no uploaded SMB exists yet
-    if not smb_storage.exists():
-        smb_storage = MEET_TEMPLATE
     if not smb_storage.exists():
         raise HTTPException(404, "No SMB backup available")
     return Response(

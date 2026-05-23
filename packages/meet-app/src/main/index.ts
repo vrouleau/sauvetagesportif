@@ -357,8 +357,8 @@ ipcMain.handle('file:new-meet', async () => {
 
     // Resolve template path (bundled resource or dev path)
     const templatePath = app.isPackaged
-      ? join(process.resourcesPath, 'template_juniorsenior.lxf')
-      : join(__dirname, '../../../../config/template_juniorsenior.lxf')
+      ? join(process.resourcesPath, 'template_pool.lxf')
+      : join(__dirname, '../../../../config/template_pool.lxf')
 
     // Import the template lenex file
     const summary = importLenex(templatePath, getLocalDb())

@@ -36,8 +36,8 @@
         "to": "combined-events-config.json"
       },
       {
-        "from": "../../config/template_juniorsenior.lxf",
-        "to": "template_juniorsenior.lxf"
+        "from": "../../config/template_pool.lxf",
+        "to": "template_pool.lxf"
       }
     ],
     "win": {
