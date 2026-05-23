@@ -72,6 +72,27 @@ cd packages/meet-app
 npm run clean   # wipes out/, rebuilds native modules for Electron, runs full Vite build
 ```
 
+### Releasing
+
+All packages share a single version. To create a release:
+
+```bash
+npm run release minor    # 0.1.0 → 0.2.0
+npm run release patch    # 0.1.0 → 0.1.1
+npm run release 1.0.0    # explicit version
+```
+
+This bumps the version in all `package.json` files, commits, and creates a git tag. Then push:
+
+```bash
+git push && git push --tags
+```
+
+Pushing the tag triggers the [Release CI](.github/workflows/release.yml) which builds:
+- Windows installer (`.exe`) via electron-builder
+- macOS DMG
+- Docker images pushed to `ghcr.io`
+
 ## Architecture
 
 ### Shared UI (`packages/shared-ui`)
