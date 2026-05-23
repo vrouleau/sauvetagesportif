@@ -20,7 +20,7 @@ services:
     restart: unless-stopped
 
   backend:
-    image: ghcr.io/vrouleau/sauvetageteam-backend:latest
+    image: ghcr.io/vrouleau/sauvetagesportif/team-backend:latest
     environment:
       DATABASE_URL: postgresql://meetmgr:meetmgr@db:5432/meetmgr
       ADMIN_PIN: "${ADMIN_PIN}"
@@ -41,7 +41,7 @@ services:
     restart: unless-stopped
 
   frontend:
-    image: ghcr.io/vrouleau/sauvetageteam-frontend:latest
+    image: ghcr.io/vrouleau/sauvetagesportif/team-frontend:latest
     environment:
       TURNSTILE_SITE_KEY: "${TURNSTILE_SITE_KEY:-}"
       SUPPORT_EMAIL: "${SUPPORT_EMAIL:-}"
