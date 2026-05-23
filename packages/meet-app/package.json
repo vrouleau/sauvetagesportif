@@ -4,6 +4,7 @@
   "private": true,
   "author": "Société de sauvetage",
   "description": "Electron desktop app for running lifesaving competitions",
+  "repository": "github:vrouleau/sauvetagesportif",
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
