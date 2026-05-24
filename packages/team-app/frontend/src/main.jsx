@@ -98,7 +98,7 @@ function AuthLayout({ children, canOrganizer, canAdmin, meetName, toggle, lang, 
   ]
 
   return (
-    <div className="flex flex-col min-h-screen bg-gray-100">
+    <div className="flex flex-col h-screen bg-gray-100">
       {/* Title bar */}
       <div className="flex items-center h-8 bg-gray-800 text-white text-xs select-none shrink-0">
         <img src={logoSrc} alt="Logo" className="h-5 w-5 ml-2 mr-1" />
@@ -145,11 +145,11 @@ function AuthLayout({ children, canOrganizer, canAdmin, meetName, toggle, lang, 
       </div>
 
       {/* Page content */}
-      <div className="flex-1 overflow-auto">
+      <div className="flex-1 overflow-hidden">
         {children}
       </div>
 
-      <Footer showUsage={canOrganizer && location.pathname === '/organizer'} />
+      <Footer showUsage={true} />
     </div>
   )
 }

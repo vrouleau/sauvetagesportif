@@ -1097,6 +1097,15 @@ function createWindow(): void {
       label: 'Aide',
       submenu: [
         {
+          label: 'Guide — Compétition piscine',
+          click: () => mainWindow.webContents.send('menu:open-guide', 'pool'),
+        },
+        {
+          label: 'Guide — Compétition plage',
+          click: () => mainWindow.webContents.send('menu:open-guide', 'beach'),
+        },
+        { type: 'separator' },
+        {
           label: `À propos de SauvetageMeet v${app.getVersion()}`,
           click: () => {
             dialog.showMessageBox(mainWindow, {

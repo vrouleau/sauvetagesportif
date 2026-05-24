@@ -72,6 +72,21 @@ cd packages/meet-app
 npm run clean   # wipes out/, rebuilds native modules for Electron, runs full Vite build
 ```
 
+### Fixture data (meet-app)
+
+Generate sample `.smb` files for testing or documentation screenshots:
+
+```bash
+cd packages/meet-app
+npx tsx scripts/generate-fixture-smb.ts
+```
+
+This produces two files in `scripts/`:
+- `fixture_pool.smb` — Pool meet (11 events, 2 sessions, 10 clubs, 150 athletes, ~450 registrations with entry times)
+- `fixture_beach.smb` — Beach meet (5 events, 2 sessions, 10 clubs, 150 athletes, ~450 registrations without times)
+
+To load: File → *Restaurer un meet (.smb)…* and select the desired fixture. Heats are not pre-generated — use *Générer séries* in the app to create them.
+
 ### Releasing
 
 All packages share a single version. To create a release:

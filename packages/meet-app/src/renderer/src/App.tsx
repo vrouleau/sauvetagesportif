@@ -6,6 +6,7 @@ import FinalsPage from './pages/FinalsPage'
 import ReportPage from './pages/ReportPage'
 import TimingScanPage from './pages/TimingScanPage'
 import TimingProcessPage from './pages/TimingProcessPage'
+import GuidePage from './pages/GuidePage'
 import { DbConfigDialog } from './components/DbConfigDialog'
 import { GeminiKeyDialog } from './components/GeminiKeyDialog'
 import { competition } from './data/mockData'
@@ -60,6 +61,7 @@ function menuApi() {
       menu?: {
         onConfigureDb: (cb: () => void) => () => void
         onConfigureGemini: (cb: () => void) => () => void
+        onOpenGuide: (cb: (guideType: string) => void) => () => void
         onSyncDown: (cb: () => void) => () => void
         onSyncUp: (cb: () => void) => () => void
         onImportLenex: (cb: () => void) => () => void
@@ -205,6 +207,75 @@ function SyncUpDialog({
 
 // ─── Flush Confirm Dialog ─────────────────────────────────────────────────────
 
+interface SmbState {
+  status: 'running' | 'done' | 'error'
+  action: 'save' | 'restore'
+  tables?: number
+  rows?: number
+  detail?: string
+  error?: string
+}
+
+function SmbStatusDialog({
+  state,
+  onClose,
+}: {
+  state: SmbState
+  onClose: () => void
+}) {
+  const title = state.action === 'save' ? 'Sauvegarder le meet (.smb)' : 'Restaurer un meet (.smb)'
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="bg-white border border-gray-400 shadow-xl w-[440px] text-xs">
+        <div className="flex items-center justify-between bg-gray-700 text-white px-3 py-2">
+          <span className="font-semibold">{title}</span>
+          {state.status !== 'running' && (
+            <button onClick={onClose} className="hover:text-gray-300 text-lg leading-none">×</button>
+          )}
+        </div>
+
+        <div className="p-5">
+          {state.status === 'running' && (
+            <div className="text-gray-500 italic">
+              {state.action === 'save' ? 'Sauvegarde en cours…' : 'Restauration en cours…'}
+            </div>
+          )}
+          {state.status === 'error' && (
+            <div className="text-red-600">Erreur: {state.error}</div>
+          )}
+          {state.status === 'done' && (
+            <>
+              <div className="font-semibold text-green-700 mb-3">
+                {state.action === 'save' ? 'Meet sauvegardé avec succès' : 'Meet restauré avec succès'}
+              </div>
+              <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs mb-3">
+                <div className="text-gray-500">Tables</div><div className="font-mono">{state.tables}</div>
+                <div className="text-gray-500">Enregistrements</div><div className="font-mono">{state.rows}</div>
+              </div>
+              {state.detail && (
+                <div className="mt-2 text-gray-600 text-xs whitespace-pre-wrap bg-gray-50 border border-gray-200 p-2 max-h-32 overflow-y-auto font-mono">
+                  {state.detail}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        {state.status !== 'running' && (
+          <div className="flex justify-end px-5 py-3 border-t border-gray-200 bg-gray-50">
+            <button
+              onClick={onClose}
+              className="px-4 py-1 bg-blue-600 text-white hover:bg-blue-700 border border-blue-700"
+            >
+              Fermer
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function FlushConfirmDialog({
   onConfirm,
   onClose,
@@ -290,7 +361,9 @@ function AppInner() {
   const { lang, setLang, t } = useLang()
   const [showDbConfig, setShowDbConfig] = useState(false)
   const [showGeminiConfig, setShowGeminiConfig] = useState(false)
+  const [showGuide, setShowGuide] = useState<'pool' | 'beach' | null>(null)
   const [importState, setImportState] = useState<ImportState | null>(null)
+  const [smbState, setSmbState] = useState<SmbState | null>(null)
   const [flushState, setFlushState] = useState<{ open: boolean; running: boolean; meetType?: string; error?: string } | null>(null)
   const [syncUpState, setSyncUpState] = useState<SyncUpState | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
@@ -308,6 +381,7 @@ function AppInner() {
     const cleanups = [
       m.onConfigureDb(() => setShowDbConfig(true)),
       m.onConfigureGemini(() => setShowGeminiConfig(true)),
+      m.onOpenGuide((guideType) => setShowGuide(guideType as 'pool' | 'beach')),
       m.onSyncDown(() => handleRefresh()),
       m.onSyncUp(() => handleSyncUp()),
       m.onImportLenex(() => handleImportLenex()),
@@ -349,25 +423,37 @@ function AppInner() {
   async function handleSaveSMB() {
     const f = fileApi()
     if (!f) return
+    setSmbState({ status: 'running', action: 'save' })
     const result = await f.saveSMB()
-    if (result.canceled) return
+    if (result.canceled) {
+      setSmbState(null)
+      return
+    }
     if (result.ok) {
-      window.alert(`Meet sauvegardé: ${result.rows} enregistrements dans ${result.tables} tables.`)
+      setSmbState({ status: 'done', action: 'save', tables: result.tables, rows: result.rows })
     } else {
-      window.alert(`Erreur: ${result.error}`)
+      setSmbState({ status: 'error', action: 'save', error: result.error })
     }
   }
 
   async function handleRestoreSMB() {
     const f = fileApi()
     if (!f) return
+    setSmbState({ status: 'running', action: 'restore' })
     const result = await f.restoreSMB()
-    if (result.canceled) return
+    if (result.canceled) {
+      setSmbState(null)
+      return
+    }
     if (result.ok) {
-      window.alert(`Meet restauré: ${result.rows} enregistrements dans ${result.tables} tables.\n\n${(result as { detail?: string }).detail ?? ''}`)
+      setSmbState({
+        status: 'done', action: 'restore',
+        tables: result.tables, rows: result.rows,
+        detail: (result as { detail?: string }).detail,
+      })
       handleRefresh()
     } else {
-      window.alert(`Erreur: ${result.error}`)
+      setSmbState({ status: 'error', action: 'restore', error: result.error })
     }
   }
 
@@ -457,6 +543,11 @@ function AppInner() {
             🏖 PLAGE
           </span>
         )}
+        {meetType === 'POOL' && (
+          <span className="ml-auto flex items-center px-3 text-xs text-blue-300 font-semibold">
+            🏊 PISCINE
+          </span>
+        )}
       </div>
 
       {/* Page content */}
@@ -473,6 +564,8 @@ function AppInner() {
       {/* Modals */}
       {showDbConfig && <DbConfigDialog onClose={() => setShowDbConfig(false)} />}
       {showGeminiConfig && <GeminiKeyDialog onClose={() => setShowGeminiConfig(false)} />}
+      {showGuide && <GuidePage guideType={showGuide} onClose={() => setShowGuide(null)} />}
+      {smbState && <SmbStatusDialog state={smbState} onClose={() => setSmbState(null)} />}
       {syncUpState && (
         <SyncUpDialog
           state={syncUpState}

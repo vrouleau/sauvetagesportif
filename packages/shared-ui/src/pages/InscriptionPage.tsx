@@ -416,7 +416,7 @@ export default function InscriptionPage({ role, clubId, refreshKey }: Inscriptio
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full overflow-hidden">
       {/* Filter text box */}
       <div className="px-3 py-1.5 bg-white border-b border-gray-300 shrink-0">
         <input

@@ -20,7 +20,7 @@ const quantumApi = () => (window as any).api?.quantum
 const dbApi = () => (window as any).api?.db
 
 export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refreshKey?: number; meetType?: string }) {
-  const { t } = useLang()
+  const { t, lang } = useLang()
   const isBeach = meetType === 'BEACH'
 
   const [sessions, setSessions] = useState<HeatListSession[]>([])
@@ -624,13 +624,30 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
 
   // ── Generate heats handler ──────────────────────────────────────────────────
 
-  async function handleGenerateHeats() {
-    if (!window.confirm(t.heats.generateHeatsConfirm)) return
+  const [generateMenuOpen, setGenerateMenuOpen] = useState(false)
+
+  async function handleGenerateHeats(scope: 'all' | 'session' | 'event') {
+    setGenerateMenuOpen(false)
+    let confirmMsg = t.heats.generateHeatsConfirm
+    let eventId: number | undefined
+    let sessionId: number | undefined
+
+    if (scope === 'event') {
+      const evId = selectedEventId || selectedEvent?.id
+      if (!evId) return
+      eventId = evId
+    } else if (scope === 'session') {
+      const sessId = selectedSessionId || selectedSession?.id
+      if (!sessId) return
+      sessionId = sessId
+    }
+
+    if (!window.confirm(confirmMsg)) return
     setGenerating(true)
     try {
       const api = dbApi()
       if (!api) return
-      const result = await api.generateHeats()
+      const result = await api.generateHeats(eventId, sessionId)
       // Reload heat data
       const sess = await api.getHeatListSessions() as HeatListSession[]
       setSessions(sess)
@@ -847,13 +864,42 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
             Invalider
           </button>
           <div className="w-px h-4 bg-gray-300" />
-          <button
-            onClick={handleGenerateHeats}
-            disabled={generating}
-            className="border border-gray-400 bg-white hover:bg-blue-50 disabled:opacity-50 disabled:cursor-default px-2 py-0.5 text-xs font-medium text-blue-700"
-          >
-            {generating ? '…' : t.heats.generateHeats}
-          </button>
+          <div className="relative">
+            <button
+              onClick={() => setGenerateMenuOpen(!generateMenuOpen)}
+              disabled={generating}
+              className="border border-gray-400 bg-white hover:bg-blue-50 disabled:opacity-50 disabled:cursor-default px-2 py-0.5 text-xs font-medium text-blue-700"
+            >
+              {generating ? '…' : t.heats.generateHeats} ▾
+            </button>
+            {generateMenuOpen && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setGenerateMenuOpen(false)} />
+                <div className="absolute top-full left-0 mt-0.5 bg-white border border-gray-300 shadow-lg z-50 text-xs w-48">
+                  <button
+                    onClick={() => handleGenerateHeats('all')}
+                    className="w-full text-left px-3 py-1.5 hover:bg-blue-50"
+                  >
+                    {lang === 'fr' ? 'Toutes les épreuves' : 'All events'}
+                  </button>
+                  <button
+                    onClick={() => handleGenerateHeats('session')}
+                    disabled={!selectedSessionId && !selectedSession}
+                    className="w-full text-left px-3 py-1.5 hover:bg-blue-50 disabled:opacity-40 disabled:cursor-default"
+                  >
+                    {lang === 'fr' ? 'Session sélectionnée' : 'Selected session'}
+                  </button>
+                  <button
+                    onClick={() => handleGenerateHeats('event')}
+                    disabled={!selectedEventId && !selectedEvent}
+                    className="w-full text-left px-3 py-1.5 hover:bg-blue-50 disabled:opacity-40 disabled:cursor-default"
+                  >
+                    {lang === 'fr' ? 'Épreuve sélectionnée' : 'Selected event'}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
           <button
             onClick={handlePrintTimingSheets}
             className="border border-gray-400 bg-white hover:bg-purple-50 px-2 py-0.5 text-xs font-medium text-purple-700"

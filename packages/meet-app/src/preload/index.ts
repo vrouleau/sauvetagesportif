@@ -36,6 +36,11 @@ const api = {
       ipcRenderer.on('menu:configure-gemini', cb)
       return () => { ipcRenderer.removeListener('menu:configure-gemini', cb) }
     },
+    onOpenGuide: (cb: (guideType: string) => void) => {
+      const handler = (_e: unknown, guideType: string) => cb(guideType)
+      ipcRenderer.on('menu:open-guide', handler)
+      return () => { ipcRenderer.removeListener('menu:open-guide', handler) }
+    },
   },
   quantum: {
     configure: (folder: string) =>
