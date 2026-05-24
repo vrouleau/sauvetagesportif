@@ -205,6 +205,7 @@ Team-app frontend Dockerfile uses monorepo root as context (`context: ../..`) to
 | `timing:set-gemini-key` | Set free/paid API keys |
 | `timing:clear-all-scans` | Delete all scan records |
 | `db:get-meet-type` | Get meet type (POOL/BEACH) from BSGLOBAL |
+| `menu:open-guide` | Open in-app workflow guide (pool/beach) |
 | `db:register` | Register athlete for event (create swimresult) |
 | `db:unregister` | Unregister athlete from event (delete unseeded swimresult) |
 | `db:get-relay-members` | Get relay position members by relay ID |
@@ -213,20 +214,45 @@ Team-app frontend Dockerfile uses monorepo root as context (`context: ../..`) to
 
 ## API endpoints (team-app)
 
-| Endpoint | Purpose |
-|---|---|
-| `GET /api/sessions` | Sessions + events + age groups (for EventsPage) |
-| `GET /api/swim-styles` | All swimstyles (for dropdown) |
-| `GET /api/meet-info` | Meet metadata |
-| `GET /api/events` | Flat event list |
-| `POST /api/upload/meet` | Upload meet .lxf |
-| `POST /api/upload/entries` | Upload entries/results .lxf |
-| `GET /api/export` | Export registrations as .lxf bundle |
-| `GET /api/athletes` | Athlete list |
-| `POST /api/auth` | PIN authentication |
-| `GET /api/admin/gemini-keys` | Get masked Gemini API keys (admin) |
-| `POST /api/admin/gemini-keys` | Set free/paid Gemini API keys (admin) |
-| `POST /api/admin/new-meet` | Create new meet from template (accepts `{"meet_type": "pool"\|"beach"}`) |
+| Endpoint | Purpose | Access |
+|---|---|---|
+| `GET /api/sessions` | Sessions + events + age groups (for EventsPage) | Public |
+| `GET /api/swim-styles` | All swimstyles (for dropdown) | Public |
+| `GET /api/meet-info` | Meet metadata | Public |
+| `GET /api/events` | Flat event list | Public |
+| `POST /api/auth` | PIN authentication | Public |
+| `POST /api/upload/meet` | Upload meet .lxf (event structure) | Organizer/Admin |
+| `POST /api/upload/entries` | Upload entries/results .lxf (clubs + athletes + best times) | Admin |
+| `POST /api/upload/meet-smb` | Full database restore from .smb backup | Admin |
+| `GET /api/export/meet-smb` | Download full .smb backup | Admin |
+| `POST /api/admin/new-meet` | Create new meet from template (pool/beach) | Organizer/Admin |
+| `GET /api/export` | Export registrations as .lxf bundle (.zip) | Admin |
+| `GET /api/export/entries` | Export entries .lxf (clubs + athletes + best times) | Admin |
+| `GET /api/athletes` | Athlete list | Any authenticated |
+| `GET /api/admin/gemini-keys` | Get masked Gemini API keys | Admin |
+| `POST /api/admin/gemini-keys` | Set free/paid Gemini API keys | Admin |
+
+## In-App Documentation
+
+Both apps serve bilingual (FR/EN) workflow guides bundled as markdown files:
+
+### Team-app
+- Location: `packages/team-app/frontend/public/docs/`
+- Files: `team-admin_{lang}.md`, `team-organizer_{lang}.md`, `team-coach_{lang}.md`
+- Accessed via: `/usage` route (tab navigation between guides)
+- Screenshots: `public/docs/assets/team-*.png`
+
+### Meet-app
+- Location: `packages/meet-app/src/renderer/public/docs/`
+- Files: `meet-pool_{lang}.md`, `meet-beach_{lang}.md`
+- Accessed via: Aide menu → "Guide — Compétition piscine/plage" (full-screen overlay)
+- Screenshots: `public/docs/assets/meet-*.png`
+- Renderer: custom `GuidePage.tsx` with built-in markdown-to-HTML converter (no external dependency)
+
+### Fixture data
+- Generator: `packages/meet-app/scripts/generate-fixture-smb.ts`
+- Output: `fixture_pool.smb`, `fixture_beach.smb` (10 clubs, 150 athletes, events, registrations)
+- Usage: File → Restaurer un meet (.smb) in meet-app, or Admin → Restore SMB in team-app
 
 ## Best times storage
 Stored in `bsglobal` as `bt_{athlete_id}` keys with JSON: `{style_uid: {course: {time_ms, date, source}}}`. Updated on results upload, expired after 18 months. **Not updated for beach meets** (positions are not times). Pool styles use 5xx IDs, beach styles use 6xx — no collisions.
@@ -384,8 +410,8 @@ Separate SQLite: `{userData}/timing_scans.sqlite`
 ### Key management flow
 1. Admin sets keys in team-app (Admin page → "Clés API Gemini")
 2. Keys stored in PostgreSQL `bsglobal` table
-3. Export `.smb` → keys included
-4. Organizer imports `.smb` in meet-app → keys in local SQLite
+3. Admin saves `.smb` backup → keys included
+4. Admin restores `.smb` in meet-app → keys in local SQLite
 5. Gemini OCR works automatically (transparent to end users)
 
 ### Time entry
