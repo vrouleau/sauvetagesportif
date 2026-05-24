@@ -57,6 +57,7 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
   // Drag state
   const [dragSource, setDragSource] = useState<{ heatId: number; lane: number; entry: LaneEntry } | null>(null)
   const [dragOverLane, setDragOverLane] = useState<number | null>(null)
+  const dragHoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Derived flat list of all events (for Quantum schedule)
   const heatListEvents: HeatListEvent[] = sessions.flatMap(s => s.events)
@@ -528,6 +529,37 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
     setDragOverLane(null)
   }
 
+  const dragHoverHeatRef = useRef<number | null>(null)
+
+  function handleHeatRowDragOver(e: React.DragEvent, heatId: number) {
+    if (!dragSource) return
+    if (dragSource.heatId === heatId) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    // Only start timer if this is a new heat we're hovering
+    if (dragHoverHeatRef.current !== heatId) {
+      dragHoverHeatRef.current = heatId
+      if (dragHoverTimerRef.current) clearTimeout(dragHoverTimerRef.current)
+      dragHoverTimerRef.current = setTimeout(() => {
+        setSelectedHeatId(heatId)
+        setSelectedEventId(null)
+        setSelectedSessionId(null)
+        setEditingLane(null)
+      }, 500)
+    }
+  }
+
+  function handleHeatRowDragLeave(e: React.DragEvent, heatId: number) {
+    // Only cancel if we truly left the row (not entering a child element)
+    const related = e.relatedTarget as HTMLElement | null
+    const current = e.currentTarget as HTMLElement
+    if (related && current.contains(related)) return
+    if (dragHoverHeatRef.current === heatId) {
+      dragHoverHeatRef.current = null
+      if (dragHoverTimerRef.current) clearTimeout(dragHoverTimerRef.current)
+    }
+  }
+
   async function handleDrop(e: React.DragEvent, targetHeatId: number, targetLane: number, targetEntry: LaneEntry | null) {
     e.preventDefault()
     setDragOverLane(null)
@@ -586,56 +618,8 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
   function handleDragEnd() {
     setDragSource(null)
     setDragOverLane(null)
-  }
-
-  async function handleDropOnHeat(targetHeatId: number, heatLaneMin: number, heatLaneMax: number) {
-    if (!dragSource) return
-    const api = dbApi()
-    if (!api) return
-
-    const { heatId: srcHeatId, entry: srcEntry } = dragSource
-
-    // Don't drop on same heat
-    if (srcHeatId === targetHeatId) {
-      setDragSource(null)
-      return
-    }
-
-    // Find best available lane (center-out)
-    const occupiedLanes = new Set((heatData[targetHeatId] ?? []).map((e) => e.lane))
-    const laneOrder = generateCenterOutOrder(heatLaneMin, heatLaneMax)
-    const targetLane = laneOrder.find((l) => !occupiedLanes.has(l))
-
-    if (targetLane == null) {
-      // No empty lane available
-      setDragSource(null)
-      return
-    }
-
-    await api.assignToHeatLane(srcEntry.swimresultId, targetHeatId, targetLane)
-    setHeatData((prev) => {
-      const next = { ...prev }
-      // Remove from source heat
-      next[srcHeatId] = (next[srcHeatId] ?? []).filter((e) => e.swimresultId !== srcEntry.swimresultId)
-      // Add to target heat
-      next[targetHeatId] = [...(next[targetHeatId] ?? []), { ...srcEntry, lane: targetLane }]
-      return next
-    })
-    setDragSource(null)
-  }
-
-  function generateCenterOutOrder(min: number, max: number): number[] {
-    const count = max - min + 1
-    const center = Math.floor(count / 2)
-    const order: number[] = []
-    order.push(min + center)
-    for (let offset = 1; order.length < count; offset++) {
-      const right = min + center + offset
-      const left = min + center - offset
-      if (right <= max) order.push(right)
-      if (left >= min) order.push(left)
-    }
-    return order
+    dragHoverHeatRef.current = null
+    if (dragHoverTimerRef.current) clearTimeout(dragHoverTimerRef.current)
   }
 
   // ── Generate heats handler ──────────────────────────────────────────────────
@@ -1031,21 +1015,11 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
                               <tr
                                 key={`h-${heat.id}`}
                                 className={`border-b border-gray-100 cursor-pointer select-none ${
-                                  isHeatSelected ? 'bg-blue-600 text-white' : dragSource ? 'bg-gray-50 hover:bg-green-100' : 'bg-gray-50 hover:bg-blue-100'
+                                  isHeatSelected ? 'bg-blue-600 text-white' : dragSource && dragSource.heatId !== heat.id ? 'bg-gray-50 hover:bg-green-100' : 'bg-gray-50 hover:bg-blue-100'
                                 }`}
                                 onClick={() => { setSelectedHeatId(heat.id); setSelectedEventId(null); setSelectedSessionId(null); setEditingLane(null) }}
-                                onDragOver={(e) => {
-                                  if (dragSource) {
-                                    e.preventDefault()
-                                    e.dataTransfer.dropEffect = 'move'
-                                  }
-                                }}
-                                onDrop={(e) => {
-                                  if (dragSource) {
-                                    e.preventDefault()
-                                    handleDropOnHeat(heat.id, session.laneMin, session.laneMax)
-                                  }
-                                }}
+                                onDragOver={(e) => handleHeatRowDragOver(e, heat.id)}
+                                onDragLeave={(e) => handleHeatRowDragLeave(e, heat.id)}
                               >
                                 <td className="px-2 py-0.5 pl-10">
                                   <svg className="w-3 h-3 inline text-gray-400" fill="currentColor" viewBox="0 0 20 20">

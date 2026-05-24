@@ -5,7 +5,9 @@ import {
   PointerSensor,
   useSensor,
   useSensors,
+  useDroppable,
   type DragEndEvent,
+  type DragOverEvent,
 } from '@dnd-kit/core'
 import {
   SortableContext,
@@ -163,6 +165,49 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
   )
+
+  // ── Drag-over session expansion (hover 500ms to expand collapsed session) ──
+  const dragOverSessionRef = useRef<number | null>(null)
+  const dragOverSessionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  function handleDragOver(event: DragOverEvent) {
+    const { over } = event
+    if (!over) {
+      // Left all droppables — cancel timer
+      if (dragOverSessionTimerRef.current) clearTimeout(dragOverSessionTimerRef.current)
+      dragOverSessionRef.current = null
+      return
+    }
+
+    const overId = String(over.id)
+    // Check if hovering over a session droppable
+    if (overId.startsWith('session-')) {
+      const sessionId = Number(overId.replace('session-', ''))
+      if (dragOverSessionRef.current !== sessionId) {
+        dragOverSessionRef.current = sessionId
+        if (dragOverSessionTimerRef.current) clearTimeout(dragOverSessionTimerRef.current)
+        dragOverSessionTimerRef.current = setTimeout(() => {
+          setExpandedSessions((prev) => {
+            const next = new Set(prev)
+            next.add(sessionId)
+            sessionStorage.setItem('eventsPage_expandedSessions', JSON.stringify([...next]))
+            return next
+          })
+        }, 500)
+      }
+    } else {
+      // Over an event item — cancel session timer
+      if (dragOverSessionTimerRef.current) clearTimeout(dragOverSessionTimerRef.current)
+      dragOverSessionRef.current = null
+    }
+  }
+
+  function handleDragEndWrapper(event: DragEndEvent) {
+    // Clean up hover timer
+    if (dragOverSessionTimerRef.current) clearTimeout(dragOverSessionTimerRef.current)
+    dragOverSessionRef.current = null
+    handleDragEnd(event)
+  }
 
   async function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event
@@ -706,7 +751,7 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
 
       <div className="flex flex-1 min-h-0">
         {/* ── Left: tree ── */}
-        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEndWrapper} onDragOver={handleDragOver}>
         <div style={{ width: leftPanelWidth }} className="shrink-0 border-r border-gray-300 overflow-y-auto bg-white select-none text-xs">
           {/* Column headers */}
           <div className="flex items-center h-6 bg-gray-100 border-b border-gray-300 text-gray-500 font-medium px-2 sticky top-0 z-10">
@@ -738,13 +783,16 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
           )}
 
           {/* Sessions */}
+          <SortableContext items={localSessions.flatMap(s => expandedSessions.has(s.id) ? s.events.map(e => `event-${e.id}`) : [])} strategy={verticalListSortingStrategy}>
           {localSessions.map((session) => {
             const expanded = expandedSessions.has(session.id)
             const isSessionSelected = selected.type === 'session' && selected.session.id === session.id
             return (
               <div key={session.id}>
-                <div
-                  className={`flex items-center h-6 pl-4 cursor-pointer tree-node ${isSessionSelected ? 'bg-blue-600 text-white' : ''}`}
+                <DroppableSessionRow
+                  session={session}
+                  isSelected={isSessionSelected}
+                  expanded={expanded}
                   onClick={() => {
                     setSelected({ type: 'session', session })
                     if (session.events.length > 0) toggleSession(session.id)
@@ -769,12 +817,11 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
                   <span className="w-28" />
                   <span className="w-14 text-center">{session.time ?? ''}</span>
                   <span className="w-14 text-center">{t.events.poolUnit(session.poolSize)}</span>
-                </div>
+                </DroppableSessionRow>
 
                 {/* Events (sortable) */}
                 {expanded && (
-                  <SortableContext items={session.events.map(e => `event-${e.id}`)} strategy={verticalListSortingStrategy}>
-                    {session.events.map((event) => (
+                    session.events.map((event) => (
                       <SortableEventItem
                         key={event.id}
                         event={event}
@@ -819,12 +866,12 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
                         onContextMenuGroup={(e, group) => openContextMenu(e, { type: 'agegroup', group, event })}
                         t={t}
                       />
-                    ))}
-                  </SortableContext>
+                    ))
                 )}
               </div>
             )
           })}
+          </SortableContext>
         </div>
         </DndContext>
 
@@ -873,6 +920,37 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
       {promptState && (
         <PromptDialog state={promptState} onConfirm={handleConfirm} onCancel={handleCancel} />
       )}
+    </div>
+  )
+}
+
+// ─── Droppable Session Row (for drag-hover-to-expand) ─────────────────────────
+
+function DroppableSessionRow({
+  session,
+  isSelected,
+  expanded,
+  onClick,
+  onContextMenu,
+  children,
+}: {
+  session: Session
+  isSelected: boolean
+  expanded: boolean
+  onClick: () => void
+  onContextMenu: (e: MouseEvent) => void
+  children: ReactNode
+}) {
+  const { setNodeRef } = useDroppable({ id: `session-${session.id}` })
+
+  return (
+    <div
+      ref={setNodeRef}
+      className={`flex items-center h-6 pl-4 cursor-pointer tree-node ${isSelected ? 'bg-blue-600 text-white' : ''}`}
+      onClick={onClick}
+      onContextMenu={onContextMenu}
+    >
+      {children}
     </div>
   )
 }
