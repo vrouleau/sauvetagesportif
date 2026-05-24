@@ -517,6 +517,65 @@ async def upload_meet_smb(file: UploadFile = File(...), db: Session = Depends(ge
         events_imported += 1
     db.flush()
 
+    # ── Normalize Splash MDB round encoding → canonical ──────────────────
+    # Splash MDB uses: 1=TimedFinal, 2=Prelim, 9=Final, 11=Break/Pause
+    # Our canonical:   1=Prelim(PRE), 2=Semi, 4=Final(FIN), 5=TimedFinal(TIM)
+    has_mdb_encoding = db.query(SwimEvent).filter(SwimEvent.round.in_([9, 11])).count() > 0
+    if has_mdb_encoding:
+        for ev in db.query(SwimEvent).filter(SwimEvent.round == 1).all():
+            ev.round = -1
+        for ev in db.query(SwimEvent).filter(SwimEvent.round == 2).all():
+            ev.round = -2
+        for ev in db.query(SwimEvent).filter(SwimEvent.round == 9).all():
+            ev.round = -9
+        db.flush()
+        for ev in db.query(SwimEvent).filter(SwimEvent.round == -1).all():
+            ev.round = ROUND_TIM
+        for ev in db.query(SwimEvent).filter(SwimEvent.round == -2).all():
+            ev.round = ROUND_PRE
+        for ev in db.query(SwimEvent).filter(SwimEvent.round == -9).all():
+            ev.round = ROUND_FIN
+        db.flush()
+
+        # Fix PRE events with gender=0
+        pre_events = db.query(SwimEvent).filter(
+            SwimEvent.round == ROUND_PRE, SwimEvent.gender == 0,
+            SwimEvent.swimstyleid.isnot(None),
+        ).all()
+        for pre in pre_events:
+            tim = db.query(SwimEvent).filter(
+                SwimEvent.swimsessionid == pre.swimsessionid,
+                SwimEvent.swimstyleid == pre.swimstyleid,
+                SwimEvent.round == ROUND_TIM,
+                SwimEvent.sortcode == (pre.sortcode or 0) - 1,
+            ).first()
+            if tim and tim.gender and tim.gender != 0:
+                pre.gender = tim.gender
+                continue
+            fin = db.query(SwimEvent).filter(
+                SwimEvent.preveventid == pre.swimeventid,
+                SwimEvent.round == ROUND_FIN,
+            ).first()
+            if fin and fin.gender and fin.gender != 0:
+                pre.gender = fin.gender
+        db.flush()
+
+        # Fix PRE events with eventnumber=0
+        zero_num_prelims = (
+            db.query(SwimEvent)
+            .join(SwimSession, SwimEvent.swimsessionid == SwimSession.swimsessionid)
+            .filter(
+                SwimEvent.round == ROUND_PRE,
+                SwimEvent.swimstyleid.isnot(None),
+                ((SwimEvent.eventnumber == 0) | (SwimEvent.eventnumber.is_(None))),
+            )
+            .order_by(SwimSession.sessionnumber, SwimEvent.sortcode)
+            .all()
+        )
+        for seq, pre in enumerate(zero_num_prelims, start=1):
+            pre.eventnumber = seq
+        db.flush()
+
     # ── Import AGEGROUP ───────────────────────────────────────────────────
     agegroups_imported = 0
     for row in tables.get("AGEGROUP", []):
