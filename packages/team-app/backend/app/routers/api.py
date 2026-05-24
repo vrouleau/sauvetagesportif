@@ -607,13 +607,13 @@ async def upload_meet_smb(file: UploadFile = File(...), db: Session = Depends(ge
 
     db.commit()
     return {
-        "styles": styles_imported,
-        "clubs": clubs_imported,
-        "athletes": athletes_imported,
-        "events": events_imported,
-        "agegroups": agegroups_imported,
-        "heats": heats_imported,
-        "results": results_imported,
+        "events_loaded": events_imported,
+        "styles_loaded": styles_imported,
+        "agegroups_loaded": agegroups_imported,
+        "clubs_loaded": clubs_imported,
+        "athletes_loaded": athletes_imported,
+        "heats_loaded": heats_imported,
+        "results_loaded": results_imported,
         "filename": file.filename,
     }
 
@@ -1971,7 +1971,7 @@ def export_entries_lxf(db: Session = Depends(get_db)):
     )
 
 
-@router.get("/export/meet-smb", dependencies=[Depends(require_organizer_or_admin)])
+@router.get("/export/meet-smb", dependencies=[Depends(require_admin)])
 def export_meet_smb():
     smb_storage = Path(os.environ.get("MEET_STORAGE", "/app/data/meet.lxf")).parent / "meet.smb"
     if not smb_storage.exists():
