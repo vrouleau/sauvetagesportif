@@ -639,6 +639,35 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
     }
   }
 
+  async function handleImportMeet() {
+    if (!api.importMeet) return
+    const result = await api.importMeet()
+    if (result.ok) {
+      // Trigger reload by re-fetching sessions
+      setLoading(true)
+      api.getSessions().then((sessions) => {
+        setLocalSessions(sessions)
+        setLoading(false)
+      }).catch(() => setLoading(false))
+      api.getMeetConfig().then((cfg) => {
+        if (cfg?.NAME) setMeetName(cfg.NAME)
+        const course = cfg?.COURSE
+        if (course === '3' || course === '2') setPoolSize(25)
+        else setPoolSize(50)
+      }).catch(() => {})
+    } else if (result.error) {
+      window.alert(result.error)
+    }
+  }
+
+  async function handleExportMeet() {
+    if (!api.exportMeet) return
+    const result = await api.exportMeet()
+    if (!result.ok && result.error) {
+      window.alert(result.error)
+    }
+  }
+
   async function handleUpdateSession(sessionId: number, data: Record<string, unknown>) {
     try {
       await api.updateSession(sessionId, data)
@@ -747,6 +776,25 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
           danger
           onClick={handleDelete}
         />
+        {(api.importMeet || api.exportMeet) && (
+          <>
+            <div className="w-px h-4 bg-gray-300 mx-1" />
+            {api.importMeet && (
+              <ToolbarBtn
+                label={t.events.toolbar.importMeet}
+                enabled={true}
+                onClick={handleImportMeet}
+              />
+            )}
+            {api.exportMeet && (
+              <ToolbarBtn
+                label={t.events.toolbar.exportMeet}
+                enabled={localSessions.length > 0}
+                onClick={handleExportMeet}
+              />
+            )}
+          </>
+        )}
       </div>
 
       <div className="flex flex-1 min-h-0">

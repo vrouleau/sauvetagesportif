@@ -47,7 +47,7 @@ export default function Organizer() {
   }
 
   function exportLxf() {
-    window.open('/api/export', '_blank')
+    window.open('/api/export/registrations-lxf', '_blank')
   }
 
   async function uploadMeet(e) {
@@ -218,15 +218,15 @@ export default function Organizer() {
         </button>
         <div className="w-px h-4 bg-gray-300" />
         <button onClick={() => createMeet('pool')}
-          className="text-xs text-blue-600 hover:underline">
+          className="px-3 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700">
           {lang === 'fr' ? 'Créer meet piscine' : 'Create Pool Meet'}
         </button>
         <button onClick={() => createMeet('beach')}
-          className="text-xs text-orange-600 hover:underline">
+          className="px-3 py-1 bg-orange-600 text-white text-xs rounded hover:bg-orange-700">
           {lang === 'fr' ? 'Créer meet plage' : 'Create Beach Meet'}
         </button>
         <div className="w-px h-4 bg-gray-300" />
-        <button onClick={exportLxf} className="text-xs text-blue-600 hover:underline">{t.download_lxf}</button>
+        <button onClick={exportLxf} className="px-3 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700">{t.download_lxf}</button>
         {stripeStatus?.connected && (
           <>
             <div className="w-px h-4 bg-gray-300" />

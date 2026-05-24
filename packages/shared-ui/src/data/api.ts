@@ -140,6 +140,10 @@ export interface MeetAPI {
 
   // Heat generation
   generateHeats(eventId?: number, sessionId?: number): Promise<{ heatsCreated: number; entriesAssigned: number }>
+
+  // Meet import/export (optional — not all hosts support these)
+  importMeet?(): Promise<{ ok: boolean; events?: number; error?: string }>
+  exportMeet?(): Promise<{ ok: boolean; error?: string }>
 }
 
 // ─── Registration API (used by AthletesListPage & RegistrationPage) ───────────

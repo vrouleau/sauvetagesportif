@@ -37,7 +37,7 @@ import {
   type EventUpdate,
   type AgeGroupUpdate,
 } from './db'
-import { importLenex } from './lenex'
+import { importLenex, exportLenexResults } from './lenex'
 import { saveSMB, restoreSMB } from './smb'
 import {
   getScanDb, closeScanDb, insertScan, getUnprocessedScans,
@@ -450,6 +450,22 @@ ipcMain.handle('file:open-lenex-dialog', async (event) => {
 ipcMain.handle('file:import-lenex', async (_event, filePath: string) => {
   try {
     const summary = importLenex(filePath, getLocalDb())
+    return { ok: true, summary }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+})
+
+ipcMain.handle('file:export-lenex-results', async (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender)
+  const result = await dialog.showSaveDialog(win ?? BrowserWindow.getFocusedWindow()!, {
+    title: 'Exporter les résultats LENEX',
+    filters: [{ name: 'LENEX', extensions: ['lxf'] }],
+    defaultPath: 'results.lxf',
+  })
+  if (result.canceled || !result.filePath) return { ok: false, canceled: true }
+  try {
+    const summary = exportLenexResults(result.filePath, getLocalDb())
     return { ok: true, summary }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
@@ -1039,6 +1055,10 @@ function createWindow(): void {
         {
           label: 'Importer un fichier LENEX…',
           click: () => mainWindow.webContents.send('menu:import-lenex'),
+        },
+        {
+          label: 'Exporter les résultats LENEX…',
+          click: () => mainWindow.webContents.send('menu:export-lenex-results'),
         },
         { type: 'separator' },
         {

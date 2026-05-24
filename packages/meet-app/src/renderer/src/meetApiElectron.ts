@@ -68,4 +68,21 @@ export const meetApiElectron: MeetAPI = {
     const result = (await ipc()?.generateHeats(eventId, sessionId)) as { heatsCreated: number; entriesAssigned: number } | undefined
     return result ?? { heatsCreated: 0, entriesAssigned: 0 }
   },
+  async importMeet() {
+    const fileApi = (window as unknown as { api?: { file?: { openLxfDialog: () => Promise<string | null>; importLenex: (path: string) => Promise<{ ok: boolean; summary?: { events: number }; error?: string }> } } }).api?.file
+    if (!fileApi) return { ok: false, error: 'File API not available' }
+    const path = await fileApi.openLxfDialog()
+    if (!path) return { ok: false }
+    const result = await fileApi.importLenex(path)
+    if (result.ok) return { ok: true, events: result.summary?.events }
+    return { ok: false, error: result.error }
+  },
+  async exportMeet() {
+    const fileApi = (window as unknown as { api?: { file?: { exportLenexResults: () => Promise<{ ok: boolean; canceled?: boolean; error?: string }> } } }).api?.file
+    if (!fileApi) return { ok: false, error: 'File API not available' }
+    const result = await fileApi.exportLenexResults()
+    if (result.canceled) return { ok: false }
+    if (result.ok) return { ok: true }
+    return { ok: false, error: result.error }
+  },
 }

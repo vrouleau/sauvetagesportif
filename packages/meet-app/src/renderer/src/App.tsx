@@ -21,6 +21,11 @@ interface ImportSummary {
   errors: string[]
 }
 
+interface ExportSummary {
+  sessions: number; events: number
+  clubs: number; athletes: number; results: number
+}
+
 interface ImportState {
   status: 'idle' | 'running' | 'done' | 'error'
   summary?: ImportSummary
@@ -33,6 +38,7 @@ function fileApi() {
       file?: {
         openLxfDialog: () => Promise<string | null>
         importLenex: (path: string) => Promise<{ ok: boolean; summary?: ImportSummary; error?: string }>
+        exportLenexResults: () => Promise<{ ok: boolean; canceled?: boolean; summary?: ExportSummary; error?: string }>
         saveSMB: () => Promise<{ ok: boolean; canceled?: boolean; tables?: number; rows?: number; error?: string }>
         restoreSMB: () => Promise<{ ok: boolean; canceled?: boolean; tables?: number; rows?: number; error?: string }>
         newMeet: (meetType?: string) => Promise<{ ok: boolean; summary?: ImportSummary; meetType?: string; error?: string }>
@@ -65,6 +71,7 @@ function menuApi() {
         onSyncDown: (cb: () => void) => () => void
         onSyncUp: (cb: () => void) => () => void
         onImportLenex: (cb: () => void) => () => void
+        onExportLenexResults: (cb: () => void) => () => void
         onSaveSMB: (cb: () => void) => () => void
         onRestoreSMB: (cb: () => void) => () => void
         onNewMeet: (cb: (meetType: string) => void) => () => void
@@ -363,6 +370,7 @@ function AppInner() {
   const [showGeminiConfig, setShowGeminiConfig] = useState(false)
   const [showGuide, setShowGuide] = useState<'pool' | 'beach' | null>(null)
   const [importState, setImportState] = useState<ImportState | null>(null)
+  const [exportState, setExportState] = useState<{ status: 'done' | 'error'; summary?: ExportSummary; error?: string } | null>(null)
   const [smbState, setSmbState] = useState<SmbState | null>(null)
   const [flushState, setFlushState] = useState<{ open: boolean; running: boolean; meetType?: string; error?: string } | null>(null)
   const [syncUpState, setSyncUpState] = useState<SyncUpState | null>(null)
@@ -385,6 +393,7 @@ function AppInner() {
       m.onSyncDown(() => handleRefresh()),
       m.onSyncUp(() => handleSyncUp()),
       m.onImportLenex(() => handleImportLenex()),
+      m.onExportLenexResults(() => handleExportLenexResults()),
       m.onSaveSMB(() => handleSaveSMB()),
       m.onRestoreSMB(() => handleRestoreSMB()),
       m.onNewMeet((meetType) => setFlushState({ open: true, running: false, meetType: meetType || 'pool' })),
@@ -403,6 +412,18 @@ function AppInner() {
       setImportState({ status: 'done', summary: result.summary })
     } else {
       setImportState({ status: 'error', error: result.error ?? 'Unknown error' })
+    }
+  }
+
+  async function handleExportLenexResults() {
+    const f = fileApi()
+    if (!f) return
+    const result = await f.exportLenexResults()
+    if (result.canceled) return
+    if (result.ok && result.summary) {
+      setExportState({ status: 'done', summary: result.summary })
+    } else {
+      setExportState({ status: 'error', error: result.error ?? 'Unknown error' })
     }
   }
 
@@ -589,6 +610,40 @@ function AppInner() {
             handleRefresh()  // auto-refresh after import
           }}
         />
+      )}
+      {exportState && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white border border-gray-400 shadow-xl w-[440px] text-xs">
+            <div className="flex items-center justify-between bg-green-700 text-white px-3 py-2">
+              <span className="font-semibold">Export LENEX Résultats</span>
+              <button onClick={() => setExportState(null)} className="hover:text-green-200 text-lg leading-none">×</button>
+            </div>
+            <div className="p-5">
+              {exportState.status === 'done' && exportState.summary ? (
+                <div className="space-y-2">
+                  <p className="font-semibold text-green-700">Export réussi !</p>
+                  <ul className="list-disc ml-5 text-gray-700 space-y-0.5">
+                    <li>{exportState.summary.sessions} session(s)</li>
+                    <li>{exportState.summary.events} épreuve(s)</li>
+                    <li>{exportState.summary.clubs} club(s)</li>
+                    <li>{exportState.summary.athletes} athlète(s)</li>
+                    <li>{exportState.summary.results} résultat(s)</li>
+                  </ul>
+                </div>
+              ) : (
+                <p className="text-red-600">Erreur: {exportState.error}</p>
+              )}
+            </div>
+            <div className="flex items-center justify-end px-5 py-3 border-t border-gray-200 bg-gray-50">
+              <button
+                onClick={() => setExportState(null)}
+                className="px-4 py-1 bg-green-600 text-white hover:bg-green-700 border border-green-700"
+              >
+                Fermer
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

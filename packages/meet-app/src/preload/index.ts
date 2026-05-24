@@ -19,6 +19,10 @@ const api = {
       ipcRenderer.on('menu:import-lenex', cb)
       return () => { ipcRenderer.removeListener('menu:import-lenex', cb) }
     },
+    onExportLenexResults: (cb: () => void) => {
+      ipcRenderer.on('menu:export-lenex-results', cb)
+      return () => { ipcRenderer.removeListener('menu:export-lenex-results', cb) }
+    },
     onSaveSMB: (cb: () => void) => {
       ipcRenderer.on('menu:save-smb', cb)
       return () => { ipcRenderer.removeListener('menu:save-smb', cb) }
@@ -226,6 +230,8 @@ const api = {
       ipcRenderer.invoke('file:open-lenex-dialog'),
     importLenex: (path: string) =>
       ipcRenderer.invoke('file:import-lenex', path),
+    exportLenexResults: () =>
+      ipcRenderer.invoke('file:export-lenex-results'),
     saveSMB: () =>
       ipcRenderer.invoke('file:save-smb'),
     restoreSMB: () =>

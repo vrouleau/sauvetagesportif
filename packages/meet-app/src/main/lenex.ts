@@ -1,5 +1,5 @@
-import { readFileSync } from 'node:fs'
-import { inflateRawSync } from 'node:zlib'
+import { readFileSync, writeFileSync } from 'node:fs'
+import { inflateRawSync, deflateRawSync } from 'node:zlib'
 import Database from 'better-sqlite3'
 
 // ── ZIP reader ────────────────────────────────────────────────────────────────
@@ -440,6 +440,415 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
       }
     }
   }
+
+  return summary
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ── LENEX Results Export ──────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── Decode helpers (reverse of encode*) ───────────────────────────────────────
+
+function decodeGender(g: number | null): string {
+  if (g === 1) return 'M'
+  if (g === 2) return 'F'
+  return 'X'
+}
+
+function decodeStroke(s: number | null): string {
+  switch (s) {
+    case 1: return 'FREE'
+    case 2: return 'BACK'
+    case 3: return 'BREAST'
+    case 4: return 'FLY'
+    case 5: return 'MEDLEY'
+    case 6: return 'FREE'   // relay free
+    case 7: return 'MEDLEY' // relay medley
+    default: return 'FREE'
+  }
+}
+
+function decodeRound(r: number | null): string {
+  switch (r) {
+    case 1: return 'PRE'
+    case 2: return 'SEM'
+    case 4: return 'FIN'
+    case 5: return 'TIM'
+    default: return 'TIM'
+  }
+}
+
+function decodeCourse(c: number | null): string {
+  switch (c) {
+    case 1: return 'LCM'
+    case 2: return 'SCY'
+    case 3: return 'SCM'
+    default: return 'LCM'
+  }
+}
+
+function msToLenexTime(ms: number | null): string | null {
+  if (!ms || ms <= 0) return null
+  const totalCs = Math.round(ms / 10)
+  const cs = totalCs % 100
+  const totalSecs = Math.floor(totalCs / 100)
+  const ss = totalSecs % 60
+  const totalMins = Math.floor(totalSecs / 60)
+  const mm = totalMins % 60
+  const hh = Math.floor(totalMins / 60)
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}.${String(cs).padStart(2, '0')}`
+}
+
+function decodeResultStatus(s: number | null): string | null {
+  switch (s) {
+    case 1: return 'DNS'
+    case 2: return 'DNF'
+    case 3: return 'DSQ'
+    default: return null
+  }
+}
+
+// ── XML escaping ──────────────────────────────────────────────────────────────
+
+function escXml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;')
+}
+
+function attr(name: string, value: string | number | null | undefined): string {
+  if (value === null || value === undefined || value === '') return ''
+  return ` ${name}="${escXml(String(value))}"`
+}
+
+// ── ZIP writer (minimal, single-entry) ────────────────────────────────────────
+
+function writeZipSingleEntry(filePath: string, entryName: string, content: string): void {
+  const data = Buffer.from(content, 'utf8')
+  const compressed = deflateRawSync(data)
+  const nameBytes = Buffer.from(entryName, 'utf8')
+  const now = new Date()
+  const dosTime = ((now.getHours() << 11) | (now.getMinutes() << 5) | (now.getSeconds() >> 1)) & 0xFFFF
+  const dosDate = (((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate()) & 0xFFFF
+
+  // CRC-32
+  const crc = crc32(data)
+
+  // Local file header
+  const localHeader = Buffer.alloc(30 + nameBytes.length)
+  localHeader.writeUInt32LE(0x04034b50, 0)  // signature
+  localHeader.writeUInt16LE(20, 4)           // version needed
+  localHeader.writeUInt16LE(0, 6)            // flags
+  localHeader.writeUInt16LE(8, 8)            // compression: deflate
+  localHeader.writeUInt16LE(dosTime, 10)
+  localHeader.writeUInt16LE(dosDate, 12)
+  localHeader.writeUInt32LE(crc, 14)
+  localHeader.writeUInt32LE(compressed.length, 18)
+  localHeader.writeUInt32LE(data.length, 22)
+  localHeader.writeUInt16LE(nameBytes.length, 26)
+  localHeader.writeUInt16LE(0, 28)           // extra field length
+  nameBytes.copy(localHeader, 30)
+
+  // Central directory header
+  const centralHeader = Buffer.alloc(46 + nameBytes.length)
+  centralHeader.writeUInt32LE(0x02014b50, 0)  // signature
+  centralHeader.writeUInt16LE(20, 4)           // version made by
+  centralHeader.writeUInt16LE(20, 6)           // version needed
+  centralHeader.writeUInt16LE(0, 8)            // flags
+  centralHeader.writeUInt16LE(8, 10)           // compression
+  centralHeader.writeUInt16LE(dosTime, 12)
+  centralHeader.writeUInt16LE(dosDate, 14)
+  centralHeader.writeUInt32LE(crc, 16)
+  centralHeader.writeUInt32LE(compressed.length, 20)
+  centralHeader.writeUInt32LE(data.length, 24)
+  centralHeader.writeUInt16LE(nameBytes.length, 28)
+  centralHeader.writeUInt16LE(0, 30)           // extra field length
+  centralHeader.writeUInt16LE(0, 32)           // comment length
+  centralHeader.writeUInt16LE(0, 34)           // disk number start
+  centralHeader.writeUInt16LE(0, 36)           // internal attrs
+  centralHeader.writeUInt32LE(0, 38)           // external attrs
+  centralHeader.writeUInt32LE(0, 42)           // local header offset
+  nameBytes.copy(centralHeader, 46)
+
+  const centralDirOffset = localHeader.length + compressed.length
+
+  // End of central directory
+  const eocd = Buffer.alloc(22)
+  eocd.writeUInt32LE(0x06054b50, 0)
+  eocd.writeUInt16LE(0, 4)   // disk number
+  eocd.writeUInt16LE(0, 6)   // disk with central dir
+  eocd.writeUInt16LE(1, 8)   // entries on this disk
+  eocd.writeUInt16LE(1, 10)  // total entries
+  eocd.writeUInt32LE(centralHeader.length, 12)
+  eocd.writeUInt32LE(centralDirOffset, 16)
+  eocd.writeUInt16LE(0, 20)  // comment length
+
+  writeFileSync(filePath, Buffer.concat([localHeader, compressed, centralHeader, eocd]))
+}
+
+// CRC-32 (standard polynomial)
+function crc32(buf: Buffer): number {
+  let crc = 0xFFFFFFFF
+  for (let i = 0; i < buf.length; i++) {
+    crc ^= buf[i]
+    for (let j = 0; j < 8; j++) {
+      crc = (crc >>> 1) ^ (crc & 1 ? 0xEDB88320 : 0)
+    }
+  }
+  return (crc ^ 0xFFFFFFFF) >>> 0
+}
+
+// ── Export summary ────────────────────────────────────────────────────────────
+
+export interface ExportSummary {
+  sessions: number
+  events: number
+  clubs: number
+  athletes: number
+  results: number
+}
+
+// ── Main export function ──────────────────────────────────────────────────────
+
+export function exportLenexResults(filePath: string, db: Database.Database): ExportSummary {
+  const summary: ExportSummary = { sessions: 0, events: 0, clubs: 0, athletes: 0, results: 0 }
+
+  // ── Read meet metadata from bsglobal ────────────────────────────────────────
+  const globals = db.prepare(`SELECT name, data FROM bsglobal`).all() as Array<{ name: string; data: string | null }>
+  const g: Record<string, string> = {}
+  for (const row of globals) g[row.name] = row.data ?? ''
+
+  const meetName = g['MeetName'] || 'Meet'
+  const meetCity = g['MeetCity'] || ''
+  const meetNation = g['MeetNation'] || ''
+  const meetCourse = decodeCourse(parseInt(g['MeetCourse'] || '1', 10))
+
+  // ── Sessions ────────────────────────────────────────────────────────────────
+  const sessions = db.prepare(
+    `SELECT swimsessionid, sessionnumber, name, course FROM swimsession ORDER BY sessionnumber`
+  ).all() as Array<{ swimsessionid: number; sessionnumber: number; name: string | null; course: number | null }>
+
+  // ── Events (skip internal/break events) ─────────────────────────────────────
+  const events = db.prepare(
+    `SELECT e.swimeventid, e.swimsessionid, e.eventnumber, e.gender, e.round, e.roundname,
+            e.sortcode, e.swimstyleid,
+            s.distance, s.stroke, s.relaycount, s.name AS stylename
+     FROM swimevent e
+     LEFT JOIN swimstyle s ON s.swimstyleid = e.swimstyleid
+     WHERE e.internalevent = 'F'
+     ORDER BY e.sortcode, e.eventnumber`
+  ).all() as Array<{
+    swimeventid: number; swimsessionid: number; eventnumber: number
+    gender: number; round: number; roundname: string | null; sortcode: number
+    swimstyleid: number | null; distance: number | null; stroke: number | null
+    relaycount: number | null; stylename: string | null
+  }>
+
+  // ── Age groups ──────────────────────────────────────────────────────────────
+  const ageGroups = db.prepare(
+    `SELECT agegroupid, swimeventid, name, agemin, agemax, gender FROM agegroup ORDER BY sortcode`
+  ).all() as Array<{
+    agegroupid: number; swimeventid: number; name: string | null
+    agemin: number | null; agemax: number | null; gender: number | null
+  }>
+  const agByEvent = new Map<number, typeof ageGroups>()
+  for (const ag of ageGroups) {
+    const list = agByEvent.get(ag.swimeventid) ?? []
+    list.push(ag)
+    agByEvent.set(ag.swimeventid, list)
+  }
+
+  // ── Heats ───────────────────────────────────────────────────────────────────
+  const heats = db.prepare(
+    `SELECT heatid, swimeventid, heatnumber, racestatus FROM heat ORDER BY sortcode, heatnumber`
+  ).all() as Array<{ heatid: number; swimeventid: number; heatnumber: number; racestatus: number | null }>
+  const heatsByEvent = new Map<number, typeof heats>()
+  for (const h of heats) {
+    const list = heatsByEvent.get(h.swimeventid) ?? []
+    list.push(h)
+    heatsByEvent.set(h.swimeventid, list)
+  }
+
+  // ── Results with athlete + club info ────────────────────────────────────────
+  const results = db.prepare(
+    `SELECT r.swimresultid, r.athleteid, r.swimeventid, r.agegroupid,
+            r.heatid, r.lane, r.swimtime, r.reactiontime, r.resultstatus,
+            a.firstname, a.lastname, a.birthdate, a.gender AS athgender,
+            a.nation AS athnation, a.license, a.clubid
+     FROM swimresult r
+     JOIN athlete a ON a.athleteid = r.athleteid
+     WHERE r.swimtime IS NOT NULL OR r.resultstatus IS NOT NULL
+     ORDER BY r.swimeventid, r.heatid, r.lane`
+  ).all() as Array<{
+    swimresultid: number; athleteid: number; swimeventid: number; agegroupid: number | null
+    heatid: number | null; lane: number | null; swimtime: number | null
+    reactiontime: number | null; resultstatus: number | null
+    firstname: string | null; lastname: string | null; birthdate: string | null
+    athgender: number | null; athnation: string | null; license: string | null
+    clubid: number | null
+  }>
+
+  // ── Splits ──────────────────────────────────────────────────────────────────
+  const splits = db.prepare(
+    `SELECT swimresultid, distance, swimtime FROM split ORDER BY swimresultid, distance`
+  ).all() as Array<{ swimresultid: number; distance: number; swimtime: number | null }>
+  const splitsByResult = new Map<number, typeof splits>()
+  for (const sp of splits) {
+    const list = splitsByResult.get(sp.swimresultid) ?? []
+    list.push(sp)
+    splitsByResult.set(sp.swimresultid, list)
+  }
+
+  // ── Clubs ───────────────────────────────────────────────────────────────────
+  const clubs = db.prepare(
+    `SELECT clubid, code, name, nation FROM club ORDER BY clubid`
+  ).all() as Array<{ clubid: number; code: string | null; name: string | null; nation: string | null }>
+
+  // Build club map and determine which clubs have results
+  const clubMap = new Map<number, typeof clubs[0]>()
+  for (const c of clubs) clubMap.set(c.clubid, c)
+
+  // Group results by club → athlete
+  const athleteResults = new Map<number, typeof results>()
+  const clubsWithResults = new Set<number>()
+  const athletesWithResults = new Set<number>()
+  for (const r of results) {
+    const list = athleteResults.get(r.athleteid) ?? []
+    list.push(r)
+    athleteResults.set(r.athleteid, list)
+    athletesWithResults.add(r.athleteid)
+    if (r.clubid) clubsWithResults.add(r.clubid)
+  }
+
+  // Athletes grouped by club
+  const athletesByClub = new Map<number, Array<{ athleteid: number; firstname: string; lastname: string; birthdate: string | null; gender: number; nation: string | null; license: string | null }>>()
+  for (const r of results) {
+    if (!r.clubid) continue
+    if (!athletesByClub.has(r.clubid)) athletesByClub.set(r.clubid, [])
+    const list = athletesByClub.get(r.clubid)!
+    if (!list.find(a => a.athleteid === r.athleteid)) {
+      list.push({
+        athleteid: r.athleteid,
+        firstname: r.firstname ?? '',
+        lastname: r.lastname ?? '',
+        birthdate: r.birthdate,
+        gender: r.athgender ?? 3,
+        nation: r.athnation,
+        license: r.license,
+      })
+    }
+  }
+
+  // ── Build XML ───────────────────────────────────────────────────────────────
+  const lines: string[] = []
+  lines.push('<?xml version="1.0" encoding="UTF-8"?>')
+  lines.push('<LENEX version="3.0">')
+  lines.push('  <MEETS>')
+  lines.push(`    <MEET${attr('name', meetName)}${attr('city', meetCity)}${attr('nation', meetNation)}${attr('course', meetCourse)}>`)
+
+  // Sessions + Events + AgeGroups + Heats
+  lines.push('      <SESSIONS>')
+  for (const sess of sessions) {
+    lines.push(`        <SESSION${attr('number', sess.sessionnumber)}${attr('name', sess.name)}${attr('course', decodeCourse(sess.course))}>`)
+    lines.push('          <EVENTS>')
+
+    const sessEvents = events.filter(e => e.swimsessionid === sess.swimsessionid)
+    for (const ev of sessEvents) {
+      lines.push(`            <EVENT${attr('eventid', ev.swimeventid)}${attr('number', ev.eventnumber)}${attr('gender', decodeGender(ev.gender))}${attr('round', decodeRound(ev.round))}${attr('order', ev.sortcode)}>`)
+
+      // SWIMSTYLE
+      if (ev.swimstyleid) {
+        lines.push(`              <SWIMSTYLE${attr('swimstyleid', ev.swimstyleid)}${attr('distance', ev.distance)}${attr('stroke', decodeStroke(ev.stroke))}${attr('relaycount', ev.relaycount ?? 1)}${attr('name', ev.stylename)} />`)
+      }
+
+      // AGEGROUPS
+      const evAgs = agByEvent.get(ev.swimeventid)
+      if (evAgs && evAgs.length > 0) {
+        lines.push('              <AGEGROUPS>')
+        for (const ag of evAgs) {
+          lines.push(`                <AGEGROUP${attr('agegroupid', ag.agegroupid)}${attr('name', ag.name)}${attr('agemin', ag.agemin)}${attr('agemax', ag.agemax)}${attr('gender', decodeGender(ag.gender))} />`)
+        }
+        lines.push('              </AGEGROUPS>')
+      }
+
+      // HEATS
+      const evHeats = heatsByEvent.get(ev.swimeventid)
+      if (evHeats && evHeats.length > 0) {
+        lines.push('              <HEATS>')
+        for (const h of evHeats) {
+          const heatStatus = h.racestatus && h.racestatus >= 8 ? 'OFFICIAL' : h.racestatus === 4 ? 'SEEDED' : undefined
+          lines.push(`                <HEAT${attr('heatid', h.heatid)}${attr('number', h.heatnumber)}${attr('status', heatStatus)} />`)
+        }
+        lines.push('              </HEATS>')
+      }
+
+      lines.push('            </EVENT>')
+      summary.events++
+    }
+
+    lines.push('          </EVENTS>')
+    lines.push('        </SESSION>')
+    summary.sessions++
+  }
+  lines.push('      </SESSIONS>')
+
+  // Clubs + Athletes + Results
+  lines.push('      <CLUBS>')
+  for (const [clubId, athletes] of athletesByClub) {
+    const club = clubMap.get(clubId)
+    if (!club) continue
+    lines.push(`        <CLUB${attr('clubid', clubId)}${attr('code', club.code)}${attr('name', club.name)}${attr('nation', club.nation)}>`)
+    lines.push('          <ATHLETES>')
+
+    for (const ath of athletes) {
+      lines.push(`            <ATHLETE${attr('athleteid', ath.athleteid)}${attr('firstname', ath.firstname)}${attr('lastname', ath.lastname)}${attr('birthdate', ath.birthdate)}${attr('gender', decodeGender(ath.gender))}${attr('nation', ath.nation)}${attr('license', ath.license)}>`)
+      lines.push('              <RESULTS>')
+
+      const athResults = athleteResults.get(ath.athleteid) ?? []
+      for (const r of athResults) {
+        const timeStr = msToLenexTime(r.swimtime)
+        const status = decodeResultStatus(r.resultstatus)
+        const rtStr = r.reactiontime != null ? msToLenexTime(r.reactiontime) : null
+        lines.push(`                <RESULT${attr('resultid', r.swimresultid)}${attr('eventid', r.swimeventid)}${attr('heatid', r.heatid)}${attr('lane', r.lane)}${attr('swimtime', timeStr)}${attr('reactiontime', rtStr)}${attr('status', status)}>`)
+
+        // Splits
+        const resSplits = splitsByResult.get(r.swimresultid)
+        if (resSplits && resSplits.length > 0) {
+          lines.push('                  <SPLITS>')
+          for (const sp of resSplits) {
+            const spTime = msToLenexTime(sp.swimtime)
+            if (spTime) {
+              lines.push(`                    <SPLIT${attr('distance', sp.distance)}${attr('swimtime', spTime)} />`)
+            }
+          }
+          lines.push('                  </SPLITS>')
+        }
+
+        lines.push('                </RESULT>')
+        summary.results++
+      }
+
+      lines.push('              </RESULTS>')
+      lines.push('            </ATHLETE>')
+      summary.athletes++
+    }
+
+    lines.push('          </ATHLETES>')
+    lines.push('        </CLUB>')
+    summary.clubs++
+  }
+  lines.push('      </CLUBS>')
+
+  lines.push('    </MEET>')
+  lines.push('  </MEETS>')
+  lines.push('</LENEX>')
+
+  const xml = lines.join('\n')
+  writeZipSingleEntry(filePath, 'results.lef', xml)
 
   return summary
 }

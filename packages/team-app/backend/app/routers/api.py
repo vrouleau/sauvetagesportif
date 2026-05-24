@@ -2042,6 +2042,29 @@ def export_meet_smb():
     )
 
 
+@router.get("/export/meet-lxf", dependencies=[Depends(require_organizer_or_admin)])
+def export_meet_lxf():
+    """Download the stored meet .lxf file (the meet structure)."""
+    if not MEET_STORAGE.exists():
+        raise HTTPException(404, "No meet .lxf available")
+    return Response(
+        content=MEET_STORAGE.read_bytes(),
+        media_type="application/zip",
+        headers={"Content-Disposition": "attachment; filename=meet.lxf"},
+    )
+
+
+@router.get("/export/registrations-lxf", dependencies=[Depends(require_organizer_or_admin)])
+def export_registrations_lxf(db: Session = Depends(get_db)):
+    """Download registrations as a Lenex .lxf (entries file for import into meet-app)."""
+    data = generate_lxf(db)
+    return Response(
+        content=data,
+        media_type="application/zip",
+        headers={"Content-Disposition": "attachment; filename=inscriptions.lxf"},
+    )
+
+
 # ---------------------------------------------------------------------------
 # Data management
 # ---------------------------------------------------------------------------
