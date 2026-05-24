@@ -21,7 +21,7 @@ import SelfInvite from './pages/SelfInvite'
 import BestTimesPublic from './pages/BestTimesPublic'
 import Workflow from './pages/Workflow'
 import Footer from './Footer'
-import logoSrc from './logo.png'
+import logoSrc from '@shared/assets/icon.png'
 
 // Wrap the shared EventsPage with its required providers
 function EventsPage() {

@@ -11,6 +11,7 @@
     "./components/*": "./src/components/*",
     "./context/*": "./src/context/*",
     "./data/*": "./src/data/*",
+    "./assets/*": "./src/assets/*",
     "./i18n": "./src/i18n.ts"
   },
   "peerDependencies": {

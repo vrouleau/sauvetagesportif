@@ -10,7 +10,7 @@ import { DbConfigDialog } from './components/DbConfigDialog'
 import { GeminiKeyDialog } from './components/GeminiKeyDialog'
 import { competition } from './data/mockData'
 import { LangProvider, useLang } from '@shared/context/LangContext'
-import logoSrc from './assets/logo.png'
+import logoSrc from '@shared/assets/icon.png'
 
 type Page = 'events' | 'inscription' | 'finals' | 'heats' | 'report' | 'scan' | 'process'
 
