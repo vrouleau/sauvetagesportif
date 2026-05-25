@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useLang } from '../i18n'
@@ -13,6 +13,7 @@ export default function Workflow() {
   const { lang } = useLang()
   const [content, setContent] = useState('')
   const [activeDoc, setActiveDoc] = useState('team-admin')
+  const scrollRef = useRef(null)
 
   useEffect(() => {
     fetch(`/docs/${activeDoc}_${lang}.md`)
@@ -30,11 +31,12 @@ export default function Workflow() {
     if (href && DOCS.some(d => d.id === href)) {
       e.preventDefault()
       setActiveDoc(href)
-      window.scrollTo(0, 0)
+      scrollRef.current?.scrollTo(0, 0)
     }
   }
 
   return (
+    <div ref={scrollRef} className="h-full overflow-y-auto">
     <div className="max-w-5xl mx-auto p-6">
       {/* Doc navigation tabs */}
       <div className="flex gap-1 mb-6 border-b border-gray-200">
@@ -73,8 +75,16 @@ export default function Workflow() {
         [&_strong]:font-semibold
         [&_a]:text-blue-600 [&_a]:underline [&_a]:cursor-pointer
       ">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          components={{
+            img: ({ src, alt, ...props }) => (
+              <img src={src?.startsWith('http') ? src : `/docs/${src}`} alt={alt} {...props} />
+            ),
+          }}
+        >{content}</ReactMarkdown>
       </div>
+    </div>
     </div>
   )
 }
