@@ -2071,14 +2071,20 @@ def export_registrations_lxf(db: Session = Depends(get_db)):
 
 @router.get("/data-management/styles", dependencies=[Depends(require_admin)])
 def get_styles(db: Session = Depends(get_db)):
-    """List all unique style_uids present in best_times with display names."""
+    """List all unique style_uids from meet events and best_times."""
     import json as _json
     cfg = db.query(BsGlobal).get("style_names_json")
     imported_names: dict[int, str] = {int(k): v for k, v in _json.loads(cfg.data).items()} if cfg and cfg.data else {}
 
-    # Collect all style_uids from bsglobal bt_* entries
-    bt_entries = db.query(BsGlobal).filter(BsGlobal.name.like("bt_%")).all()
     all_uids: set[int] = set()
+
+    # Styles used in the current meet's events
+    for (uid,) in db.query(SwimEvent.swimstyleid).distinct().all():
+        if uid is not None:
+            all_uids.add(int(uid))
+
+    # Styles referenced in best_times entries
+    bt_entries = db.query(BsGlobal).filter(BsGlobal.name.like("bt_%")).all()
     for entry in bt_entries:
         try:
             data = _json.loads(entry.data)
