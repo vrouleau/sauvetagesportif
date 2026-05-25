@@ -19,8 +19,9 @@ const quantumApi = () => (window as any).api?.quantum
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const dbApi = () => (window as any).api?.db
 
-export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
-  const { t } = useLang()
+export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refreshKey?: number; meetType?: string }) {
+  const { t, lang } = useLang()
+  const isBeach = meetType === 'BEACH'
 
   const [sessions, setSessions] = useState<HeatListSession[]>([])
   const [heatData, setHeatData] = useState<HeatState>({})
@@ -56,6 +57,7 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
   // Drag state
   const [dragSource, setDragSource] = useState<{ heatId: number; lane: number; entry: LaneEntry } | null>(null)
   const [dragOverLane, setDragOverLane] = useState<number | null>(null)
+  const dragHoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Derived flat list of all events (for Quantum schedule)
   const heatListEvents: HeatListEvent[] = sessions.flatMap(s => s.events)
@@ -281,6 +283,13 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
     const trimmed = raw.trim()
     if (!trimmed) return null
 
+    // Beach mode: validate as integer position (1, 2, 3, ...)
+    if (isBeach) {
+      const n = parseInt(trimmed, 10)
+      if (isNaN(n) || n < 1 || String(n) !== trimmed) return null
+      return String(n)
+    }
+
     // Split by spaces or commas to detect multiple times
     const parts = trimmed.split(/[\s,]+/).filter(Boolean)
 
@@ -311,11 +320,74 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
     if (!entry) return
     setSelectedLane(lane)
     setEditingLane(lane)
-    setEditValue(entry.finalTime ?? '')
+
+    if (isBeach) {
+      // Pre-fill with next available position if cell is empty
+      if (!entry.finalTime) {
+        const usedPositions = entries
+          .filter(e => e.finalTime && !e.status)
+          .map(e => parseInt(e.finalTime!, 10))
+          .filter(n => !isNaN(n))
+        const nextPos = usedPositions.length > 0 ? Math.max(...usedPositions) + 1 : 1
+        setEditValue(String(nextPos))
+      } else {
+        setEditValue(entry.finalTime)
+      }
+    } else {
+      setEditValue(entry.finalTime ?? '')
+    }
   }
 
   function saveEdit(lane: number) {
     const parsed = parseTimeInput(editValue)
+
+    // Beach validation: swap on duplicate, no gaps in final sequence
+    if (isBeach && parsed) {
+      const pos = parseInt(parsed, 10)
+      const currentEntry = entries.find(e => e.lane === lane)
+      const hadPosition = currentEntry?.finalTime && !currentEntry?.status
+      const otherEntries = entries.filter(e => e.lane !== lane && e.finalTime && !e.status)
+      const otherPositions = otherEntries.map(e => ({ lane: e.lane, pos: parseInt(e.finalTime!, 10) })).filter(p => !isNaN(p.pos))
+
+      // Max allowed = number of athletes that will have a position after this edit
+      const totalWithPosition = otherPositions.length + 1 // others + this one
+      if (pos > totalWithPosition) {
+        setEditingLane(null)
+        return
+      }
+
+      // Duplicate? Swap positions
+      const conflict = otherPositions.find(p => p.pos === pos)
+      if (conflict) {
+        const currentEntry = entries.find(e => e.lane === lane)
+        const currentPos = currentEntry?.finalTime ?? null
+        // Swap: give the conflicting athlete our old position (or clear if we had none)
+        setHeatData((prev) => {
+          if (selectedHeatId === null) return prev
+          const updated = (prev[selectedHeatId] ?? []).map((e) => {
+            if (e.lane === lane) {
+              const next: LaneEntry = { ...e, finalTime: parsed || undefined, status: null }
+              if (next.swimresultId) {
+                dbApi()?.saveResult(next.swimresultId, next.finalTime, null, null, next.splitTimes).catch(console.error)
+              }
+              return next
+            }
+            if (e.lane === conflict.lane) {
+              const next: LaneEntry = { ...e, finalTime: currentPos || undefined, status: null }
+              if (next.swimresultId) {
+                dbApi()?.saveResult(next.swimresultId, next.finalTime, null, null, next.splitTimes).catch(console.error)
+              }
+              return next
+            }
+            return e
+          })
+          return { ...prev, [selectedHeatId]: updated }
+        })
+        setEditingLane(null)
+        return
+      }
+    }
+
     setHeatData((prev) => {
       if (selectedHeatId === null) return prev
       const updated = (prev[selectedHeatId] ?? []).map((e) => {
@@ -457,6 +529,37 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
     setDragOverLane(null)
   }
 
+  const dragHoverHeatRef = useRef<number | null>(null)
+
+  function handleHeatRowDragOver(e: React.DragEvent, heatId: number) {
+    if (!dragSource) return
+    if (dragSource.heatId === heatId) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    // Only start timer if this is a new heat we're hovering
+    if (dragHoverHeatRef.current !== heatId) {
+      dragHoverHeatRef.current = heatId
+      if (dragHoverTimerRef.current) clearTimeout(dragHoverTimerRef.current)
+      dragHoverTimerRef.current = setTimeout(() => {
+        setSelectedHeatId(heatId)
+        setSelectedEventId(null)
+        setSelectedSessionId(null)
+        setEditingLane(null)
+      }, 500)
+    }
+  }
+
+  function handleHeatRowDragLeave(e: React.DragEvent, heatId: number) {
+    // Only cancel if we truly left the row (not entering a child element)
+    const related = e.relatedTarget as HTMLElement | null
+    const current = e.currentTarget as HTMLElement
+    if (related && current.contains(related)) return
+    if (dragHoverHeatRef.current === heatId) {
+      dragHoverHeatRef.current = null
+      if (dragHoverTimerRef.current) clearTimeout(dragHoverTimerRef.current)
+    }
+  }
+
   async function handleDrop(e: React.DragEvent, targetHeatId: number, targetLane: number, targetEntry: LaneEntry | null) {
     e.preventDefault()
     setDragOverLane(null)
@@ -515,67 +618,36 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
   function handleDragEnd() {
     setDragSource(null)
     setDragOverLane(null)
-  }
-
-  async function handleDropOnHeat(targetHeatId: number, heatLaneMin: number, heatLaneMax: number) {
-    if (!dragSource) return
-    const api = dbApi()
-    if (!api) return
-
-    const { heatId: srcHeatId, entry: srcEntry } = dragSource
-
-    // Don't drop on same heat
-    if (srcHeatId === targetHeatId) {
-      setDragSource(null)
-      return
-    }
-
-    // Find best available lane (center-out)
-    const occupiedLanes = new Set((heatData[targetHeatId] ?? []).map((e) => e.lane))
-    const laneOrder = generateCenterOutOrder(heatLaneMin, heatLaneMax)
-    const targetLane = laneOrder.find((l) => !occupiedLanes.has(l))
-
-    if (targetLane == null) {
-      // No empty lane available
-      setDragSource(null)
-      return
-    }
-
-    await api.assignToHeatLane(srcEntry.swimresultId, targetHeatId, targetLane)
-    setHeatData((prev) => {
-      const next = { ...prev }
-      // Remove from source heat
-      next[srcHeatId] = (next[srcHeatId] ?? []).filter((e) => e.swimresultId !== srcEntry.swimresultId)
-      // Add to target heat
-      next[targetHeatId] = [...(next[targetHeatId] ?? []), { ...srcEntry, lane: targetLane }]
-      return next
-    })
-    setDragSource(null)
-  }
-
-  function generateCenterOutOrder(min: number, max: number): number[] {
-    const count = max - min + 1
-    const center = Math.floor(count / 2)
-    const order: number[] = []
-    order.push(min + center)
-    for (let offset = 1; order.length < count; offset++) {
-      const right = min + center + offset
-      const left = min + center - offset
-      if (right <= max) order.push(right)
-      if (left >= min) order.push(left)
-    }
-    return order
+    dragHoverHeatRef.current = null
+    if (dragHoverTimerRef.current) clearTimeout(dragHoverTimerRef.current)
   }
 
   // ── Generate heats handler ──────────────────────────────────────────────────
 
-  async function handleGenerateHeats() {
-    if (!window.confirm(t.heats.generateHeatsConfirm)) return
+  const [generateMenuOpen, setGenerateMenuOpen] = useState(false)
+
+  async function handleGenerateHeats(scope: 'all' | 'session' | 'event') {
+    setGenerateMenuOpen(false)
+    let confirmMsg = t.heats.generateHeatsConfirm
+    let eventId: number | undefined
+    let sessionId: number | undefined
+
+    if (scope === 'event') {
+      const evId = selectedEventId || selectedEvent?.id
+      if (!evId) return
+      eventId = evId
+    } else if (scope === 'session') {
+      const sessId = selectedSessionId || selectedSession?.id
+      if (!sessId) return
+      sessionId = sessId
+    }
+
+    if (!window.confirm(confirmMsg)) return
     setGenerating(true)
     try {
       const api = dbApi()
       if (!api) return
-      const result = await api.generateHeats()
+      const result = await api.generateHeats(eventId, sessionId)
       // Reload heat data
       const sess = await api.getHeatListSessions() as HeatListSession[]
       setSessions(sess)
@@ -792,13 +864,42 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
             Invalider
           </button>
           <div className="w-px h-4 bg-gray-300" />
-          <button
-            onClick={handleGenerateHeats}
-            disabled={generating}
-            className="border border-gray-400 bg-white hover:bg-blue-50 disabled:opacity-50 disabled:cursor-default px-2 py-0.5 text-xs font-medium text-blue-700"
-          >
-            {generating ? '…' : t.heats.generateHeats}
-          </button>
+          <div className="relative">
+            <button
+              onClick={() => setGenerateMenuOpen(!generateMenuOpen)}
+              disabled={generating}
+              className="border border-gray-400 bg-white hover:bg-blue-50 disabled:opacity-50 disabled:cursor-default px-2 py-0.5 text-xs font-medium text-blue-700"
+            >
+              {generating ? '…' : t.heats.generateHeats} ▾
+            </button>
+            {generateMenuOpen && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setGenerateMenuOpen(false)} />
+                <div className="absolute top-full left-0 mt-0.5 bg-white border border-gray-300 shadow-lg z-50 text-xs w-48">
+                  <button
+                    onClick={() => handleGenerateHeats('all')}
+                    className="w-full text-left px-3 py-1.5 hover:bg-blue-50"
+                  >
+                    {lang === 'fr' ? 'Toutes les épreuves' : 'All events'}
+                  </button>
+                  <button
+                    onClick={() => handleGenerateHeats('session')}
+                    disabled={!selectedSessionId && !selectedSession}
+                    className="w-full text-left px-3 py-1.5 hover:bg-blue-50 disabled:opacity-40 disabled:cursor-default"
+                  >
+                    {lang === 'fr' ? 'Session sélectionnée' : 'Selected session'}
+                  </button>
+                  <button
+                    onClick={() => handleGenerateHeats('event')}
+                    disabled={!selectedEventId && !selectedEvent}
+                    className="w-full text-left px-3 py-1.5 hover:bg-blue-50 disabled:opacity-40 disabled:cursor-default"
+                  >
+                    {lang === 'fr' ? 'Épreuve sélectionnée' : 'Selected event'}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
           <button
             onClick={handlePrintTimingSheets}
             className="border border-gray-400 bg-white hover:bg-purple-50 px-2 py-0.5 text-xs font-medium text-purple-700"
@@ -960,21 +1061,11 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
                               <tr
                                 key={`h-${heat.id}`}
                                 className={`border-b border-gray-100 cursor-pointer select-none ${
-                                  isHeatSelected ? 'bg-blue-600 text-white' : dragSource ? 'bg-gray-50 hover:bg-green-100' : 'bg-gray-50 hover:bg-blue-100'
+                                  isHeatSelected ? 'bg-blue-600 text-white' : dragSource && dragSource.heatId !== heat.id ? 'bg-gray-50 hover:bg-green-100' : 'bg-gray-50 hover:bg-blue-100'
                                 }`}
                                 onClick={() => { setSelectedHeatId(heat.id); setSelectedEventId(null); setSelectedSessionId(null); setEditingLane(null) }}
-                                onDragOver={(e) => {
-                                  if (dragSource) {
-                                    e.preventDefault()
-                                    e.dataTransfer.dropEffect = 'move'
-                                  }
-                                }}
-                                onDrop={(e) => {
-                                  if (dragSource) {
-                                    e.preventDefault()
-                                    handleDropOnHeat(heat.id, session.laneMin, session.laneMax)
-                                  }
-                                }}
+                                onDragOver={(e) => handleHeatRowDragOver(e, heat.id)}
+                                onDragLeave={(e) => handleHeatRowDragLeave(e, heat.id)}
                               >
                                 <td className="px-2 py-0.5 pl-10">
                                   <svg className="w-3 h-3 inline text-gray-400" fill="currentColor" viewBox="0 0 20 20">
@@ -1044,16 +1135,16 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
               <table className="w-full border-collapse heat-table">
                 <thead className="sticky top-0 z-10">
                   <tr className="bg-gray-100 border-b border-gray-400 text-gray-600">
-                    <th className="px-2 py-0.5 text-center w-8 font-medium border-r border-gray-300">{t.heats.columns.lane}</th>
+                    <th className="px-2 py-0.5 text-center w-8 font-medium border-r border-gray-300">{isBeach ? '#' : t.heats.columns.lane}</th>
                     <th className="px-2 py-0.5 text-left font-medium border-r border-gray-300 min-w-[160px]">{t.heats.columns.name}</th>
                     <th className="px-2 py-0.5 text-center w-10 font-medium border-r border-gray-300">{t.heats.columns.nation}</th>
                     <th className="px-2 py-0.5 text-center w-14 font-medium border-r border-gray-300">{t.heats.columns.clubCode}</th>
                     <th className="px-2 py-0.5 text-left font-medium border-r border-gray-300 min-w-[150px]">{t.heats.columns.clubName}</th>
                     <th className="px-2 py-0.5 text-center w-14 font-medium border-r border-gray-300">{t.heats.columns.category}</th>
-                    <th className="px-2 py-0.5 text-center w-20 font-medium border-r border-gray-300">{selectedEvent?.phase === 'Finale' ? t.heats.columns.prelimTime : t.heats.columns.seedTime}</th>
-                    <th className="px-2 py-0.5 text-center w-24 font-medium border-r border-gray-300">{t.heats.columns.splitTime}</th>
-                    <th className="px-2 py-0.5 text-center w-24 font-medium border-r border-gray-300 bg-blue-50">{t.heats.columns.finalTime}</th>
-                    <th className="px-2 py-0.5 text-center w-8 font-medium border-r border-gray-300">{t.heats.columns.rank}</th>
+                    {!isBeach && <th className="px-2 py-0.5 text-center w-20 font-medium border-r border-gray-300">{selectedEvent?.phase === 'Finale' ? t.heats.columns.prelimTime : t.heats.columns.seedTime}</th>}
+                    {!isBeach && <th className="px-2 py-0.5 text-center w-24 font-medium border-r border-gray-300">{t.heats.columns.splitTime}</th>}
+                    <th className="px-2 py-0.5 text-center w-24 font-medium border-r border-gray-300 bg-blue-50">{isBeach ? 'Position' : t.heats.columns.finalTime}</th>
+                    {!isBeach && <th className="px-2 py-0.5 text-center w-8 font-medium border-r border-gray-300">{t.heats.columns.rank}</th>}
                     <th className="px-2 py-0.5 text-center w-16 font-medium">{t.heats.columns.status}</th>
                   </tr>
                 </thead>
@@ -1132,13 +1223,17 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
                         <td className={`px-2 text-center border-r border-gray-200 ${isSelected ? 'text-gray-700' : 'text-gray-600'}`}>
                           {entry.category}
                         </td>
-                        <td className={`px-2 text-center font-mono border-r border-gray-200 ${isSelected ? 'text-gray-600' : 'text-gray-500'}`}>
-                          {entry.entryTime ?? 'NT'}
-                        </td>
-                        <td className={`px-2 text-center font-mono border-r border-gray-200 ${isSelected ? 'text-gray-500' : 'text-gray-400'}`}>
-                          {entry.splitTimes ? Object.values(entry.splitTimes)[0] ?? '—' : '—'}
-                        </td>
-                        {/* Final time — editable */}
+                        {!isBeach && (
+                          <td className={`px-2 text-center font-mono border-r border-gray-200 ${isSelected ? 'text-gray-600' : 'text-gray-500'}`}>
+                            {entry.entryTime ?? 'NT'}
+                          </td>
+                        )}
+                        {!isBeach && (
+                          <td className={`px-2 text-center font-mono border-r border-gray-200 ${isSelected ? 'text-gray-500' : 'text-gray-400'}`}>
+                            {entry.splitTimes ? Object.values(entry.splitTimes)[0] ?? '—' : '—'}
+                          </td>
+                        )}
+                        {/* Final time / Position — editable */}
                         <td
                           className={`px-1 text-center font-mono border-r border-gray-200 ${isSelected && !isEditing ? 'bg-blue-200' : 'bg-blue-50'}`}
                           onClick={(e) => { e.stopPropagation(); startEdit(lane) }}
@@ -1151,7 +1246,7 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
                               onChange={(e) => setEditValue(e.target.value)}
                               onKeyDown={(e) => handleKeyDown(e, lane, maxLane)}
                               onBlur={() => saveEdit(lane)}
-                              placeholder="M:SS.hh"
+                              placeholder={isBeach ? '#' : 'M:SS.hh'}
                             />
                           ) : (
                             <span
@@ -1169,9 +1264,11 @@ export default function HeatsPage({ refreshKey = 0 }: { refreshKey?: number }) {
                             </span>
                           )}
                         </td>
-                        <td className={`px-2 text-center font-bold border-r border-gray-200 ${rank === 1 ? 'text-yellow-600' : 'text-gray-600'}`}>
-                          {rank ?? ''}
-                        </td>
+                        {!isBeach && (
+                          <td className={`px-2 text-center font-bold border-r border-gray-200 ${rank === 1 ? 'text-yellow-600' : 'text-gray-600'}`}>
+                            {rank ?? ''}
+                          </td>
+                        )}
                         <td className="px-1 text-center">
                           <select
                             className={`text-xs border border-gray-300 rounded px-1 ${isSelected ? 'bg-blue-100 border-blue-300' : 'bg-white'}`}

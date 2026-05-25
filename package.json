@@ -1,5 +1,6 @@
 {
   "name": "sauvetagesportif",
+  "version": "0.3.1",
   "private": true,
   "workspaces": [
     "packages/*"
@@ -7,6 +8,7 @@
   "scripts": {
     "dev:meet": "npm run dev -w @meetmgr/meet-app",
     "dev:team": "npm run dev -w @meetmgr/team-app",
-    "build": "npm run build -w @meetmgr/shared-ui && npm run build -w @meetmgr/meet-app && npm run build -w @meetmgr/team-app"
+    "build": "npm run build -w @meetmgr/shared-ui && npm run build -w @meetmgr/meet-app && npm run build -w @meetmgr/team-app",
+    "release": "node scripts/release.js"
   }
 }

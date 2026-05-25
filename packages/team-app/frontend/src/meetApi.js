@@ -60,4 +60,32 @@ export const meetApiHttp = {
       return r.data || []
     } catch { return [] }
   },
+
+  async importMeet() {
+    // Create a file input, let user pick a .lxf, upload it
+    return new Promise((resolve) => {
+      const input = document.createElement('input')
+      input.type = 'file'
+      input.accept = '.lxf'
+      input.onchange = async (e) => {
+        const file = e.target.files?.[0]
+        if (!file) { resolve({ ok: false }); return }
+        const fd = new FormData()
+        fd.append('file', file)
+        try {
+          const r = await api.post('/upload/meet', fd)
+          resolve({ ok: true, events: r.data.events_loaded })
+        } catch (err) {
+          resolve({ ok: false, error: err.response?.data?.detail || err.message || 'Error' })
+        }
+      }
+      input.oncancel = () => resolve({ ok: false })
+      input.click()
+    })
+  },
+
+  async exportMeet() {
+    window.open('/api/export/meet-lxf', '_blank')
+    return { ok: true }
+  },
 }

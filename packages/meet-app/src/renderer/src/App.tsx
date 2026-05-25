@@ -6,11 +6,12 @@ import FinalsPage from './pages/FinalsPage'
 import ReportPage from './pages/ReportPage'
 import TimingScanPage from './pages/TimingScanPage'
 import TimingProcessPage from './pages/TimingProcessPage'
+import GuidePage from './pages/GuidePage'
 import { DbConfigDialog } from './components/DbConfigDialog'
 import { GeminiKeyDialog } from './components/GeminiKeyDialog'
 import { competition } from './data/mockData'
 import { LangProvider, useLang } from '@shared/context/LangContext'
-import logoSrc from './assets/logo.png'
+import logoSrc from '@shared/assets/icon.png'
 
 type Page = 'events' | 'inscription' | 'finals' | 'heats' | 'report' | 'scan' | 'process'
 
@@ -18,6 +19,11 @@ interface ImportSummary {
   sessions: number; events: number; ageGroups: number
   heats: number; clubs: number; athletes: number; results: number
   errors: string[]
+}
+
+interface ExportSummary {
+  sessions: number; events: number
+  clubs: number; athletes: number; results: number
 }
 
 interface ImportState {
@@ -32,9 +38,10 @@ function fileApi() {
       file?: {
         openLxfDialog: () => Promise<string | null>
         importLenex: (path: string) => Promise<{ ok: boolean; summary?: ImportSummary; error?: string }>
+        exportLenexResults: () => Promise<{ ok: boolean; canceled?: boolean; summary?: ExportSummary; error?: string }>
         saveSMB: () => Promise<{ ok: boolean; canceled?: boolean; tables?: number; rows?: number; error?: string }>
         restoreSMB: () => Promise<{ ok: boolean; canceled?: boolean; tables?: number; rows?: number; error?: string }>
-        newMeet: () => Promise<{ ok: boolean; summary?: ImportSummary; error?: string }>
+        newMeet: (meetType?: string) => Promise<{ ok: boolean; summary?: ImportSummary; meetType?: string; error?: string }>
       }
     }
   }).api?.file ?? null
@@ -46,6 +53,7 @@ function dbApi() {
       db?: {
         syncUp: () => Promise<{ ok: boolean; tablesCreated?: string[]; error?: string }>
         flushMeet: () => Promise<{ ok: boolean; error?: string }>
+        getMeetType: () => Promise<string>
       }
     }
   }).api?.db ?? null
@@ -58,12 +66,15 @@ function menuApi() {
     api?: {
       menu?: {
         onConfigureDb: (cb: () => void) => () => void
+        onConfigureGemini: (cb: () => void) => () => void
+        onOpenGuide: (cb: (guideType: string) => void) => () => void
         onSyncDown: (cb: () => void) => () => void
         onSyncUp: (cb: () => void) => () => void
         onImportLenex: (cb: () => void) => () => void
+        onExportLenexResults: (cb: () => void) => () => void
         onSaveSMB: (cb: () => void) => () => void
         onRestoreSMB: (cb: () => void) => () => void
-        onNewMeet: (cb: () => void) => () => void
+        onNewMeet: (cb: (meetType: string) => void) => () => void
       }
     }
   }).api?.menu ?? null
@@ -203,22 +214,95 @@ function SyncUpDialog({
 
 // ─── Flush Confirm Dialog ─────────────────────────────────────────────────────
 
+interface SmbState {
+  status: 'running' | 'done' | 'error'
+  action: 'save' | 'restore'
+  tables?: number
+  rows?: number
+  detail?: string
+  error?: string
+}
+
+function SmbStatusDialog({
+  state,
+  onClose,
+}: {
+  state: SmbState
+  onClose: () => void
+}) {
+  const title = state.action === 'save' ? 'Sauvegarder le meet (.smb)' : 'Restaurer un meet (.smb)'
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="bg-white border border-gray-400 shadow-xl w-[440px] text-xs">
+        <div className="flex items-center justify-between bg-gray-700 text-white px-3 py-2">
+          <span className="font-semibold">{title}</span>
+          {state.status !== 'running' && (
+            <button onClick={onClose} className="hover:text-gray-300 text-lg leading-none">×</button>
+          )}
+        </div>
+
+        <div className="p-5">
+          {state.status === 'running' && (
+            <div className="text-gray-500 italic">
+              {state.action === 'save' ? 'Sauvegarde en cours…' : 'Restauration en cours…'}
+            </div>
+          )}
+          {state.status === 'error' && (
+            <div className="text-red-600">Erreur: {state.error}</div>
+          )}
+          {state.status === 'done' && (
+            <>
+              <div className="font-semibold text-green-700 mb-3">
+                {state.action === 'save' ? 'Meet sauvegardé avec succès' : 'Meet restauré avec succès'}
+              </div>
+              <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs mb-3">
+                <div className="text-gray-500">Tables</div><div className="font-mono">{state.tables}</div>
+                <div className="text-gray-500">Enregistrements</div><div className="font-mono">{state.rows}</div>
+              </div>
+              {state.detail && (
+                <div className="mt-2 text-gray-600 text-xs whitespace-pre-wrap bg-gray-50 border border-gray-200 p-2 max-h-32 overflow-y-auto font-mono">
+                  {state.detail}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        {state.status !== 'running' && (
+          <div className="flex justify-end px-5 py-3 border-t border-gray-200 bg-gray-50">
+            <button
+              onClick={onClose}
+              className="px-4 py-1 bg-blue-600 text-white hover:bg-blue-700 border border-blue-700"
+            >
+              Fermer
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function FlushConfirmDialog({
   onConfirm,
   onClose,
   running,
   error,
+  meetType,
 }: {
   onConfirm: () => void
   onClose: () => void
   running: boolean
   error?: string
+  meetType?: string
 }) {
+  const isBeach = meetType === 'beach'
+  const typeLabel = isBeach ? 'plage' : 'piscine'
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
       <div className="bg-white border border-gray-400 shadow-xl w-[420px] text-xs">
-        <div className="flex items-center justify-between bg-red-700 text-white px-3 py-2">
-          <span className="font-semibold">Créer un nouveau meet</span>
+        <div className={`flex items-center justify-between text-white px-3 py-2 ${isBeach ? 'bg-orange-700' : 'bg-red-700'}`}>
+          <span className="font-semibold">Nouveau meet {typeLabel}</span>
           {!running && (
             <button onClick={onClose} className="hover:text-red-200 text-lg leading-none">×</button>
           )}
@@ -232,7 +316,7 @@ function FlushConfirmDialog({
           ) : (
             <>
               <p className="mb-3 font-semibold text-red-700">
-                Cette action supprimera TOUTES les données du meet et importera le gabarit par défaut:
+                Cette action supprimera TOUTES les données du meet et importera le gabarit {typeLabel}:
               </p>
               <ul className="list-disc ml-5 space-y-0.5 text-gray-700 mb-4">
                 <li>Sessions, épreuves, catégories d'âge, vagues</li>
@@ -264,9 +348,9 @@ function FlushConfirmDialog({
                 </button>
                 <button
                   onClick={onConfirm}
-                  className="px-4 py-1 bg-red-600 text-white hover:bg-red-700 border border-red-700"
+                  className={`px-4 py-1 text-white border ${isBeach ? 'bg-orange-600 hover:bg-orange-700 border-orange-700' : 'bg-red-600 hover:bg-red-700 border-red-700'}`}
                 >
-                  Créer un nouveau meet
+                  Créer meet {typeLabel}
                 </button>
               </>
             )}
@@ -284,10 +368,19 @@ function AppInner() {
   const { lang, setLang, t } = useLang()
   const [showDbConfig, setShowDbConfig] = useState(false)
   const [showGeminiConfig, setShowGeminiConfig] = useState(false)
+  const [showGuide, setShowGuide] = useState<'pool' | 'beach' | null>(null)
   const [importState, setImportState] = useState<ImportState | null>(null)
-  const [flushState, setFlushState] = useState<{ open: boolean; running: boolean; error?: string } | null>(null)
+  const [exportState, setExportState] = useState<{ status: 'done' | 'error'; summary?: ExportSummary; error?: string } | null>(null)
+  const [smbState, setSmbState] = useState<SmbState | null>(null)
+  const [flushState, setFlushState] = useState<{ open: boolean; running: boolean; meetType?: string; error?: string } | null>(null)
   const [syncUpState, setSyncUpState] = useState<SyncUpState | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
+  const [meetType, setMeetType] = useState<string>('POOL')
+
+  // Load meet type on mount and after refresh
+  useEffect(() => {
+    dbApi()?.getMeetType().then((t) => setMeetType(t || 'POOL'))
+  }, [refreshKey])
 
   // Listen for native menu events
   useEffect(() => {
@@ -296,12 +389,14 @@ function AppInner() {
     const cleanups = [
       m.onConfigureDb(() => setShowDbConfig(true)),
       m.onConfigureGemini(() => setShowGeminiConfig(true)),
+      m.onOpenGuide((guideType) => setShowGuide(guideType as 'pool' | 'beach')),
       m.onSyncDown(() => handleRefresh()),
       m.onSyncUp(() => handleSyncUp()),
       m.onImportLenex(() => handleImportLenex()),
+      m.onExportLenexResults(() => handleExportLenexResults()),
       m.onSaveSMB(() => handleSaveSMB()),
       m.onRestoreSMB(() => handleRestoreSMB()),
-      m.onNewMeet(() => setFlushState({ open: true, running: false })),
+      m.onNewMeet((meetType) => setFlushState({ open: true, running: false, meetType: meetType || 'pool' })),
     ]
     return () => { cleanups.forEach((fn) => fn()) }
   }, [])
@@ -317,6 +412,18 @@ function AppInner() {
       setImportState({ status: 'done', summary: result.summary })
     } else {
       setImportState({ status: 'error', error: result.error ?? 'Unknown error' })
+    }
+  }
+
+  async function handleExportLenexResults() {
+    const f = fileApi()
+    if (!f) return
+    const result = await f.exportLenexResults()
+    if (result.canceled) return
+    if (result.ok && result.summary) {
+      setExportState({ status: 'done', summary: result.summary })
+    } else {
+      setExportState({ status: 'error', error: result.error ?? 'Unknown error' })
     }
   }
 
@@ -337,36 +444,49 @@ function AppInner() {
   async function handleSaveSMB() {
     const f = fileApi()
     if (!f) return
+    setSmbState({ status: 'running', action: 'save' })
     const result = await f.saveSMB()
-    if (result.canceled) return
+    if (result.canceled) {
+      setSmbState(null)
+      return
+    }
     if (result.ok) {
-      window.alert(`Meet sauvegardé: ${result.rows} enregistrements dans ${result.tables} tables.`)
+      setSmbState({ status: 'done', action: 'save', tables: result.tables, rows: result.rows })
     } else {
-      window.alert(`Erreur: ${result.error}`)
+      setSmbState({ status: 'error', action: 'save', error: result.error })
     }
   }
 
   async function handleRestoreSMB() {
     const f = fileApi()
     if (!f) return
+    setSmbState({ status: 'running', action: 'restore' })
     const result = await f.restoreSMB()
-    if (result.canceled) return
+    if (result.canceled) {
+      setSmbState(null)
+      return
+    }
     if (result.ok) {
-      window.alert(`Meet restauré: ${result.rows} enregistrements dans ${result.tables} tables.\n\n${(result as { detail?: string }).detail ?? ''}`)
+      setSmbState({
+        status: 'done', action: 'restore',
+        tables: result.tables, rows: result.rows,
+        detail: (result as { detail?: string }).detail,
+      })
       handleRefresh()
     } else {
-      window.alert(`Erreur: ${result.error}`)
+      setSmbState({ status: 'error', action: 'restore', error: result.error })
     }
   }
 
   async function handleFlushConfirm() {
-    setFlushState({ open: true, running: true })
+    const meetType = flushState?.meetType || 'pool'
+    setFlushState({ open: true, running: true, meetType })
     const f = fileApi()
     if (!f) {
-      setFlushState({ open: true, running: false, error: 'File API not available' })
+      setFlushState({ open: true, running: false, error: 'File API not available', meetType })
       return
     }
-    const result = await f.newMeet()
+    const result = await f.newMeet(meetType)
     if (result.ok) {
       setFlushState(null)
       if (result.summary) {
@@ -374,7 +494,7 @@ function AppInner() {
       }
       handleRefresh()
     } else {
-      setFlushState({ open: true, running: false, error: result.error })
+      setFlushState({ open: true, running: false, error: result.error, meetType })
     }
   }
 
@@ -415,7 +535,7 @@ function AppInner() {
 
       {/* Tab bar */}
       <div className="flex h-8 bg-gray-700 shrink-0 border-b border-gray-900">
-        {(['events', 'inscription', 'finals', 'heats', 'report', 'scan', 'process'] as Page[]).map((p) => {
+        {(['events', 'inscription', 'finals', 'heats', 'report', ...(meetType !== 'BEACH' ? ['scan', 'process'] : [])] as Page[]).map((p) => {
           const labels: Record<Page, string> = {
             events: t.nav.events,
             inscription: t.nav.inscription,
@@ -439,14 +559,24 @@ function AppInner() {
             </button>
           )
         })}
+        {meetType === 'BEACH' && (
+          <span className="ml-auto flex items-center px-3 text-xs text-orange-300 font-semibold">
+            🏖 PLAGE
+          </span>
+        )}
+        {meetType === 'POOL' && (
+          <span className="ml-auto flex items-center px-3 text-xs text-blue-300 font-semibold">
+            🏊 PISCINE
+          </span>
+        )}
       </div>
 
       {/* Page content */}
       <div className="flex-1 overflow-hidden">
         {page === 'events' && <EventsPage refreshKey={refreshKey} />}
         {page === 'inscription' && <InscriptionPageWrapper refreshKey={refreshKey} />}
-        {page === 'finals' && <FinalsPage refreshKey={refreshKey} />}
-        {page === 'heats' && <HeatsPage refreshKey={refreshKey} />}
+        {page === 'finals' && <FinalsPage refreshKey={refreshKey} meetType={meetType} />}
+        {page === 'heats' && <HeatsPage refreshKey={refreshKey} meetType={meetType} />}
         {page === 'report' && <ReportPage refreshKey={refreshKey} />}
         {page === 'scan' && <TimingScanPage />}
         {page === 'process' && <TimingProcessPage />}
@@ -455,6 +585,8 @@ function AppInner() {
       {/* Modals */}
       {showDbConfig && <DbConfigDialog onClose={() => setShowDbConfig(false)} />}
       {showGeminiConfig && <GeminiKeyDialog onClose={() => setShowGeminiConfig(false)} />}
+      {showGuide && <GuidePage guideType={showGuide} onClose={() => setShowGuide(null)} />}
+      {smbState && <SmbStatusDialog state={smbState} onClose={() => setSmbState(null)} />}
       {syncUpState && (
         <SyncUpDialog
           state={syncUpState}
@@ -465,6 +597,7 @@ function AppInner() {
         <FlushConfirmDialog
           running={flushState.running}
           error={flushState.error}
+          meetType={flushState.meetType}
           onConfirm={handleFlushConfirm}
           onClose={() => setFlushState(null)}
         />
@@ -477,6 +610,40 @@ function AppInner() {
             handleRefresh()  // auto-refresh after import
           }}
         />
+      )}
+      {exportState && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white border border-gray-400 shadow-xl w-[440px] text-xs">
+            <div className="flex items-center justify-between bg-green-700 text-white px-3 py-2">
+              <span className="font-semibold">Export LENEX Résultats</span>
+              <button onClick={() => setExportState(null)} className="hover:text-green-200 text-lg leading-none">×</button>
+            </div>
+            <div className="p-5">
+              {exportState.status === 'done' && exportState.summary ? (
+                <div className="space-y-2">
+                  <p className="font-semibold text-green-700">Export réussi !</p>
+                  <ul className="list-disc ml-5 text-gray-700 space-y-0.5">
+                    <li>{exportState.summary.sessions} session(s)</li>
+                    <li>{exportState.summary.events} épreuve(s)</li>
+                    <li>{exportState.summary.clubs} club(s)</li>
+                    <li>{exportState.summary.athletes} athlète(s)</li>
+                    <li>{exportState.summary.results} résultat(s)</li>
+                  </ul>
+                </div>
+              ) : (
+                <p className="text-red-600">Erreur: {exportState.error}</p>
+              )}
+            </div>
+            <div className="flex items-center justify-end px-5 py-3 border-t border-gray-200 bg-gray-50">
+              <button
+                onClick={() => setExportState(null)}
+                className="px-4 py-1 bg-green-600 text-white hover:bg-green-700 border border-green-700"
+              >
+                Fermer
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

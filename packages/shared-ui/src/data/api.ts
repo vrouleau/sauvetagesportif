@@ -44,6 +44,7 @@ export interface CompetitionEvent {
   duration?: string
   swimstyleId?: number | null
   finalOrder?: number | null  // 1=fast-first (A swum first), 2=slow-first (A swum last, standard)
+  maxEntries?: number | null  // beach: max participants per heat (overrides swimstyle.distance)
   ageGroups: AgeGroup[]
 }
 
@@ -139,6 +140,10 @@ export interface MeetAPI {
 
   // Heat generation
   generateHeats(eventId?: number, sessionId?: number): Promise<{ heatsCreated: number; entriesAssigned: number }>
+
+  // Meet import/export (optional — not all hosts support these)
+  importMeet?(): Promise<{ ok: boolean; events?: number; error?: string }>
+  exportMeet?(): Promise<{ ok: boolean; error?: string }>
 }
 
 // ─── Registration API (used by AthletesListPage & RegistrationPage) ───────────
@@ -173,6 +178,7 @@ export interface RegistrationStyle {
   best_time_scm_ms: number | null
   relay_count?: number
   locked_by_name?: string
+  relay_members?: Array<{ position: number; athleteId: number | null }>
   categories: RegistrationCategory[]
 }
 
@@ -191,6 +197,7 @@ export interface RegistrationData {
   club_athletes: Array<{ id: number; name: string }>
   suggested_age_code: string
   meet_course: string
+  meet_type?: string
   closure_date?: string | null
 }
 
@@ -204,5 +211,6 @@ export interface RegistrationAPI {
   updateAthlete(athleteId: number, data: Record<string, unknown>): Promise<void>
   register(data: { athlete_id: number; event_id: number; entry_time_ms: number | null; age_code: string }): Promise<void>
   unregister(registrationId: number): Promise<void>
+  setRelayMember?(eventId: number, position: number, athleteId: number | null): Promise<void>
   resetClubPin?(clubId: string): Promise<{ pin: string }>
 }

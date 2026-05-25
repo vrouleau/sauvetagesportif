@@ -527,7 +527,7 @@ export async function getHeatListSessions(): Promise<HeatListSessionRow[]> {
              r.entrytime, r.swimtime, r.reactiontime, r.resultstatus, r.agegroupid,
              a.athleteid, a.firstname, a.lastname, a.birthdate, a.nation, a.handicapex,
              c.code AS clubcode, c.name AS clubname,
-             COALESCE(ag.name, CASE WHEN ag.agemin IS NOT NULL THEN ag.agemin || '-' || ag.agemax END, '???') AS agegroupname
+             COALESCE(NULLIF(ag.name, ''), CASE WHEN ag.agemin IS NOT NULL THEN ag.agemin || '-' || COALESCE(ag.agemax, '+') END, '???') AS agegroupname
       FROM swimresult r
       JOIN athlete a ON r.athleteid = a.athleteid
       LEFT JOIN club c ON a.clubid = c.clubid
@@ -555,11 +555,20 @@ export async function getHeatListSessions(): Promise<HeatListSessionRow[]> {
   }
 
   // Build entry map keyed by heatId
+  const meetTypeRow2 = db.prepare(`SELECT data FROM bsglobal WHERE name = 'MEET_TYPE'`).get() as { data: string } | undefined
+  const isBeachMeet = (meetTypeRow2?.data || 'POOL').toUpperCase() === 'BEACH'
+
   const entryMap = new Map<number, LaneEntryRow[]>()
   for (const r of entries) {
     if (!entryMap.has(r.heatid)) entryMap.set(r.heatid, [])
     const status = decodeResultStatus(r.resultstatus)
     const birthYear = parseBirthYear(r.birthdate)
+    // For beach meets, display position as plain integer instead of time format
+    const finalTimeDisplay = status ? undefined : (
+      isBeachMeet && r.swimtime != null
+        ? String(Math.round(r.swimtime / 1000))
+        : msToDisplay(r.swimtime)
+    )
     entryMap.get(r.heatid)!.push({
       swimresultId: r.swimresultid,
       lane: r.lane ?? 0,
@@ -571,8 +580,8 @@ export async function getHeatListSessions(): Promise<HeatListSessionRow[]> {
       clubCode: r.clubcode ?? '',
       clubName: r.clubname ?? '',
       category: r.agegroupname ?? '',
-      entryTime: msToDisplay(r.entrytime) ?? 'NT',
-      finalTime: status ? undefined : msToDisplay(r.swimtime),
+      entryTime: isBeachMeet ? '' : (msToDisplay(r.entrytime) ?? 'NT'),
+      finalTime: finalTimeDisplay,
       splitTimes: splitMap.get(r.swimresultid),
       status,
       handicapex: r.handicapex ?? undefined,
@@ -654,7 +663,7 @@ export async function getSessions(): Promise<SessionRow[]> {
   const events = db.prepare(`
     SELECT e.swimeventid, e.swimsessionid, e.eventnumber, e.gender, e.round,
            e.internalevent, e.daytime, e.duration, e.roundname AS eventname, e.comment, e.swimstyleid,
-           e.finalorder,
+           e.finalorder, e.maxentries,
            ss.distance, ss.stroke, ss.name AS stylename
     FROM swimevent e
     LEFT JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid
@@ -665,7 +674,7 @@ export async function getSessions(): Promise<SessionRow[]> {
     gender: number | null; round: number | null; distance: number | null
     stroke: number | null; stylename: string | null; swimstyleid: number | null
     internalevent: string | null; daytime: string | number | null; duration: string | number | null
-    eventname: string | null; comment: string | null; finalorder: number | null
+    eventname: string | null; comment: string | null; finalorder: number | null; maxentries: number | null
   }>
 
   const eventIds = events.map(r => r.swimeventid)
@@ -715,6 +724,7 @@ export async function getSessions(): Promise<SessionRow[]> {
       duration: formatDaytime(e.duration),
       swimstyleId: e.swimstyleid ?? null,
       finalOrder: e.finalorder,
+      maxEntries: e.maxentries ?? null,
       ageGroups: agMap.get(e.swimeventid) ?? [],
     })
   }
@@ -766,7 +776,7 @@ export async function getAthletes(): Promise<AthleteRow[]> {
 
   const entries = db.prepare(`
     SELECT r.athleteid, r.swimeventid, r.entrytime,
-           COALESCE(ag.name, CASE WHEN ag.agemin IS NOT NULL THEN ag.agemin || '-' || ag.agemax END, '???') AS agegroupname,
+           COALESCE(NULLIF(ag.name, ''), CASE WHEN ag.agemin IS NOT NULL THEN ag.agemin || '-' || COALESCE(ag.agemax, '+') END, '???') AS agegroupname,
            e.eventnumber,
            ss.distance, ss.stroke, ss.name AS stylename
     FROM swimresult r
@@ -938,7 +948,7 @@ export async function addLateEntry(
 
 // ── Write: session CRUD ───────────────────────────────────────────────────────
 
-function nextId(table: string, pkCol: string): number {
+export function nextId(table: string, pkCol: string): number {
   const db = getLocalDb()
   const row = db.prepare(`SELECT COALESCE(MAX(${pkCol}), 0) + 1 AS next FROM ${table}`).get() as { next: number }
   return row.next
@@ -1591,6 +1601,15 @@ export async function generateHeats(eventId?: number, sessionId?: number, inject
 
   if (eventIds.length === 0) return { heatsCreated: 0, entriesAssigned: 0 }
 
+  // ── Check if this is a beach meet ──
+  const meetTypeRow = db.prepare(`SELECT data FROM bsglobal WHERE name = 'MEET_TYPE'`).get() as { data: string } | undefined
+  const isBeachMeet = (meetTypeRow?.data || 'POOL').toUpperCase() === 'BEACH'
+
+  if (isBeachMeet) {
+    // Beach mode: random heat assignment, no lanes, max participants from swimstyle.distance
+    return generateHeatsBeach(db, eventIds)
+  }
+
   // Get session lane config (use first session's config as default)
   const sessionRow = db.prepare(`
     SELECT lanemin, lanemax, lanesbyplace, course FROM swimsession ORDER BY sessionnumber LIMIT 1
@@ -1689,6 +1708,86 @@ export async function generateHeats(eventId?: number, sessionId?: number, inject
             totalAssigned += result.assigned
           }
         }
+      }
+    }
+  }
+
+  return { heatsCreated: totalHeats, entriesAssigned: totalAssigned }
+}
+
+// ── Beach heat generation ─────────────────────────────────────────────────────
+
+/**
+ * Beach mode heat generation:
+ * - Max participants per heat = swimstyle.distance
+ * - Random assignment (no seeding by time, no lanes)
+ * - Athletes are shuffled and distributed into heats
+ */
+function generateHeatsBeach(
+  db: ReturnType<typeof getLocalDb>,
+  eventIds: number[],
+): GenerateHeatsResult {
+  let totalHeats = 0
+  let totalAssigned = 0
+
+  for (const evId of eventIds) {
+    // Skip events that have any validated heats
+    const validatedCount = (db.prepare(
+      `SELECT COUNT(*) AS c FROM heat WHERE swimeventid = ? AND racestatus = 5`
+    ).get(evId) as { c: number }).c
+    if (validatedCount > 0) continue
+
+    // Get max participants from swimevent.maxentries (override) or swimstyle.distance (default)
+    const styleRow = db.prepare(`
+      SELECT e.maxentries, ss.distance FROM swimevent e
+      JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid
+      WHERE e.swimeventid = ?
+    `).get(evId) as { maxentries: number | null; distance: number | null } | undefined
+    const maxPerHeat = styleRow?.maxentries ?? styleRow?.distance ?? 16
+
+    // Delete existing heats for this event
+    db.prepare(`DELETE FROM heat WHERE swimeventid=?`).run(evId)
+    db.prepare(`UPDATE swimresult SET heatid=NULL, lane=NULL WHERE swimeventid=?`).run(evId)
+
+    // Get all entries for this event
+    const entries = db.prepare(`
+      SELECT swimresultid FROM swimresult WHERE swimeventid=? ORDER BY swimresultid
+    `).all(evId) as Array<{ swimresultid: number }>
+
+    if (entries.length === 0) continue
+
+    // Shuffle entries randomly (Fisher-Yates)
+    const shuffled = [...entries]
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
+    }
+
+    // Distribute into heats
+    const numHeats = Math.ceil(shuffled.length / maxPerHeat)
+    // Distribute evenly: each heat gets roughly the same number
+    const baseSize = Math.floor(shuffled.length / numHeats)
+    const remainder = shuffled.length % numHeats
+
+    let idx = 0
+    for (let h = 0; h < numHeats; h++) {
+      const heatSize = baseSize + (h < remainder ? 1 : 0)
+      const heatId = nextId('heat', 'heatid')
+      const heatNumber = h + 1
+
+      db.prepare(
+        `INSERT INTO heat (heatid, swimeventid, heatnumber, racestatus, sortcode)
+         VALUES (?, ?, ?, 4, ?)`
+      ).run(heatId, evId, heatNumber, heatNumber * 100)
+      totalHeats++
+
+      for (let i = 0; i < heatSize; i++) {
+        const entry = shuffled[idx++]
+        // No lane assignment for beach — use sequential number as placeholder
+        db.prepare(
+          `UPDATE swimresult SET heatid=?, lane=? WHERE swimresultid=?`
+        ).run(heatId, i + 1, entry.swimresultid)
+        totalAssigned++
       }
     }
   }
@@ -2143,6 +2242,7 @@ export interface EventUpdate {
   roundname?: string | null
   comment?: string | null
   finalorder?: number | null
+  maxentries?: number | null
 }
 
 export async function updateEvent(eventId: number, data: EventUpdate): Promise<void> {
@@ -2168,6 +2268,7 @@ export async function updateEvent(eventId: number, data: EventUpdate): Promise<v
   if (data.roundname !== undefined) { sets.push('roundname=?'); vals.push(data.roundname) }
   if (data.comment !== undefined) { sets.push('comment=?'); vals.push(data.comment) }
   if (data.finalorder !== undefined) { sets.push('finalorder=?'); vals.push(data.finalorder) }
+  if (data.maxentries !== undefined) { sets.push('maxentries=?'); vals.push(data.maxentries) }
 
   if (sets.length === 0) return
   vals.push(eventId)
@@ -2370,6 +2471,8 @@ export function getFinalEvents(): FinalEventRow[] {
 /** Get all candidates for a final event (prelim finishers ranked by time) */
 export function getFinalCandidates(finalEventId: number): FinalCandidateRow[] {
   const db = getLocalDb()
+  const meetTypeRow3 = db.prepare(`SELECT data FROM bsglobal WHERE name = 'MEET_TYPE'`).get() as { data: string } | undefined
+  const isBeachMeet3 = (meetTypeRow3?.data || 'POOL').toUpperCase() === 'BEACH'
 
   // Get the prelim event linked to this final
   const finalEvent = db.prepare(
@@ -2384,7 +2487,7 @@ export function getFinalCandidates(finalEventId: number): FinalCandidateRow[] {
     SELECT r.swimresultid, r.athleteid, r.swimtime, r.resultstatus, r.agegroupid,
            a.lastname, a.firstname, a.birthdate,
            c.code AS clubcode,
-           COALESCE(ag.name, CASE WHEN ag.agemin IS NOT NULL THEN ag.agemin || '-' || ag.agemax END, '???') AS agegroupname
+           COALESCE(NULLIF(ag.name, ''), CASE WHEN ag.agemin IS NOT NULL THEN ag.agemin || '-' || COALESCE(ag.agemax, '+') END, '???') AS agegroupname
     FROM swimresult r
     JOIN athlete a ON r.athleteid = a.athleteid
     LEFT JOIN club c ON a.clubid = c.clubid
@@ -2431,7 +2534,7 @@ export function getFinalCandidates(finalEventId: number): FinalCandidateRow[] {
       firstName: r.firstname ?? '',
       clubCode: r.clubcode ?? '',
       ageGroupName: r.agegroupname ?? '',
-      prelimTime: msToDisplay(r.swimtime) ?? null,
+      prelimTime: isBeachMeet3 && r.swimtime != null ? String(Math.round(r.swimtime / 1000)) : (msToDisplay(r.swimtime) ?? null),
       prelimTimeMs: r.swimtime,
       prelimRank: status ? 0 : (r.swimtime != null ? rank : 0),
       resultStatus: status,
@@ -2526,6 +2629,10 @@ export function setQualification(
 export function autoQualify(finalEventId: number): { counts: Record<string, number> } {
   const db = getLocalDb()
 
+  // Check if beach meet
+  const meetTypeRow4 = db.prepare(`SELECT data FROM bsglobal WHERE name = 'MEET_TYPE'`).get() as { data: string } | undefined
+  const isBeachMeet4 = (meetTypeRow4?.data || 'POOL').toUpperCase() === 'BEACH'
+
   // Get lane count and heat count from event + age group
   const evInfo = db.prepare(`
     SELECT s.lanemin, s.lanemax, e.qualbyplace
@@ -2538,7 +2645,19 @@ export function autoQualify(finalEventId: number): { counts: Record<string, numb
     `SELECT heatcount FROM agegroup WHERE swimeventid = ? ORDER BY sortcode LIMIT 1`
   ).get(finalEventId) as { heatcount: number | null } | undefined
 
-  const laneCount = (evInfo?.lanemax ?? 8) - (evInfo?.lanemin ?? 1) + 1
+  // For beach: capacity per heat comes from swimstyle.distance
+  let slotsPerHeat: number
+  if (isBeachMeet4) {
+    const styleRow = db.prepare(`
+      SELECT e.maxentries, ss.distance FROM swimevent e
+      JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid
+      WHERE e.swimeventid = ?
+    `).get(finalEventId) as { maxentries: number | null; distance: number | null } | undefined
+    slotsPerHeat = styleRow?.maxentries ?? styleRow?.distance ?? 16
+  } else {
+    slotsPerHeat = (evInfo?.lanemax ?? 8) - (evInfo?.lanemin ?? 1) + 1
+  }
+
   const heatCount = hcRow?.heatcount ?? 1
   const reserveCount = 2
 
@@ -2556,11 +2675,11 @@ export function autoQualify(finalEventId: number): { counts: Record<string, numb
       const c = eligible[i]
       let qualCode: string | null = null
 
-      const heatIndex = Math.floor(i / laneCount)
+      const heatIndex = Math.floor(i / slotsPerHeat)
       if (heatIndex < heatCount) {
         qualCode = HEAT_LETTERS[heatIndex]
         counts[qualCode] = (counts[qualCode] ?? 0) + 1
-      } else if (i < heatCount * laneCount + reserveCount) {
+      } else if (i < heatCount * slotsPerHeat + reserveCount) {
         qualCode = 'R'
         counts['R'] = (counts['R'] ?? 0) + 1
       } else {
@@ -2588,6 +2707,10 @@ export function clearFinalSeeding(finalEventId: number): void {
 export function seedFinals(finalEventId: number): { ok: boolean; heatsCreated: number; assigned: number; overflow: number } {
   const db = getLocalDb()
 
+  // Check if beach meet
+  const meetTypeRow5 = db.prepare(`SELECT data FROM bsglobal WHERE name = 'MEET_TYPE'`).get() as { data: string } | undefined
+  const isBeachMeet5 = (meetTypeRow5?.data || 'POOL').toUpperCase() === 'BEACH'
+
   // Get session lane config and final order
   const evInfo = db.prepare(`
     SELECT s.lanemin, s.lanemax, s.lanesbyplace, e.finalorder
@@ -2601,6 +2724,19 @@ export function seedFinals(finalEventId: number): { ok: boolean; heatsCreated: n
   const laneCount = laneMax - laneMin + 1
   const customLaneOrder = parseLanesbyplace(evInfo?.lanesbyplace)
   const finalOrder = evInfo?.finalorder ?? 2 // 1=fast-first (A swum first), 2=slow-first (A swum last, standard)
+
+  // For beach: capacity per heat comes from swimevent.maxentries or swimstyle.distance
+  let capacity: number
+  if (isBeachMeet5) {
+    const styleRow = db.prepare(`
+      SELECT e.maxentries, ss.distance FROM swimevent e
+      JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid
+      WHERE e.swimeventid = ?
+    `).get(finalEventId) as { maxentries: number | null; distance: number | null } | undefined
+    capacity = styleRow?.maxentries ?? styleRow?.distance ?? 16
+  } else {
+    capacity = laneCount
+  }
 
   // Get heat count from age group
   const hcRow = db.prepare(
@@ -2652,20 +2788,30 @@ export function seedFinals(finalEventId: number): { ok: boolean; heatsCreated: n
        VALUES (?, ?, ?, 4, ?, ?)`
     ).run(heatId, finalEventId, heatNumber, heatNumber * 100, letter)
 
-    // Center-out lane assignment
-    const laneOrder = customLaneOrder ?? buildCenterOutLanes(laneMin, laneMax)
-
-    const maxAssign = Math.min(qualified.length, laneCount)
-    if (qualified.length > laneCount) {
-      overflow += qualified.length - laneCount
+    // Lane assignment: center-out for pool, sequential for beach
+    const maxAssign = Math.min(qualified.length, capacity)
+    if (qualified.length > capacity) {
+      overflow += qualified.length - capacity
     }
 
-    for (let i = 0; i < maxAssign; i++) {
-      const lane = laneOrder[i]
-      db.prepare(
-        `UPDATE swimresult SET heatid = ?, lane = ? WHERE swimresultid = ?`
-      ).run(heatId, lane, qualified[i].swimresultid)
-      assigned++
+    if (isBeachMeet5) {
+      // Beach: sequential numbering (no lanes)
+      for (let i = 0; i < maxAssign; i++) {
+        db.prepare(
+          `UPDATE swimresult SET heatid = ?, lane = ? WHERE swimresultid = ?`
+        ).run(heatId, i + 1, qualified[i].swimresultid)
+        assigned++
+      }
+    } else {
+      // Pool: center-out lane assignment
+      const laneOrder = customLaneOrder ?? buildCenterOutLanes(laneMin, laneMax)
+      for (let i = 0; i < maxAssign; i++) {
+        const lane = laneOrder[i]
+        db.prepare(
+          `UPDATE swimresult SET heatid = ?, lane = ? WHERE swimresultid = ?`
+        ).run(heatId, lane, qualified[i].swimresultid)
+        assigned++
+      }
     }
   }
 

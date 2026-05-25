@@ -19,6 +19,10 @@ const api = {
       ipcRenderer.on('menu:import-lenex', cb)
       return () => { ipcRenderer.removeListener('menu:import-lenex', cb) }
     },
+    onExportLenexResults: (cb: () => void) => {
+      ipcRenderer.on('menu:export-lenex-results', cb)
+      return () => { ipcRenderer.removeListener('menu:export-lenex-results', cb) }
+    },
     onSaveSMB: (cb: () => void) => {
       ipcRenderer.on('menu:save-smb', cb)
       return () => { ipcRenderer.removeListener('menu:save-smb', cb) }
@@ -27,13 +31,19 @@ const api = {
       ipcRenderer.on('menu:restore-smb', cb)
       return () => { ipcRenderer.removeListener('menu:restore-smb', cb) }
     },
-    onNewMeet: (cb: () => void) => {
-      ipcRenderer.on('menu:new-meet', cb)
-      return () => { ipcRenderer.removeListener('menu:new-meet', cb) }
+    onNewMeet: (cb: (meetType: string) => void) => {
+      const handler = (_e: unknown, meetType: string) => cb(meetType)
+      ipcRenderer.on('menu:new-meet', handler)
+      return () => { ipcRenderer.removeListener('menu:new-meet', handler) }
     },
     onConfigureGemini: (cb: () => void) => {
       ipcRenderer.on('menu:configure-gemini', cb)
       return () => { ipcRenderer.removeListener('menu:configure-gemini', cb) }
+    },
+    onOpenGuide: (cb: (guideType: string) => void) => {
+      const handler = (_e: unknown, guideType: string) => cb(guideType)
+      ipcRenderer.on('menu:open-guide', handler)
+      return () => { ipcRenderer.removeListener('menu:open-guide', handler) }
     },
   },
   quantum: {
@@ -105,6 +115,18 @@ const api = {
       ipcRenderer.invoke('db:set-meet-config', entries),
     getSwimStyles: () =>
       ipcRenderer.invoke('db:get-swim-styles'),
+    getMeetType: () =>
+      ipcRenderer.invoke('db:get-meet-type'),
+    register: (data: { athlete_id: number; event_id: number; entry_time_ms: number | null; age_code: string }) =>
+      ipcRenderer.invoke('db:register', data),
+    unregister: (athleteId: number, eventId: number) =>
+      ipcRenderer.invoke('db:unregister', athleteId, eventId),
+    getRelayMembers: (relayId: number) =>
+      ipcRenderer.invoke('db:get-relay-members', relayId),
+    getRelayMembersByEvent: (eventId: number, athleteId: number) =>
+      ipcRenderer.invoke('db:get-relay-members-by-event', eventId, athleteId),
+    setRelayMember: (eventId: number, athleteId: number, position: number, memberAthleteId: number | null) =>
+      ipcRenderer.invoke('db:set-relay-member', eventId, athleteId, position, memberAthleteId),
     reorderEvents: (updates: Array<{ eventId: number; sessionId: number; sortcode: number }>) =>
       ipcRenderer.invoke('db:reorder-events', updates),
     generateHeats: (eventId?: number, sessionId?: number) =>
@@ -208,12 +230,14 @@ const api = {
       ipcRenderer.invoke('file:open-lenex-dialog'),
     importLenex: (path: string) =>
       ipcRenderer.invoke('file:import-lenex', path),
+    exportLenexResults: () =>
+      ipcRenderer.invoke('file:export-lenex-results'),
     saveSMB: () =>
       ipcRenderer.invoke('file:save-smb'),
     restoreSMB: () =>
       ipcRenderer.invoke('file:restore-smb'),
-    newMeet: () =>
-      ipcRenderer.invoke('file:new-meet'),
+    newMeet: (meetType?: string) =>
+      ipcRenderer.invoke('file:new-meet', meetType),
   },
 }
 

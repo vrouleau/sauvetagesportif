@@ -8,7 +8,7 @@ import string
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, UploadFile, File, HTTPException, Request
 from fastapi.responses import Response
 from sqlalchemy.orm import Session, joinedload
 from collections import defaultdict
@@ -35,7 +35,6 @@ router = APIRouter(prefix="/api")
 _audit = logging.getLogger("audit")
 
 MEET_STORAGE = Path(os.environ.get("MEET_STORAGE", "/app/data/meet.lxf"))
-MEET_TEMPLATE = Path(os.environ.get("MEET_TEMPLATE", "/app/templates/meet.smb"))
 _DEFAULT_ADMIN_PIN = os.environ.get("ADMIN_PIN", "000000")
 _BEST_TIME_MAX_AGE_MONTHS = int(os.environ.get("BEST_TIME_MAX_AGE_MONTHS", "18"))
 
@@ -334,9 +333,9 @@ async def upload_meet(file: UploadFile = File(...), db: Session = Depends(get_db
     return {"events_loaded": count, "filename": file.filename}
 
 
-@router.post("/upload/meet-smb", dependencies=[Depends(require_organizer_or_admin)])
+@router.post("/upload/meet-smb", dependencies=[Depends(require_admin)])
 async def upload_meet_smb(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    """Upload meet .smb — imports event structure from a Splash Meet Backup."""
+    """Upload meet .smb — full database restore from a Splash Meet Backup (admin only)."""
     content = await file.read()
     if len(content) > 20 * 1024 * 1024:
         raise HTTPException(413, "File too large (max 20MB)")
@@ -351,20 +350,14 @@ async def upload_meet_smb(file: UploadFile = File(...), db: Session = Depends(ge
     OLE_EPOCH = datetime(1899, 12, 30)
 
     def ole_to_datetime(val):
-        """Convert OLE Automation date double to full Python datetime, or None.
-        Handles both full dates (e.g. 46200.333 = 2026-06-15 08:00) and
-        time-only values (null sentinel date + fractional time).
-        """
         if val is None:
             return None
         if not isinstance(val, (int, float)):
             return None
         if val == D_NULL_SENTINEL or val == 0:
             return None
-        # Check if the date part is the null sentinel (time-only field)
         int_part = int(val)
         if int_part == -36522 or int_part == 0:
-            # Time-only: extract fractional part as time of day
             frac = abs(val) % 1
             if frac == 0:
                 return None
@@ -372,7 +365,6 @@ async def upload_meet_smb(file: UploadFile = File(...), db: Session = Depends(ge
             hours = total_minutes // 60
             minutes = total_minutes % 60
             return datetime(2000, 1, 1, hours, minutes, 0)
-        # Full date+time
         from datetime import timedelta
         dt = OLE_EPOCH + timedelta(days=val)
         if dt.year < 1900 or dt.year > 2100:
@@ -380,9 +372,6 @@ async def upload_meet_smb(file: UploadFile = File(...), db: Session = Depends(ge
         return dt
 
     def ole_to_date_only(val):
-        """Convert OLE Automation date double to a date-only datetime, or None.
-        Used for fields like startdate that carry a date without meaningful time.
-        """
         if val is None:
             return None
         if not isinstance(val, (int, float)):
@@ -395,11 +384,7 @@ async def upload_meet_smb(file: UploadFile = File(...), db: Session = Depends(ge
             return None
         return dt
 
-    # Validate required tables
-    if "SWIMSESSION" not in tables or "SWIMEVENT" not in tables:
-        raise HTTPException(400, "SMB file missing required tables (SWIMSESSION, SWIMEVENT)")
-
-    # Wipe existing event structure and registrations
+    # Wipe ALL data (full restore)
     db.query(Split).delete()
     db.query(SwimResult).delete()
     db.query(Heat).delete()
@@ -407,9 +392,20 @@ async def upload_meet_smb(file: UploadFile = File(...), db: Session = Depends(ge
     db.query(SwimEvent).delete()
     db.query(SwimSession).delete()
     db.query(SwimStyle).delete()
+    db.query(Athlete).delete()
+    db.query(Club).delete()
+    db.query(BsGlobal).delete()
     db.flush()
 
-    # Import swim styles
+    # ── Import BSGLOBAL ────────────────────────────────────────────────────
+    for row in tables.get("BSGLOBAL", []):
+        name = row.get("name")
+        if not name:
+            continue
+        db.add(BsGlobal(name=name, data=row.get("data") or ""))
+    db.flush()
+
+    # ── Import SWIMSTYLE ───────────────────────────────────────────────────
     styles_imported = 0
     for row in tables.get("SWIMSTYLE", []):
         style_id = row.get("swimstyleid")
@@ -429,13 +425,50 @@ async def upload_meet_smb(file: UploadFile = File(...), db: Session = Depends(ge
         styles_imported += 1
     db.flush()
 
-    # Import sessions
-    session_id_map: dict[int, int] = {}  # original id -> db id
+    # ── Import CLUB ────────────────────────────────────────────────────────
+    clubs_imported = 0
+    for row in tables.get("CLUB", []):
+        cid = row.get("clubid")
+        if cid is None:
+            continue
+        pin = ''.join(secrets.choice(string.digits) for _ in range(6))
+        db.add(Club(
+            clubid=cid,
+            code=row.get("code") or "",
+            name=row.get("name") or "",
+            nation=row.get("nation") or "CAN",
+            pin=pin,
+            email=row.get("contactemail") or "",
+        ))
+        clubs_imported += 1
+    db.flush()
+
+    # ── Import ATHLETE ─────────────────────────────────────────────────────
+    athletes_imported = 0
+    for row in tables.get("ATHLETE", []):
+        aid = row.get("athleteid")
+        if aid is None:
+            continue
+        birthdate = ole_to_date_only(row.get("birthdate"))
+        db.add(Athlete(
+            athleteid=aid,
+            clubid=row.get("clubid"),
+            firstname=row.get("firstname") or "",
+            lastname=row.get("lastname") or "",
+            gender=row.get("gender"),
+            birthdate=birthdate,
+            nation=row.get("nation") or "",
+            license=row.get("license") or "",
+        ))
+        athletes_imported += 1
+    db.flush()
+
+    # ── Import SWIMSESSION ────────────────────────────────────────────────
     for row in tables.get("SWIMSESSION", []):
         sid = row.get("swimsessionid")
         if sid is None:
             continue
-        session = SwimSession(
+        db.add(SwimSession(
             swimsessionid=sid,
             sessionnumber=row.get("sessionnumber"),
             name=row.get("name"),
@@ -449,12 +482,10 @@ async def upload_meet_smb(file: UploadFile = File(...), db: Session = Depends(ge
             warmupuntil=ole_to_datetime(row.get("warmupuntil")),
             officialmeeting=ole_to_datetime(row.get("officialmeeting")),
             tlmeeting=ole_to_datetime(row.get("tlmeeting")),
-        )
-        db.add(session)
-        session_id_map[sid] = sid
+        ))
     db.flush()
 
-    # Import events
+    # ── Import SWIMEVENT ──────────────────────────────────────────────────
     events_imported = 0
     for row in tables.get("SWIMEVENT", []):
         eid = row.get("swimeventid")
@@ -486,36 +517,32 @@ async def upload_meet_smb(file: UploadFile = File(...), db: Session = Depends(ge
         events_imported += 1
     db.flush()
 
-    # ── Normalize Splash MDB round encoding → canonical ──
+    # ── Normalize Splash MDB round encoding → canonical ──────────────────
     # Splash MDB uses: 1=TimedFinal, 2=Prelim, 9=Final, 11=Break/Pause
     # Our canonical:   1=Prelim(PRE), 2=Semi, 4=Final(FIN), 5=TimedFinal(TIM)
-    # Detect MDB encoding by presence of round=9 or round=11
     has_mdb_encoding = db.query(SwimEvent).filter(SwimEvent.round.in_([9, 11])).count() > 0
     if has_mdb_encoding:
-        # Remap: MDB 1→TIM(5), MDB 2→PRE(1), MDB 9→FIN(4), 11 unchanged
         for ev in db.query(SwimEvent).filter(SwimEvent.round == 1).all():
-            ev.round = -1  # temp
+            ev.round = -1
         for ev in db.query(SwimEvent).filter(SwimEvent.round == 2).all():
-            ev.round = -2  # temp
+            ev.round = -2
         for ev in db.query(SwimEvent).filter(SwimEvent.round == 9).all():
-            ev.round = -9  # temp
+            ev.round = -9
         db.flush()
         for ev in db.query(SwimEvent).filter(SwimEvent.round == -1).all():
-            ev.round = ROUND_TIM  # MDB 1 → 5
+            ev.round = ROUND_TIM
         for ev in db.query(SwimEvent).filter(SwimEvent.round == -2).all():
-            ev.round = ROUND_PRE  # MDB 2 → 1
+            ev.round = ROUND_PRE
         for ev in db.query(SwimEvent).filter(SwimEvent.round == -9).all():
-            ev.round = ROUND_FIN  # MDB 9 → 4
+            ev.round = ROUND_FIN
         db.flush()
 
-        # Fix PRE events with gender=0: derive from paired TIM (sortcode-1) or FIN (preveventid)
+        # Fix PRE events with gender=0
         pre_events = db.query(SwimEvent).filter(
-            SwimEvent.round == ROUND_PRE,
-            SwimEvent.gender == 0,
+            SwimEvent.round == ROUND_PRE, SwimEvent.gender == 0,
             SwimEvent.swimstyleid.isnot(None),
         ).all()
         for pre in pre_events:
-            # Strategy 1: TIM event at sortcode - 1, same session + style
             tim = db.query(SwimEvent).filter(
                 SwimEvent.swimsessionid == pre.swimsessionid,
                 SwimEvent.swimstyleid == pre.swimstyleid,
@@ -525,7 +552,6 @@ async def upload_meet_smb(file: UploadFile = File(...), db: Session = Depends(ge
             if tim and tim.gender and tim.gender != 0:
                 pre.gender = tim.gender
                 continue
-            # Strategy 2: FIN event referencing this PRE via preveventid
             fin = db.query(SwimEvent).filter(
                 SwimEvent.preveventid == pre.swimeventid,
                 SwimEvent.round == ROUND_FIN,
@@ -534,9 +560,7 @@ async def upload_meet_smb(file: UploadFile = File(...), db: Session = Depends(ge
                 pre.gender = fin.gender
         db.flush()
 
-        # Fix PRE events with eventnumber=0: Splash auto-assigns sequential numbers
-        # (1, 2, 3...) to prelim events that have eventnumber=0 in the MDB.
-        # Replicate by numbering them in session-number + sortcode order.
+        # Fix PRE events with eventnumber=0
         zero_num_prelims = (
             db.query(SwimEvent)
             .join(SwimSession, SwimEvent.swimsessionid == SwimSession.swimsessionid)
@@ -552,7 +576,7 @@ async def upload_meet_smb(file: UploadFile = File(...), db: Session = Depends(ge
             pre.eventnumber = seq
         db.flush()
 
-    # Import age groups
+    # ── Import AGEGROUP ───────────────────────────────────────────────────
     agegroups_imported = 0
     for row in tables.get("AGEGROUP", []):
         agid = row.get("agegroupid")
@@ -576,44 +600,105 @@ async def upload_meet_smb(file: UploadFile = File(...), db: Session = Depends(ge
         agegroups_imported += 1
     db.flush()
 
-    # Regenerate combined events XML after loading event structure
+    # ── Import HEAT ───────────────────────────────────────────────────────
+    heats_imported = 0
+    for row in tables.get("HEAT", []):
+        hid = row.get("heatid")
+        if hid is None:
+            continue
+        db.add(Heat(
+            heatid=hid,
+            swimeventid=row.get("swimeventid"),
+            heatnumber=row.get("heatnumber"),
+            racestatus=row.get("racestatus"),
+            sortcode=row.get("sortcode"),
+        ))
+        heats_imported += 1
+    db.flush()
+
+    # ── Import SWIMRESULT ─────────────────────────────────────────────────
+    results_imported = 0
+    for row in tables.get("SWIMRESULT", []):
+        rid = row.get("swimresultid")
+        if rid is None:
+            continue
+        db.add(SwimResult(
+            swimresultid=rid,
+            athleteid=row.get("athleteid"),
+            swimeventid=row.get("swimeventid"),
+            agegroupid=row.get("agegroupid") or None,
+            heatid=row.get("heatid") or None,
+            lane=row.get("lane"),
+            entrytime=row.get("entrytime"),
+            swimtime=row.get("swimtime"),
+            entrycourse=row.get("entrycourse"),
+            backuptime1=row.get("backuptime1"),
+            backuptime2=row.get("backuptime2"),
+        ))
+        results_imported += 1
+    db.flush()
+
+    # ── Import SPLIT ──────────────────────────────────────────────────────
+    for row in tables.get("SPLIT", []):
+        rid = row.get("swimresultid")
+        if rid is None:
+            continue
+        db.add(Split(
+            swimresultid=rid,
+            distance=row.get("distance"),
+            swimtime=row.get("swimtime"),
+        ))
+    db.flush()
+
+    # Regenerate combined events + point scores
     from ..combined_events import regenerate_combined_events
     from ..point_scores import regenerate_point_scores
     regenerate_combined_events(db)
     regenerate_point_scores(db)
 
-    # Store the uploaded SMB in the writable data directory for later download
+    # Store the uploaded SMB for later download
     smb_storage = Path(os.environ.get("MEET_STORAGE", "/app/data/meet.lxf")).parent / "meet.smb"
     smb_storage.parent.mkdir(parents=True, exist_ok=True)
     smb_storage.write_bytes(content)
 
-    # Track metadata
-    for key, val in [("meet_filename", file.filename or "meet.smb"),
-                     ("meet_uploaded_at", datetime.utcnow().isoformat()),
-                     ("meet_name", file.filename or "meet.smb")]:
-        _set_config(db, key, val)
-
-    # Reset closure date
-    _set_config(db, "closure_date", "")
+    # Restore admin PIN from env (since bsglobal was wiped)
+    _set_config(db, "admin_pin", _DEFAULT_ADMIN_PIN)
 
     db.commit()
     return {
         "events_loaded": events_imported,
         "styles_loaded": styles_imported,
         "agegroups_loaded": agegroups_imported,
+        "clubs_loaded": clubs_imported,
+        "athletes_loaded": athletes_imported,
+        "heats_loaded": heats_imported,
+        "results_loaded": results_imported,
         "filename": file.filename,
     }
 
 
-@router.post("/admin/new-meet", dependencies=[Depends(require_admin)])
-def create_new_meet(db: Session = Depends(get_db)):
-    """Create a new meet by resetting all data and importing from the default template."""
-    template_path = Path(os.environ.get(
-        "MEET_DEFAULT_TEMPLATE",
-        str(Path(__file__).resolve().parent.parent.parent.parent.parent / "config" / "template_juniorsenior.lxf")
-    ))
+@router.post("/admin/new-meet", dependencies=[Depends(require_organizer_or_admin)])
+def create_new_meet(data: dict = Body(default={}), db: Session = Depends(get_db)):
+    """Create a new meet by resetting all data and importing from the appropriate template.
+
+    Accepts optional JSON body: {"meet_type": "pool"|"beach"}
+    Defaults to "pool" if not specified.
+    """
+    meet_type = (data.get("meet_type") or "pool").lower()
+    if meet_type not in ("pool", "beach"):
+        raise HTTPException(400, f"Invalid meet_type: {meet_type}. Must be 'pool' or 'beach'.")
+
+    # Resolve template path based on meet type
+    if meet_type == "beach":
+        env_var = "MEET_TEMPLATE_BEACH"
+        fallback = str(Path(__file__).resolve().parent.parent.parent.parent.parent / "config" / "template_beach.lxf")
+    else:
+        env_var = "MEET_TEMPLATE_POOL"
+        fallback = str(Path(__file__).resolve().parent.parent.parent.parent.parent / "config" / "template_pool.lxf")
+
+    template_path = Path(os.environ.get(env_var, os.environ.get("MEET_DEFAULT_TEMPLATE", fallback)))
     if not template_path.exists():
-        raise HTTPException(404, f"Default meet template not found: {template_path}")
+        raise HTTPException(404, f"Meet template not found: {template_path}")
 
     from ..meet_parser import parse_meet_lxf
     try:
@@ -643,6 +728,9 @@ def create_new_meet(db: Session = Depends(get_db)):
     MEET_STORAGE.parent.mkdir(parents=True, exist_ok=True)
     MEET_STORAGE.write_bytes(template_path.read_bytes())
 
+    # Set meet type in BSGLOBAL
+    _set_config(db, "meet_type", meet_type.upper())
+
     # Track metadata
     import json as _json
     for key, val in [("meet_filename", template_path.name),
@@ -659,7 +747,7 @@ def create_new_meet(db: Session = Depends(get_db)):
     _set_config(db, "closure_date", "")
 
     db.commit()
-    return {"events_loaded": count, "filename": template_path.name}
+    return {"events_loaded": count, "filename": template_path.name, "meet_type": meet_type}
 
 
 @router.get("/meet-info")
@@ -701,6 +789,7 @@ def meet_info(db: Session = Depends(get_db)):
         "currency": currency or "CAD",
         "meet_fees": meet_fees,
         "event_fees": event_fees,
+        "meet_type": (_get_config(db, "meet_type") or "POOL").upper(),
     }
 
 
@@ -1259,7 +1348,7 @@ def get_registration(athlete_id: int, db: Session = Depends(get_db)):
             continue
         relay_count = style.relaycount or 1
         # Individual-event gender filter
-        if relay_count == 1 and ev.gender != 0 and ev.gender != ath_gender_int:
+        if relay_count == 1 and ev.gender not in (0, 3) and ev.gender != ath_gender_int:
             continue
 
         is_masters = ev.masters == "T"
@@ -1354,6 +1443,7 @@ def get_registration(athlete_id: int, db: Session = Depends(get_db)):
             suggested_age_code = "15-18"
 
     meet_course = _get_config(db, "meet_course") or "LCM"
+    meet_type = (_get_config(db, "meet_type") or "POOL").upper()
     closure = _get_config(db, "closure_date")
 
     return {
@@ -1367,6 +1457,7 @@ def get_registration(athlete_id: int, db: Session = Depends(get_db)):
         },
         "suggested_age_code": suggested_age_code,
         "meet_course": meet_course,
+        "meet_type": meet_type,
         "closure_date": closure,
         "individual_events": individual_events,
         "relay_events": relay_events,
@@ -1528,7 +1619,12 @@ async def upload_entries(file: UploadFile = File(...), db: Session = Depends(get
     if len(content) > 10 * 1024 * 1024:
         raise HTTPException(413, "File too large (max 10MB)")
     seed_result = seed_from_lxf(db, content)
-    times_result = load_best_times(db, content, source=file.filename or "upload")
+    # Skip best-time import for beach meets (positions are not times)
+    meet_type = (_get_config(db, "meet_type") or "POOL").upper()
+    if meet_type != "BEACH":
+        times_result = load_best_times(db, content, source=file.filename or "upload")
+    else:
+        times_result = {"times_updated": 0, "athletes_skipped": 0, "athletes_created": 0}
     events_loaded = 0
     if not db.query(SwimEvent).first():
         from ..meet_parser import parse_meet_lxf
@@ -1549,7 +1645,12 @@ async def upload_results(file: UploadFile = File(...), db: Session = Depends(get
     if len(content) > 10 * 1024 * 1024:
         raise HTTPException(413, "File too large (max 10MB)")
     seed_result = seed_from_lxf(db, content)
-    times_result = load_best_times(db, content, source=file.filename or "upload")
+    # Skip best-time import for beach meets (positions are not times)
+    meet_type = (_get_config(db, "meet_type") or "POOL").upper()
+    if meet_type != "BEACH":
+        times_result = load_best_times(db, content, source=file.filename or "upload")
+    else:
+        times_result = {"times_updated": 0, "athletes_skipped": 0, "athletes_created": 0}
     return {**seed_result, **times_result}
 
 
@@ -1929,18 +2030,38 @@ def export_entries_lxf(db: Session = Depends(get_db)):
     )
 
 
-@router.get("/export/meet-smb", dependencies=[Depends(require_organizer_or_admin)])
+@router.get("/export/meet-smb", dependencies=[Depends(require_admin)])
 def export_meet_smb():
     smb_storage = Path(os.environ.get("MEET_STORAGE", "/app/data/meet.lxf")).parent / "meet.smb"
-    # Fall back to the read-only template if no uploaded SMB exists yet
-    if not smb_storage.exists():
-        smb_storage = MEET_TEMPLATE
     if not smb_storage.exists():
         raise HTTPException(404, "No SMB backup available")
     return Response(
         content=smb_storage.read_bytes(),
         media_type="application/octet-stream",
         headers={"Content-Disposition": "attachment; filename=meet.smb"},
+    )
+
+
+@router.get("/export/meet-lxf", dependencies=[Depends(require_organizer_or_admin)])
+def export_meet_lxf():
+    """Download the stored meet .lxf file (the meet structure)."""
+    if not MEET_STORAGE.exists():
+        raise HTTPException(404, "No meet .lxf available")
+    return Response(
+        content=MEET_STORAGE.read_bytes(),
+        media_type="application/zip",
+        headers={"Content-Disposition": "attachment; filename=meet.lxf"},
+    )
+
+
+@router.get("/export/registrations-lxf", dependencies=[Depends(require_organizer_or_admin)])
+def export_registrations_lxf(db: Session = Depends(get_db)):
+    """Download registrations as a Lenex .lxf (entries file for import into meet-app)."""
+    data = generate_lxf(db)
+    return Response(
+        content=data,
+        media_type="application/zip",
+        headers={"Content-Disposition": "attachment; filename=inscriptions.lxf"},
     )
 
 

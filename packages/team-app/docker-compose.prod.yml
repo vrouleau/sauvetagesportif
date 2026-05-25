@@ -20,7 +20,7 @@ services:
     restart: unless-stopped
 
   backend:
-    image: ghcr.io/vrouleau/sauvetageteam-backend:latest
+    image: ghcr.io/vrouleau/sauvetagesportif/team-backend:latest
     environment:
       DATABASE_URL: postgresql://meetmgr:meetmgr@db:5432/meetmgr
       ADMIN_PIN: "${ADMIN_PIN}"
@@ -29,19 +29,18 @@ services:
       APP_BASE_URL: "${APP_BASE_URL:-http://localhost:8001}"
       SECRET_KEY: "${SECRET_KEY}"
       STRIPE_API_KEY: "${STRIPE_API_KEY:-}"
-      MEET_TEMPLATE: "${MEET_TEMPLATE:-/app/templates/meet.smb}"
       SUPPORT_EMAIL: "${SUPPORT_EMAIL:-}"
       TURNSTILE_SECRET_KEY: "${TURNSTILE_SECRET_KEY:-}"
     depends_on:
       db:
         condition: service_healthy
     volumes:
-      - ./templates:/app/templates:ro
+      - ../../config:/app/templates:ro
       - appdata:/app/data
     restart: unless-stopped
 
   frontend:
-    image: ghcr.io/vrouleau/sauvetageteam-frontend:latest
+    image: ghcr.io/vrouleau/sauvetagesportif/team-frontend:latest
     environment:
       TURNSTILE_SITE_KEY: "${TURNSTILE_SITE_KEY:-}"
       SUPPORT_EMAIL: "${SUPPORT_EMAIL:-}"

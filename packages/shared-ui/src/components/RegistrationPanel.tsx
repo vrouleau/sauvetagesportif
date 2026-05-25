@@ -74,6 +74,7 @@ export interface RegistrationPanelProps {
   onRegister: (eventId: number, timeMs: number | null, ageCode: string) => void
   onUnregister: (regId: number) => void
   onUpdateEntryTime: (eventId: number, ageCode: string, timeMs: number | null) => void
+  onSetRelayMember?: (eventId: number, position: number, athleteId: number | null) => void
 }
 
 export default function RegistrationPanel({
@@ -82,11 +83,13 @@ export default function RegistrationPanel({
   onRegister,
   onUnregister,
   onUpdateEntryTime,
+  onSetRelayMember,
 }: RegistrationPanelProps) {
   const { t } = useLang()
   const tr = t.registration
 
-  const { individual_events, relay_events, club_athletes, suggested_age_code, meet_course } = data
+  const { individual_events, relay_events, club_athletes, suggested_age_code, meet_course, meet_type } = data
+  const isBeach = (meet_type || 'POOL').toUpperCase() === 'BEACH'
   const bestKey: 'best_time_scm_ms' | 'best_time_lcm_ms' = meet_course === 'SCM' ? 'best_time_scm_ms' : 'best_time_lcm_ms'
 
   // Category state
@@ -101,8 +104,6 @@ export default function RegistrationPanel({
     setCategory(regs[0]?.age_code || suggested_age_code)
   }, [athleteId, individual_events, relay_events, suggested_age_code])
 
-  const activeCategory = category || suggested_age_code
-
   // Compute available and dropdown categories
   const availableCategories = (() => {
     const set = new Set<string>()
@@ -113,14 +114,23 @@ export default function RegistrationPanel({
   })()
 
   const dropdownCategories = (() => {
+    const preferred = category || suggested_age_code
     const naturalIdx = AGE_CODE_ORDER.indexOf(suggested_age_code)
     if (naturalIdx < 0) return availableCategories
     const allowed = new Set<string>()
     for (let i = Math.max(0, naturalIdx - 1); i <= Math.min(AGE_CODE_ORDER.length - 1, naturalIdx + 1); i++) {
       allowed.add(AGE_CODE_ORDER[i])
     }
-    if (activeCategory) allowed.add(activeCategory)
+    if (preferred) allowed.add(preferred)
     return availableCategories.filter(c => allowed.has(c))
+  })()
+
+  // If preferred category isn't available in the dropdown, fall back to the closest one
+  const activeCategory = (() => {
+    const preferred = category || suggested_age_code
+    if (dropdownCategories.includes(preferred)) return preferred
+    if (dropdownCategories.length > 0) return dropdownCategories[0]
+    return preferred
   })()
 
   const allowedSet = new Set(dropdownCategories)
@@ -180,9 +190,9 @@ export default function RegistrationPanel({
               <tr className="bg-gray-100">
                 <th className="border border-gray-300 px-2 py-1 w-6 text-center">✓</th>
                 <th className="border border-gray-300 px-2 py-1 text-left">{tr.event}</th>
-                <th className="border border-gray-300 px-2 py-1 text-right w-20">{tr.bt50}</th>
-                <th className="border border-gray-300 px-2 py-1 text-right w-20">{tr.bt25}</th>
-                <th className="border border-gray-300 px-2 py-1 text-left w-24">{tr.entryTime}</th>
+                {!isBeach && <th className="border border-gray-300 px-2 py-1 text-right w-20">{tr.bt50}</th>}
+                {!isBeach && <th className="border border-gray-300 px-2 py-1 text-right w-20">{tr.bt25}</th>}
+                {!isBeach && <th className="border border-gray-300 px-2 py-1 text-left w-24">{tr.entryTime}</th>}
               </tr>
             </thead>
             <tbody>
@@ -203,27 +213,29 @@ export default function RegistrationPanel({
                             onUnregister(reg.registration_id!)
                           } else {
                             const cat = style.categories.find(c => c.age_code === activeCategory) || style.categories[0]
-                            onRegister(cat.event_id, bestMs, cat.age_code)
+                            onRegister(cat.event_id, isBeach ? null : bestMs, cat.age_code)
                           }
                         }}
                       />
                     </td>
                     <td className="border border-gray-300 px-2 py-0.5">{style.style_name}</td>
-                    <td className="border border-gray-300 px-2 py-0.5 text-right font-mono text-gray-500">{msToTime(style.best_time_lcm_ms)}</td>
-                    <td className="border border-gray-300 px-2 py-0.5 text-right font-mono text-gray-500">{msToTime(style.best_time_scm_ms)}</td>
-                    <td className="border border-gray-300 px-2 py-0.5">
-                      {reg && (
-                        <TimeInput
-                          defaultValue={msToTime(reg.entry_time_ms || bestMs)}
-                          key={`${reg.registration_id}-${reg.entry_time_ms}`}
-                          onSave={v => {
-                            const ms = parseTime(v)
-                            if (ms === undefined) return
-                            onUpdateEntryTime(reg.event_id, reg.age_code, ms)
-                          }}
-                        />
-                      )}
-                    </td>
+                    {!isBeach && <td className="border border-gray-300 px-2 py-0.5 text-right font-mono text-gray-500">{msToTime(style.best_time_lcm_ms)}</td>}
+                    {!isBeach && <td className="border border-gray-300 px-2 py-0.5 text-right font-mono text-gray-500">{msToTime(style.best_time_scm_ms)}</td>}
+                    {!isBeach && (
+                      <td className="border border-gray-300 px-2 py-0.5">
+                        {reg && (
+                          <TimeInput
+                            defaultValue={msToTime(reg.entry_time_ms || bestMs)}
+                            key={`${reg.registration_id}-${reg.entry_time_ms}`}
+                            onSave={v => {
+                              const ms = parseTime(v)
+                              if (ms === undefined) return
+                              onUpdateEntryTime(reg.event_id, reg.age_code, ms)
+                            }}
+                          />
+                        )}
+                      </td>
+                    )}
                   </tr>
                 )
               })}
@@ -240,9 +252,9 @@ export default function RegistrationPanel({
                 <tr className="bg-gray-100">
                   <th className="border border-gray-300 px-2 py-1 w-6 text-center">✓</th>
                   <th className="border border-gray-300 px-2 py-1 text-left">{tr.event}</th>
-                  <th className="border border-gray-300 px-2 py-1 text-right w-20">{tr.bt50}</th>
-                  <th className="border border-gray-300 px-2 py-1 text-right w-20">{tr.bt25}</th>
-                  <th className="border border-gray-300 px-2 py-1 text-left w-24">{tr.entryTime}</th>
+                  {!isBeach && <th className="border border-gray-300 px-2 py-1 text-right w-20">{tr.bt50}</th>}
+                  {!isBeach && <th className="border border-gray-300 px-2 py-1 text-right w-20">{tr.bt25}</th>}
+                  {!isBeach && <th className="border border-gray-300 px-2 py-1 text-left w-24">{tr.entryTime}</th>}
                   <th className="border border-gray-300 px-2 py-1 text-left">{tr.teammates}</th>
                 </tr>
               </thead>
@@ -267,7 +279,7 @@ export default function RegistrationPanel({
                               onUnregister(reg.registration_id!)
                             } else {
                               const cat = style.categories.find(c => c.age_code === activeCategory) || style.categories[0]
-                              onRegister(cat.event_id, bestMs, cat.age_code)
+                              onRegister(cat.event_id, isBeach ? null : bestMs, cat.age_code)
                             }
                           }}
                         />
@@ -280,32 +292,46 @@ export default function RegistrationPanel({
                           </span>
                         )}
                       </td>
-                      <td className="border border-gray-300 px-2 py-0.5 text-right font-mono text-gray-500">{msToTime(style.best_time_lcm_ms)}</td>
-                      <td className="border border-gray-300 px-2 py-0.5 text-right font-mono text-gray-500">{msToTime(style.best_time_scm_ms)}</td>
-                      <td className="border border-gray-300 px-2 py-0.5">
-                        {!lockedBy && reg && (
-                          <TimeInput
-                            defaultValue={msToTime(reg.entry_time_ms || bestMs)}
-                            key={`r-${reg.registration_id}-${reg.entry_time_ms}`}
-                            onSave={v => {
-                              const ms = parseTime(v)
-                              if (ms === undefined) return
-                              onUpdateEntryTime(reg.event_id, reg.age_code, ms)
-                            }}
-                          />
-                        )}
-                      </td>
+                      {!isBeach && <td className="border border-gray-300 px-2 py-0.5 text-right font-mono text-gray-500">{msToTime(style.best_time_lcm_ms)}</td>}
+                      {!isBeach && <td className="border border-gray-300 px-2 py-0.5 text-right font-mono text-gray-500">{msToTime(style.best_time_scm_ms)}</td>}
+                      {!isBeach && (
+                        <td className="border border-gray-300 px-2 py-0.5">
+                          {!lockedBy && reg && (
+                            <TimeInput
+                              defaultValue={msToTime(reg.entry_time_ms || bestMs)}
+                              key={`r-${reg.registration_id}-${reg.entry_time_ms}`}
+                              onSave={v => {
+                                const ms = parseTime(v)
+                                if (ms === undefined) return
+                                onUpdateEntryTime(reg.event_id, reg.age_code, ms)
+                              }}
+                            />
+                          )}
+                        </td>
+                      )}
                       <td className="border border-gray-300 px-2 py-0.5">
                         {!lockedBy && reg && (
                           <div className="flex flex-wrap gap-1">
-                            {Array.from({ length: teammateCount }, (_, i) => (
-                              <select key={i} className="border border-gray-300 px-1 py-0.5 rounded text-xs w-36">
-                                <option value="">Member {i + 2}...</option>
-                                {club_athletes.map(a => (
-                                  <option key={a.id} value={a.id}>{a.name}</option>
-                                ))}
-                              </select>
-                            ))}
+                            {Array.from({ length: teammateCount }, (_, i) => {
+                              const pos = i + 2 // position 2, 3, 4... (position 1 is the registering athlete)
+                              const currentMember = style.relay_members?.find(m => m.position === pos)
+                              return (
+                                <select
+                                  key={i}
+                                  className="border border-gray-300 px-1 py-0.5 rounded text-xs w-36"
+                                  value={currentMember?.athleteId ?? ''}
+                                  onChange={e => {
+                                    const val = e.target.value ? parseInt(e.target.value, 10) : null
+                                    onSetRelayMember?.(reg.event_id, pos, val)
+                                  }}
+                                >
+                                  <option value="">Member {pos}...</option>
+                                  {club_athletes.map(a => (
+                                    <option key={a.id} value={a.id}>{a.name}</option>
+                                  ))}
+                                </select>
+                              )
+                            })}
                           </div>
                         )}
                       </td>

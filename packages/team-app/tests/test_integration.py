@@ -20,6 +20,8 @@ from conftest import (
     export_bundle, export_lxf,
 )
 
+SMB_FILE = Path(__file__).resolve().parent / "fixtures" / "meet.smb"
+
 
 # ---------------------------------------------------------------------------
 # Setup / smoke
@@ -487,26 +489,9 @@ class TestExportEntries:
 
 
 # ---------------------------------------------------------------------------
-# Meet SMB download (/export/meet-smb)
+# Meet SMB download (/export/meet-smb) — moved to end of file to avoid
+# disrupting session-scoped fixtures (full SMB restore wipes all data)
 # ---------------------------------------------------------------------------
-
-class TestExportMeetLxf:
-    def test_returns_zip_content(self, uploaded, admin_headers):
-        r = requests.get(f"{BASE_URL}/api/export/meet-smb",
-                         headers=admin_headers, timeout=30)
-        r.raise_for_status()
-        z = zipfile.ZipFile(BytesIO(r.content))
-        assert len(z.namelist()) > 0
-
-    def test_rejects_no_auth(self):
-        r = requests.get(f"{BASE_URL}/api/export/meet-smb", timeout=5)
-        assert r.status_code == 403
-
-    def test_rejects_coach(self, clubs):
-        coach_headers = {"X-Club-Pin": clubs[0]["pin"]}
-        r = requests.get(f"{BASE_URL}/api/export/meet-smb",
-                         headers=coach_headers, timeout=5)
-        assert r.status_code == 403
 
 
 # ---------------------------------------------------------------------------
@@ -1216,110 +1201,7 @@ class TestSwimStyles:
 # SMB upload round normalization
 # ---------------------------------------------------------------------------
 
-SMB_FILE = Path(__file__).resolve().parent / "fixtures" / "meet.smb"
 
-
-class TestSmbUploadNormalization:
-    """Verify that uploading a Splash-native SMB normalizes MDB round encoding."""
-
-    @pytest.fixture(scope="class")
-    def smb_uploaded(self, admin_headers):
-        """Upload the Splash meet.smb and return the response."""
-        assert SMB_FILE.exists(), f"meet.smb not found at {SMB_FILE}"
-        with open(SMB_FILE, "rb") as f:
-            r = requests.post(
-                f"{BASE_URL}/api/upload/meet-smb",
-                files={"file": ("meet.smb", f, "application/octet-stream")},
-                headers=admin_headers,
-                timeout=60,
-            )
-        assert r.status_code == 200, f"SMB upload failed ({r.status_code}): {r.text}"
-        return r.json()
-
-    def test_smb_upload_succeeds(self, smb_uploaded):
-        assert smb_uploaded["events_loaded"] > 0
-
-    def test_tim_events_have_correct_phase(self, smb_uploaded, admin_headers):
-        """Timed Final events (round=5 canonical) must show phase='Finale directe'."""
-        r = requests.get(f"{BASE_URL}/api/sessions", headers=admin_headers, timeout=10)
-        r.raise_for_status()
-        sessions = r.json()
-        # Find non-admin events with phase "Finale directe" (TIM or direct final)
-        tim_events = [
-            ev for s in sessions for ev in s["events"]
-            if ev["phase"] == "Finale directe" and not ev["isAdmin"]
-        ]
-        assert len(tim_events) > 0, "Expected Timed Final events after SMB upload"
-
-    def test_pre_events_have_correct_phase(self, smb_uploaded, admin_headers):
-        """Prelim events (round=1 canonical) must show phase='Eliminatoire'."""
-        r = requests.get(f"{BASE_URL}/api/sessions", headers=admin_headers, timeout=10)
-        r.raise_for_status()
-        sessions = r.json()
-        pre_events = [
-            ev for s in sessions for ev in s["events"]
-            if ev["phase"] == "Eliminatoire" and not ev["isAdmin"]
-        ]
-        assert len(pre_events) > 0, "Expected Prelim events after SMB upload"
-
-    def test_fin_events_have_correct_phase(self, smb_uploaded, admin_headers):
-        """Final events (round=4 canonical) must show phase='Finale'."""
-        r = requests.get(f"{BASE_URL}/api/sessions", headers=admin_headers, timeout=10)
-        r.raise_for_status()
-        sessions = r.json()
-        fin_events = [
-            ev for s in sessions for ev in s["events"]
-            if ev["phase"] == "Finale" and not ev["isAdmin"]
-        ]
-        assert len(fin_events) > 0, "Expected Final events after SMB upload"
-
-    def test_no_events_have_unknown_round(self, smb_uploaded, admin_headers):
-        """No non-admin event should have round values outside canonical set."""
-        r = requests.get(f"{BASE_URL}/api/sessions", headers=admin_headers, timeout=10)
-        r.raise_for_status()
-        sessions = r.json()
-        valid_phases = {"Eliminatoire", "Finale", "Finale directe"}
-        for s in sessions:
-            for ev in s["events"]:
-                if not ev["isAdmin"]:
-                    assert ev["phase"] in valid_phases, (
-                        f"Event {ev['id']} has unexpected phase '{ev['phase']}'"
-                    )
-
-    def test_pre_events_have_valid_gender(self, smb_uploaded, admin_headers):
-        """PRE events must not have gender='X' when they should be M or F
-        (gender=0 in MDB should be fixed by normalization)."""
-        r = requests.get(f"{BASE_URL}/api/sessions", headers=admin_headers, timeout=10)
-        r.raise_for_status()
-        sessions = r.json()
-        pre_events = [
-            ev for s in sessions for ev in s["events"]
-            if ev["phase"] == "Eliminatoire" and not ev["isAdmin"]
-        ]
-        # At least some PRE events should have M or F gender (not all X)
-        gendered = [ev for ev in pre_events if ev["gender"] in ("M", "F")]
-        assert len(gendered) > 0, (
-            "Expected PRE events with M/F gender after normalization, "
-            f"but all {len(pre_events)} PRE events have gender='X'"
-        )
-
-    def test_pre_events_have_nonzero_eventnumber(self, smb_uploaded, admin_headers):
-        """PRE events with eventnumber=0 in MDB should get auto-assigned
-        sequential numbers (1, 2, 3...) after normalization."""
-        r = requests.get(f"{BASE_URL}/api/sessions", headers=admin_headers, timeout=10)
-        r.raise_for_status()
-        sessions = r.json()
-        pre_events = [
-            ev for s in sessions for ev in s["events"]
-            if ev["phase"] == "Eliminatoire" and not ev["isAdmin"]
-        ]
-        assert len(pre_events) > 0, "Expected PRE events after SMB upload"
-        # All prelim events should have a non-zero event number
-        zero_num = [ev for ev in pre_events if ev["number"] == 0]
-        assert len(zero_num) == 0, (
-            f"{len(zero_num)} PRE events still have eventnumber=0 after normalization: "
-            f"{[ev['id'] for ev in zero_num[:5]]}"
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -1396,7 +1278,7 @@ class TestGeminiKeys:
                       headers=admin_headers, timeout=10)
 
         # Export SMB
-        r = requests.get(f"{BASE_URL}/api/export/smb",
+        r = requests.get(f"{BASE_URL}/api/export/meet-smb",
                          headers=admin_headers, timeout=30)
         if r.status_code == 404:
             pytest.skip("SMB export endpoint not available")
@@ -1421,3 +1303,126 @@ class TestGeminiKeys:
         r = requests.post(f"{BASE_URL}/api/admin/gemini-keys",
                           json={"freeKey": "stolen"}, timeout=10)
         assert r.status_code in (401, 403, 422)
+
+
+# ---------------------------------------------------------------------------
+# SMB tests (destructive — must run LAST since full restore wipes all data)
+# ---------------------------------------------------------------------------
+
+class TestExportMeetLxf:
+    """Test SMB upload + export. Runs last because full restore wipes DB."""
+
+    def test_returns_zip_content(self, uploaded, admin_headers):
+        with open(SMB_FILE, "rb") as f:
+            r = requests.post(
+                f"{BASE_URL}/api/upload/meet-smb",
+                files={"file": ("meet.smb", f, "application/octet-stream")},
+                headers=admin_headers,
+                timeout=60,
+            )
+        assert r.status_code == 200, f"smb upload: {r.status_code} {r.text}"
+
+        r = requests.get(f"{BASE_URL}/api/export/meet-smb",
+                         headers=admin_headers, timeout=30)
+        r.raise_for_status()
+        z = zipfile.ZipFile(BytesIO(r.content))
+        assert len(z.namelist()) > 0
+
+    def test_rejects_no_auth(self):
+        r = requests.get(f"{BASE_URL}/api/export/meet-smb", timeout=5)
+        assert r.status_code == 403
+
+    def test_rejects_coach(self, admin_headers):
+        r = requests.get(f"{BASE_URL}/api/clubs", headers=admin_headers, timeout=10)
+        r.raise_for_status()
+        clubs = r.json()
+        if clubs:
+            coach_headers = {"X-Club-Pin": clubs[0]["pin"]}
+            r = requests.get(f"{BASE_URL}/api/export/meet-smb",
+                             headers=coach_headers, timeout=5)
+            assert r.status_code == 403
+
+
+class TestSmbUploadNormalization:
+    """Verify that uploading a Splash-native SMB normalizes MDB round encoding.
+    Runs last because full restore wipes DB."""
+
+    @pytest.fixture(scope="class")
+    def smb_uploaded(self, admin_headers):
+        """Upload the Splash meet.smb and return the response."""
+        assert SMB_FILE.exists(), f"meet.smb not found at {SMB_FILE}"
+        with open(SMB_FILE, "rb") as f:
+            r = requests.post(
+                f"{BASE_URL}/api/upload/meet-smb",
+                files={"file": ("meet.smb", f, "application/octet-stream")},
+                headers=admin_headers,
+                timeout=60,
+            )
+        assert r.status_code == 200, f"SMB upload failed ({r.status_code}): {r.text}"
+        return r.json()
+
+    def test_smb_upload_succeeds(self, smb_uploaded):
+        assert smb_uploaded["events_loaded"] > 0
+
+    def test_tim_events_have_correct_phase(self, smb_uploaded, admin_headers):
+        r = requests.get(f"{BASE_URL}/api/sessions", headers=admin_headers, timeout=10)
+        r.raise_for_status()
+        sessions = r.json()
+        tim_events = [
+            ev for s in sessions for ev in s["events"]
+            if ev["phase"] == "Finale directe" and not ev["isAdmin"]
+        ]
+        assert len(tim_events) > 0, "Expected Timed Final events after SMB upload"
+
+    def test_pre_events_have_correct_phase(self, smb_uploaded, admin_headers):
+        r = requests.get(f"{BASE_URL}/api/sessions", headers=admin_headers, timeout=10)
+        r.raise_for_status()
+        sessions = r.json()
+        pre_events = [
+            ev for s in sessions for ev in s["events"]
+            if ev["phase"] == "Eliminatoire" and not ev["isAdmin"]
+        ]
+        assert len(pre_events) > 0, "Expected Prelim events after SMB upload"
+
+    def test_fin_events_have_correct_phase(self, smb_uploaded, admin_headers):
+        r = requests.get(f"{BASE_URL}/api/sessions", headers=admin_headers, timeout=10)
+        r.raise_for_status()
+        sessions = r.json()
+        fin_events = [
+            ev for s in sessions for ev in s["events"]
+            if ev["phase"] == "Finale" and not ev["isAdmin"]
+        ]
+        assert len(fin_events) > 0, "Expected Final events after SMB upload"
+
+    def test_no_events_have_unknown_round(self, smb_uploaded, admin_headers):
+        r = requests.get(f"{BASE_URL}/api/sessions", headers=admin_headers, timeout=10)
+        r.raise_for_status()
+        sessions = r.json()
+        valid_phases = {"Eliminatoire", "Finale", "Finale directe"}
+        for s in sessions:
+            for ev in s["events"]:
+                if not ev["isAdmin"]:
+                    assert ev["phase"] in valid_phases
+
+    def test_pre_events_have_valid_gender(self, smb_uploaded, admin_headers):
+        r = requests.get(f"{BASE_URL}/api/sessions", headers=admin_headers, timeout=10)
+        r.raise_for_status()
+        sessions = r.json()
+        pre_events = [
+            ev for s in sessions for ev in s["events"]
+            if ev["phase"] == "Eliminatoire" and not ev["isAdmin"]
+        ]
+        gendered = [ev for ev in pre_events if ev["gender"] in ("M", "F")]
+        assert len(gendered) > 0
+
+    def test_pre_events_have_nonzero_eventnumber(self, smb_uploaded, admin_headers):
+        r = requests.get(f"{BASE_URL}/api/sessions", headers=admin_headers, timeout=10)
+        r.raise_for_status()
+        sessions = r.json()
+        pre_events = [
+            ev for s in sessions for ev in s["events"]
+            if ev["phase"] == "Eliminatoire" and not ev["isAdmin"]
+        ]
+        assert len(pre_events) > 0
+        zero_num = [ev for ev in pre_events if ev["number"] == 0]
+        assert len(zero_num) == 0

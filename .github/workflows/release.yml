@@ -22,7 +22,6 @@ jobs:
           node-version: 22
 
       - name: Install dependencies
-        working-directory: packages/meet-app
         run: npm install
 
       - name: Rebuild better-sqlite3 for Electron
@@ -51,9 +50,8 @@ jobs:
         with:
           node-version: 22
 
-      - name: Install dependencies
-        working-directory: packages/meet-app
-        run: npm install
+      - name: Install dependencies (from monorepo root)
+        run: npm install --include=optional
 
       - name: Rebuild better-sqlite3 for Electron
         working-directory: packages/meet-app
@@ -91,7 +89,8 @@ jobs:
       - name: Build and push backend image
         uses: docker/build-push-action@v6
         with:
-          context: packages/team-app/backend
+          context: .
+          file: packages/team-app/backend/Dockerfile
           push: true
           tags: |
             ghcr.io/${{ github.repository }}/team-backend:${{ steps.version.outputs.VERSION }}

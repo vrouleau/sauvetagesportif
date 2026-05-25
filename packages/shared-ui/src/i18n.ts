@@ -41,6 +41,8 @@ const fr = {
       addCategory: '+ Catégorie',
       addBreak: '+ Pause',
       delete: 'Effacer',
+      importMeet: 'Importer (.lxf)',
+      exportMeet: 'Exporter (.lxf)',
     },
     props: {
       general: 'Général',
@@ -343,6 +345,8 @@ const en = {
       addCategory: '+ Category',
       addBreak: '+ Break',
       delete: 'Delete',
+      importMeet: 'Import (.lxf)',
+      exportMeet: 'Export (.lxf)',
     },
     props: {
       general: 'General',

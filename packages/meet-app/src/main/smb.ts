@@ -506,9 +506,9 @@ export function decodeGbin(data: Buffer): { cols: ColDef[]; rows: Record<string,
 
 // ── ZIP helpers (minimal PKZIP write) ─────────────────────────────────────────
 
-interface ZipEntry { name: string; data: Buffer }
+export interface ZipEntry { name: string; data: Buffer }
 
-function createZip(entries: ZipEntry[]): Buffer {
+export function createZip(entries: ZipEntry[]): Buffer {
   const localHeaders: Buffer[] = []
   const centralHeaders: Buffer[] = []
   let offset = 0

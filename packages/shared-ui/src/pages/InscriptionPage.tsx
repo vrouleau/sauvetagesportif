@@ -259,6 +259,19 @@ function useInscriptionPage(api: RegistrationAPI, role: string, clubId?: string,
     }
   }, [api, state.selectedAthleteId, reloadRegistration])
 
+  const handleSetRelayMember = useCallback(async (eventId: number, position: number, athleteId: number | null) => {
+    if (!api.setRelayMember) return
+    try {
+      await api.setRelayMember(eventId, position, athleteId)
+      await reloadRegistration()
+    } catch (err) {
+      setState(prev => ({
+        ...prev,
+        error: err instanceof Error ? err.message : 'Failed to set relay member',
+      }))
+    }
+  }, [api, reloadRegistration])
+
   // Retry on error
   const handleRetry = useCallback(() => {
     setState(prev => ({ ...prev, error: null }))
@@ -289,6 +302,7 @@ function useInscriptionPage(api: RegistrationAPI, role: string, clubId?: string,
     handleRegister,
     handleUnregister,
     handleUpdateEntryTime,
+    handleSetRelayMember,
     handleRetry,
   }
 }
@@ -373,6 +387,7 @@ export default function InscriptionPage({ role, clubId, refreshKey }: Inscriptio
     handleRegister,
     handleUnregister,
     handleUpdateEntryTime,
+    handleSetRelayMember,
     handleRetry,
   } = useInscriptionPage(api, role, clubId, refreshKey)
 
@@ -401,7 +416,7 @@ export default function InscriptionPage({ role, clubId, refreshKey }: Inscriptio
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full overflow-hidden">
       {/* Filter text box */}
       <div className="px-3 py-1.5 bg-white border-b border-gray-300 shrink-0">
         <input
@@ -443,6 +458,7 @@ export default function InscriptionPage({ role, clubId, refreshKey }: Inscriptio
                   onRegister={handleRegister}
                   onUnregister={handleUnregister}
                   onUpdateEntryTime={handleUpdateEntryTime}
+                  onSetRelayMember={handleSetRelayMember}
                 />
               </div>
             </>

@@ -1,8 +1,10 @@
 {
   "name": "@meetmgr/meet-app",
-  "version": "0.1.0",
+  "version": "0.3.1",
   "private": true,
+  "author": "Société de sauvetage",
   "description": "Electron desktop app for running lifesaving competitions",
+  "repository": "github:vrouleau/sauvetagesportif",
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
@@ -34,8 +36,8 @@
         "to": "combined-events-config.json"
       },
       {
-        "from": "../../config/template_juniorsenior.lxf",
-        "to": "template_juniorsenior.lxf"
+        "from": "../../config/template_pool.lxf",
+        "to": "template_pool.lxf"
       }
     ],
     "win": {
@@ -75,8 +77,8 @@
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
     "autoprefixer": "^10.4.19",
-    "electron": "^33.4.11",
-    "electron-builder": "^24.9.1",
+    "electron": "33.4.11",
+    "electron-builder": "^26.8.1",
     "electron-vite": "^2.3.0",
     "postcss": "^8.4.38",
     "tailwindcss": "^3.4.4",
