@@ -9,7 +9,6 @@ import TimingProcessPage from './pages/TimingProcessPage'
 import GuidePage from './pages/GuidePage'
 import { DbConfigDialog } from './components/DbConfigDialog'
 import { GeminiKeyDialog } from './components/GeminiKeyDialog'
-import { competition } from './data/mockData'
 import { LangProvider, useLang } from '@shared/context/LangContext'
 import logoSrc from '@shared/assets/icon.png'
 
@@ -376,10 +375,12 @@ function AppInner() {
   const [syncUpState, setSyncUpState] = useState<SyncUpState | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
   const [meetType, setMeetType] = useState<string>('POOL')
+  const [meetName, setMeetName] = useState<string>('')
 
-  // Load meet type on mount and after refresh
+  // Load meet type and name on mount and after refresh
   useEffect(() => {
     dbApi()?.getMeetType().then((t) => setMeetType(t || 'POOL'))
+    dbApi()?.getMeetInfo().then((info: { name: string }) => setMeetName(info?.name || ''))
   }, [refreshKey])
 
   // Listen for native menu events
@@ -506,7 +507,7 @@ function AppInner() {
         <span className="px-1 font-semibold text-gray-300">SauvetageMeet</span>
         <span className="text-gray-500 mr-1">|</span>
         <span className="text-gray-300 truncate mr-4">
-          {competition.nameFr} — {competition.city} ({competition.nation}) {competition.poolSize}m
+          {meetName || (lang === 'fr' ? 'Gestion de compétition' : 'Meet Management')}
         </span>
         {/* Language toggle */}
         <div className="ml-auto flex items-center gap-1 pr-3">

@@ -100,6 +100,7 @@ const fr = {
       valueCol: 'Valeur',
     },
     meetPanel: {
+      title: 'Compétition',
       general: 'Général',
       name: 'Nom',
       number: 'Numéro',
@@ -404,6 +405,7 @@ const en = {
       valueCol: 'Value',
     },
     meetPanel: {
+      title: 'Competition',
       general: 'General',
       name: 'Name',
       number: 'Number',

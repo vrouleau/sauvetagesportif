@@ -105,7 +105,7 @@ function AuthLayout({ children, canOrganizer, canAdmin, meetName, toggle, lang, 
         <span className="px-1 font-semibold text-gray-300">SauvetageTeam</span>
         <span className="text-gray-500 mr-1">|</span>
         <span className="text-gray-300 truncate mr-4">
-          {meetName || 'Gestion des inscriptions'}
+          {meetName || (lang === 'fr' ? 'Gestion des inscriptions' : 'Registration Management')}
         </span>
         <div className="ml-auto flex items-center gap-2 pr-3">
           <span className="text-gray-400 text-xs">{auth.club_name}</span>

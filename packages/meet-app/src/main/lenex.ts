@@ -165,6 +165,28 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
   }
   if (meetAttrs.organizer) bsglobalStmt.run('MeetOrganizer', meetAttrs.organizer)
   if (meetAttrs.organizer_url) bsglobalStmt.run('MeetOrganizerUrl', meetAttrs.organizer_url)
+
+  // Also write to MEETVALUES (the canonical Splash format)
+  {
+    const mvRow = db.prepare(`SELECT data FROM bsglobal WHERE name='MEETVALUES'`).get() as { data: string | null } | undefined
+    const existing: Record<string, string> = {}
+    if (mvRow?.data) {
+      for (const line of mvRow.data.split(/\r?\n/)) {
+        const eq = line.indexOf('=')
+        if (eq >= 0) existing[line.slice(0, eq)] = line.slice(eq + 1)
+      }
+    }
+    if (meetAttrs.name) existing['NAME'] = `S;${meetAttrs.name}`
+    if (meetAttrs.city) existing['CITY'] = `S;${meetAttrs.city}`
+    if (meetAttrs.nation) existing['NATION'] = `S;${meetAttrs.nation}`
+    if (meetAttrs.course) {
+      const courseMap: Record<string, string> = { LCM: '1', SCY: '2', SCM: '3' }
+      existing['COURSE'] = `I;${courseMap[meetAttrs.course] ?? '1'}`
+    }
+    const data = Object.entries(existing).map(([k, v]) => `${k}=${v}`).join('\r\n')
+    bsglobalStmt.run('MEETVALUES', data)
+  }
+
   // Pool info from POOL element
   const pool = child(meet, 'POOL')
   if (pool) {
@@ -622,10 +644,23 @@ export function exportLenexResults(filePath: string, db: Database.Database): Exp
   const g: Record<string, string> = {}
   for (const row of globals) g[row.name] = row.data ?? ''
 
-  const meetName = g['MeetName'] || 'Meet'
-  const meetCity = g['MeetCity'] || ''
-  const meetNation = g['MeetNation'] || ''
-  const meetCourse = decodeCourse(parseInt(g['MeetCourse'] || '1', 10))
+  // Parse MEETVALUES (primary source, same as real Splash)
+  const mv: Record<string, string> = {}
+  if (g['MEETVALUES']) {
+    for (const line of g['MEETVALUES'].split(/\r?\n/)) {
+      const eq = line.indexOf('=')
+      if (eq < 0) continue
+      const key = line.slice(0, eq)
+      const rest = line.slice(eq + 1)
+      const semi = rest.indexOf(';')
+      mv[key] = semi >= 0 ? rest.slice(semi + 1) : rest
+    }
+  }
+
+  const meetName = mv['NAME'] || g['MeetName'] || 'Meet'
+  const meetCity = mv['CITY'] || g['MeetCity'] || ''
+  const meetNation = mv['NATION'] || g['MeetNation'] || ''
+  const meetCourse = decodeCourse(parseInt(mv['COURSE'] || g['MeetCourse'] || '1', 10))
 
   // ── Sessions ────────────────────────────────────────────────────────────────
   const sessions = db.prepare(

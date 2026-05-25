@@ -793,6 +793,66 @@ def meet_info(db: Session = Depends(get_db)):
     }
 
 
+@router.get("/meet-config", dependencies=[Depends(require_organizer_or_admin)])
+def get_meet_config(db: Session = Depends(get_db)):
+    """Return MEETVALUES-style config as a flat dict {KEY: value}."""
+    cfg = db.query(BsGlobal).get("MEETVALUES")
+    result: dict[str, str] = {}
+    if cfg and cfg.data:
+        for line in cfg.data.split("\r\n"):
+            if not line:
+                continue
+            eq = line.find("=")
+            if eq < 0:
+                continue
+            key = line[:eq]
+            rest = line[eq + 1:]
+            # Strip type prefix (I;, S;, B;, D;, F;)
+            semi = rest.find(";")
+            result[key] = rest[semi + 1:] if semi >= 0 else rest
+    # Also include individual bsglobal keys that map to meet info
+    name = _get_config(db, "meet_name")
+    if name and "NAME" not in result:
+        result["NAME"] = name
+    course = _get_config(db, "meet_course")
+    if course:
+        course_map = {"LCM": "1", "SCM": "3", "SCY": "2"}
+        result.setdefault("COURSE", course_map.get(course, "1"))
+    return result
+
+
+@router.put("/meet-config", dependencies=[Depends(require_organizer_or_admin)])
+def set_meet_config(entries: dict, db: Session = Depends(get_db)):
+    """Update MEETVALUES-style config. Body: {KEY: {type, value}}."""
+    # Read existing MEETVALUES
+    cfg = db.query(BsGlobal).get("MEETVALUES")
+    existing: dict[str, str] = {}
+    if cfg and cfg.data:
+        for line in cfg.data.split("\r\n"):
+            if not line:
+                continue
+            eq = line.find("=")
+            if eq < 0:
+                continue
+            existing[line[:eq]] = line[eq + 1:]
+    # Apply updates
+    for key, entry in entries.items():
+        type_code = entry.get("type", "S") if isinstance(entry, dict) else "S"
+        value = entry.get("value", "") if isinstance(entry, dict) else str(entry)
+        existing[key] = f"{type_code};{value}"
+        # Also sync meet_name for /meet-info compatibility
+        if key == "NAME":
+            _set_config(db, "meet_name", value)
+    # Serialize back
+    data = "\r\n".join(f"{k}={v}" for k, v in existing.items())
+    if cfg:
+        cfg.data = data
+    else:
+        db.add(BsGlobal(name="MEETVALUES", data=data))
+    db.commit()
+    return {"ok": True}
+
+
 @router.put("/closure-date", dependencies=[Depends(require_organizer_or_admin)])
 def set_closure_date(data: ClosureDateUpdate, db: Session = Depends(get_db)):
     val = data.closure_date

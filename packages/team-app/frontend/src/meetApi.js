@@ -43,16 +43,24 @@ export const meetApiHttp = {
 
   async getMeetConfig() {
     try {
-      const r = await api.get('/meet-info')
-      const info = r.data || {}
-      return {
-        NAME: info.meet_name || '',
-        COURSE: info.course === 'LCM' ? '1' : info.course === 'SCM' ? '3' : '1',
-        MASTERS: info.masters ? 'T' : 'F',
-      }
-    } catch { return {} }
+      const r = await api.get('/meet-config')
+      return r.data || {}
+    } catch {
+      // Fallback to meet-info for read-only contexts
+      try {
+        const r = await api.get('/meet-info')
+        const info = r.data || {}
+        return {
+          NAME: info.meet_name || '',
+          COURSE: info.course === 'LCM' ? '1' : info.course === 'SCM' ? '3' : '1',
+          MASTERS: info.masters ? 'T' : 'F',
+        }
+      } catch { return {} }
+    }
   },
-  async setMeetConfig(entries) {},
+  async setMeetConfig(entries) {
+    await api.put('/meet-config', entries)
+  },
 
   async getSwimStyles() {
     try {
