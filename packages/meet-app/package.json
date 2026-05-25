@@ -43,7 +43,12 @@
     },
     "mac": {
       "target": "dmg",
-      "category": "public.app-category.sports"
+      "category": "public.app-category.sports",
+      "entitlements": "resources/entitlements.mac.plist",
+      "entitlementsInherit": "resources/entitlements.mac.plist",
+      "extendInfo": {
+        "NSCameraUsageDescription": "Pour scanner les fiches chrono avec la caméra."
+      }
     },
     "nsis": {
       "oneClick": false,

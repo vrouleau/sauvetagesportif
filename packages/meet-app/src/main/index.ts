@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell, ipcMain, dialog, nativeImage, Menu } from 'electron'
+import { app, BrowserWindow, shell, ipcMain, dialog, nativeImage, Menu, session } from 'electron'
 import { join } from 'path'
 import { writeFileSync, unlinkSync } from 'fs'
 import { tmpdir } from 'os'
@@ -969,6 +969,11 @@ app.whenReady().then(() => {
   if (process.platform === 'win32') {
     app.setAppUserModelId('com.sauvetagemeet')
   }
+
+  // macOS blocks getUserMedia without this — grant camera permission explicitly
+  session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
+    callback(permission === 'media')
+  })
 
   // Start background Gemini OCR processing
   startGeminiBackground()
