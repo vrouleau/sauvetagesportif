@@ -396,9 +396,13 @@ function parseTimeInput(str: string): number | null {
     const [, sec, hh] = short
     return parseInt(sec, 10) * 1000 + parseInt(hh, 10) * 10
   }
-  // Raw digits: try to parse as MSSCC or SSCC
+  // Raw digits: < 100 = whole seconds, >= 100 = MSSCC or SSCC
   const n = parseInt(str, 10)
   if (!isNaN(n) && n > 0) {
+    if (n < 100) {
+      // Whole seconds (e.g. "35" → 35000ms)
+      return n * 1000
+    }
     const cc = n % 100
     const rest = Math.floor(n / 100)
     const ss = rest % 100

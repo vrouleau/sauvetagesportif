@@ -235,9 +235,19 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
       return normalized
     }
 
-    // Pure integer: interpret digit positions as [M...]SS CC
+    // Pure integer: interpret based on magnitude
+    // < 100: treat as whole seconds (e.g. "35" → 35.00)
+    // >= 100: interpret digit positions as [M...]SS CC (e.g. "135" → 1.35, "14567" → 1:45.67)
     const n = parseInt(s, 10)
     if (isNaN(n) || n <= 0) return null
+
+    if (n < 100) {
+      // Whole seconds
+      const min = Math.floor(n / 60)
+      const sec = n % 60
+      if (min > 0) return `${min}:${String(sec).padStart(2, '0')}.00`
+      return `${sec}.00`
+    }
 
     const cs = n % 100
     const rest = Math.floor(n / 100)
