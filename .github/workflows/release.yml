@@ -10,8 +10,78 @@ permissions:
   packages: write
 
 jobs:
+  # ─── Create GitHub Release with notes ──────────────────────────────────────
+  create-release:
+    name: Create Release with Notes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history for changelog generation
+
+      - name: Generate release notes from commits
+        id: notes
+        run: |
+          # Find previous tag
+          PREV_TAG=$(git tag --sort=-v:refname | sed -n '2p')
+          if [ -z "$PREV_TAG" ]; then
+            PREV_TAG=$(git rev-list --max-parents=0 HEAD)
+          fi
+          echo "Previous tag: $PREV_TAG"
+
+          # Generate notes grouped by conventional commit type
+          {
+            echo "NOTES<<EOF"
+
+            # Features
+            FEATS=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s (%h)" --grep="^feat" --extended-regexp | grep -v "^$" || true)
+            if [ -n "$FEATS" ]; then
+              echo "### ✨ Features"
+              echo ""
+              echo "$FEATS"
+              echo ""
+            fi
+
+            # Bug fixes
+            FIXES=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s (%h)" --grep="^fix" --extended-regexp | grep -v "^$" || true)
+            if [ -n "$FIXES" ]; then
+              echo "### 🐛 Bug Fixes"
+              echo ""
+              echo "$FIXES"
+              echo ""
+            fi
+
+            # Docs
+            DOCS=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s (%h)" --grep="^docs" --extended-regexp | grep -v "^$" || true)
+            if [ -n "$DOCS" ]; then
+              echo "### 📝 Documentation"
+              echo ""
+              echo "$DOCS"
+              echo ""
+            fi
+
+            # Other (refactor, chore, ci, etc.)
+            OTHERS=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s (%h)" --grep="^feat\|^fix\|^docs\|^release" --invert-grep --extended-regexp | grep -v "^$" || true)
+            if [ -n "$OTHERS" ]; then
+              echo "### 🔧 Other Changes"
+              echo ""
+              echo "$OTHERS"
+              echo ""
+            fi
+
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body: ${{ steps.notes.outputs.NOTES }}
+          draft: false
+          prerelease: false
+
   # ─── Meet App: Windows x64 Installer ──────────────────────────────────────
   meet-app-windows:
+    needs: create-release
     name: Meet App — Windows x64 Setup
     runs-on: windows-latest
     steps:
@@ -41,6 +111,7 @@ jobs:
 
   # ─── Meet App: macOS Installer ─────────────────────────────────────────────
   meet-app-macos:
+    needs: create-release
     name: Meet App — macOS DMG
     runs-on: macos-latest
     steps:
@@ -70,6 +141,7 @@ jobs:
 
   # ─── Team App: Docker Images ───────────────────────────────────────────────
   team-app-images:
+    needs: create-release
     name: Team App — Docker Images
     runs-on: ubuntu-latest
     steps:
