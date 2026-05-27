@@ -12,7 +12,9 @@ export const meetApiHttp = {
   },
 
   async createSession(name, number) { return { id: Date.now() } },
-  async updateSession(sessionId, data) {},
+  async updateSession(sessionId, data) {
+    await api.put(`/sessions/${sessionId}`, data)
+  },
   async deleteSession(sessionId) {},
 
   async createEvent(sessionId, number, gender, distance, phase, styleName) { return { id: Date.now() } },

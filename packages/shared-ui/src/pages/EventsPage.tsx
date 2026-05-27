@@ -682,6 +682,7 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
         else if (key === 'remarks') localUpdate.remarks = val as string | undefined
         else if (key === 'remarksjury') localUpdate.remarksJury = val as string | undefined
         else if (key === 'sessionnumber') localUpdate.number = val as number
+        else if (key === 'startdate') localUpdate.date = val as string | undefined
         else if (key === 'course') {
           const c = val as number
           localUpdate.poolSize = c === 3 ? 25 : c === 2 ? 25 : 50
@@ -2314,7 +2315,20 @@ function SessionPropertiesPanel({
           {(() => { currentSection = 'Général'; return null })()}
           <SectionHeader title="Général" />
           <NumberRow label="Numéro" value={session.number} field="sessionnumber" />
-          <TextRow label="Date" value={session.date ?? ''} field="date" />
+          <tr className="border-b border-gray-100 hover:bg-gray-50">
+            <td className="px-4 py-0.5 text-gray-600 w-64">Date</td>
+            <td className="px-2 py-0.5">
+              <input
+                type="date"
+                className="w-full border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
+                defaultValue={session.date ?? ''}
+                onBlur={(e) => {
+                  if (e.target.value !== (session.date ?? '')) onUpdate({ startdate: e.target.value || null })
+                }}
+                onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+              />
+            </td>
+          </tr>
           <TextRow label="Nom" value={session.name} field="name" />
 
           {/* Horaire */}

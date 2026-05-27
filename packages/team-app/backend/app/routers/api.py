@@ -1432,10 +1432,60 @@ def list_sessions(db: Session = Depends(get_db)):
             "id": s.swimsessionid,
             "number": s.sessionnumber or 0,
             "name": s.name or "",
+            "date": s.startdate.isoformat() if s.startdate else None,
             "poolSize": 50 if s.course == 1 else 25,
             "events": events_data,
         })
     return result
+
+
+@router.put("/sessions/{session_id}", dependencies=[Depends(require_organizer_or_admin)])
+def update_session(session_id: int, data: dict = Body(default={}), db: Session = Depends(get_db)):
+    """Update session fields (name, date, times, lanes, etc.)."""
+    session = db.query(SwimSession).get(session_id)
+    if not session:
+        raise HTTPException(404, "Session not found")
+
+    field_map = {
+        "name": "name",
+        "sessionnumber": "sessionnumber",
+        "startdate": "startdate",
+        "daytime": "daytime",
+        "endtime": "endtime",
+        "course": "course",
+        "lanemin": "lanemin",
+        "lanemax": "lanemax",
+        "warmupfrom": "warmupfrom",
+        "warmupuntil": "warmupuntil",
+        "officialmeeting": "officialmeeting",
+        "remarks": "remarks",
+        "remarksjury": "remarksjury",
+        "maxentriesathlete": "maxentriesathlete",
+        "maxentriesrelay": "maxentriesrelay",
+        "feeathlete": "feeathlete",
+        "timing": "timing",
+        "touchpadmode": "touchpadmode",
+        "roundtotenths": "roundtotenths",
+    }
+
+    for key, col in field_map.items():
+        if key in data:
+            val = data[key]
+            if key == "roundtotenths":
+                val = "T" if val else "F"
+            elif key == "startdate" and val:
+                from datetime import date as _d
+                try:
+                    val = _d.fromisoformat(val)
+                except (ValueError, TypeError):
+                    val = None
+            elif key in ("daytime", "endtime", "warmupfrom", "warmupuntil", "officialmeeting") and val:
+                if ":" in str(val) and "-" not in str(val):
+                    val = datetime(2000, 1, 1, *[int(x) for x in str(val).split(":")[:2]])
+            setattr(session, col, val if val != "" else None)
+
+    db.commit()
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------

@@ -874,6 +874,7 @@ export async function createSession(name: string, sessionNumber: number): Promis
 export interface SessionUpdate {
   name?: string
   sessionnumber?: number
+  startdate?: string | null
   daytime?: string | null
   endtime?: string | null
   course?: number
@@ -905,6 +906,7 @@ export async function updateSession(sessionId: number, data: SessionUpdate): Pro
 
   if (data.name !== undefined) { sets.push('name=?'); vals.push(data.name) }
   if (data.sessionnumber !== undefined) { sets.push('sessionnumber=?'); vals.push(data.sessionnumber) }
+  if (data.startdate !== undefined) { sets.push('startdate=?'); vals.push(data.startdate) }
   if (data.daytime !== undefined) { sets.push('daytime=?'); vals.push(timeToTimestamp(data.daytime)) }
   if (data.endtime !== undefined) { sets.push('endtime=?'); vals.push(timeToTimestamp(data.endtime)) }
   if (data.course !== undefined) { sets.push('course=?'); vals.push(data.course) }
