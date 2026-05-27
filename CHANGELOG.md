@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.6] - 2026-05-27
+
+### 🏗️ CI
+
+- auto-generate release notes on GitHub Releases page (`e5fe266`)
+
 ## [0.3.5] - 2026-05-27
 
 ### ✨ Features
