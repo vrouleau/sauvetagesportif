@@ -437,7 +437,7 @@ export async function getHeatListSessions(): Promise<HeatListSessionRow[]> {
              r.entrytime, r.swimtime, r.reactiontime, r.resultstatus, r.agegroupid,
              a.athleteid, a.firstname, a.lastname, a.birthdate, a.nation, a.handicapex,
              c.code AS clubcode, c.name AS clubname,
-             COALESCE(NULLIF(ag.name, ''), CASE WHEN ag.agemin IS NOT NULL THEN ag.agemin || '-' || COALESCE(ag.agemax, '+') END, '???') AS agegroupname
+             COALESCE(NULLIF(ag.name, ''), CASE WHEN ag.agemin IS NOT NULL THEN CAST(ag.agemin AS TEXT) || '-' || COALESCE(CAST(ag.agemax AS TEXT), '+') END, '???') AS agegroupname
       FROM swimresult r
       JOIN athlete a ON r.athleteid = a.athleteid
       LEFT JOIN club c ON a.clubid = c.clubid
@@ -686,7 +686,7 @@ export async function getAthletes(): Promise<AthleteRow[]> {
 
   const entries = db.prepare(`
     SELECT r.athleteid, r.swimeventid, r.entrytime,
-           COALESCE(NULLIF(ag.name, ''), CASE WHEN ag.agemin IS NOT NULL THEN ag.agemin || '-' || COALESCE(ag.agemax, '+') END, '???') AS agegroupname,
+           COALESCE(NULLIF(ag.name, ''), CASE WHEN ag.agemin IS NOT NULL THEN CAST(ag.agemin AS TEXT) || '-' || COALESCE(CAST(ag.agemax AS TEXT), '+') END, '???') AS agegroupname,
            e.eventnumber,
            ss.distance, ss.stroke, ss.name AS stylename
     FROM swimresult r
@@ -2175,7 +2175,7 @@ export function getFinalCandidates(finalEventId: number): FinalCandidateRow[] {
     SELECT r.swimresultid, r.athleteid, r.swimtime, r.resultstatus, r.agegroupid,
            a.lastname, a.firstname, a.birthdate,
            c.code AS clubcode,
-           COALESCE(NULLIF(ag.name, ''), CASE WHEN ag.agemin IS NOT NULL THEN ag.agemin || '-' || COALESCE(ag.agemax, '+') END, '???') AS agegroupname
+           COALESCE(NULLIF(ag.name, ''), CASE WHEN ag.agemin IS NOT NULL THEN CAST(ag.agemin AS TEXT) || '-' || COALESCE(CAST(ag.agemax AS TEXT), '+') END, '???') AS agegroupname
     FROM swimresult r
     JOIN athlete a ON r.athleteid = a.athleteid
     LEFT JOIN club c ON a.clubid = c.clubid
