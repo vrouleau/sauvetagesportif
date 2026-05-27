@@ -255,6 +255,9 @@ export default function Admin() {
           </div>
         </Section>
 
+        {/* Database Backup */}
+        <BackupSection />
+
         {/* Club Manager */}
         <div className="border border-gray-300 rounded bg-white">
           <div className="px-3 py-1.5 bg-gray-100 border-b border-gray-300 flex items-center justify-between">
@@ -323,6 +326,163 @@ function Section({ title, desc, children }) {
       </div>
       <div className="px-3 py-2">
         {children}
+      </div>
+    </div>
+  )
+}
+
+function BackupSection() {
+  const [backups, setBackups] = useState([])
+  const [config, setConfig] = useState({ interval_days: 1, max_count: 7 })
+  const [msg, setMsg] = useState('')
+  const { lang } = useLang()
+
+  useEffect(() => { loadBackups(); loadConfig() }, [])
+
+  async function loadBackups() {
+    try {
+      const r = await api.get('/admin/backups')
+      setBackups(r.data)
+    } catch {}
+  }
+
+  async function loadConfig() {
+    try {
+      const r = await api.get('/admin/backup-config')
+      setConfig(r.data)
+    } catch {}
+  }
+
+  async function saveConfig() {
+    try {
+      await api.put('/admin/backup-config', config)
+      setMsg(lang === 'fr' ? 'Configuration sauvegardée' : 'Config saved')
+    } catch (e) { setMsg(e.message || 'Error') }
+  }
+
+  async function createBackup() {
+    setMsg(lang === 'fr' ? 'Création...' : 'Creating...')
+    try {
+      const r = await api.post('/admin/backups/create', {})
+      setMsg(lang === 'fr' ? `Backup créé: ${r.data.filename}` : `Backup created: ${r.data.filename}`)
+      loadBackups()
+    } catch (e) { setMsg(e.response?.data?.detail || e.message || 'Error') }
+  }
+
+  async function downloadBackup(filename) {
+    const res = await fetch(`/api/admin/backups/${filename}`, {
+      headers: { 'X-Club-Pin': localStorage.getItem('pin') || '' }
+    })
+    if (!res.ok) return
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = filename; a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  async function deleteBackup(filename) {
+    if (!confirm(lang === 'fr' ? `Supprimer ${filename} ?` : `Delete ${filename}?`)) return
+    try {
+      await api.delete(`/admin/backups/${filename}`)
+      loadBackups()
+    } catch (e) { setMsg(e.message || 'Error') }
+  }
+
+  async function restoreBackup(e) {
+    const file = e.target.files[0]
+    if (!file) return
+    const label = lang === 'fr'
+      ? 'Restaurer cette sauvegarde ? Toutes les données actuelles seront écrasées.'
+      : 'Restore this backup? All current data will be overwritten.'
+    if (!confirm(label)) { e.target.value = ''; return }
+    setMsg(lang === 'fr' ? 'Restauration...' : 'Restoring...')
+    const fd = new FormData()
+    fd.append('file', file)
+    try {
+      await api.post('/admin/restore-db', fd)
+      setMsg(lang === 'fr' ? '✓ Base restaurée' : '✓ Database restored')
+      e.target.value = ''
+    } catch (err) { setMsg(err.response?.data?.detail || err.message || 'Error') }
+  }
+
+  return (
+    <div className="border border-gray-300 rounded bg-white">
+      <div className="px-3 py-1.5 bg-gray-100 border-b border-gray-300">
+        <span className="text-xs font-semibold text-gray-700">
+          {lang === 'fr' ? 'Sauvegarde de la base de données' : 'Database Backup'}
+        </span>
+        <p className="text-xs text-gray-500 mt-0.5">
+          {lang === 'fr'
+            ? 'Sauvegarde et restauration PostgreSQL. Les sauvegardes automatiques sont créées selon la configuration.'
+            : 'PostgreSQL backup and restore. Auto-backups are created based on the configuration below.'}
+        </p>
+      </div>
+      <div className="px-3 py-2 space-y-3">
+        {/* Manual actions */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <button onClick={createBackup}
+            className="px-3 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700">
+            {lang === 'fr' ? 'Créer une sauvegarde' : 'Create Backup'}
+          </button>
+          <label className="px-3 py-1 bg-orange-600 text-white text-xs rounded hover:bg-orange-700 cursor-pointer">
+            {lang === 'fr' ? 'Restaurer (.sql)' : 'Restore (.sql)'}
+            <input type="file" accept=".sql" className="hidden" onChange={restoreBackup} />
+          </label>
+          {msg && <span className="text-xs text-green-700">{msg}</span>}
+        </div>
+
+        {/* Auto-backup config */}
+        <div className="flex items-center gap-2 text-xs flex-wrap">
+          <span className="text-gray-600">{lang === 'fr' ? 'Auto-backup:' : 'Auto-backup:'}</span>
+          <label className="flex items-center gap-1">
+            {lang === 'fr' ? 'chaque' : 'every'}
+            <input type="number" min="1" max="30" value={config.interval_days}
+              onChange={e => setConfig(c => ({ ...c, interval_days: parseInt(e.target.value) || 1 }))}
+              className="w-12 border border-gray-300 rounded px-1 py-0.5 text-xs text-center" />
+            {lang === 'fr' ? 'jour(s)' : 'day(s)'}
+          </label>
+          <label className="flex items-center gap-1">
+            {lang === 'fr' ? 'garder' : 'keep'}
+            <input type="number" min="1" max="30" value={config.max_count}
+              onChange={e => setConfig(c => ({ ...c, max_count: parseInt(e.target.value) || 7 }))}
+              className="w-12 border border-gray-300 rounded px-1 py-0.5 text-xs text-center" />
+            {lang === 'fr' ? 'copies' : 'copies'}
+          </label>
+          <button onClick={saveConfig}
+            className="px-2 py-0.5 bg-gray-600 text-white text-xs rounded hover:bg-gray-700">
+            {lang === 'fr' ? 'Sauver' : 'Save'}
+          </button>
+        </div>
+
+        {/* Backup list */}
+        {backups.length > 0 && (
+          <table className="w-full text-xs border-collapse">
+            <thead>
+              <tr className="border-b border-gray-200">
+                <th className="text-left py-1 font-medium text-gray-600">{lang === 'fr' ? 'Fichier' : 'File'}</th>
+                <th className="text-right py-1 font-medium text-gray-600">{lang === 'fr' ? 'Taille' : 'Size'}</th>
+                <th className="text-right py-1 font-medium text-gray-600">Date</th>
+                <th className="text-right py-1 font-medium text-gray-600"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {backups.map(b => (
+                <tr key={b.filename} className="border-b border-gray-100 hover:bg-gray-50">
+                  <td className="py-1">{b.filename}</td>
+                  <td className="py-1 text-right text-gray-500">{b.size_mb} MB</td>
+                  <td className="py-1 text-right text-gray-500">{b.date?.slice(0, 16).replace('T', ' ')}</td>
+                  <td className="py-1 text-right">
+                    <button onClick={() => downloadBackup(b.filename)}
+                      className="text-blue-600 hover:underline mr-2">↓</button>
+                    <button onClick={() => deleteBackup(b.filename)}
+                      className="text-red-500 hover:underline">✕</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
     </div>
   )
