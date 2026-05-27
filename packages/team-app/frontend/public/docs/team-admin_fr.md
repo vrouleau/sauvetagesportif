@@ -8,41 +8,7 @@ L'administrateur est responsable de la sauvegarde/restauration complète de la b
 
 ## Cycle complet de compétition
 
-```
-┌──────────────────────── CYCLE DE COMPÉTITION ─────────────────────────────┐
-│                                                                             │
-│  ① Admin          Inviter l'organisateur (définir dans la page Admin)     │
-│        │                                                                    │
-│        ▼                                                                    │
-│  ② Organisateur   Créer la structure de compétition                       │
-│                   (Créer Piscine/Plage — ou import .lxf de SauvetageMeet)  │
-│        │                                                                    │
-│        ▼                                                                    │
-│  ③ Organisateur   Envoyer les invitations → responsables reçoivent NIP    │
-│        │                                                                    │
-│        ▼                                                                    │
-│  ④ Responsables   Se connecter · Inscrire les athlètes · Temps d'entrée   │
-│        │                                                                    │
-│        ▼                                                                    │
-│  ⑤ Organisateur   Date limite dépassée → Envoyer les factures Stripe      │
-│        │                                                                    │
-│        ▼                                                                    │
-│  ⑥ Organisateur   Exporter les inscriptions (.lxf)                        │
-│   SauvetageMeet   Importer · Générer les séries · Courir la compétition   │
-│                   Enregistrer les temps · Exporter les résultats (.lxf)   │
-│        │                                                                    │
-│        ▼                                                                    │
-│  ⑦ Organisateur   Importer les résultats (.lxf)  ← clôture du meet       │
-│                   → Résultats archivés comme meet historique               │
-│                   → Meet actuel réinitialisé (épreuves et inscriptions)   │
-│                   → NIP de tous les clubs régénérés                       │
-│                   → Rôle d'organisateur effacé · Déconnexion              │
-│                   → Meet admin également réinitialisé                     │
-│        │                                                                    │
-│        └──────────────────────────────────► ① Prochain cycle             │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+![Cycle de compétition](assets/meet-lifecycle-fr.png)
 
 Le rôle de l'administrateur se situe principalement aux **étapes ① et ⑦** : inviter l'organisateur au début, puis être prêt à inviter le prochain organisateur une fois le meet clôturé.
 

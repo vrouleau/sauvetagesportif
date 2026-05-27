@@ -4,41 +4,7 @@
 
 L'organisateur gère le cycle complet de la compétition : création de la structure, envoi des invitations, collecte des inscriptions, facturation et importation des résultats pour clôturer le meet. Ce rôle a accès aux onglets **Compétition**, **Invitation** et **Inscription**.
 
-```
-┌──────────────────────── CYCLE DE COMPÉTITION ─────────────────────────────┐
-│                                                                             │
-│  ① Admin          Inviter l'organisateur (définir dans la page Admin)     │
-│        │                                                                    │
-│        ▼                                                                    │
-│  ② Organisateur   Créer la structure de compétition                       │
-│                   (Créer Piscine/Plage — ou import .lxf de SauvetageMeet)  │
-│        │                                                                    │
-│        ▼                                                                    │
-│  ③ Organisateur   Envoyer les invitations → responsables reçoivent NIP    │
-│        │                                                                    │
-│        ▼                                                                    │
-│  ④ Responsables   Se connecter · Inscrire les athlètes · Temps d'entrée   │
-│        │                                                                    │
-│        ▼                                                                    │
-│  ⑤ Organisateur   Date limite dépassée → Envoyer les factures Stripe      │
-│        │                                                                    │
-│        ▼                                                                    │
-│  ⑥ Organisateur   Exporter les inscriptions (.lxf)                        │
-│   SauvetageMeet   Importer · Générer les séries · Courir la compétition   │
-│                   Enregistrer les temps · Exporter les résultats (.lxf)   │
-│        │                                                                    │
-│        ▼                                                                    │
-│  ⑦ Organisateur   Importer les résultats (.lxf)  ← clôture du meet       │
-│                   → Résultats archivés comme meet historique               │
-│                   → Meet actuel réinitialisé (épreuves et inscriptions)   │
-│                   → NIP de tous les clubs régénérés                       │
-│                   → Rôle d'organisateur effacé · Déconnexion              │
-│                   → Meet admin également réinitialisé                     │
-│        │                                                                    │
-│        └──────────────────────────────────► ① Prochain cycle             │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+![Cycle de compétition](assets/meet-lifecycle-fr.png)
 
 ---
 

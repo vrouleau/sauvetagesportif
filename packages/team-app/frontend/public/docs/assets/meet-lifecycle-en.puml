@@ -1,0 +1,50 @@
+@startuml
+skinparam backgroundColor white
+skinparam activityBackgroundColor #EEF2FF
+skinparam activityBorderColor #1E3A8A
+skinparam arrowColor #1E3A8A
+skinparam activityFontSize 11
+
+|Admin|
+start
+:① Invite organizer
+(set organizer club in Admin page);
+
+|Organizer|
+:② Create meet structure
+(Create Pool/Beach — or import .lxf);
+:③ Send invitations
+→ coaches receive PIN by email;
+
+|Coaches|
+:④ Log in
+Register athletes
+Adjust entry times;
+
+|Organizer|
+:⑤ Closure date passes
+→ Send Stripe invoices;
+:⑥ Export registrations (.lxf);
+
+|SauvetageMeet|
+:Import · Seed heats
+Run competition
+Record times
+Export results (.lxf);
+
+|Organizer|
+:⑦ Import results (.lxf)
+**Meet closed**;
+
+note right
+  • Results archived (historical)
+  • Current meet reset
+  • All PINs regenerated
+  • Organizer logged out
+end note
+
+|Admin|
+:↩ Back to step ①;
+stop
+
+@enduml

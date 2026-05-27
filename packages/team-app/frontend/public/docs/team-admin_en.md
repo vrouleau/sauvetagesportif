@@ -8,41 +8,7 @@ The administrator is responsible for full database backup/restore, managing club
 
 ## Complete Meet Lifecycle
 
-```
-┌────────────────────────── MEET LIFECYCLE ────────────────────────────────┐
-│                                                                            │
-│  ① Admin         Invite organizer (set organizer club in Admin page)     │
-│        │                                                                   │
-│        ▼                                                                   │
-│  ② Organizer     Create meet structure                                    │
-│                  (Create Pool/Beach — or import .lxf from SauvetageMeet)  │
-│        │                                                                   │
-│        ▼                                                                   │
-│  ③ Organizer     Send invitations → coaches receive PIN by email          │
-│        │                                                                   │
-│        ▼                                                                   │
-│  ④ Coaches       Log in · Register athletes · Adjust entry times          │
-│        │                                                                   │
-│        ▼                                                                   │
-│  ⑤ Organizer     Closure date passes → Send Stripe invoices to clubs      │
-│        │                                                                   │
-│        ▼                                                                   │
-│  ⑥ Organizer     Export registrations (.lxf)                              │
-│   SauvetageMeet  Import entries · Seed heats · Run competition            │
-│                  Record times · Generate reports · Export results (.lxf)  │
-│        │                                                                   │
-│        ▼                                                                   │
-│  ⑦ Organizer     Import results (.lxf)   ← closes the meet               │
-│                  → Results archived as historical meet                     │
-│                  → Current meet reset (events + registrations cleared)    │
-│                  → All club PINs regenerated                              │
-│                  → Organizer role cleared · Organizer logged out          │
-│                  → Admin meet also reset                                  │
-│        │                                                                   │
-│        └────────────────────────────────► ① Start next meet cycle        │
-│                                                                            │
-└────────────────────────────────────────────────────────────────────────────┘
-```
+![Meet Lifecycle](assets/meet-lifecycle-en.png)
 
 The admin's role is primarily at **steps ① and ⑦**: inviting the organizer at the start, and being ready to invite the next organizer once the meet closes.
 
