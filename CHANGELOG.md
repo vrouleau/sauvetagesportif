@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.7] - 2026-05-27
+
+### ✨ Features
+
+- PostgreSQL direct connect — shared DB with Splash Meet Manager + auto-refresh (`97b811e`)
+
 ## [0.3.6] - 2026-05-27
 
 ### 🏗️ CI
