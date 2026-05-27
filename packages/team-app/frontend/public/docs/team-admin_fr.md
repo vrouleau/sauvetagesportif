@@ -8,40 +8,7 @@ L'administrateur est responsable de la sauvegarde/restauration complète de la b
 
 ## Cycle complet de compétition
 
-```
-┌──────────────────────── CYCLE DE COMPÉTITION ─────────────────────────────┐
-│                                                                             │
-│  ① Admin          Inviter l'organisateur (définir dans la page Admin)     │
-│        │                                                                    │
-│        ▼                                                                    │
-│  ② Organisateur   Créer la structure de compétition                       │
-│                   (bouton Nouveau meet — ou import .lxf de SauvetageMeet)  │
-│        │                                                                    │
-│        ▼                                                                    │
-│  ③ Organisateur   Envoyer les invitations → responsables reçoivent NIP    │
-│        │                                                                    │
-│        ▼                                                                    │
-│  ④ Responsables   Se connecter · Inscrire les athlètes · Temps d'entrée   │
-│        │                                                                    │
-│        ▼                                                                    │
-│  ⑤ Organisateur   Date limite dépassée → Envoyer les factures Stripe      │
-│        │                                                                    │
-│        ▼                                                                    │
-│  ⑥ Organisateur   Exporter les inscriptions (.lxf)                        │
-│   SauvetageMeet   Importer · Générer les séries · Courir la compétition   │
-│                   Enregistrer les temps · Exporter les résultats (.lxf)   │
-│        │                                                                    │
-│        ▼                                                                    │
-│  ⑦ Organisateur   Importer les résultats (.lxf)  ← clôture du meet       │
-│                   → Résultats archivés comme meet historique               │
-│                   → Meet actuel réinitialisé (épreuves et inscriptions)   │
-│                   → NIP de tous les clubs régénérés                       │
-│                   → Rôle d'organisateur effacé · Déconnexion              │
-│        │                                                                    │
-│        └──────────────────────────────────► ① Prochain cycle             │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+![Cycle de compétition](assets/meet-lifecycle-fr.png)
 
 Le rôle de l'administrateur se situe principalement aux **étapes ① et ⑦** : inviter l'organisateur au début, puis être prêt à inviter le prochain organisateur une fois le meet clôturé.
 
@@ -59,21 +26,34 @@ Le rôle de l'administrateur se situe principalement aux **étapes ① et ⑦** 
 
 ## Onglet Admin — Actions principales
 
-### Restaurer une sauvegarde (.smb)
+### Sauvegarde de la base de données
 
-La méthode principale pour alimenter la base de données est de restaurer une sauvegarde `.smb` complète. Ceci charge **tout** : clubs, athlètes, épreuves, sessions, catégories d'âge, inscriptions, résultats et configuration.
+La page Admin offre des fonctionnalités complètes de sauvegarde et restauration de la base de données.
 
-1. Dans la section **Restaurer sauvegarde (.smb)**, cliquer **Choisir un fichier**
-2. Sélectionner un fichier `.smb` (d'une saison précédente ou de SauvetageMeet)
-3. L'application efface la base de données actuelle et charge toutes les données
+#### Créer une sauvegarde
+
+1. Cliquer **Créer une sauvegarde** — un instantané de la base de données est stocké sur le serveur
+2. La sauvegarde apparaît dans la **Liste des sauvegardes** ci-dessous
+
+#### Restaurer (.sql)
+
+1. Cliquer **Restaurer (.sql)**
+2. Sélectionner un fichier de sauvegarde `.sql` à téléverser
+3. L'application efface la base de données actuelle et restaure toutes les données du fichier
 
 > **Attention** : Ceci remplace TOUTES les données. Les clubs reçoivent de nouveaux NIP automatiquement.
 
-### Sauvegarder (.smb)
+#### Configuration de la sauvegarde automatique
 
-1. Dans la section **Sauvegarder (.smb)**, cliquer **Télécharger**
-2. Sauvegarder le fichier — c'est un instantané complet de la base de données
-3. Utiliser pour transférer les données vers SauvetageMeet ou comme archive de saison
+1. Dans la section **Sauvegarde automatique**, définir l'**intervalle** (en jours) entre les sauvegardes
+2. Définir le **nombre maximum de copies** à conserver — les plus anciennes sont supprimées automatiquement
+3. Cliquer **Enregistrer**
+
+#### Liste des sauvegardes
+
+La liste des sauvegardes affiche toutes les sauvegardes stockées (manuelles et automatiques) :
+- Cliquer **Télécharger** pour sauvegarder un fichier localement
+- Cliquer **Supprimer** pour retirer une sauvegarde du serveur
 
 ### Désigner l'organisateur
 
@@ -100,11 +80,11 @@ La méthode principale pour alimenter la base de données est de restaurer une s
 ## Pages Organisateur (l'admin a accès complet)
 
 L'admin a accès à toutes les fonctionnalités de l'organisateur :
-- Créer un nouveau meet piscine/plage à partir des gabarits
 - Téléverser la structure de la compétition (.lxf)
 - Téléverser les inscriptions/résultats (.lxf)
 - Exporter le bundle d'inscriptions (.zip)
-- Envoyer les invitations, fixer la date limite
+- Envoyer les invitations
+- Créer un nouveau meet piscine/plage (depuis la page Invitation : boutons **Créer Piscine** / **Créer Plage**)
 
 Voir le [Guide de l'organisateur](team-organizer) pour les détails.
 
@@ -125,7 +105,8 @@ Voir le [Guide de l'organisateur](team-organizer) pour les détails.
 ### Fusionner les styles divergents
 
 1. Dans la section **Fusionner les styles**, sélectionner l'**UID source** et l'**UID cible**
-2. Cliquer **Fusionner** — les meilleurs temps sont consolidés (le plus rapide par bassin est conservé)
+2. Un **popup de prévisualisation** affiche les enregistrements affectés avant l'exécution
+3. Confirmer pour procéder — les meilleurs temps sont consolidés (le plus rapide par bassin est conservé)
 
 ---
 
@@ -136,7 +117,8 @@ Voir le [Guide de l'organisateur](team-organizer) pour les détails.
 | Désigner l'organisateur | Avant chaque meet | Admin |
 | Configurer les courriels des clubs | Avant les invitations | Admin |
 | Configurer les clés Gemini | Avant la compétition | Admin |
-| Sauvegarder (.smb) | Après tout changement majeur | Admin |
+| Créer une sauvegarde | Après tout changement majeur | Admin |
+| Configurer la sauvegarde auto | Une fois (intervalle + copies max) | Admin |
 | Exporter les inscriptions (.lxf) | Après mise à jour des temps | Gestion des données |
 | Fusionner clubs/styles | Après import multiple | Gestion des données |
 | *(Après clôture)* Inviter le prochain organisateur | Après import des résultats | Admin |

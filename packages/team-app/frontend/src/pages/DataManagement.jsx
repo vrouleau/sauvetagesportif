@@ -132,36 +132,6 @@ export default function DataManagement() {
 
       {/* Content */}
       <div className="flex-1 overflow-auto p-3 space-y-3">
-        {/* Database backup / restore */}
-        <div className="border border-gray-300 rounded bg-white">
-          <div className="px-3 py-1.5 bg-gray-100 border-b border-gray-300 flex items-center justify-between">
-            <span className="text-xs font-semibold text-gray-700">
-              {lang === 'fr' ? 'Sauvegarde / Restauration' : 'Backup / Restore'}
-            </span>
-            <div className="flex items-center gap-2">
-              <a href="/api/admin/backup-db"
-                 download="team_backup.sql"
-                 className="px-3 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 no-underline"
-                 onClick={(e) => { e.preventDefault(); fetch('/api/admin/backup-db', { headers: { 'X-Club-Pin': localStorage.getItem('pin') || '' } }).then(r => { if (!r.ok) throw new Error(r.status); return r.blob() }).then(blob => { const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'team_backup.sql'; a.click(); URL.revokeObjectURL(url) }).catch(e => setMsg(e.message)) }}>
-                {lang === 'fr' ? '⬇ Sauvegarder' : '⬇ Backup'}
-              </a>
-              <label className="px-3 py-1 bg-red-600 text-white text-xs rounded hover:bg-red-700 cursor-pointer">
-                {lang === 'fr' ? '⬆ Restaurer' : '⬆ Restore'}
-                <input type="file" accept=".sql" className="hidden" onChange={(e) => {
-                  const file = e.target.files?.[0]; if (!file) return
-                  if (!confirm(lang === 'fr' ? 'Ceci va écraser toutes les données. Continuer?' : 'This will overwrite all data. Continue?')) return
-                  const fd = new FormData(); fd.append('file', file)
-                  fetch('/api/admin/restore-db', { method: 'POST', headers: { 'X-Club-Pin': localStorage.getItem('pin') || '' }, body: fd })
-                    .then(r => { if (!r.ok) throw new Error(r.status); return r.json() })
-                    .then(() => { setMsg(lang === 'fr' ? 'Restauration réussie — rechargez la page' : 'Restore successful — reload the page'); setTimeout(() => window.location.reload(), 1500) })
-                    .catch(err => setMsg('Erreur: ' + err.message))
-                  e.target.value = ''
-                }} />
-              </label>
-            </div>
-          </div>
-        </div>
-
         {/* Club merging */}
         <div className="border border-gray-300 rounded bg-white">
           <div className="px-3 py-1.5 bg-gray-100 border-b border-gray-300 flex items-center justify-between">

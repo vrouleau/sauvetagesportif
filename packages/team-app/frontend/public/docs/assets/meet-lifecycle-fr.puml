@@ -1,0 +1,50 @@
+@startuml
+skinparam backgroundColor white
+skinparam activityBackgroundColor #EEF2FF
+skinparam activityBorderColor #1E3A8A
+skinparam arrowColor #1E3A8A
+skinparam activityFontSize 11
+
+|Admin|
+start
+:① Inviter l'organisateur
+(définir dans la page Admin);
+
+|Organisateur|
+:② Créer la structure de compétition
+(Créer Piscine/Plage — ou import .lxf);
+:③ Envoyer les invitations
+→ responsables reçoivent NIP;
+
+|Responsables|
+:④ Se connecter
+Inscrire les athlètes
+Temps d'entrée;
+
+|Organisateur|
+:⑤ Date limite dépassée
+→ Envoyer les factures Stripe;
+:⑥ Exporter inscriptions (.lxf);
+
+|SauvetageMeet|
+:Importer · Générer séries
+Courir la compétition
+Enregistrer les temps
+Exporter résultats (.lxf);
+
+|Organisateur|
+:⑦ Importer résultats (.lxf)
+**Clôture du meet**;
+
+note right
+  • Résultats archivés (historique)
+  • Meet réinitialisé
+  • NIP régénérés
+  • Organisateur déconnecté
+end note
+
+|Admin|
+:↩ Retour à l'étape ①;
+stop
+
+@enduml

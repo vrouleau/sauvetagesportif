@@ -2490,6 +2490,109 @@ async def restore_db(file: UploadFile = File(...)):
 
 
 # ---------------------------------------------------------------------------
+# Auto-backup: config + list + download + delete
+# ---------------------------------------------------------------------------
+
+BACKUP_DIR = Path(os.environ.get("MEET_STORAGE", "/app/data/meet.lxf")).parent / "backups"
+
+
+def _run_pg_dump_bytes() -> bytes:
+    """Run pg_dump and return SQL bytes."""
+    import subprocess
+    from urllib.parse import urlparse
+    db_url = os.environ.get("DATABASE_URL", "")
+    parsed = urlparse(db_url)
+    env = {**os.environ, "PGPASSWORD": parsed.password or ""}
+    cmd = [
+        "pg_dump",
+        "-h", parsed.hostname or "db",
+        "-p", str(parsed.port or 5432),
+        "-U", parsed.username or "meetmgr",
+        "-d", parsed.path.lstrip("/") or "meetmgr",
+        "--no-owner", "--no-acl",
+    ]
+    result = subprocess.run(cmd, capture_output=True, env=env, timeout=60)
+    if result.returncode != 0:
+        raise RuntimeError(f"pg_dump failed: {result.stderr.decode()[:500]}")
+    return result.stdout
+
+
+@router.get("/admin/backup-config", dependencies=[Depends(require_admin)])
+def get_backup_config(db: Session = Depends(get_db)):
+    """Get auto-backup configuration."""
+    interval = _get_config(db, "backup_interval_days") or "1"
+    max_count = _get_config(db, "backup_max_count") or "7"
+    return {"interval_days": int(interval), "max_count": int(max_count)}
+
+
+@router.put("/admin/backup-config", dependencies=[Depends(require_admin)])
+def set_backup_config(data: dict = Body(default={}), db: Session = Depends(get_db)):
+    """Update auto-backup configuration."""
+    if "interval_days" in data:
+        val = max(1, int(data["interval_days"]))
+        _set_config(db, "backup_interval_days", str(val))
+    if "max_count" in data:
+        val = max(1, int(data["max_count"]))
+        _set_config(db, "backup_max_count", str(val))
+    db.commit()
+    return get_backup_config(db=db)
+
+
+@router.get("/admin/backups", dependencies=[Depends(require_admin)])
+def list_backups():
+    """List all stored auto-backups."""
+    if not BACKUP_DIR.exists():
+        return []
+    backups = []
+    for f in sorted(BACKUP_DIR.glob("*.sql"), key=lambda p: p.stat().st_mtime, reverse=True):
+        stat = f.stat()
+        backups.append({
+            "filename": f.name,
+            "size_bytes": stat.st_size,
+            "size_mb": round(stat.st_size / 1024 / 1024, 2),
+            "date": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+        })
+    return backups
+
+
+@router.post("/admin/backups/create", dependencies=[Depends(require_admin)])
+def create_backup_now():
+    """Create a manual backup and store it."""
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y-%m-%d-%H%M%S")
+    filename = f"manual-{timestamp}.sql"
+    sql = _run_pg_dump_bytes()
+    (BACKUP_DIR / filename).write_bytes(sql)
+    return {"filename": filename, "size_bytes": len(sql)}
+
+
+@router.get("/admin/backups/{filename}", dependencies=[Depends(require_admin)])
+def download_backup(filename: str):
+    """Download a specific backup file."""
+    # Sanitize filename to prevent path traversal
+    safe_name = Path(filename).name
+    filepath = BACKUP_DIR / safe_name
+    if not filepath.exists() or not filepath.is_file():
+        raise HTTPException(404, "Backup not found")
+    return Response(
+        content=filepath.read_bytes(),
+        media_type="application/sql",
+        headers={"Content-Disposition": f"attachment; filename={safe_name}"},
+    )
+
+
+@router.delete("/admin/backups/{filename}", dependencies=[Depends(require_admin)])
+def delete_backup(filename: str):
+    """Delete a specific backup file."""
+    safe_name = Path(filename).name
+    filepath = BACKUP_DIR / safe_name
+    if not filepath.exists():
+        raise HTTPException(404, "Backup not found")
+    filepath.unlink()
+    return {"deleted": safe_name}
+
+
+# ---------------------------------------------------------------------------
 # Data management
 # ---------------------------------------------------------------------------
 

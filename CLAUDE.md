@@ -18,7 +18,7 @@ Per-package context:
 | Entries | team-app (Organizer → Télécharger LXF) | meet-app (File → Importer LENEX) | Clubs, athletes, registrations, entry times |
 | Results | meet-app (File → Exporter résultats) | team-app (Organizer → Importer résultats) | Athletes + final times → archived as historical meet |
 
-Organizer import of results also closes the meet cycle: resets current meet, regenerates club PINs, clears organizer role. See `packages/team-app/CLAUDE.md` for details.
+Organizer import of results also closes the meet cycle: resets current meet (both admin and organizer paths), regenerates club PINs, clears organizer role. Empty meet state is supported — self-invite shows "no meet planned". See `packages/team-app/CLAUDE.md` for details.
 
 ## Branding
 - App names: **SauvetageMeet** (desktop) / **SauvetageTeam** (web)
@@ -93,9 +93,11 @@ Team-app `docker-compose.yml` uses `context: ../..` (monorepo root). Always run 
 ### Column encoding (SQLite + PostgreSQL)
 - `swimevent.roundname` — event name (NOT `name`)
 - `swimevent.internalevent` — `'T'` = pause/admin event
+- `swimevent.round` — `11` in MDB encoding means Break/Pause → converted to `internalevent='T'` on import
 - Gender: `1`=M, `2`=F, `3`=Mixed
-- Times: INTEGER milliseconds
+- Times: INTEGER milliseconds (`0` = no time, same as NULL)
 - Boolean: CHAR(1) `'T'`/`'F'`
+- `agegroup.agemax` — `99` or `-1` both mean "Open" (no upper limit)
 
 ### MEETVALUES format
 Meet-level config in `bsglobal` uses Splash's format: `KEY=TYPE;VALUE\r\n`
