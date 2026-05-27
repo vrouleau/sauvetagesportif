@@ -1,3 +1,5 @@
 pytest>=7
 requests>=2
 hypothesis>=6
+sqlalchemy>=2
+defusedxml>=0.7

@@ -73,7 +73,8 @@ jobs:
           python-version: "3.12"
 
       - name: Install test dependencies
-        run: pip install pytest requests
+        working-directory: packages/team-app
+        run: pip install -r tests/requirements-test.txt
 
       - name: Start stack
         working-directory: packages/team-app
