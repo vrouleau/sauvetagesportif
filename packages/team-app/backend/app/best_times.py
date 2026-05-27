@@ -22,9 +22,10 @@ import json as _json
 
 from sqlalchemy.orm import Session
 from .models import (
-    Athlete, BsGlobal, Club, SwimEvent, SwimResult, SwimStyle,
+    BsGlobal, SwimEvent, SwimResult, SwimStyle,
     gender_from_str, course_from_str, COURSE_LCM, COURSE_SCM,
 )
+from .models_team import TeamClub, Member
 
 
 def _lenex_time_to_ms(t: str) -> int | None:
@@ -45,23 +46,23 @@ def _lenex_time_to_ms(t: str) -> int | None:
     return None
 
 
-def _find_or_create_athlete(db: Session, first: str, last: str, license: str, club=None) -> Athlete | None:
+def _find_or_create_athlete(db: Session, first: str, last: str, license: str, club=None) -> Member | None:
     """Match athlete by license first, then name. Create if not found and club provided."""
     if license:
-        ath = db.query(Athlete).filter(Athlete.license == license).first()
-        if ath:
-            return ath
-    ath = db.query(Athlete).filter(
-        Athlete.firstname == first, Athlete.lastname == last
+        member = db.query(Member).filter(Member.license == license).first()
+        if member:
+            return member
+    member = db.query(Member).filter(
+        Member.firstname == first, Member.lastname == last
     ).first()
-    if ath:
-        return ath
+    if member:
+        return member
     if not club:
         return None
-    ath = Athlete(firstname=first, lastname=last, gender=1, clubid=club.clubid, license=license)
-    db.add(ath)
+    member = Member(firstname=first, lastname=last, gender=1, clubsid=club.clubsid, license=license)
+    db.add(member)
     db.flush()
-    return ath
+    return member
 
 
 # ---------------------------------------------------------------------------
@@ -264,15 +265,15 @@ def load_best_times(db: Session, file_bytes: bytes, source: str = "") -> dict:
     updated = 0
     skipped = 0
     athletes_created = 0
-    athlete_by_lenex_id: dict[str, Athlete] = {}
+    athlete_by_lenex_id: dict[str, Member] = {}
 
     for club_el in root.iter("CLUB"):
         club_code = club_el.get("code", "")
         club_name = club_el.get("name", "")
         if club_code:
-            club = db.query(Club).filter(Club.code == club_code).first()
+            club = db.query(TeamClub).filter(TeamClub.code == club_code).first()
         else:
-            club = db.query(Club).filter(Club.name == club_name).first()
+            club = db.query(TeamClub).filter(TeamClub.name == club_name).first()
         for ath_el in club_el.iter("ATHLETE"):
             first = ath_el.get("firstname", "")
             last = ath_el.get("lastname", "")
@@ -281,18 +282,18 @@ def load_best_times(db: Session, file_bytes: bytes, source: str = "") -> dict:
             bd_str = ath_el.get("birthdate", "")
             lenex_aid = ath_el.get("athleteid", "")
 
-            athlete = _find_or_create_athlete(db, first, last, license_val, club)
-            if not athlete:
+            member = _find_or_create_athlete(db, first, last, license_val, club)
+            if not member:
                 skipped += 1
                 continue
             if lenex_aid:
-                athlete_by_lenex_id[lenex_aid] = athlete
+                athlete_by_lenex_id[lenex_aid] = member
             # Update gender/birthdate if newly created
-            if athlete.athleteid is None or (not athlete.birthdate and bd_str):
-                athlete.gender = gender_from_str(gender_str)
+            if member.membersid is None or (not member.birthdate and bd_str):
+                member.gender = gender_from_str(gender_str)
                 if bd_str:
                     try:
-                        athlete.birthdate = _date.fromisoformat(bd_str)
+                        member.birthdate = _date.fromisoformat(bd_str)
                     except ValueError:
                         pass
                 athletes_created += 1
@@ -327,17 +328,17 @@ def load_best_times(db: Session, file_bytes: bytes, source: str = "") -> dict:
                 if not style_uid:
                     continue
                 best_time, best_date = min(times, key=lambda x: x[0])
-                if _upsert_best_time(db, athlete.athleteid, style_uid,
+                if _upsert_best_time(db, member.membersid, style_uid,
                                      best_time, ev_course, source, best_date):
                     updated += 1
 
     # Relay BT
     for relay_el in root.iter("RELAY"):
-        roster: list[Athlete] = []
+        roster: list[Member] = []
         for pos_el in relay_el.iter("RELAYPOSITION"):
-            ath = athlete_by_lenex_id.get(pos_el.get("athleteid", ""))
-            if ath and ath not in roster:
-                roster.append(ath)
+            member = athlete_by_lenex_id.get(pos_el.get("athleteid", ""))
+            if member and member not in roster:
+                roster.append(member)
         if not roster:
             continue
 
@@ -358,8 +359,8 @@ def load_best_times(db: Session, file_bytes: bytes, source: str = "") -> dict:
             if not style_uid:
                 continue
             best = min(times)
-            for ath in roster:
-                if _upsert_best_time(db, ath.athleteid, style_uid, best, course, source, recorded_on):
+            for member in roster:
+                if _upsert_best_time(db, member.membersid, style_uid, best, course, source, recorded_on):
                     updated += 1
 
     db.commit()
@@ -381,5 +382,79 @@ def load_best_times(db: Session, file_bytes: bytes, source: str = "") -> dict:
             db.commit()
         except Exception:
             db.rollback()
+
+    # ── Sync best times to Team Manager Result table (transition) ─────────
+    # Create Result rows so best_times_v2 can compute from them.
+    try:
+        from .models_team import Meet, Result as TeamResult
+        from sqlalchemy import func
+        from datetime import datetime as _dt
+
+        # Find or create a historical "Best Times" meet
+        bt_meet = db.query(Meet).filter(Meet.name == "__best_times_import__").first()
+        if not bt_meet:
+            next_id = (db.query(func.max(Meet.meetsid)).scalar() or 0) + 1
+            bt_meet = Meet(
+                meetsid=next_id,
+                name="__best_times_import__",
+                mindate=_dt(recorded_on.year, recorded_on.month, recorded_on.day) if recorded_on else None,
+                course={"LCM": 1, "SCM": 3}.get(course, 1),
+                meetstate=3,  # completed
+            )
+            db.add(bt_meet)
+            db.flush()
+
+        course_int = {"LCM": 1, "SCM": 3, "SCY": 2}.get(course, 1)
+
+        # For each athlete that was updated, sync their best times to Result rows
+        bt_entries = db.query(BsGlobal).filter(BsGlobal.name.like("bt_%")).all()
+        for entry in bt_entries:
+            try:
+                ath_id = int(entry.name[3:])  # "bt_123" -> 123
+            except (ValueError, IndexError):
+                continue
+            # Only sync if member exists
+            member = db.query(Member).get(ath_id)
+            if not member:
+                continue
+            try:
+                bt_data = _json.loads(entry.data)
+            except (ValueError, TypeError):
+                continue
+            for uid_key, style_data in bt_data.items():
+                style_uid = int(uid_key)
+                for course_str, time_entry in style_data.items():
+                    c_int = {"LCM": 1, "SCM": 3, "SCY": 2}.get(course_str)
+                    if not c_int:
+                        continue
+                    time_ms = time_entry.get("time_ms")
+                    if not time_ms:
+                        continue
+                    date_str = time_entry.get("date")
+                    event_date = _dt.fromisoformat(date_str) if date_str else None
+                    # Upsert: check if result already exists
+                    existing = db.query(TeamResult).filter(
+                        TeamResult.membersid == ath_id,
+                        TeamResult.meetsid == bt_meet.meetsid,
+                        TeamResult.stylesid == style_uid,
+                        TeamResult.course == c_int,
+                    ).first()
+                    if existing:
+                        if time_ms < (existing.totaltime or 999999999):
+                            existing.totaltime = time_ms
+                            existing.eventdate = event_date
+                    else:
+                        db.add(TeamResult(
+                            membersid=ath_id,
+                            meetsid=bt_meet.meetsid,
+                            stylesid=style_uid,
+                            totaltime=time_ms,
+                            course=c_int,
+                            eventdate=event_date,
+                            resulttyp=0,
+                        ))
+        db.commit()
+    except Exception:
+        db.rollback()
 
     return {"times_updated": updated, "athletes_skipped": skipped, "athletes_created": athletes_created}

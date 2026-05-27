@@ -1,23 +1,32 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 import { inflateRawSync, deflateRawSync } from 'node:zlib'
 import Database from 'better-sqlite3'
+import { saveGeminiKeys } from './ocrGemini'
 
 // ── ZIP reader ────────────────────────────────────────────────────────────────
 
-function readZipFirstEntry(filePath: string): string {
+// Reads all local-file entries from a ZIP. Handles store (method 0) and deflate (method 8).
+function readZipEntries(filePath: string): Map<string, Buffer> {
   const buf = readFileSync(filePath)
   if (buf[0] !== 0x50 || buf[1] !== 0x4B || buf[2] !== 0x03 || buf[3] !== 0x04) {
     throw new Error('Not a valid ZIP/LXF file')
   }
-  const method = buf.readUInt16LE(8)
-  const compressedSize = buf.readUInt32LE(18)
-  const fileNameLen = buf.readUInt16LE(26)
-  const extraLen = buf.readUInt16LE(28)
-  const dataStart = 30 + fileNameLen + extraLen
-  const compressed = buf.subarray(dataStart, dataStart + compressedSize)
-  if (method === 0) return compressed.toString('utf8')
-  if (method === 8) return inflateRawSync(compressed).toString('utf8')
-  throw new Error(`Unsupported ZIP compression method: ${method}`)
+  const entries = new Map<string, Buffer>()
+  let offset = 0
+  while (offset + 30 <= buf.length) {
+    if (buf.readUInt32LE(offset) !== 0x04034b50) break
+    const method = buf.readUInt16LE(offset + 8)
+    const compressedSize = buf.readUInt32LE(offset + 18)
+    const fileNameLen = buf.readUInt16LE(offset + 26)
+    const extraLen = buf.readUInt16LE(offset + 28)
+    const name = buf.subarray(offset + 30, offset + 30 + fileNameLen).toString('utf8')
+    const dataStart = offset + 30 + fileNameLen + extraLen
+    const compressed = buf.subarray(dataStart, dataStart + compressedSize)
+    if (method === 0) entries.set(name, Buffer.from(compressed))
+    else if (method === 8) entries.set(name, inflateRawSync(compressed))
+    offset = dataStart + compressedSize
+  }
+  return entries
 }
 
 // ── Minimal XML tree parser ───────────────────────────────────────────────────
@@ -136,6 +145,7 @@ export interface ImportSummary {
   athletes: number
   results: number
   errors: string[]
+  geminiKeysImported?: boolean
 }
 
 // ── Main import function (now uses local SQLite) ──────────────────────────────
@@ -146,7 +156,29 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
     heats: 0, clubs: 0, athletes: 0, results: 0, errors: [],
   }
 
-  const xml = readZipFirstEntry(filePath)
+  const entries = readZipEntries(filePath)
+
+  // Find the .lef XML entry (first entry whose name ends with .lef)
+  const lefName = [...entries.keys()].find(n => n.endsWith('.lef'))
+  if (!lefName) throw new Error('No .lef entry found in LXF file')
+  const xml = entries.get(lefName)!.toString('utf8')
+
+  // Extract Gemini keys if embedded by team-app export
+  const keysEntry = entries.get('.keys')
+  if (keysEntry) {
+    try {
+      const keys = JSON.parse(keysEntry.toString('utf8')) as Record<string, string>
+      const freeKey = keys['gemini_free'] ?? ''
+      const paidKey = keys['gemini_paid'] ?? ''
+      if (freeKey || paidKey) {
+        saveGeminiKeys(freeKey, paidKey)
+        summary.geminiKeysImported = true
+      }
+    } catch {
+      summary.errors.push('Warning: .keys entry present but could not be parsed')
+    }
+  }
+
   const lenex = parseXml(xml)
   const meet = child(child(lenex, 'MEETS')!, 'MEET')
   if (!meet) throw new Error('No MEET element found in LENEX file')
@@ -234,13 +266,15 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
       `INSERT INTO swimevent
          (swimeventid, swimsessionid, eventnumber, gender, round, swimstyleid, sortcode,
           internalevent, splashmecanedit, masters, pfineignore, seedbonuslast,
-          seedexhlast, seedlateentrylast, seedingglobal, twoperlane, combineagegroups, roundname)
-       VALUES (?,?,?,?,?,?,?,'F','F',?,'F','F','F','F','F','F','F',?)
+          seedexhlast, seedlateentrylast, seedingglobal, twoperlane, combineagegroups, roundname, comment)
+       VALUES (?,?,?,?,?,?,?,?,'F',?,'F','F','F','F','F','F','F',?,?)
        ON CONFLICT(swimeventid) DO UPDATE SET
          swimsessionid=excluded.swimsessionid, eventnumber=excluded.eventnumber,
          gender=excluded.gender, round=excluded.round, swimstyleid=excluded.swimstyleid,
          sortcode=excluded.sortcode, internalevent=excluded.internalevent,
-         masters=excluded.masters, roundname=excluded.roundname`),
+         masters=excluded.masters,
+         roundname=CASE WHEN excluded.roundname!='' THEN excluded.roundname ELSE swimevent.roundname END,
+         comment=CASE WHEN excluded.comment!='' THEN excluded.comment ELSE swimevent.comment END`),
     upsertAgeGroup: db.prepare(
       `INSERT INTO agegroup
          (agegroupid, swimeventid, name, agemin, agemax, gender, heatcount, sortcode,
@@ -323,12 +357,14 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
       const gender = encodeGender(ea.gender)
       const round = encodeRound(ea.round)
       const sortcode = parseInt(ea.order ?? ea.number ?? '0', 10)
+      const isInternal = ea.internalevent === 'T' ? 'T' : 'F'
       const isMasters = ea.type === 'MASTERS' ? 'T' : 'F'
       const evName = ea.name ?? styleName
+      const evComment = isInternal === 'T' ? evName : ''
       try {
         stmts.upsertEvent.run(
           eventId, swimsessionid, parseInt(ea.number ?? '0', 10),
-          gender, round, styleId || null, sortcode, isMasters, evName
+          gender, round, styleId || null, sortcode, isInternal, isMasters, evName, evComment
         )
         summary.events++
       } catch (e) {
@@ -885,5 +921,143 @@ export function exportLenexResults(filePath: string, db: Database.Database): Exp
   const xml = lines.join('\n')
   writeZipSingleEntry(filePath, 'results.lef', xml)
 
+  return summary
+}
+
+// ── Meet structure export (for team-app invitation flow) ──────────────────────
+
+export interface MeetExportSummary {
+  sessions: number
+  events: number
+}
+
+/**
+ * Export the meet structure (sessions, events, age groups) as a LENEX .lxf.
+ * Does NOT include athletes or results — only the competition skeleton.
+ * The resulting file can be imported into team-app via /api/upload/meet.
+ */
+export function exportMeetLenex(filePath: string, db: Database.Database): MeetExportSummary {
+  const summary: MeetExportSummary = { sessions: 0, events: 0 }
+
+  // Meet metadata
+  const globals = db.prepare(`SELECT name, data FROM bsglobal`).all() as Array<{ name: string; data: string | null }>
+  const g: Record<string, string> = {}
+  for (const row of globals) g[row.name] = row.data ?? ''
+
+  const mv: Record<string, string> = {}
+  if (g['MEETVALUES']) {
+    for (const line of g['MEETVALUES'].split(/\r?\n/)) {
+      const eq = line.indexOf('=')
+      if (eq < 0) continue
+      const key = line.slice(0, eq)
+      const rest = line.slice(eq + 1)
+      const semi = rest.indexOf(';')
+      mv[key] = semi >= 0 ? rest.slice(semi + 1) : rest
+    }
+  }
+
+  const meetName = mv['NAME'] || g['MeetName'] || 'Meet'
+  const meetCity = mv['CITY'] || g['MeetCity'] || ''
+  const meetNation = mv['NATION'] || g['MeetNation'] || ''
+  const meetCourse = decodeCourse(parseInt(mv['COURSE'] || g['MeetCourse'] || '1', 10))
+
+  // Age base date from MEETVALUES or default to Dec 31 of current year
+  const ageDateRaw = mv['AGEDATE'] || ''
+  let ageDate = ''
+  if (ageDateRaw && ageDateRaw.length >= 8) {
+    const y = ageDateRaw.slice(0, 4), m = ageDateRaw.slice(4, 6), d = ageDateRaw.slice(6, 8)
+    ageDate = `${y}-${m}-${d}`
+  }
+  if (!ageDate) ageDate = `${new Date().getFullYear()}-12-31`
+
+  const sessions = db.prepare(
+    `SELECT swimsessionid, sessionnumber, name, course, startdate FROM swimsession ORDER BY sessionnumber`
+  ).all() as Array<{ swimsessionid: number; sessionnumber: number; name: string | null; course: number | null; startdate: string | null }>
+
+  const events = db.prepare(
+    `SELECT e.swimeventid, e.swimsessionid, e.eventnumber, e.gender, e.round, e.roundname,
+            e.internalevent, e.masters, e.sortcode, e.swimstyleid,
+            s.distance, s.stroke, s.relaycount, s.name AS stylename
+     FROM swimevent e
+     LEFT JOIN swimstyle s ON s.swimstyleid = e.swimstyleid
+     ORDER BY e.sortcode, e.eventnumber`
+  ).all() as Array<{
+    swimeventid: number; swimsessionid: number; eventnumber: number
+    gender: number; round: number; roundname: string | null; internalevent: string | null
+    masters: string | null; sortcode: number; swimstyleid: number | null
+    distance: number | null; stroke: number | null; relaycount: number | null; stylename: string | null
+  }>
+
+  const ageGroups = db.prepare(
+    `SELECT agegroupid, swimeventid, name, agemin, agemax, gender, finalseedtype FROM agegroup ORDER BY sortcode`
+  ).all() as Array<{
+    agegroupid: number; swimeventid: number; name: string | null
+    agemin: number | null; agemax: number | null; gender: number | null; finalseedtype: number | null
+  }>
+  const agByEvent = new Map<number, typeof ageGroups>()
+  for (const ag of ageGroups) {
+    const list = agByEvent.get(ag.swimeventid) ?? []
+    list.push(ag)
+    agByEvent.set(ag.swimeventid, list)
+  }
+
+  const lines: string[] = []
+  lines.push('<?xml version="1.0" encoding="UTF-8"?>')
+  lines.push('<LENEX version="3.0">')
+  lines.push('  <MEETS>')
+  lines.push(`    <MEET${attr('name', meetName)}${attr('city', meetCity)}${attr('nation', meetNation)}${attr('course', meetCourse)}>`)
+  lines.push(`      <AGEDATE value="${ageDate}" type="DATE" />`)
+  lines.push('      <SESSIONS>')
+
+  for (const sess of sessions) {
+    const sessDate = sess.startdate ? sess.startdate.slice(0, 10) : ageDate
+    lines.push(`        <SESSION${attr('number', sess.sessionnumber)}${attr('name', sess.name)}${attr('date', sessDate)}${attr('course', decodeCourse(sess.course))}>`)
+    lines.push('          <EVENTS>')
+
+    const sessEvents = events.filter(e => e.swimsessionid === sess.swimsessionid)
+    for (const ev of sessEvents) {
+      const evAttrs = [
+        attr('eventid', ev.swimeventid),
+        attr('number', ev.eventnumber),
+        attr('gender', decodeGender(ev.gender)),
+        attr('round', decodeRound(ev.round)),
+        attr('order', ev.sortcode),
+      ]
+      if (ev.roundname) evAttrs.push(attr('name', ev.roundname))
+      if (ev.internalevent === 'T') evAttrs.push(` internalevent="T"`)
+      if (ev.masters === 'T') evAttrs.push(` type="MASTERS"`)
+      lines.push(`            <EVENT${evAttrs.join('')}>`)
+
+      if (ev.swimstyleid) {
+        lines.push(`              <SWIMSTYLE${attr('swimstyleid', ev.swimstyleid)}${attr('distance', ev.distance)}${attr('stroke', decodeStroke(ev.stroke))}${attr('relaycount', ev.relaycount ?? 1)}${attr('name', ev.stylename)} />`)
+      }
+
+      const evAgs = agByEvent.get(ev.swimeventid)
+      if (evAgs && evAgs.length > 0) {
+        lines.push('              <AGEGROUPS>')
+        for (const ag of evAgs) {
+          let agStr = `                <AGEGROUP${attr('agegroupid', ag.agegroupid)}${attr('name', ag.name)}${attr('agemin', ag.agemin)}${attr('agemax', ag.agemax)}${attr('gender', decodeGender(ag.gender))}`
+          if (ag.finalseedtype != null) agStr += attr('finalseedtype', ag.finalseedtype)
+          agStr += ' />'
+          lines.push(agStr)
+        }
+        lines.push('              </AGEGROUPS>')
+      }
+
+      lines.push('            </EVENT>')
+      summary.events++
+    }
+
+    lines.push('          </EVENTS>')
+    lines.push('        </SESSION>')
+    summary.sessions++
+  }
+
+  lines.push('      </SESSIONS>')
+  lines.push('    </MEET>')
+  lines.push('  </MEETS>')
+  lines.push('</LENEX>')
+
+  writeZipSingleEntry(filePath, 'meet.lef', lines.join('\n'))
   return summary
 }

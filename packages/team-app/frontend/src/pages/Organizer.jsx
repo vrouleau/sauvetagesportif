@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useLang } from '../i18n'
 import api from '../api'
 
@@ -8,7 +8,10 @@ export default function Organizer() {
   const [checked, setChecked] = useState({})
   const [stripeStatus, setStripeStatus] = useState(null)
   const [msg, setMsg] = useState('')
+  const [showImportConfirm, setShowImportConfirm] = useState(false)
   const { t, lang } = useLang()
+  const importResultsRef = useRef(null)
+  const isAdmin = localStorage.getItem('role') === 'admin'
 
   useEffect(() => { loadMeetInfo(); loadClubs(); loadStripeStatus() }, [])
 
@@ -46,8 +49,63 @@ export default function Organizer() {
     } catch (e) { setMsg(e.message || 'Error') }
   }
 
-  function exportLxf() {
-    window.open('/api/export/registrations-lxf', '_blank')
+  async function importResults(e) {
+    const file = e.target.files[0]
+    if (!file) return
+    setMsg(lang === 'fr' ? 'Importation des résultats...' : 'Importing results...')
+    const fd = new FormData()
+    fd.append('file', file)
+    e.target.value = ''
+    try {
+      const res = await fetch('/api/import-results-lxf', {
+        method: 'POST',
+        headers: { 'X-Club-Pin': localStorage.getItem('pin') || '' },
+        body: fd,
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || `${res.status}`)
+      const r = data.results
+      if (data.reset) {
+        const isOrganizer = localStorage.getItem('role') === 'organizer'
+        if (isOrganizer) {
+          setMsg(lang === 'fr'
+            ? `✓ Meet archivé : ${r} résultat(s) — ${data.meet_name}. Déconnexion en cours…`
+            : `✓ Meet archived: ${r} result(s) — ${data.meet_name}. Logging out…`)
+          setTimeout(() => {
+            localStorage.removeItem('pin')
+            localStorage.removeItem('role')
+            localStorage.removeItem('club_id')
+            localStorage.removeItem('club_name')
+            window.location.href = '/'
+          }, 2500)
+        } else {
+          setMsg(lang === 'fr'
+            ? `✓ Meet archivé et réinitialisé : ${r} résultat(s) — ${data.meet_name}`
+            : `✓ Meet archived and reset: ${r} result(s) — ${data.meet_name}`)
+          loadMeetInfo(); loadClubs()
+        }
+      } else {
+        setMsg(lang === 'fr'
+          ? `✓ Meet historique mis à jour : ${r} résultat(s) — ${data.meet_name}`
+          : `✓ Historical meet updated: ${r} result(s) — ${data.meet_name}`)
+      }
+    } catch (err) {
+      setMsg(err.message || 'Error')
+    }
+  }
+
+  async function exportLxf() {
+    try {
+      const res = await fetch('/api/export/registrations-lxf', {
+        headers: { 'X-Club-Pin': localStorage.getItem('pin') || '' }
+      })
+      if (!res.ok) throw new Error(`${res.status}`)
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url; a.download = 'inscriptions.lxf'; a.click()
+      URL.revokeObjectURL(url)
+    } catch (e) { setMsg(e.message || 'Error') }
   }
 
   async function uploadMeet(e) {
@@ -186,9 +244,6 @@ export default function Organizer() {
             )}
           </span>
         )}
-        {meetInfo && !meetInfo.filename && (
-          <span className="text-xs text-red-500">{t.no_meet}</span>
-        )}
         <div className="flex-1" />
         {/* Stripe status */}
         {stripeStatus?.connected ? (
@@ -227,6 +282,12 @@ export default function Organizer() {
         </button>
         <div className="w-px h-4 bg-gray-300" />
         <button onClick={exportLxf} className="px-3 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700">{t.download_lxf}</button>
+        <input ref={importResultsRef} type="file" accept=".lxf" className="hidden" onChange={importResults} />
+        <button
+          onClick={() => setShowImportConfirm(true)}
+          className="px-3 py-1 bg-indigo-600 text-white text-xs rounded hover:bg-indigo-700">
+          {lang === 'fr' ? 'Importer résultats' : 'Import Results'}
+        </button>
         {stripeStatus?.connected && (
           <>
             <div className="w-px h-4 bg-gray-300" />
@@ -273,6 +334,61 @@ export default function Organizer() {
 
       {/* Fee summary panel */}
       {meetInfo?.filename && <FeeSummary meetInfo={meetInfo} t={t} lang={lang} />}
+
+      {/* Import results confirmation modal (organizer only) */}
+      {showImportConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md mx-4 p-6">
+            <h2 className="text-base font-semibold text-gray-900 mb-1">
+              {lang === 'fr' ? 'Finaliser le meet et archiver les résultats' : 'Close the Meet and Archive Results'}
+            </h2>
+            <p className="text-xs text-red-600 font-medium mb-3">
+              {lang === 'fr' ? 'Cette action est irréversible.' : 'This action cannot be undone.'}
+            </p>
+            <p className="text-xs text-gray-600 mb-2">
+              {lang === 'fr' ? 'En important les résultats, vous allez :' : 'By importing results, you will:'}
+            </p>
+            <ul className="text-xs text-gray-700 space-y-1.5 mb-4 ml-2">
+              <li className="flex gap-2">
+                <span className="text-gray-400 shrink-0">1.</span>
+                <span>{lang === 'fr'
+                  ? 'Archiver les résultats comme meet historique (visible dans les meilleures performances)'
+                  : 'Archive results as a historical meet (visible in best times)'}</span>
+              </li>
+              <li className="flex gap-2">
+                <span className="text-gray-400 shrink-0">2.</span>
+                <span>{lang === 'fr'
+                  ? 'Réinitialiser le meet actuel — toutes les inscriptions et la structure des épreuves seront effacées'
+                  : 'Reset the current meet — all registrations and event structure will be erased'}</span>
+              </li>
+              <li className="flex gap-2">
+                <span className="text-gray-400 shrink-0">3.</span>
+                <span>{lang === 'fr'
+                  ? 'Régénérer les NIP de tous les clubs — les entraîneurs devront se reconnecter pour le prochain meet'
+                  : 'Regenerate all club PINs — coaches will need to log in again for the next meet'}</span>
+              </li>
+              <li className="flex gap-2">
+                <span className="text-gray-400 shrink-0">4.</span>
+                <span className="font-medium text-orange-700">{lang === 'fr'
+                  ? "Supprimer votre rôle d'organisateur et vous déconnecter — l'administrateur devra inviter un nouvel organisateur pour le prochain meet"
+                  : 'Remove your organizer role and log you out — an admin will need to invite a new organizer for the next meet'}</span>
+              </li>
+            </ul>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setShowImportConfirm(false)}
+                className="px-4 py-1.5 text-xs rounded border border-gray-300 text-gray-700 hover:bg-gray-50">
+                {lang === 'fr' ? 'Annuler' : 'Cancel'}
+              </button>
+              <button
+                onClick={() => { setShowImportConfirm(false); importResultsRef.current?.click() }}
+                className="px-4 py-1.5 text-xs rounded bg-red-600 text-white hover:bg-red-700 font-medium">
+                {lang === 'fr' ? 'Oui, archiver et terminer' : 'Yes, archive and close'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

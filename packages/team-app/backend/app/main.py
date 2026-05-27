@@ -7,7 +7,9 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from .database import engine, SessionLocal
-from .models import Base, Club, BsGlobal
+from .models import Base, BsGlobal
+from .models_team import TeamClub
+from . import models_team  # noqa: F401 — register Team Manager tables with Base.metadata
 from .events import load_events
 from .routers.api import router
 
@@ -54,11 +56,11 @@ def _identify_user(pin: str) -> str:
         admin_pin = admin_pin_cfg.data if admin_pin_cfg else os.environ.get("ADMIN_PIN", "000000")
         if pin == admin_pin:
             return "admin"
-        club = db.query(Club).filter(Club.pin == pin).first()
+        club = db.query(TeamClub).filter(TeamClub.pin == pin).first()
         if not club:
             return "unknown"
         org_cfg = db.query(BsGlobal).get("organizer_club_id")
-        if org_cfg and org_cfg.data == str(club.clubid):
+        if org_cfg and org_cfg.data == str(club.clubsid):
             return f"organizer/{club.name}"
         return f"coach/{club.name}"
     finally:

@@ -2,7 +2,42 @@
 
 ## Overview
 
-The organizer manages the competition structure, sends invitations to clubs, and exports registration bundles for import into SauvetageMeet. This role has access to the **Meet**, **Invitation**, and **Registration** tabs.
+The organizer manages the full meet cycle: creating the structure, sending invitations, collecting registrations, sending invoices, and finally importing results to close the meet. This role has access to the **Meet**, **Invitation**, and **Registration** tabs.
+
+```
+┌────────────────────────── MEET LIFECYCLE ────────────────────────────────┐
+│                                                                            │
+│  ① Admin         Invite organizer (set organizer club in Admin page)     │
+│        │                                                                   │
+│        ▼                                                                   │
+│  ② Organizer     Create meet structure                                    │
+│                  (New meet button — or import .lxf from SauvetageMeet)    │
+│        │                                                                   │
+│        ▼                                                                   │
+│  ③ Organizer     Send invitations → coaches receive PIN by email          │
+│        │                                                                   │
+│        ▼                                                                   │
+│  ④ Coaches       Log in · Register athletes · Adjust entry times          │
+│        │                                                                   │
+│        ▼                                                                   │
+│  ⑤ Organizer     Closure date passes → Send Stripe invoices to clubs      │
+│        │                                                                   │
+│        ▼                                                                   │
+│  ⑥ Organizer     Export registrations (.lxf)                              │
+│   SauvetageMeet  Import entries · Seed heats · Run competition            │
+│                  Record times · Generate reports · Export results (.lxf)  │
+│        │                                                                   │
+│        ▼                                                                   │
+│  ⑦ Organizer     Import results (.lxf)   ← closes the meet               │
+│                  → Results archived as historical meet                     │
+│                  → Current meet reset (events + registrations cleared)    │
+│                  → All club PINs regenerated                              │
+│                  → Organizer role cleared · Organizer logged out          │
+│        │                                                                   │
+│        └────────────────────────────────► ① Start next meet cycle        │
+│                                                                            │
+└────────────────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
@@ -83,16 +118,21 @@ Coaches can request their own invitation from the login page:
 
 ## After Closure — Export Registrations
 
-1. After the closure date, click **Download bundle (.zip)**
-2. The zip contains:
-   - `entries.lxf` — all registrations in Lenex format
-   - Helper scripts for result simulation
+1. After the closure date, click **Download LXF** in the Invitation tab toolbar
+2. Import the `.lxf` file into SauvetageMeet: **File → Import LENEX**
+3. All athletes, clubs, and entry times are loaded into SauvetageMeet
 
-### Import into SauvetageMeet
+---
 
-1. In SauvetageMeet, use **File → Import LENEX**
-2. Select the `entries.lxf` from the downloaded zip
-3. All athletes, clubs, and entry times are imported
+## After Closure — Send Invoices (Stripe)
+
+If your Stripe account is connected:
+
+1. Select clubs in the Invitation tab (checkboxes)
+2. Click **Send Stripe Invoice** — each club receives an invoice for their registration fees
+3. Clubs pay online; payment status is tracked in Stripe
+
+> **Note**: Connect your Stripe account in the Invitation tab toolbar before the meet. Fees are configured in the meet structure.
 
 ---
 
@@ -102,14 +142,31 @@ The organizer can register athletes from any club and modify entries (same inter
 
 ---
 
+## After the Competition — Import Results (Close the Meet)
+
+Once the competition is over and results have been exported from SauvetageMeet:
+
+1. In SauvetageMeet, use **File → Export results LENEX…** to save a `.lxf` results file
+2. In SauvetageTeam (Invitation tab), click **Import Results**
+3. Confirm the warning dialog — this action is **irreversible** and will:
+   - Archive results as a completed historical meet (used for future best times)
+   - Reset the current meet (all registrations and event structure cleared)
+   - Regenerate all club PINs (coaches must re-authenticate for the next meet)
+   - Clear the organizer role and **log you out**
+4. After logout, the administrator can invite the organizer for the next meet
+
+> **Admin note**: After a results import, the system is back to step ①. Designate the next organizer in the Admin page.
+
+---
+
 ## Workflow Summary
 
-| Step | Action | Tool |
-|------|--------|------|
-| 1 | Create new pool or beach meet from template | SauvetageTeam |
-| 2 | Upload meet structure (.lxf) from SauvetageMeet export | SauvetageTeam |
-| 3 | Set entry closure date | SauvetageTeam |
-| 4 | Send invitations to clubs | SauvetageTeam |
-| 5 | Wait for coaches to register | — |
-| 6 | Export registration bundle (.zip) | SauvetageTeam |
-| 7 | Import entries into SauvetageMeet | SauvetageMeet |
+| Step | Action | Role | Tool |
+|------|--------|------|------|
+| ① | Invite organizer | Admin | SauvetageTeam |
+| ② | Create meet structure | Organizer | SauvetageTeam (or SauvetageMeet → export) |
+| ③ | Send invitations to clubs | Organizer | SauvetageTeam |
+| ④ | Register athletes | Coaches | SauvetageTeam |
+| ⑤ | Send Stripe invoices (collect fees) | Organizer | SauvetageTeam |
+| ⑥ | Export registrations (.lxf) → Run competition | Organizer + SauvetageMeet | Both |
+| ⑦ | Import results (.lxf) → meet closed | Organizer | SauvetageTeam |

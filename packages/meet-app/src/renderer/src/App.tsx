@@ -7,7 +7,6 @@ import ReportPage from './pages/ReportPage'
 import TimingScanPage from './pages/TimingScanPage'
 import TimingProcessPage from './pages/TimingProcessPage'
 import GuidePage from './pages/GuidePage'
-import { DbConfigDialog } from './components/DbConfigDialog'
 import { GeminiKeyDialog } from './components/GeminiKeyDialog'
 import { LangProvider, useLang } from '@shared/context/LangContext'
 import logoSrc from '@shared/assets/icon.png'
@@ -25,6 +24,10 @@ interface ExportSummary {
   clubs: number; athletes: number; results: number
 }
 
+interface MeetExportSummary {
+  sessions: number; events: number
+}
+
 interface ImportState {
   status: 'idle' | 'running' | 'done' | 'error'
   summary?: ImportSummary
@@ -37,6 +40,7 @@ function fileApi() {
       file?: {
         openLxfDialog: () => Promise<string | null>
         importLenex: (path: string) => Promise<{ ok: boolean; summary?: ImportSummary; error?: string }>
+        exportMeetLenex: () => Promise<{ ok: boolean; canceled?: boolean; summary?: MeetExportSummary; error?: string }>
         exportLenexResults: () => Promise<{ ok: boolean; canceled?: boolean; summary?: ExportSummary; error?: string }>
         saveSMB: () => Promise<{ ok: boolean; canceled?: boolean; tables?: number; rows?: number; error?: string }>
         restoreSMB: () => Promise<{ ok: boolean; canceled?: boolean; tables?: number; rows?: number; error?: string }>
@@ -50,7 +54,6 @@ function dbApi() {
   return (window as unknown as {
     api?: {
       db?: {
-        syncUp: () => Promise<{ ok: boolean; tablesCreated?: string[]; error?: string }>
         flushMeet: () => Promise<{ ok: boolean; error?: string }>
         getMeetType: () => Promise<string>
       }
@@ -64,12 +67,10 @@ function menuApi() {
   return (window as unknown as {
     api?: {
       menu?: {
-        onConfigureDb: (cb: () => void) => () => void
         onConfigureGemini: (cb: () => void) => () => void
         onOpenGuide: (cb: (guideType: string) => void) => () => void
-        onSyncDown: (cb: () => void) => () => void
-        onSyncUp: (cb: () => void) => () => void
         onImportLenex: (cb: () => void) => () => void
+        onExportMeetLenex: (cb: () => void) => () => void
         onExportLenexResults: (cb: () => void) => () => void
         onSaveSMB: (cb: () => void) => () => void
         onRestoreSMB: (cb: () => void) => () => void
@@ -130,69 +131,6 @@ function ImportStatusDialog({
                 </details>
               )}
             </>
-          )}
-        </div>
-
-        {state.status !== 'running' && (
-          <div className="flex justify-end px-5 py-3 border-t border-gray-200 bg-gray-50">
-            <button
-              onClick={onClose}
-              className="px-4 py-1 bg-blue-600 text-white hover:bg-blue-700 border border-blue-700"
-            >
-              Fermer
-            </button>
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-// ─── Sync-Up Dialog ───────────────────────────────────────────────────────────
-
-interface SyncUpState {
-  status: 'running' | 'done' | 'error'
-  tablesCreated?: string[]
-  error?: string
-}
-
-function SyncUpDialog({
-  state,
-  onClose,
-}: {
-  state: SyncUpState
-  onClose: () => void
-}) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="bg-white border border-gray-400 shadow-xl w-[420px] text-xs">
-        <div className="flex items-center justify-between bg-gray-700 text-white px-3 py-2">
-          <span className="font-semibold">Synchronisation ↑ (app → BD)</span>
-          {state.status !== 'running' && (
-            <button onClick={onClose} className="hover:text-gray-300 text-lg leading-none">×</button>
-          )}
-        </div>
-
-        <div className="p-5">
-          {state.status === 'running' && (
-            <div className="text-gray-500 italic">Synchronisation en cours…</div>
-          )}
-          {state.status === 'error' && (
-            <div className="text-red-600">Erreur: {state.error}</div>
-          )}
-          {state.status === 'done' && (
-            state.tablesCreated && state.tablesCreated.length > 0 ? (
-              <>
-                <div className="font-semibold text-green-700 mb-2">
-                  Base de données initialisée — {state.tablesCreated.length} table(s) créée(s)
-                </div>
-                <ul className="list-disc ml-4 space-y-0.5 text-gray-700">
-                  {state.tablesCreated.map(t => <li key={t} className="font-mono">{t}</li>)}
-                </ul>
-              </>
-            ) : (
-              <div className="text-gray-700">La base de données est déjà à jour — aucune table à créer.</div>
-            )
           )}
         </div>
 
@@ -365,14 +303,12 @@ function FlushConfirmDialog({
 function AppInner() {
   const [page, setPage] = useState<Page>('events')
   const { lang, setLang, t } = useLang()
-  const [showDbConfig, setShowDbConfig] = useState(false)
   const [showGeminiConfig, setShowGeminiConfig] = useState(false)
   const [showGuide, setShowGuide] = useState<'pool' | 'beach' | null>(null)
   const [importState, setImportState] = useState<ImportState | null>(null)
   const [exportState, setExportState] = useState<{ status: 'done' | 'error'; summary?: ExportSummary; error?: string } | null>(null)
   const [smbState, setSmbState] = useState<SmbState | null>(null)
   const [flushState, setFlushState] = useState<{ open: boolean; running: boolean; meetType?: string; error?: string } | null>(null)
-  const [syncUpState, setSyncUpState] = useState<SyncUpState | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
   const [meetType, setMeetType] = useState<string>('POOL')
   const [meetName, setMeetName] = useState<string>('')
@@ -388,12 +324,10 @@ function AppInner() {
     const m = menuApi()
     if (!m) return
     const cleanups = [
-      m.onConfigureDb(() => setShowDbConfig(true)),
       m.onConfigureGemini(() => setShowGeminiConfig(true)),
       m.onOpenGuide((guideType) => setShowGuide(guideType as 'pool' | 'beach')),
-      m.onSyncDown(() => handleRefresh()),
-      m.onSyncUp(() => handleSyncUp()),
       m.onImportLenex(() => handleImportLenex()),
+      m.onExportMeetLenex(() => handleExportMeetLenex()),
       m.onExportLenexResults(() => handleExportLenexResults()),
       m.onSaveSMB(() => handleSaveSMB()),
       m.onRestoreSMB(() => handleRestoreSMB()),
@@ -416,6 +350,16 @@ function AppInner() {
     }
   }
 
+  async function handleExportMeetLenex() {
+    const f = fileApi()
+    if (!f) return
+    const result = await f.exportMeetLenex()
+    if (result.canceled) return
+    if (!result.ok) {
+      alert(result.error ?? 'Export failed')
+    }
+  }
+
   async function handleExportLenexResults() {
     const f = fileApi()
     if (!f) return
@@ -430,16 +374,6 @@ function AppInner() {
 
   function handleRefresh() {
     setRefreshKey((k) => k + 1)
-  }
-
-  async function handleSyncUp() {
-    setSyncUpState({ status: 'running' })
-    const result = await dbApi()?.syncUp()
-    if (!result || result.ok) {
-      setSyncUpState({ status: 'done', tablesCreated: result?.tablesCreated ?? [] })
-    } else {
-      setSyncUpState({ status: 'error', error: result.error })
-    }
   }
 
   async function handleSaveSMB() {
@@ -584,16 +518,9 @@ function AppInner() {
       </div>
 
       {/* Modals */}
-      {showDbConfig && <DbConfigDialog onClose={() => setShowDbConfig(false)} />}
       {showGeminiConfig && <GeminiKeyDialog onClose={() => setShowGeminiConfig(false)} />}
       {showGuide && <GuidePage guideType={showGuide} onClose={() => setShowGuide(null)} />}
       {smbState && <SmbStatusDialog state={smbState} onClose={() => setSmbState(null)} />}
-      {syncUpState && (
-        <SyncUpDialog
-          state={syncUpState}
-          onClose={() => setSyncUpState(null)}
-        />
-      )}
       {flushState?.open && (
         <FlushConfirmDialog
           running={flushState.running}

@@ -6,6 +6,47 @@ L'administrateur est responsable de la sauvegarde/restauration complète de la b
 
 ---
 
+## Cycle complet de compétition
+
+```
+┌──────────────────────── CYCLE DE COMPÉTITION ─────────────────────────────┐
+│                                                                             │
+│  ① Admin          Inviter l'organisateur (définir dans la page Admin)     │
+│        │                                                                    │
+│        ▼                                                                    │
+│  ② Organisateur   Créer la structure de compétition                       │
+│                   (bouton Nouveau meet — ou import .lxf de SauvetageMeet)  │
+│        │                                                                    │
+│        ▼                                                                    │
+│  ③ Organisateur   Envoyer les invitations → responsables reçoivent NIP    │
+│        │                                                                    │
+│        ▼                                                                    │
+│  ④ Responsables   Se connecter · Inscrire les athlètes · Temps d'entrée   │
+│        │                                                                    │
+│        ▼                                                                    │
+│  ⑤ Organisateur   Date limite dépassée → Envoyer les factures Stripe      │
+│        │                                                                    │
+│        ▼                                                                    │
+│  ⑥ Organisateur   Exporter les inscriptions (.lxf)                        │
+│   SauvetageMeet   Importer · Générer les séries · Courir la compétition   │
+│                   Enregistrer les temps · Exporter les résultats (.lxf)   │
+│        │                                                                    │
+│        ▼                                                                    │
+│  ⑦ Organisateur   Importer les résultats (.lxf)  ← clôture du meet       │
+│                   → Résultats archivés comme meet historique               │
+│                   → Meet actuel réinitialisé (épreuves et inscriptions)   │
+│                   → NIP de tous les clubs régénérés                       │
+│                   → Rôle d'organisateur effacé · Déconnexion              │
+│        │                                                                    │
+│        └──────────────────────────────────► ① Prochain cycle             │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+Le rôle de l'administrateur se situe principalement aux **étapes ① et ⑦** : inviter l'organisateur au début, puis être prêt à inviter le prochain organisateur une fois le meet clôturé.
+
+---
+
 ## Connexion
 
 1. Ouvrir l'application SauvetageTeam dans un navigateur
@@ -92,10 +133,10 @@ Voir le [Guide de l'organisateur](team-organizer) pour les détails.
 
 | Tâche | Quand | Section |
 |-------|-------|---------|
-| Restaurer sauvegarde (.smb) | Début de saison / transfert | Admin |
-| Désigner l'organisateur | Début de saison | Admin |
+| Désigner l'organisateur | Avant chaque meet | Admin |
 | Configurer les courriels des clubs | Avant les invitations | Admin |
 | Configurer les clés Gemini | Avant la compétition | Admin |
 | Sauvegarder (.smb) | Après tout changement majeur | Admin |
 | Exporter les inscriptions (.lxf) | Après mise à jour des temps | Gestion des données |
 | Fusionner clubs/styles | Après import multiple | Gestion des données |
+| *(Après clôture)* Inviter le prochain organisateur | Après import des résultats | Admin |

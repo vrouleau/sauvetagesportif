@@ -37,8 +37,18 @@ export default function Meet() {
     e.target.value = ''
   }
 
-  function handleExportMeet() {
-    window.open('/api/export/meet-lxf', '_blank')
+  async function handleExportMeet() {
+    try {
+      const res = await fetch('/api/export/meet-lxf', {
+        headers: { 'X-Club-Pin': localStorage.getItem('pin') || '' }
+      })
+      if (!res.ok) throw new Error(`${res.status}`)
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url; a.download = 'meet.lxf'; a.click()
+      URL.revokeObjectURL(url)
+    } catch (e) { setMsg(e.message || 'Error') }
   }
 
   if (loading) return <div className="p-4 text-xs text-gray-400">Chargement…</div>

@@ -1,8 +1,6 @@
 import Database from 'better-sqlite3'
 import { app } from 'electron'
 import { join } from 'path'
-import pkg from 'pg'
-const { Pool } = pkg
 import { regenerateCombinedEvents } from './combinedEvents'
 import { regeneratePointScores } from './pointScores'
 
@@ -30,47 +28,13 @@ export function closeLocalDb(): void {
   localDb = null
 }
 
-// ── Remote PG connection (for sync to venue server) ───────────────────────────
-
-export interface DbConfig {
-  host: string
-  port: number
-  user: string
-  password: string
-  database: string
-}
-
-const DEFAULT_CONFIG: DbConfig = {
-  host: '192.168.1.190',
-  port: 5432,
-  user: 'meetmgr',
-  password: 'meetmgr',
-  database: 'meet',
-}
-
-let pool: InstanceType<typeof Pool> | null = null
-let currentConfig = { ...DEFAULT_CONFIG }
-
-export function configureDb(cfg: DbConfig): void {
-  currentConfig = cfg
-  pool?.end().catch(() => {})
-  pool = new Pool({ ...cfg, max: 5, idleTimeoutMillis: 30000 })
-}
-
-function remoteDb(): InstanceType<typeof Pool> {
-  if (!pool) pool = new Pool({ ...currentConfig, max: 5, idleTimeoutMillis: 30000 })
-  return pool
-}
-
-export function getDbConfig(): DbConfig { return { ...currentConfig } }
-
 export function getPool(): InstanceType<typeof Pool> { return remoteDb() }
 
 // ── Time helpers ──────────────────────────────────────────────────────────────
 // DB stores times as integer milliseconds.  Display format: "M:SS.cc" or "SS.cc"
 
 export function msToDisplay(ms: number | null | undefined): string | undefined {
-  if (ms == null) return undefined
+  if (ms == null || ms === 0) return undefined
   // Treat max-int sentinel (2147483647) and unreasonably large values as "no time"
   if (ms >= 2147483647 || ms < 0) return undefined
   const totalCs = Math.round(ms / 10)
@@ -202,63 +166,6 @@ function parseOleDate(d: string | number | null): string | undefined {
   }
   return undefined
 }
-
-/**
- * Convert an OLE Automation date (or ISO string) to a full ISO timestamp for PG.
- * Handles: number (OLE double), string "28725.0" (OLE as text), string "2026-06-15 08:00:00" (ISO).
- * Returns null if the value is a null sentinel or unparseable.
- */
-function oleToIsoTimestamp(v: unknown): string | null {
-  if (v == null) return null
-
-  if (typeof v === 'number') {
-    if (v === 0 || v === -36522) return null
-    const ms = OLE_EPOCH_MS + v * 86400000
-    const dt = new Date(ms)
-    if (dt.getUTCFullYear() < 1900 || dt.getUTCFullYear() > 2100) return null
-    return dt.toISOString().replace('T', ' ').slice(0, 19)
-  }
-
-  const str = String(v).trim()
-  // Already an ISO timestamp
-  if (/^\d{4}-\d{2}-\d{2}/.test(str)) return str.slice(0, 19)
-  // Stringified OLE double
-  const num = parseFloat(str)
-  if (!isNaN(num) && num !== 0 && num !== -36522) {
-    const ms = OLE_EPOCH_MS + num * 86400000
-    const dt = new Date(ms)
-    if (dt.getUTCFullYear() < 1900 || dt.getUTCFullYear() > 2100) return null
-    return dt.toISOString().replace('T', ' ').slice(0, 19)
-  }
-  return null
-}
-
-/**
- * Convert an ISO timestamp (from PG/syncDown) back to an OLE Automation double for SMB export.
- */
-// @ts-ignore: reserved for future SMB export use
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function isoToOle(v: unknown): number {
-  if (v == null) return -36522 // D_NULL_SENTINEL
-  const str = String(v).trim()
-  // Already a number (OLE double stored in SQLite)
-  const num = parseFloat(str)
-  if (!isNaN(num) && !/^\d{4}-/.test(str)) return num
-  // ISO date/timestamp → OLE double
-  const dt = new Date(str)
-  if (isNaN(dt.getTime())) return -36522
-  return (dt.getTime() - OLE_EPOCH_MS) / 86400000
-}
-
-/** Set of table.column pairs that are TIMESTAMP in PG (need OLE→ISO conversion on syncUp) */
-const DATE_COLS = new Set([
-  'swimsession.daytime', 'swimsession.endtime', 'swimsession.officialmeeting',
-  'swimsession.startdate', 'swimsession.tlmeeting', 'swimsession.warmupfrom', 'swimsession.warmupuntil',
-  'athlete.birthdate',
-  'swimevent.daytime', 'swimevent.duration',
-  'heat.daytime',
-  'swimresult.dsqdaytime', 'swimresult.qtdate',
-])
 
 /**
  * Extract birth year from a birthdate value that may be:
@@ -1275,259 +1182,11 @@ const SCHEMA_DDL: string[] = [
   )`,
 ]
 
-const CORE_TABLES = [
-  'bsglobal', 'swimstyle', 'club', 'swimsession', 'athlete',
-  'swimevent', 'agegroup', 'heat', 'swimresult', 'split',
-]
-
 function initLocalSchema(): void {
   const db = getLocalDb()
   for (const ddl of SCHEMA_DDL) {
     db.exec(ddl)
   }
-}
-
-// ── Sync-Up: push local SQLite → remote PG ───────────────────────────────────
-
-const PG_SCHEMA_DDL: string[] = [
-  `CREATE TABLE IF NOT EXISTS bsglobal (
-    name VARCHAR(50) NOT NULL DEFAULT '' PRIMARY KEY,
-    data TEXT)`,
-  `CREATE TABLE IF NOT EXISTS swimstyle (
-    swimstyleid INTEGER NOT NULL,
-    code VARCHAR(10), distance SMALLINT, name VARCHAR(50), relaycount SMALLINT,
-    stroke SMALLINT, sortcode INTEGER, technique SMALLINT, uniqueid SMALLINT,
-    CONSTRAINT pk_swimstyle PRIMARY KEY (swimstyleid))`,
-  `CREATE TABLE IF NOT EXISTS club (
-    clubid INTEGER NOT NULL,
-    bonuspoints INTEGER, clubtype SMALLINT, code VARCHAR(10),
-    contactname VARCHAR(50), contactinternet VARCHAR(150),
-    contactcity VARCHAR(30), contactcountry VARCHAR(2), contactemail VARCHAR(50),
-    contactfax VARCHAR(20), contactphone VARCHAR(20), contactstate VARCHAR(5),
-    contactstreet VARCHAR(50), contactstreet2 VARCHAR(50), contactzip VARCHAR(10),
-    externalid VARCHAR(40), longcode VARCHAR(20), entryclubid INTEGER,
-    entryemails VARCHAR(255), name VARCHAR(80), nameen VARCHAR(80),
-    nation VARCHAR(3), region VARCHAR(10), shortname VARCHAR(30),
-    shortnameen VARCHAR(30), swrid INTEGER, teamnumber SMALLINT,
-    CONSTRAINT pk_club PRIMARY KEY (clubid))`,
-  `CREATE TABLE IF NOT EXISTS swimsession (
-    swimsessionid INTEGER NOT NULL,
-    course SMALLINT, daytime TIMESTAMP WITHOUT TIME ZONE,
-    endtime TIMESTAMP WITHOUT TIME ZONE, feeathlete DOUBLE PRECISION,
-    following CHAR(1) DEFAULT 'F', lanemin SMALLINT, lanemax SMALLINT,
-    lanesbyplace VARCHAR(100), maxentriesathlete SMALLINT,
-    maxentriesrelay SMALLINT, name VARCHAR(100),
-    officialmeeting TIMESTAMP WITHOUT TIME ZONE,
-    poolglobal CHAR(1) DEFAULT 'F', pooltype SMALLINT,
-    remarks TEXT, remarksjury TEXT, roundtotenths CHAR(1) DEFAULT 'F',
-    sessionnumber SMALLINT, startdate TIMESTAMP WITHOUT TIME ZONE,
-    timing SMALLINT, tlmeeting TIMESTAMP WITHOUT TIME ZONE,
-    touchpadmode SMALLINT,
-    warmupfrom TIMESTAMP WITHOUT TIME ZONE,
-    warmupuntil TIMESTAMP WITHOUT TIME ZONE,
-    CONSTRAINT pk_swimsession PRIMARY KEY (swimsessionid))`,
-  `CREATE TABLE IF NOT EXISTS athlete (
-    athleteid INTEGER NOT NULL,
-    clubid INTEGER REFERENCES club(clubid),
-    firstname VARCHAR(30), firstname_upper VARCHAR(5), gender SMALLINT,
-    lastname VARCHAR(50), lastname_upper VARCHAR(10), nameprefix VARCHAR(20),
-    birthdate TIMESTAMP WITHOUT TIME ZONE, domicile VARCHAR(50),
-    externalid VARCHAR(40), firstnameen VARCHAR(30), handicapex VARCHAR(20),
-    handicaps SMALLINT, handicapsb SMALLINT, handicapsm SMALLINT,
-    lastnameen VARCHAR(50), license VARCHAR(20), nation VARCHAR(3),
-    sdmsid INTEGER, status INTEGER, swimlevel VARCHAR(10),
-    swrid INTEGER, swrhashkey INTEGER, clubcode2 VARCHAR(10),
-    coachname VARCHAR(80), schoolyear VARCHAR(10),
-    middlename VARCHAR(50), middlenameen VARCHAR(50),
-    CONSTRAINT pk_athlete PRIMARY KEY (athleteid))`,
-  `CREATE TABLE IF NOT EXISTS swimevent (
-    swimeventid INTEGER NOT NULL,
-    comment TEXT, daytime TIMESTAMP WITHOUT TIME ZONE,
-    duration TIMESTAMP WITHOUT TIME ZONE, entrytimeconversion SMALLINT,
-    entrytimepercent SMALLINT, eventnumber SMALLINT, externalid VARCHAR(40),
-    fee DOUBLE PRECISION, finalorder SMALLINT, gender SMALLINT,
-    lanemax SMALLINT, lytentrylist INTEGER, lytstartlist INTEGER,
-    lytresult2column INTEGER, lytresult2split INTEGER,
-    lytresult4split INTEGER, lytresultnosplit INTEGER, lytresulthtml INTEGER,
-    masters CHAR(1) DEFAULT 'F', maxentries SMALLINT,
-    pfineignore CHAR(1) DEFAULT 'F', preveventid INTEGER,
-    qualbyplace SMALLINT, round SMALLINT,
-    seedbonuslast CHAR(1) DEFAULT 'F', seedexhlast CHAR(1) DEFAULT 'F',
-    seedlateentrylast CHAR(1) DEFAULT 'F', seedingglobal CHAR(1) DEFAULT 'F',
-    singleheats SMALLINT, sortcode INTEGER,
-    splashmecanedit CHAR(1) DEFAULT 'F', sponsor VARCHAR(50),
-    swimsessionid INTEGER REFERENCES swimsession(swimsessionid) ON DELETE CASCADE,
-    swimstyleid INTEGER REFERENCES swimstyle(swimstyleid),
-    twoperlane CHAR(1) DEFAULT 'F', roundname VARCHAR(50),
-    combineagegroups CHAR(1) DEFAULT 'F', roundone VARCHAR(20),
-    internalevent CHAR(1) DEFAULT 'F',
-    CONSTRAINT pk_swimevent PRIMARY KEY (swimeventid))`,
-  `CREATE TABLE IF NOT EXISTS agegroup (
-    agegroupid INTEGER NOT NULL,
-    agebytotal CHAR(1) DEFAULT 'F', agemax SMALLINT, agemax2 SMALLINT,
-    agemin SMALLINT, agemin2 SMALLINT, allofficial CHAR(1) DEFAULT 'F',
-    athletestatuses INTEGER, clubids TEXT, code VARCHAR(10),
-    externalid VARCHAR(40), fastheatcount SMALLINT,
-    forceprelim CHAR(1) DEFAULT 'F', gender SMALLINT,
-    handicaps VARCHAR(100), heatcount SMALLINT,
-    heatqualipriority VARCHAR(50), levelmax VARCHAR(5), levelmin VARCHAR(5),
-    name VARCHAR(50), nationality VARCHAR(3), nationregions TEXT,
-    resultcount SMALLINT, scoretype SMALLINT,
-    seedwithtsonly CHAR(1) DEFAULT 'F', sortcode INTEGER,
-    swimeventid INTEGER REFERENCES swimevent(swimeventid) ON DELETE CASCADE,
-    swimlevels VARCHAR(255), useformedals CHAR(1) DEFAULT 'F',
-    useforscoring CHAR(1) DEFAULT 'F', winnertitle VARCHAR(100),
-    foreigncount SMALLINT, finalseedtype SMALLINT,
-    CONSTRAINT pk_agegroup PRIMARY KEY (agegroupid))`,
-  `CREATE TABLE IF NOT EXISTS heat (
-    heatid INTEGER NOT NULL,
-    agegroupid INTEGER, agegrouporder INTEGER,
-    daytime TIMESTAMP WITHOUT TIME ZONE, finalcode VARCHAR(2),
-    heatnumber SMALLINT, racestatus SMALLINT, remarks TEXT,
-    sortcode INTEGER,
-    swimeventid INTEGER REFERENCES swimevent(swimeventid) ON DELETE CASCADE,
-    name VARCHAR(50), seedeventid INTEGER, code VARCHAR(10),
-    reservecount SMALLINT, foreigncount SMALLINT,
-    CONSTRAINT pk_heat PRIMARY KEY (heatid))`,
-  `CREATE TABLE IF NOT EXISTS swimresult (
-    swimresultid INTEGER NOT NULL,
-    athleteid INTEGER REFERENCES athlete(athleteid),
-    swrabestid INTEGER, swrabesttime INTEGER,
-    swrsbestid INTEGER, swrsbesttime INTEGER,
-    agegroupid INTEGER, backuptime1 INTEGER, backuptime2 INTEGER,
-    backuptime3 INTEGER, bonusentry CHAR(1) DEFAULT 'F',
-    comment VARCHAR(250), dsqitemid INTEGER,
-    dsqdaytime TIMESTAMP WITHOUT TIME ZONE,
-    dsqnotified CHAR(1) DEFAULT 'F', dsqnumber SMALLINT,
-    entrycourse SMALLINT, entrytime INTEGER,
-    finalfix CHAR(1) DEFAULT 'F', finishjudge SMALLINT, heatid INTEGER,
-    infocode VARCHAR(5), lane SMALLINT, lateentry CHAR(1) DEFAULT 'F',
-    mpoints SMALLINT, padtime INTEGER, qtcity VARCHAR(30),
-    qtcourse SMALLINT, qtdate TIMESTAMP WITHOUT TIME ZONE,
-    qtname VARCHAR(100), qtnation VARCHAR(3), qttime INTEGER,
-    qualcode VARCHAR(2), reactiontime SMALLINT, resultstatus SMALLINT,
-    swimeventid INTEGER REFERENCES swimevent(swimeventid) ON DELETE CASCADE,
-    swimtime INTEGER, usetimetype SMALLINT DEFAULT 0,
-    dsqofficialid INTEGER, reservecode VARCHAR(20),
-    noadvance CHAR(1) DEFAULT 'F', officialsplits VARCHAR(100),
-    qttiming SMALLINT,
-    CONSTRAINT pk_swimresult PRIMARY KEY (swimresultid))`,
-  `CREATE TABLE IF NOT EXISTS split (
-    swimresultid INTEGER NOT NULL REFERENCES swimresult(swimresultid) ON DELETE CASCADE,
-    distance SMALLINT NOT NULL, swimtime INTEGER,
-    CONSTRAINT pk_split PRIMARY KEY (swimresultid, distance))`,
-]
-
-export async function syncUp(): Promise<{ tablesCreated: string[] }> {
-  const local = getLocalDb()
-  const pg = remoteDb()
-
-  // Ensure remote schema exists
-  for (const ddl of PG_SCHEMA_DDL) {
-    await pg.query(ddl)
-  }
-
-  // Check which tables were created
-  const before = await pg.query<{ tablename: string }>(
-    `SELECT tablename FROM information_schema.tables WHERE table_schema='public' AND tablename=ANY($1)`,
-    [CORE_TABLES]
-  )
-  const tablesCreated = CORE_TABLES.filter(t => !before.rows.find(r => r.tablename === t))
-
-  // Push data table by table (full replace on remote)
-  const tables = [
-    { name: 'bsglobal', pk: 'name', cols: ['name','data'] },
-    { name: 'swimstyle', pk: 'swimstyleid', cols: ['swimstyleid','code','distance','name','relaycount','stroke','sortcode','technique','uniqueid'] },
-    { name: 'club', pk: 'clubid', cols: ['clubid','bonuspoints','clubtype','code','contactname','contactinternet','contactcity','contactcountry','contactemail','contactfax','contactphone','contactstate','contactstreet','contactstreet2','contactzip','externalid','longcode','entryclubid','entryemails','name','nameen','nation','region','shortname','shortnameen','swrid','teamnumber'] },
-    { name: 'swimsession', pk: 'swimsessionid', cols: ['swimsessionid','course','daytime','endtime','feeathlete','following','lanemin','lanemax','lanesbyplace','maxentriesathlete','maxentriesrelay','name','officialmeeting','poolglobal','pooltype','remarks','remarksjury','roundtotenths','sessionnumber','startdate','timing','tlmeeting','touchpadmode','warmupfrom','warmupuntil'] },
-    { name: 'athlete', pk: 'athleteid', cols: ['athleteid','clubid','firstname','firstname_upper','gender','lastname','lastname_upper','nameprefix','birthdate','domicile','externalid','firstnameen','handicapex','handicaps','handicapsb','handicapsm','lastnameen','license','nation','sdmsid','status','swimlevel','swrid','swrhashkey','clubcode2','coachname','schoolyear','middlename','middlenameen'] },
-    { name: 'swimevent', pk: 'swimeventid', cols: ['swimeventid','comment','daytime','duration','entrytimeconversion','entrytimepercent','eventnumber','externalid','fee','finalorder','gender','lanemax','lytentrylist','lytstartlist','lytresult2column','lytresult2split','lytresult4split','lytresultnosplit','lytresulthtml','masters','maxentries','pfineignore','preveventid','qualbyplace','round','seedbonuslast','seedexhlast','seedlateentrylast','seedingglobal','singleheats','sortcode','splashmecanedit','sponsor','swimsessionid','swimstyleid','twoperlane','roundname','combineagegroups','roundone','internalevent'] },
-    { name: 'agegroup', pk: 'agegroupid', cols: ['agegroupid','agebytotal','agemax','agemax2','agemin','agemin2','allofficial','athletestatuses','clubids','code','externalid','fastheatcount','forceprelim','gender','handicaps','heatcount','heatqualipriority','levelmax','levelmin','name','nationality','nationregions','resultcount','scoretype','seedwithtsonly','sortcode','swimeventid','swimlevels','useformedals','useforscoring','winnertitle','foreigncount','finalseedtype'] },
-    { name: 'heat', pk: 'heatid', cols: ['heatid','agegroupid','agegrouporder','daytime','finalcode','heatnumber','racestatus','remarks','sortcode','swimeventid','name','seedeventid','code','reservecount','foreigncount'] },
-    { name: 'swimresult', pk: 'swimresultid', cols: ['swimresultid','athleteid','swrabestid','swrabesttime','swrsbestid','swrsbesttime','agegroupid','backuptime1','backuptime2','backuptime3','bonusentry','comment','dsqitemid','dsqdaytime','dsqnotified','dsqnumber','entrycourse','entrytime','finalfix','finishjudge','heatid','infocode','lane','lateentry','mpoints','padtime','qtcity','qtcourse','qtdate','qtname','qtnation','qttime','qualcode','reactiontime','resultstatus','swimeventid','swimtime','usetimetype','dsqofficialid','reservecode','noadvance','officialsplits','qttiming'] },
-    { name: 'split', pk: 'swimresultid,distance', cols: ['swimresultid','distance','swimtime'] },
-  ]
-
-  for (const table of tables) {
-    const rows = local.prepare(`SELECT ${table.cols.join(',')} FROM ${table.name}`).all() as Record<string, unknown>[]
-    if (rows.length === 0) continue
-
-    // Delete remote data for this table, then insert
-    await pg.query(`DELETE FROM ${table.name}`)
-    for (const row of rows) {
-      const vals = table.cols.map(c => {
-        const v = row[c]
-        if (v == null) return null
-        // Convert OLE doubles in date columns to ISO timestamps for PG
-        if (DATE_COLS.has(`${table.name}.${c}`)) {
-          return oleToIsoTimestamp(v)
-        }
-        return v
-      })
-      const placeholders = table.cols.map((_, i) => `$${i + 1}`).join(',')
-      await pg.query(
-        `INSERT INTO ${table.name} (${table.cols.join(',')}) VALUES (${placeholders})`,
-        vals
-      )
-    }
-  }
-
-  return { tablesCreated }
-}
-
-// ── Sync-Down: pull remote PG → local SQLite ─────────────────────────────────
-
-export async function syncDown(): Promise<{ rowsCopied: number }> {
-  const local = getLocalDb()
-  const pg = remoteDb()
-  let totalRows = 0
-
-  const tables = [
-    { name: 'bsglobal', cols: ['name','data'] },
-    { name: 'swimstyle', cols: ['swimstyleid','code','distance','name','relaycount','stroke','sortcode','technique','uniqueid'] },
-    { name: 'club', cols: ['clubid','bonuspoints','clubtype','code','contactname','contactinternet','contactcity','contactcountry','contactemail','contactfax','contactphone','contactstate','contactstreet','contactstreet2','contactzip','externalid','longcode','entryclubid','entryemails','name','nameen','nation','region','shortname','shortnameen','swrid','teamnumber'] },
-    { name: 'swimsession', cols: ['swimsessionid','course','daytime','endtime','feeathlete','following','lanemin','lanemax','lanesbyplace','maxentriesathlete','maxentriesrelay','name','officialmeeting','poolglobal','pooltype','remarks','remarksjury','roundtotenths','sessionnumber','startdate','timing','tlmeeting','touchpadmode','warmupfrom','warmupuntil'] },
-    { name: 'athlete', cols: ['athleteid','clubid','firstname','firstname_upper','gender','lastname','lastname_upper','nameprefix','birthdate','domicile','externalid','firstnameen','handicapex','handicaps','handicapsb','handicapsm','lastnameen','license','nation','sdmsid','status','swimlevel','swrid','swrhashkey','clubcode2','coachname','schoolyear','middlename','middlenameen'] },
-    { name: 'swimevent', cols: ['swimeventid','comment','daytime','duration','entrytimeconversion','entrytimepercent','eventnumber','externalid','fee','finalorder','gender','lanemax','lytentrylist','lytstartlist','lytresult2column','lytresult2split','lytresult4split','lytresultnosplit','lytresulthtml','masters','maxentries','pfineignore','preveventid','qualbyplace','round','seedbonuslast','seedexhlast','seedlateentrylast','seedingglobal','singleheats','sortcode','splashmecanedit','sponsor','swimsessionid','swimstyleid','twoperlane','roundname','combineagegroups','roundone','internalevent'] },
-    { name: 'agegroup', cols: ['agegroupid','agebytotal','agemax','agemax2','agemin','agemin2','allofficial','athletestatuses','clubids','code','externalid','fastheatcount','forceprelim','gender','handicaps','heatcount','heatqualipriority','levelmax','levelmin','name','nationality','nationregions','resultcount','scoretype','seedwithtsonly','sortcode','swimeventid','swimlevels','useformedals','useforscoring','winnertitle','foreigncount','finalseedtype'] },
-    { name: 'heat', cols: ['heatid','agegroupid','agegrouporder','daytime','finalcode','heatnumber','racestatus','remarks','sortcode','swimeventid','name','seedeventid','code','reservecount','foreigncount'] },
-    { name: 'swimresult', cols: ['swimresultid','athleteid','swrabestid','swrabesttime','swrsbestid','swrsbesttime','agegroupid','backuptime1','backuptime2','backuptime3','bonusentry','comment','dsqitemid','dsqdaytime','dsqnotified','dsqnumber','entrycourse','entrytime','finalfix','finishjudge','heatid','infocode','lane','lateentry','mpoints','padtime','qtcity','qtcourse','qtdate','qtname','qtnation','qttime','qualcode','reactiontime','resultstatus','swimeventid','swimtime','usetimetype','dsqofficialid','reservecode','noadvance','officialsplits','qttiming'] },
-    { name: 'split', cols: ['swimresultid','distance','swimtime'] },
-  ]
-
-  // Wipe local and pull from remote
-  // Reverse order for FK safety
-  const reversed = [...tables].reverse()
-  for (const table of reversed) {
-    local.prepare(`DELETE FROM ${table.name}`).run()
-  }
-
-  for (const table of tables) {
-    const res = await pg.query(`SELECT ${table.cols.join(',')} FROM ${table.name}`)
-    if (res.rows.length === 0) continue
-
-    const placeholders = table.cols.map(() => '?').join(',')
-    const ins = local.prepare(
-      `INSERT INTO ${table.name} (${table.cols.join(',')}) VALUES (${placeholders})`
-    )
-
-    const insertMany = local.transaction((rows: Record<string, unknown>[]) => {
-      for (const row of rows) {
-        const vals = table.cols.map(c => {
-          const v = row[c]
-          // Convert PG Date objects to ISO strings for SQLite
-          if (v instanceof Date) return v.toISOString().replace('T', ' ').slice(0, 19)
-          return v ?? null
-        })
-        ins.run(...vals)
-      }
-    })
-
-    insertMany(res.rows)
-    totalRows += res.rows.length
-  }
-
-  return { rowsCopied: totalRows }
 }
 
 // ── Heat generation ───────────────────────────────────────────────────────────
@@ -2076,22 +1735,24 @@ export async function flushMeet(): Promise<void> {
   db.exec(`DELETE FROM agegroup`)
   db.exec(`DELETE FROM swimevent`)
   db.exec(`DELETE FROM swimsession`)
-  db.exec(`DELETE FROM swimstyle`)
   db.exec(`DELETE FROM athlete`)
   db.exec(`DELETE FROM club`)
+  // Clear bsglobal but preserve Gemini keys
+  const preserved = db.prepare(
+    `SELECT name, data FROM bsglobal WHERE name IN ('GEMINI_KEY_FREE', 'GEMINI_KEY_PAID')`
+  ).all() as Array<{ name: string; data: string | null }>
   db.exec(`DELETE FROM bsglobal`)
-}
-
-// ── Health check (remote PG) ──────────────────────────────────────────────────
-
-export async function testConnection(): Promise<{ ok: boolean; version?: string; error?: string }> {
-  try {
-    const res = await remoteDb().query<{ version: string }>(`SELECT version()`)
-    return { ok: true, version: res.rows[0].version }
-  } catch (e: unknown) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  // Restore preserved keys + set default age_base_date
+  const upsert = db.prepare(
+    `INSERT INTO bsglobal (name, data) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET data=excluded.data`
+  )
+  for (const row of preserved) {
+    if (row.data) upsert.run(row.name, row.data)
   }
+  const year = new Date().getFullYear()
+  upsert.run('AGEDATE', `D;${year}1231000000000`)
 }
+
 
 // ── bsglobal: meet-level key-value store ──────────────────────────────────────
 

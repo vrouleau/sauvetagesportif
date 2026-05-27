@@ -17,11 +17,12 @@ import time as _time
 from ..database import get_db
 from pydantic import BaseModel, Field, field_validator
 from ..models import (
-    Club, Athlete, SwimEvent, SwimStyle, SwimSession, AgeGroup, SwimResult, BsGlobal, SecretLink,
+    SwimEvent, SwimStyle, SwimSession, AgeGroup, SwimResult, BsGlobal, SecretLink,
     Heat, Split,
     gender_to_str, gender_from_str, fee_dollars_to_cents, fee_cents_to_dollars,
     GENDER_M, GENDER_F, ROUND_FIN, ROUND_TIM, ROUND_PRE,
 )
+from ..models_team import TeamClub, Member
 from ..seed import seed_from_lxf
 from ..best_times import (
     load_best_times, get_best_times, delete_best_times, expire_old_best_times,
@@ -180,7 +181,7 @@ def _age_group_code(age_min: int, age_max: int) -> str | None:
         return "13-14"
     if age_min == 15 and age_max == 18:
         return "15-18"
-    if age_min == 19 and age_max == -1:
+    if age_min == 19 and (age_max == -1 or age_max >= 99):
         return "Open"
     return None
 
@@ -204,13 +205,13 @@ def _resolve_role(pin: str, db: Session) -> tuple[str, int | None]:
     """Return (role, club_id) for a given PIN."""
     if pin == _get_admin_pin(db):
         return "admin", None
-    club = db.query(Club).filter(Club.pin == pin).first()
+    club = db.query(TeamClub).filter(TeamClub.pin == pin).first()
     if not club:
         return "none", None
     org_cfg = _get_config(db, "organizer_club_id")
-    if org_cfg and org_cfg == str(club.clubid):
-        return "organizer", club.clubid
-    return "coach", club.clubid
+    if org_cfg and org_cfg == str(club.clubsid):
+        return "organizer", club.clubsid
+    return "coach", club.clubsid
 
 
 def require_admin(request: Request, db: Session = Depends(get_db)):
@@ -229,10 +230,10 @@ def require_organizer_or_admin(request: Request, db: Session = Depends(get_db)):
 def _check_closure(db: Session, pin: str = ""):
     if pin == _get_admin_pin(db):
         return
-    club = db.query(Club).filter(Club.pin == pin).first()
+    club = db.query(TeamClub).filter(TeamClub.pin == pin).first()
     if club:
         org_cfg = _get_config(db, "organizer_club_id")
-        if org_cfg and org_cfg == str(club.clubid):
+        if org_cfg and org_cfg == str(club.clubsid):
             return
     cfg = _get_config(db, "closure_date")
     if cfg:
@@ -245,8 +246,8 @@ def _caller_club_id(db: Session, pin: str) -> int | None:
     """Return the club_id of the caller, or None if admin."""
     if pin == _get_admin_pin(db):
         return None
-    club = db.query(Club).filter(Club.pin == pin).first()
-    return club.clubid if club else None
+    club = db.query(TeamClub).filter(TeamClub.pin == pin).first()
+    return club.clubsid if club else None
 
 
 # ---------------------------------------------------------------------------
@@ -263,16 +264,16 @@ def auth(data: dict, request: Request, db: Session = Depends(get_db)):
     if pin == admin_pin:
         _audit.info(f"[admin] LOGIN  (ip={ip})")
         return {"role": "admin", "club_id": None, "club_name": "Admin"}
-    club = db.query(Club).filter(Club.pin == pin).first()
+    club = db.query(TeamClub).filter(TeamClub.pin == pin).first()
     if not club:
         _audit.info(f"[?] LOGIN_FAILED  (ip={ip})")
         raise HTTPException(401, "Invalid PIN")
     org_cfg = _get_config(db, "organizer_club_id")
-    if org_cfg and org_cfg == str(club.clubid):
+    if org_cfg and org_cfg == str(club.clubsid):
         _audit.info(f"[organizer/{club.name}] LOGIN  (ip={ip})")
-        return {"role": "organizer", "club_id": club.clubid, "club_name": club.name}
+        return {"role": "organizer", "club_id": club.clubsid, "club_name": club.name}
     _audit.info(f"[coach/{club.name}] LOGIN  (ip={ip})")
-    return {"role": "coach", "club_id": club.clubid, "club_name": club.name}
+    return {"role": "coach", "club_id": club.clubsid, "club_name": club.name}
 
 
 # ---------------------------------------------------------------------------
@@ -299,6 +300,11 @@ async def upload_meet(file: UploadFile = File(...), db: Session = Depends(get_db
     db.query(AgeGroup).delete()
     db.query(SwimEvent).delete()
     db.query(SwimSession).delete()
+    # Clear Team Manager event tables BEFORE swimstyle (FK dependency)
+    from ..models_team import Event as TeamEvent, Session as TeamSession, Meet as TeamMeet
+    db.query(TeamEvent).delete()
+    db.query(TeamSession).delete()
+    db.query(TeamMeet).delete()
     db.query(SwimStyle).delete()
     db.flush()
     from ..events import _load_from_parsed
@@ -326,7 +332,7 @@ async def upload_meet(file: UploadFile = File(...), db: Session = Depends(get_db
     _set_config(db, "closure_date", "")
 
     # Regenerate club PINs
-    for club in db.query(Club).all():
+    for club in db.query(TeamClub).all():
         club.pin = ''.join(secrets.choice(string.digits) for _ in range(6))
 
     db.commit()
@@ -391,9 +397,14 @@ async def upload_meet_smb(file: UploadFile = File(...), db: Session = Depends(ge
     db.query(AgeGroup).delete()
     db.query(SwimEvent).delete()
     db.query(SwimSession).delete()
+    # Clear Team Manager event tables BEFORE swimstyle (FK dependency)
+    from ..models_team import Event as TeamEvent, Session as TeamSession, Meet as TeamMeet
+    db.query(TeamEvent).delete()
+    db.query(TeamSession).delete()
+    db.query(TeamMeet).delete()
     db.query(SwimStyle).delete()
-    db.query(Athlete).delete()
-    db.query(Club).delete()
+    db.query(Member).delete()
+    db.query(TeamClub).delete()
     db.query(BsGlobal).delete()
     db.flush()
 
@@ -406,13 +417,24 @@ async def upload_meet_smb(file: UploadFile = File(...), db: Session = Depends(ge
     db.flush()
 
     # ── Import SWIMSTYLE ───────────────────────────────────────────────────
+    # Build a remap table: internal SMB swimstyleid → canonical uniqueid (5xx range)
+    # Splash uses internal auto-increment IDs in the MDB but exports using uniqueid
+    # in Lenex. We remap to uniqueid so our exports match Splash's Lenex output.
+    style_id_remap: dict[int, int] = {}  # old_id → new_id (uniqueid)
     styles_imported = 0
     for row in tables.get("SWIMSTYLE", []):
         style_id = row.get("swimstyleid")
         if style_id is None:
             continue
+        uid = row.get("uniqueid")
+        # Remap if uniqueid exists and differs from swimstyleid
+        # (lifesaving styles have uid in 5xx range, generic swim styles have uid < 200)
+        canonical_id = style_id
+        if uid and uid != style_id and uid >= 500:
+            style_id_remap[style_id] = uid
+            canonical_id = uid
         db.add(SwimStyle(
-            swimstyleid=style_id,
+            swimstyleid=canonical_id,
             code=row.get("code"),
             distance=row.get("distance"),
             name=row.get("name"),
@@ -420,7 +442,7 @@ async def upload_meet_smb(file: UploadFile = File(...), db: Session = Depends(ge
             stroke=row.get("stroke"),
             sortcode=row.get("sortcode"),
             technique=row.get("technique"),
-            uniqueid=row.get("uniqueid"),
+            uniqueid=uid,
         ))
         styles_imported += 1
     db.flush()
@@ -432,8 +454,9 @@ async def upload_meet_smb(file: UploadFile = File(...), db: Session = Depends(ge
         if cid is None:
             continue
         pin = ''.join(secrets.choice(string.digits) for _ in range(6))
-        db.add(Club(
-            clubid=cid,
+        # Import into clubs table (TeamClub) for auth
+        db.add(TeamClub(
+            clubsid=cid,
             code=row.get("code") or "",
             name=row.get("name") or "",
             nation=row.get("nation") or "CAN",
@@ -450,9 +473,9 @@ async def upload_meet_smb(file: UploadFile = File(...), db: Session = Depends(ge
         if aid is None:
             continue
         birthdate = ole_to_date_only(row.get("birthdate"))
-        db.add(Athlete(
-            athleteid=aid,
-            clubid=row.get("clubid"),
+        db.add(Member(
+            membersid=aid,
+            clubsid=row.get("clubid"),
             firstname=row.get("firstname") or "",
             lastname=row.get("lastname") or "",
             gender=row.get("gender"),
@@ -493,6 +516,9 @@ async def upload_meet_smb(file: UploadFile = File(...), db: Session = Depends(ge
         if eid is None or session_id is None:
             continue
         style_id = row.get("swimstyleid")
+        # Remap swimstyleid to canonical uniqueid if available
+        if style_id and style_id in style_id_remap:
+            style_id = style_id_remap[style_id]
         db.add(SwimEvent(
             swimeventid=eid,
             swimsessionid=session_id,
@@ -522,6 +548,12 @@ async def upload_meet_smb(file: UploadFile = File(...), db: Session = Depends(ge
     # Our canonical:   1=Prelim(PRE), 2=Semi, 4=Final(FIN), 5=TimedFinal(TIM)
     has_mdb_encoding = db.query(SwimEvent).filter(SwimEvent.round.in_([9, 11])).count() > 0
     if has_mdb_encoding:
+        # Mark round=11 (Break/Pause) events as internal before remapping
+        for ev in db.query(SwimEvent).filter(SwimEvent.round == 11).all():
+            ev.internalevent = 'T'
+            ev.round = ROUND_TIM
+        db.flush()
+
         for ev in db.query(SwimEvent).filter(SwimEvent.round == 1).all():
             ev.round = -1
         for ev in db.query(SwimEvent).filter(SwimEvent.round == 2).all():
@@ -650,6 +682,58 @@ async def upload_meet_smb(file: UploadFile = File(...), db: Session = Depends(ge
         ))
     db.flush()
 
+    # ── Extract meet metadata from MEETVALUES ─────────────────────────────
+    mv_row = db.query(BsGlobal).get("MEETVALUES")
+    if mv_row and mv_row.data:
+        mv = {}
+        for line in mv_row.data.replace("\\r", "").split("\n"):
+            line = line.strip("\r\n ")
+            eq = line.find("=")
+            if eq >= 0:
+                key = line[:eq]
+                val_part = line[eq + 1:]
+                # Format: TYPE;VALUE
+                semi = val_part.find(";")
+                if semi >= 0:
+                    mv[key] = val_part[semi + 1:]
+                else:
+                    mv[key] = val_part
+        if mv.get("NAME"):
+            _set_config(db, "meet_name", mv["NAME"])
+        if mv.get("COURSE"):
+            course_map = {"1": "LCM", "2": "SCY", "3": "SCM"}
+            _set_config(db, "meet_course", course_map.get(mv["COURSE"], "LCM"))
+        if mv.get("MASTERS"):
+            _set_config(db, "meet_masters", mv["MASTERS"])
+        if mv.get("NATION"):
+            _set_config(db, "meet_nation", mv["NATION"])
+        if mv.get("CITY"):
+            _set_config(db, "meet_city", mv["CITY"])
+        if mv.get("AGEDATE"):
+            # Convert YYYYMMDDHHMMSSMMM → YYYY-MM-DD
+            raw = mv["AGEDATE"]
+            if len(raw) >= 8:
+                _set_config(db, "age_base_date", f"{raw[:4]}-{raw[4:6]}-{raw[6:8]}")
+    db.flush()
+
+    # ── Create a Meet row in Team Manager schema (current meet) ───────────
+    from ..models_team import Meet as TeamMeet
+    from sqlalchemy import func
+    meet_name = _get_config(db, "meet_name") or "Current Meet"
+    meet_city = _get_config(db, "meet_city") or ""
+    course_str = _get_config(db, "meet_course") or "LCM"
+    course_int = {"LCM": 1, "SCY": 2, "SCM": 3}.get(course_str, 1)
+    next_meet_id = (db.query(func.max(TeamMeet.meetsid)).scalar() or 0) + 1
+    db.add(TeamMeet(
+        meetsid=next_meet_id,
+        name=meet_name,
+        place=meet_city,
+        course=course_int,
+        meetstate=0,  # planned (current)
+    ))
+    _set_config(db, "current_meetsid", str(next_meet_id))
+    db.flush()
+
     # Regenerate combined events + point scores
     from ..combined_events import regenerate_combined_events
     from ..point_scores import regenerate_point_scores
@@ -665,6 +749,13 @@ async def upload_meet_smb(file: UploadFile = File(...), db: Session = Depends(ge
     _set_config(db, "admin_pin", _DEFAULT_ADMIN_PIN)
 
     db.commit()
+
+    # Reset sequences after explicit ID inserts
+    from sqlalchemy import text
+    db.execute(text("SELECT setval('clubs_clubsid_seq', COALESCE((SELECT MAX(clubsid) FROM clubs), 0))"))
+    db.execute(text("SELECT setval('members_membersid_seq', COALESCE((SELECT MAX(membersid) FROM members), 0))"))
+    db.commit()
+
     return {
         "events_loaded": events_imported,
         "styles_loaded": styles_imported,
@@ -711,6 +802,11 @@ def create_new_meet(data: dict = Body(default={}), db: Session = Depends(get_db)
     db.query(AgeGroup).delete()
     db.query(SwimEvent).delete()
     db.query(SwimSession).delete()
+    # Clear Team Manager event tables BEFORE swimstyle (FK dependency)
+    from ..models_team import Event as TeamEvent, Session as TeamSession, Meet as TeamMeet
+    db.query(TeamEvent).delete()
+    db.query(TeamSession).delete()
+    db.query(TeamMeet).delete()
     db.query(SwimStyle).delete()
     db.flush()
 
@@ -733,6 +829,8 @@ def create_new_meet(data: dict = Body(default={}), db: Session = Depends(get_db)
 
     # Track metadata
     import json as _json
+    from datetime import date as _date
+    year = _date.today().year
     for key, val in [("meet_filename", template_path.name),
                      ("meet_uploaded_at", datetime.utcnow().isoformat()),
                      ("meet_name", meet.meet_name),
@@ -740,8 +838,16 @@ def create_new_meet(data: dict = Body(default={}), db: Session = Depends(get_db)
                      ("meet_masters", "T" if meet.masters else "F"),
                      ("meet_currency", meet.currency or "CAD"),
                      ("meet_fees_json", _json.dumps(meet.meet_fees)),
-                     ("age_base_date", meet.age_base_date)]:
+                     ("age_base_date", f"{year}-12-31")]:
         _set_config(db, key, val)
+
+    # Set AGEDATE in MEETVALUES so the UI picks it up
+    mv_cfg = db.query(BsGlobal).get("MEETVALUES")
+    mv_data = mv_cfg.data if mv_cfg and mv_cfg.data else ""
+    # Append or replace AGEDATE line
+    lines = [l for l in mv_data.split("\r\n") if l and not l.startswith("AGEDATE=")]
+    lines.append(f"AGEDATE=D;{year}1231000000000")
+    _set_config(db, "MEETVALUES", "\r\n".join(lines))
 
     # Reset closure date
     _set_config(db, "closure_date", "")
@@ -872,22 +978,29 @@ def list_clubs(request: Request, db: Session = Depends(get_db)):
 
     pin = request.headers.get("X-Club-Pin", "")
     role, _ = _resolve_role(pin, db)
-    clubs = db.query(Club).order_by(Club.name).all()
+    clubs = db.query(TeamClub).order_by(TeamClub.name).all()
+
+    # Pre-compute athlete counts per club (from members table)
+    athlete_counts = dict(
+        db.query(Member.clubsid, func.count(Member.membersid))
+        .group_by(Member.clubsid)
+        .all()
+    )
 
     # Pre-compute registered athlete counts per club
     reg_counts = dict(
-        db.query(Athlete.clubid, func.count(distinct(Athlete.athleteid)))
-        .join(SwimResult, SwimResult.athleteid == Athlete.athleteid)
-        .group_by(Athlete.clubid)
+        db.query(Member.clubsid, func.count(distinct(Member.membersid)))
+        .join(SwimResult, SwimResult.athleteid == Member.membersid)
+        .group_by(Member.clubsid)
         .all()
     )
 
     meet_fees = _meet_fees(db)
     result = []
     for c in clubs:
-        item = {"id": c.clubid, "name": c.name, "code": c.code,
-                "athlete_count": len(c.athletes),
-                "registered_athlete_count": reg_counts.get(c.clubid, 0),
+        item = {"id": c.clubsid, "name": c.name, "code": c.code,
+                "athlete_count": athlete_counts.get(c.clubsid, 0),
+                "registered_athlete_count": reg_counts.get(c.clubsid, 0),
                 "invite_send_count": c.invite_send_count or 0,
                 "stripe_send_count": c.stripe_send_count or 0}
         items = _club_line_items(db, c, meet_fees)
@@ -903,32 +1016,32 @@ def list_clubs(request: Request, db: Session = Depends(get_db)):
 @router.post("/clubs", dependencies=[Depends(require_admin)])
 def create_club(data: ClubCreate, db: Session = Depends(get_db)):
     pin = data.pin or ''.join(secrets.choice(string.digits) for _ in range(6))
-    club = Club(name=data.name, code=data.code, nation=data.nation, pin=pin, email=data.email)
+    club = TeamClub(name=data.name, code=data.code, nation=data.nation, pin=pin, email=data.email)
     db.add(club)
     db.commit()
-    return {"id": club.clubid, "pin": club.pin}
+    return {"id": club.clubsid, "pin": club.pin}
 
 
 @router.delete("/clubs/{club_id}", dependencies=[Depends(require_admin)])
 def delete_club(club_id: int, db: Session = Depends(get_db)):
-    if not db.query(Club.clubid).filter(Club.clubid == club_id).first():
+    if not db.query(TeamClub.clubsid).filter(TeamClub.clubsid == club_id).first():
         raise HTTPException(404)
-    athlete_ids = [aid for (aid,) in db.query(Athlete.athleteid).filter(Athlete.clubid == club_id).all()]
+    athlete_ids = [aid for (aid,) in db.query(Member.membersid).filter(Member.clubsid == club_id).all()]
     if athlete_ids:
         db.query(SwimResult).filter(SwimResult.athleteid.in_(athlete_ids)).delete(synchronize_session=False)
         # Delete best times from bsglobal
         for aid in athlete_ids:
             delete_best_times(db, aid)
-    db.query(Athlete).filter(Athlete.clubid == club_id).delete(synchronize_session=False)
+    db.query(Member).filter(Member.clubsid == club_id).delete(synchronize_session=False)
     db.query(SecretLink).filter(SecretLink.club_id == club_id).delete(synchronize_session=False)
-    db.query(Club).filter(Club.clubid == club_id).delete(synchronize_session=False)
+    db.query(TeamClub).filter(TeamClub.clubsid == club_id).delete(synchronize_session=False)
     db.commit()
     return {"deleted": True, "athletes_deleted": len(athlete_ids)}
 
 
 @router.post("/clubs/{club_id}/reset-pin", dependencies=[Depends(require_admin)])
 def reset_club_pin(club_id: int, db: Session = Depends(get_db)):
-    club = db.query(Club).get(club_id)
+    club = db.query(TeamClub).get(club_id)
     if not club:
         raise HTTPException(404)
     club.pin = ''.join(secrets.choice(string.digits) for _ in range(6))
@@ -938,7 +1051,7 @@ def reset_club_pin(club_id: int, db: Session = Depends(get_db)):
 
 @router.put("/clubs/{club_id}", dependencies=[Depends(require_admin)])
 def update_club(club_id: int, data: ClubUpdate, db: Session = Depends(get_db)):
-    club = db.query(Club).get(club_id)
+    club = db.query(TeamClub).get(club_id)
     if not club:
         raise HTTPException(404)
     if data.email is not None:
@@ -955,7 +1068,7 @@ def send_pin(club_id: int, data: dict, db: Session = Depends(get_db)):
     from cryptography.fernet import Fernet
     import httpx
 
-    club = db.query(Club).get(club_id)
+    club = db.query(TeamClub).get(club_id)
     if not club:
         raise HTTPException(404)
     if not club.email:
@@ -976,7 +1089,7 @@ def send_pin(club_id: int, data: dict, db: Session = Depends(get_db)):
 
     token = str(uuid.uuid4())
     expires = datetime.utcnow() + timedelta(days=7)
-    link = SecretLink(token=token, club_id=club.clubid,
+    link = SecretLink(token=token, club_id=club.clubsid,
                       pin_encrypted=pin_encrypted, expires_at=expires, lang=lang)
     db.add(link)
     db.flush()
@@ -990,12 +1103,12 @@ def send_pin(club_id: int, data: dict, db: Session = Depends(get_db)):
     closure_date = _get_config(db, "closure_date")
 
     org_cfg = _get_config(db, "organizer_club_id")
-    is_organizer = org_cfg and str(club.clubid) == str(org_cfg)
+    is_organizer = org_cfg and str(club.clubsid) == str(org_cfg)
 
     org_email = ""
     org_club_name = ""
     if not is_organizer and org_cfg:
-        org_club = db.query(Club).get(int(org_cfg))
+        org_club = db.query(TeamClub).get(int(org_cfg))
         if org_club:
             org_email = org_club.email or ""
             org_club_name = org_club.name or ""
@@ -1108,10 +1221,10 @@ def send_pin(club_id: int, data: dict, db: Session = Depends(get_db)):
 @router.get("/self-invite/clubs")
 def self_invite_clubs(db: Session = Depends(get_db)):
     """Public: list clubs that have an admin email."""
-    clubs = (db.query(Club)
-             .filter(Club.email != None, Club.email != '')
-             .order_by(Club.name).all())
-    return [{"id": c.clubid, "name": c.name} for c in clubs]
+    clubs = (db.query(TeamClub)
+             .filter(TeamClub.email != None, TeamClub.email != '')
+             .order_by(TeamClub.name).all())
+    return [{"id": c.clubsid, "name": c.name} for c in clubs]
 
 
 @router.post("/self-invite")
@@ -1140,7 +1253,7 @@ def self_invite(data: dict, request: Request, db: Session = Depends(get_db)):
     if not email:
         raise HTTPException(400, "email required")
 
-    club = db.query(Club).get(club_id)
+    club = db.query(TeamClub).get(club_id)
     if not club or not club.email:
         raise HTTPException(404, "Club not found")
 
@@ -1148,7 +1261,7 @@ def self_invite(data: dict, request: Request, db: Session = Depends(get_db)):
         org_cfg = _get_config(db, "organizer_club_id")
         org_email = ""
         if org_cfg:
-            org_club = db.query(Club).get(int(org_cfg))
+            org_club = db.query(TeamClub).get(int(org_cfg))
             if org_club:
                 org_email = org_club.email or ""
         raise HTTPException(403, f"email_mismatch|{org_email}")
@@ -1180,7 +1293,7 @@ def reveal_secret(token: str, db: Session = Depends(get_db)):
     link.viewed = True
     db.commit()
 
-    club = db.query(Club).get(link.club_id)
+    club = db.query(TeamClub).get(link.club_id)
     return {"pin": pin, "club": club.name if club else ""}
 
 
@@ -1196,16 +1309,16 @@ def list_athletes(request: Request, club_id: int = None, db: Session = Depends(g
         raise HTTPException(401, "Authentication required")
     if role == "coach":
         club_id = caller_club
-    q = db.query(Athlete).options(joinedload(Athlete.club))
+    q = db.query(Member).options(joinedload(Member.club))
     if club_id:
-        q = q.filter(Athlete.clubid == club_id)
-    athletes = q.order_by(Athlete.lastname, Athlete.firstname).all()
+        q = q.filter(Member.clubsid == club_id)
+    athletes = q.order_by(Member.lastname, Member.firstname).all()
     return [{
-        "id": a.athleteid, "first_name": a.firstname, "last_name": a.lastname,
+        "id": a.membersid, "first_name": a.firstname, "last_name": a.lastname,
         "gender": gender_to_str(a.gender),
         "birthdate": str(a.birthdate.date()) if a.birthdate else None,
-        "license": a.license, "club": a.club.name,
-        "club_id": a.clubid,
+        "license": a.license, "club": a.club.name if a.club else "",
+        "club_id": a.clubsid,
     } for a in athletes]
 
 
@@ -1217,32 +1330,32 @@ def create_athlete(data: AthleteCreate, request: Request, db: Session = Depends(
     if caller_club is not None and data.club_id != caller_club:
         raise HTTPException(403, "Cannot create athletes in another club")
     from datetime import date as d
-    ath = Athlete(
+    member = Member(
         firstname=data.first_name,
         lastname=data.last_name,
         gender=gender_from_str(data.gender),
         birthdate=d.fromisoformat(data.birthdate) if data.birthdate else None,
         license=data.license,
-        clubid=data.club_id,
+        clubsid=data.club_id,
     )
-    db.add(ath)
+    db.add(member)
     db.commit()
-    return {"id": ath.athleteid}
+    return {"id": member.membersid}
 
 
 @router.delete("/athletes/{athlete_id}")
 def delete_athlete(athlete_id: int, request: Request, db: Session = Depends(get_db)):
     pin = request.headers.get("X-Club-Pin", "")
     _check_closure(db, pin)
-    athlete = db.query(Athlete).get(athlete_id)
-    if not athlete:
+    member = db.query(Member).get(athlete_id)
+    if not member:
         raise HTTPException(404)
     caller_club = _caller_club_id(db, pin)
-    if caller_club is not None and athlete.clubid != caller_club:
+    if caller_club is not None and member.clubsid != caller_club:
         raise HTTPException(403, "Cannot delete athletes from another club")
     db.query(SwimResult).filter(SwimResult.athleteid == athlete_id).delete()
     delete_best_times(db, athlete_id)
-    db.delete(athlete)
+    db.delete(member)
     db.commit()
     return {"deleted": True}
 
@@ -1251,25 +1364,25 @@ def delete_athlete(athlete_id: int, request: Request, db: Session = Depends(get_
 def update_athlete(athlete_id: int, data: AthleteUpdate, request: Request, db: Session = Depends(get_db)):
     pin = request.headers.get("X-Club-Pin", "")
     _check_closure(db, pin)
-    athlete = db.query(Athlete).get(athlete_id)
-    if not athlete:
+    member = db.query(Member).get(athlete_id)
+    if not member:
         raise HTTPException(404)
     caller_club = _caller_club_id(db, pin)
-    if caller_club is not None and athlete.clubid != caller_club:
+    if caller_club is not None and member.clubsid != caller_club:
         raise HTTPException(403, "Cannot modify athletes from another club")
     if data.first_name is not None:
-        athlete.firstname = data.first_name
+        member.firstname = data.first_name
     if data.last_name is not None:
-        athlete.lastname = data.last_name
+        member.lastname = data.last_name
     if data.gender is not None:
-        athlete.gender = gender_from_str(data.gender)
+        member.gender = gender_from_str(data.gender)
     if data.birthdate is not None:
         from datetime import date as d
-        athlete.birthdate = d.fromisoformat(data.birthdate) if data.birthdate else None
+        member.birthdate = d.fromisoformat(data.birthdate) if data.birthdate else None
     if data.license is not None:
-        athlete.license = data.license
+        member.license = data.license
     if data.handicapex is not None:
-        athlete.handicapex = data.handicapex or None
+        member.handicapex = data.handicapex or None
     db.commit()
     return {"ok": True}
 
@@ -1365,8 +1478,8 @@ def list_swim_styles(db: Session = Depends(get_db)):
 
 @router.get("/athletes/{athlete_id}/registration")
 def get_registration(athlete_id: int, db: Session = Depends(get_db)):
-    athlete = db.query(Athlete).options(joinedload(Athlete.club)).get(athlete_id)
-    if not athlete:
+    member = db.query(Member).options(joinedload(Member.club)).get(athlete_id)
+    if not member:
         raise HTTPException(404, "Athlete not found")
 
     # Get all registrations for this athlete
@@ -1375,27 +1488,41 @@ def get_registration(athlete_id: int, db: Session = Depends(get_db)):
     ).all()
     reg_map = {(r.swimeventid, r.age_code): r for r in regs}
 
-    # Get best times and handle expiry
-    expired = expire_old_best_times(db, athlete_id, _BEST_TIME_MAX_AGE_MONTHS)
-    if expired:
-        db.commit()
-
-    bt_data = get_best_times(db, athlete_id)
+    # Get best times — try new system (historical results) first, fall back to JSON blobs
     best_map_lcm: dict[int, int] = {}
     best_map_scm: dict[int, int] = {}
-    for uid_key, style_data in bt_data.items():
-        uid = int(uid_key)
-        if "LCM" in style_data:
-            best_map_lcm[uid] = style_data["LCM"]["time_ms"]
-        if "SCM" in style_data:
-            best_map_scm[uid] = style_data["SCM"]["time_ms"]
+
+    # Try to find matching member in Team Manager schema (by license)
+    from ..best_times_v2 import get_best_times_for_member
+    if member.membersid:
+        # Use computed best times from historical results
+        bt_data = get_best_times_for_member(db, member.membersid, _BEST_TIME_MAX_AGE_MONTHS)
+        for uid_key, style_data in bt_data.items():
+            uid = int(uid_key)
+            if "LCM" in style_data:
+                best_map_lcm[uid] = style_data["LCM"]["time_ms"]
+            if "SCM" in style_data:
+                best_map_scm[uid] = style_data["SCM"]["time_ms"]
+
+    # Also check old JSON blob system (transition: results may not be in Team schema yet)
+    if not best_map_lcm and not best_map_scm:
+        expired = expire_old_best_times(db, athlete_id, _BEST_TIME_MAX_AGE_MONTHS)
+        if expired:
+            db.commit()
+        bt_data = get_best_times(db, athlete_id)
+        for uid_key, style_data in bt_data.items():
+            uid = int(uid_key)
+            if "LCM" in style_data:
+                best_map_lcm[uid] = style_data["LCM"]["time_ms"]
+            if "SCM" in style_data:
+                best_map_scm[uid] = style_data["SCM"]["time_ms"]
 
     events = db.query(SwimEvent).options(
         joinedload(SwimEvent.agegroups),
         joinedload(SwimEvent.swimstyle),
     ).order_by(SwimEvent.eventnumber).all()
 
-    ath_gender_int = athlete.gender
+    ath_gender_int = member.gender
 
     # Build style groups
     styles: dict[int, dict] = {}
@@ -1463,13 +1590,13 @@ def get_registration(athlete_id: int, db: Session = Depends(get_db)):
     locked_by: dict[int, str] = {}
     if relay_uids:
         other_relay_regs = (
-            db.query(Athlete, SwimEvent)
-            .join(SwimResult, SwimResult.athleteid == Athlete.athleteid)
+            db.query(Member, SwimEvent)
+            .join(SwimResult, SwimResult.athleteid == Member.membersid)
             .join(SwimEvent, SwimResult.swimeventid == SwimEvent.swimeventid)
             .join(SwimStyle, SwimEvent.swimstyleid == SwimStyle.swimstyleid)
             .filter(
-                Athlete.clubid == athlete.clubid,
-                Athlete.athleteid != athlete_id,
+                Member.clubsid == member.clubsid,
+                Member.membersid != athlete_id,
                 SwimEvent.swimstyleid.in_(relay_uids),
                 SwimStyle.relaycount > 1,
             )
@@ -1481,18 +1608,18 @@ def get_registration(athlete_id: int, db: Session = Depends(get_db)):
         s["locked_by_name"] = locked_by.get(s["style_uid"])
 
     # Club athletes for relay teammate selection
-    club_athletes = db.query(Athlete).filter(
-        Athlete.clubid == athlete.clubid,
-        Athlete.athleteid != athlete_id,
-    ).order_by(Athlete.lastname).all()
+    club_athletes = db.query(Member).filter(
+        Member.clubsid == member.clubsid,
+        Member.membersid != athlete_id,
+    ).order_by(Member.lastname).all()
 
     # Suggested age_code
     suggested_age_code = "Open"
-    if athlete.birthdate:
+    if member.birthdate:
         from datetime import date as d
         age_base_val = _get_config(db, "age_base_date")
         age_base = d.fromisoformat(age_base_val) if age_base_val else d(d.today().year, 12, 31)
-        age = age_base.year - athlete.birthdate.year
+        age = age_base.year - member.birthdate.year
         if age <= 10:
             suggested_age_code = "10-"
         elif 11 <= age <= 12:
@@ -1508,12 +1635,12 @@ def get_registration(athlete_id: int, db: Session = Depends(get_db)):
 
     return {
         "athlete": {
-            "id": athlete.athleteid, "first_name": athlete.firstname,
-            "last_name": athlete.lastname, "gender": gender_to_str(athlete.gender),
-            "birthdate": str(athlete.birthdate.date()) if athlete.birthdate else "",
-            "license": athlete.license or "",
-            "club": athlete.club.name, "club_id": athlete.clubid,
-            "handicapex": athlete.handicapex or "",
+            "id": member.membersid, "first_name": member.firstname,
+            "last_name": member.lastname, "gender": gender_to_str(member.gender),
+            "birthdate": str(member.birthdate.date()) if member.birthdate else "",
+            "license": member.license or "",
+            "club": member.club.name, "club_id": member.clubsid,
+            "handicapex": member.handicapex or "",
         },
         "suggested_age_code": suggested_age_code,
         "meet_course": meet_course,
@@ -1521,7 +1648,7 @@ def get_registration(athlete_id: int, db: Session = Depends(get_db)):
         "closure_date": closure,
         "individual_events": individual_events,
         "relay_events": relay_events,
-        "club_athletes": [{"id": a.athleteid, "name": f"{a.lastname}, {a.firstname}"}
+        "club_athletes": [{"id": a.membersid, "name": f"{a.lastname}, {a.firstname}"}
                           for a in club_athletes],
     }
 
@@ -1531,14 +1658,14 @@ def get_registration(athlete_id: int, db: Session = Depends(get_db)):
 # ---------------------------------------------------------------------------
 
 def _update_exception(db: Session, athlete_id: int):
-    """Set exception='X' if athlete has any Masters registration."""
+    """Set handicapex='X' if member has any Masters registration."""
     has_masters = db.query(SwimResult).filter(
         SwimResult.athleteid == athlete_id,
         SwimResult.age_code == "Masters",
     ).first() is not None
-    athlete = db.query(Athlete).get(athlete_id)
-    if athlete:
-        athlete.exception = "X" if has_masters else None
+    member = db.query(Member).get(athlete_id)
+    if member:
+        member.handicapex = "X" if has_masters else None
 
 
 @router.post("/registrations")
@@ -1551,10 +1678,10 @@ def create_registration(data: RegistrationCreate, request: Request, db: Session 
     entry_time_ms = data.entry_time_ms
 
     caller_club = _caller_club_id(db, pin)
-    athlete = db.query(Athlete).get(athlete_id)
-    if not athlete:
+    member = db.query(Member).get(athlete_id)
+    if not member:
         raise HTTPException(404, "Athlete not found")
-    if caller_club is not None and athlete.clubid != caller_club:
+    if caller_club is not None and member.clubsid != caller_club:
         raise HTTPException(403, "Cannot register athletes from another club")
 
     event = db.query(SwimEvent).get(event_id)
@@ -1574,10 +1701,10 @@ def create_registration(data: RegistrationCreate, request: Request, db: Session 
     # Relay lock
     style = db.query(SwimStyle).get(event.swimstyleid)
     if style and style.relaycount and style.relaycount > 1:
-        club_athlete_ids = [a.athleteid for a in db.query(Athlete).filter(Athlete.clubid == athlete.clubid).all()]
+        club_member_ids = [m.membersid for m in db.query(Member).filter(Member.clubsid == member.clubsid).all()]
         existing_relay = db.query(SwimResult).filter(
             SwimResult.swimeventid == event_id,
-            SwimResult.athleteid.in_(club_athlete_ids),
+            SwimResult.athleteid.in_(club_member_ids),
             SwimResult.athleteid != athlete_id,
         ).first()
         if existing_relay:
@@ -1603,6 +1730,8 @@ def create_registration(data: RegistrationCreate, request: Request, db: Session 
         entrytime=entry_time_ms,
     )
     db.add(result)
+    db.flush()
+
     db.commit()
     _update_exception(db, athlete_id)
     db.commit()
@@ -1618,8 +1747,8 @@ def delete_registration(reg_id: int, request: Request, db: Session = Depends(get
         raise HTTPException(404)
     caller_club = _caller_club_id(db, pin)
     if caller_club is not None:
-        athlete = db.query(Athlete).get(reg.athleteid)
-        if not athlete or athlete.clubid != caller_club:
+        member = db.query(Member).get(reg.athleteid)
+        if not member or member.clubsid != caller_club:
             raise HTTPException(403, "Cannot modify registrations from another club")
     athlete_id = reg.athleteid
     db.delete(reg)
@@ -1649,18 +1778,18 @@ async def upload_preview(file: UploadFile = File(...), db: Session = Depends(get
     athletes_new = 0
     for cd in clubs_data:
         if cd.get("code"):
-            club = db.query(Club).filter(Club.code == cd["code"]).first()
+            club = db.query(TeamClub).filter(TeamClub.code == cd["code"]).first()
         else:
-            club = db.query(Club).filter(Club.name == cd["name"]).first()
+            club = db.query(TeamClub).filter(TeamClub.name == cd["name"]).first()
         if not club:
             clubs_new += 1
             athletes_new += len(cd["athletes"])
         else:
             for ad in cd["athletes"]:
-                existing = db.query(Athlete).filter(
-                    Athlete.firstname == ad["first_name"],
-                    Athlete.lastname == ad["last_name"],
-                    Athlete.clubid == club.clubid,
+                existing = db.query(Member).filter(
+                    Member.firstname == ad["first_name"],
+                    Member.lastname == ad["last_name"],
+                    Member.clubsid == club.clubsid,
                 ).first()
                 if not existing:
                     athletes_new += 1
@@ -1728,8 +1857,8 @@ def status(db: Session = Depends(get_db)):
         except (ValueError, TypeError):
             pass
     return {
-        "clubs": db.query(Club).count(),
-        "athletes": db.query(Athlete).count(),
+        "clubs": db.query(TeamClub).count(),
+        "athletes": db.query(Member).count(),
         "events": db.query(SwimEvent).count(),
         "registrations": db.query(SwimResult).count(),
         "best_times": bt_count,
@@ -1740,24 +1869,98 @@ def status(db: Session = Depends(get_db)):
 def flush_meet(db: Session = Depends(get_db)):
     """Flush meet: delete registrations, events, meet config."""
     reg_count = db.query(SwimResult).delete()
+    db.query(Heat).delete()
     db.query(AgeGroup).delete()
     db.query(SwimEvent).delete()
     db.query(SwimSession).delete()
-    db.query(SwimStyle).delete()
+    # Clear Team Manager event tables BEFORE swimstyle (FK dependency)
+    from ..models_team import Event as TeamEvent, Session as TeamSession, Meet as TeamMeet
+    db.query(TeamEvent).delete()
+    db.query(TeamSession).delete()
+    db.query(TeamMeet).delete()
     for key in ("meet_filename", "meet_uploaded_at", "meet_name", "meet_course",
                 "meet_masters", "meet_currency", "meet_fees_json", "closure_date",
-                "organizer_club_id", "COMBINEDEVENTS"):
+                "organizer_club_id", "COMBINEDEVENTS", "current_meetsid",
+                "POINTSCORES", "MEETVALUES",
+                "meet_nation", "meet_city"):
         cfg = db.query(BsGlobal).get(key)
         if cfg:
             db.delete(cfg)
-    db.query(Club).update({Club.invite_send_count: 0, Club.stripe_send_count: 0})
+    # Reset age_base_date to Dec 31 of current year
+    from datetime import date as _date
+    year = _date.today().year
+    _set_config(db, "age_base_date", f"{year}-12-31")
+    _set_config(db, "MEETVALUES", f"AGEDATE=D;{year}1231000000000")
+    db.query(TeamClub).update({TeamClub.invite_send_count: 0, TeamClub.stripe_send_count: 0})
+    # Remove stored meet files
+    if MEET_STORAGE.exists():
+        MEET_STORAGE.unlink()
+    smb_path = MEET_STORAGE.parent / "meet.smb"
+    if smb_path.exists():
+        smb_path.unlink()
     db.commit()
     return {"deleted": reg_count}
 
 
+def _reset_for_next_meet(db: Session) -> None:
+    """Flush current meet and prepare system for the next meet cycle.
+
+    Called after an organizer closes the meet by importing final results.
+    Preserves historical meets (meetstate=3), clubs, members, and best times.
+    """
+    # Clear Team Manager current (non-historical) meets first (FK to swimstyle)
+    from ..models_team import (
+        Event as TeamEvent, Session as TeamSession,
+        Meet as TeamMeet, MemberMeet as TeamMemberMeet,
+    )
+    current_ids = [r for r, in db.query(TeamMeet.meetsid).filter(TeamMeet.meetstate != 3).all()]
+    if current_ids:
+        db.query(TeamMemberMeet).filter(TeamMemberMeet.meetsid.in_(current_ids)).delete(synchronize_session=False)
+        db.query(TeamEvent).filter(TeamEvent.meetsid.in_(current_ids)).delete(synchronize_session=False)
+        db.query(TeamSession).filter(TeamSession.meetsid.in_(current_ids)).delete(synchronize_session=False)
+        db.query(TeamMeet).filter(TeamMeet.meetsid.in_(current_ids)).delete(synchronize_session=False)
+    db.flush()
+
+    # Clear Meet Manager schema (registrations + event structure, keep swimstyle)
+    db.query(SwimResult).delete()
+    db.query(Heat).delete()
+    db.query(AgeGroup).delete()
+    db.query(SwimEvent).delete()
+    db.query(SwimSession).delete()
+
+    # Clear bsglobal meet config.
+    # Intentionally preserved: admin_pin, GEMINI_KEY_FREE, GEMINI_KEY_PAID, bt_* best-time keys.
+    for key in ("meet_filename", "meet_uploaded_at", "meet_name", "meet_course",
+                "meet_masters", "meet_currency", "meet_fees_json", "closure_date",
+                "organizer_club_id", "COMBINEDEVENTS", "current_meetsid",
+                "POINTSCORES", "MEETVALUES",
+                "meet_nation", "meet_city"):
+        cfg = db.query(BsGlobal).get(key)
+        if cfg:
+            db.delete(cfg)
+
+    # Reset age_base_date to Dec 31 of current year
+    from datetime import date as _date
+    year = _date.today().year
+    _set_config(db, "age_base_date", f"{year}-12-31")
+    _set_config(db, "MEETVALUES", f"AGEDATE=D;{year}1231000000000")
+
+    # Regenerate all club PINs and reset invite/payment counters
+    for club in db.query(TeamClub).all():
+        club.pin = ''.join(secrets.choice(string.digits) for _ in range(6))
+    db.query(TeamClub).update({TeamClub.invite_send_count: 0, TeamClub.stripe_send_count: 0})
+
+    # Remove stored meet files so startup doesn't re-load them
+    if MEET_STORAGE.exists():
+        MEET_STORAGE.unlink()
+    smb_path = MEET_STORAGE.parent / "meet.smb"
+    if smb_path.exists():
+        smb_path.unlink()
+
+
 @router.post("/clubs/regenerate-pins", dependencies=[Depends(require_admin)])
 def regenerate_pins(db: Session = Depends(get_db)):
-    clubs = db.query(Club).all()
+    clubs = db.query(TeamClub).all()
     for club in clubs:
         club.pin = ''.join(secrets.choice(string.digits) for _ in range(6))
     db.commit()
@@ -1767,12 +1970,12 @@ def regenerate_pins(db: Session = Depends(get_db)):
 @router.post("/organizer/clubs/invite-all", dependencies=[Depends(require_organizer_or_admin)])
 def invite_all_clubs(data: dict, request: Request, db: Session = Depends(get_db)):
     lang = data.get("lang", "fr")
-    clubs = db.query(Club).filter(Club.email != None, Club.email != "").all()
+    clubs = db.query(TeamClub).filter(TeamClub.email != None, TeamClub.email != "").all()
     sent = 0
     errors = []
     for club in clubs:
         try:
-            send_pin(club.clubid, {"lang": lang}, db)
+            send_pin(club.clubsid, {"lang": lang}, db)
             sent += 1
         except Exception as e:
             errors.append({"club": club.name, "error": str(e)})
@@ -1784,10 +1987,10 @@ def get_organizer(db: Session = Depends(get_db)):
     cfg = _get_config(db, "organizer_club_id")
     if not cfg:
         return {"club_id": None, "club_name": None}
-    club = db.query(Club).get(int(cfg))
+    club = db.query(TeamClub).get(int(cfg))
     if not club:
         return {"club_id": None, "club_name": None}
-    return {"club_id": club.clubid, "club_name": club.name}
+    return {"club_id": club.clubsid, "club_name": club.name}
 
 
 @router.post("/admin/set-organizer", dependencies=[Depends(require_admin)])
@@ -1795,7 +1998,7 @@ def set_organizer(data: dict, db: Session = Depends(get_db)):
     club_id = data.get("club_id")
     if club_id is None:
         raise HTTPException(400, "club_id required")
-    if not db.query(Club).get(club_id):
+    if not db.query(TeamClub).get(club_id):
         raise HTTPException(404, "Club not found")
     _set_config(db, "organizer_club_id", str(club_id))
     db.commit()
@@ -1853,7 +2056,7 @@ def stripe_connect_start(db: Session = Depends(get_db)):
     org_cfg = _get_config(db, "organizer_club_id")
     if not org_cfg:
         raise HTTPException(400, "No organizer club set")
-    club = db.query(Club).get(int(org_cfg))
+    club = db.query(TeamClub).get(int(org_cfg))
     if not club:
         raise HTTPException(404, "Organizer club not found")
 
@@ -1878,7 +2081,7 @@ def stripe_connect_status(db: Session = Depends(get_db)):
     org_cfg = _get_config(db, "organizer_club_id")
     if not org_cfg:
         return {"connected": False}
-    club = db.query(Club).get(int(org_cfg))
+    club = db.query(TeamClub).get(int(org_cfg))
     if not club or not club.stripe_account_id:
         return {"connected": False}
     stripe.api_key = os.environ.get("STRIPE_API_KEY")
@@ -1896,7 +2099,7 @@ def stripe_disconnect(db: Session = Depends(get_db)):
     org_cfg = _get_config(db, "organizer_club_id")
     if not org_cfg:
         raise HTTPException(400, "No organizer club set")
-    club = db.query(Club).get(int(org_cfg))
+    club = db.query(TeamClub).get(int(org_cfg))
     if not club:
         raise HTTPException(404, "Organizer club not found")
     club.stripe_account_id = None
@@ -1915,7 +2118,7 @@ def club_invoice_pdf(club_id: int, db: Session = Depends(get_db)):
         pdf = generate_invoice_pdf(db, club_id)
     except ValueError as e:
         raise HTTPException(400, str(e))
-    club = db.query(Club).get(club_id)
+    club = db.query(TeamClub).get(club_id)
     name = club.name.replace(" ", "_") if club else "club"
     return Response(content=pdf, media_type="application/pdf",
                     headers={"Content-Disposition": f'attachment; filename="invoice_{name}.pdf"'})
@@ -1938,7 +2141,7 @@ def invoices_pdf_zip(data: dict, db: Session = Depends(get_db)):
                 pdf = generate_invoice_pdf(db, cid)
             except ValueError:
                 continue
-            club = db.query(Club).get(cid)
+            club = db.query(TeamClub).get(cid)
             name = club.name.replace(" ", "_") if club else f"club_{cid}"
             zf.writestr(f"invoice_{name}.pdf", pdf)
 
@@ -1952,7 +2155,7 @@ def invoices_pdf_zip(data: dict, db: Session = Depends(get_db)):
 @router.get("/clubs/{club_id}/invoice-total", dependencies=[Depends(require_organizer_or_admin)])
 def club_invoice_total(club_id: int, db: Session = Depends(get_db)):
     from ..invoices import _club_line_items, _meet_fees
-    club = db.query(Club).get(club_id)
+    club = db.query(TeamClub).get(club_id)
     if not club:
         raise HTTPException(404)
     items = _club_line_items(db, club, _meet_fees(db))
@@ -1971,11 +2174,11 @@ def send_club_invoice(club_id: int, db: Session = Depends(get_db)):
     org_cfg = _get_config(db, "organizer_club_id")
     if not org_cfg:
         raise HTTPException(400, "No organizer club set")
-    org_club = db.query(Club).get(int(org_cfg))
+    org_club = db.query(TeamClub).get(int(org_cfg))
     if not org_club or not org_club.stripe_account_id:
         raise HTTPException(400, "Organizer has no connected Stripe account")
 
-    club = db.query(Club).get(club_id)
+    club = db.query(TeamClub).get(club_id)
     if not club:
         raise HTTPException(404, "Club not found")
 
@@ -1997,7 +2200,7 @@ def send_club_invoice(club_id: int, db: Session = Depends(get_db)):
         customer = stripe.Customer.create(
             name=club.name,
             email=email or None,
-            metadata={"meetmanager_club_id": str(club.clubid)},
+            metadata={"meetmanager_club_id": str(club.clubsid)},
             stripe_account=acct,
         )
 
@@ -2008,7 +2211,7 @@ def send_club_invoice(club_id: int, db: Session = Depends(get_db)):
         collection_method="send_invoice",
         days_until_due=30,
         description=f"{meet_name} — Inscriptions",
-        metadata={"meetmanager_club_id": str(club.clubid), "meetmanager_meet": meet_name},
+        metadata={"meetmanager_club_id": str(club.clubsid), "meetmanager_meet": meet_name},
         pending_invoice_items_behavior="exclude",
         stripe_account=acct,
     )
@@ -2103,12 +2306,15 @@ def export_meet_smb():
 
 
 @router.get("/export/meet-lxf", dependencies=[Depends(require_organizer_or_admin)])
-def export_meet_lxf():
-    """Download the stored meet .lxf file (the meet structure)."""
-    if not MEET_STORAGE.exists():
-        raise HTTPException(404, "No meet .lxf available")
+def export_meet_lxf(db: Session = Depends(get_db)):
+    """Download the meet structure as a Lenex .lxf (stored file or generated from DB)."""
+    from ..export import generate_meet_lxf_from_db
+    if MEET_STORAGE.exists():
+        content = MEET_STORAGE.read_bytes()
+    else:
+        content = generate_meet_lxf_from_db(db)
     return Response(
-        content=MEET_STORAGE.read_bytes(),
+        content=content,
         media_type="application/zip",
         headers={"Content-Disposition": "attachment; filename=meet.lxf"},
     )
@@ -2123,6 +2329,69 @@ def export_registrations_lxf(db: Session = Depends(get_db)):
         media_type="application/zip",
         headers={"Content-Disposition": "attachment; filename=inscriptions.lxf"},
     )
+
+
+# ---------------------------------------------------------------------------
+# Database backup / restore (pg_dump / psql)
+# ---------------------------------------------------------------------------
+
+@router.get("/admin/backup-db", dependencies=[Depends(require_admin)])
+def backup_db():
+    """Download a full PostgreSQL dump (plain SQL)."""
+    import subprocess
+    db_url = os.environ.get("DATABASE_URL", "")
+    # Parse DATABASE_URL: postgresql://user:pass@host:port/dbname
+    from urllib.parse import urlparse
+    parsed = urlparse(db_url)
+    env = {**os.environ, "PGPASSWORD": parsed.password or ""}
+    cmd = [
+        "pg_dump",
+        "-h", parsed.hostname or "db",
+        "-p", str(parsed.port or 5432),
+        "-U", parsed.username or "meetmgr",
+        "-d", parsed.path.lstrip("/") or "meet",
+        "--no-owner", "--no-acl",
+    ]
+    result = subprocess.run(cmd, capture_output=True, env=env, timeout=60)
+    if result.returncode != 0:
+        raise HTTPException(500, f"pg_dump failed: {result.stderr.decode()[:500]}")
+    return Response(
+        content=result.stdout,
+        media_type="application/sql",
+        headers={"Content-Disposition": "attachment; filename=team_backup.sql"},
+    )
+
+
+@router.post("/admin/restore-db", dependencies=[Depends(require_admin)])
+async def restore_db(file: UploadFile = File(...)):
+    """Restore database from a pg_dump SQL file. Wipes all existing data."""
+    import subprocess
+    content = await file.read()
+    if len(content) > 50 * 1024 * 1024:
+        raise HTTPException(413, "File too large (max 50MB)")
+    db_url = os.environ.get("DATABASE_URL", "")
+    from urllib.parse import urlparse
+    parsed = urlparse(db_url)
+    dbname = parsed.path.lstrip("/") or "meet"
+    env = {**os.environ, "PGPASSWORD": parsed.password or ""}
+    host_args = ["-h", parsed.hostname or "db", "-p", str(parsed.port or 5432),
+                 "-U", parsed.username or "meetmgr"]
+    # Drop and recreate the database
+    subprocess.run(["psql", *host_args, "-d", "postgres",
+                    "-c", f"DROP DATABASE IF EXISTS {dbname}"],
+                   env=env, capture_output=True, timeout=30)
+    subprocess.run(["psql", *host_args, "-d", "postgres",
+                    "-c", f"CREATE DATABASE {dbname}"],
+                   env=env, capture_output=True, timeout=30)
+    # Restore from dump
+    result = subprocess.run(["psql", *host_args, "-d", dbname],
+                            input=content, capture_output=True, env=env, timeout=120)
+    if result.returncode != 0:
+        stderr = result.stderr.decode()[:500]
+        # psql often returns non-zero for warnings; check if it's fatal
+        if "FATAL" in stderr or "could not connect" in stderr:
+            raise HTTPException(500, f"Restore failed: {stderr}")
+    return {"ok": True, "filename": file.filename}
 
 
 # ---------------------------------------------------------------------------
@@ -2143,7 +2412,7 @@ def get_styles(db: Session = Depends(get_db)):
         if uid is not None:
             all_uids.add(int(uid))
 
-    # Styles referenced in best_times entries
+    # Styles referenced in best_times entries (old JSON blobs)
     bt_entries = db.query(BsGlobal).filter(BsGlobal.name.like("bt_%")).all()
     for entry in bt_entries:
         try:
@@ -2152,6 +2421,12 @@ def get_styles(db: Session = Depends(get_db)):
                 all_uids.add(int(uid_key))
         except (ValueError, TypeError):
             pass
+
+    # Styles referenced in Team Manager Result table
+    from ..models_team import Result as TeamResult
+    for (uid,) in db.query(TeamResult.stylesid).distinct().all():
+        if uid is not None:
+            all_uids.add(int(uid))
 
     result = []
     for uid in all_uids:
@@ -2172,23 +2447,25 @@ def merge_clubs(data: dict, db: Session = Depends(get_db)):
         to_id = int(m["to_id"])
         if from_id == to_id:
             continue
-        from_club = db.query(Club).filter(Club.clubid == from_id).first()
-        to_club = db.query(Club).filter(Club.clubid == to_id).first()
+        from_club = db.query(TeamClub).filter(TeamClub.clubsid == from_id).first()
+        to_club = db.query(TeamClub).filter(TeamClub.clubsid == to_id).first()
         if not from_club or not to_club:
             continue
 
-        for ath in list(from_club.athletes):
-            existing = db.query(Athlete).filter(
-                Athlete.firstname == ath.firstname,
-                Athlete.lastname == ath.lastname,
-                Athlete.clubid == to_id,
+        # Move athletes from source club to target club
+        from_athletes = db.query(Member).filter(Member.clubsid == from_id).all()
+        for ath in from_athletes:
+            existing = db.query(Member).filter(
+                Member.firstname == ath.firstname,
+                Member.lastname == ath.lastname,
+                Member.clubsid == to_id,
             ).first()
             if not existing:
-                ath.clubid = to_id
+                ath.clubsid = to_id
             else:
                 # Merge best times: load both athletes' bt data
-                from_bt = get_best_times(db, ath.athleteid)
-                to_bt = get_best_times(db, existing.athleteid)
+                from_bt = get_best_times(db, ath.membersid)
+                to_bt = get_best_times(db, existing.membersid)
                 for uid_key, style_data in from_bt.items():
                     if uid_key not in to_bt:
                         to_bt[uid_key] = style_data
@@ -2199,15 +2476,15 @@ def merge_clubs(data: dict, db: Session = Depends(get_db)):
                             elif entry["time_ms"] < to_bt[uid_key][course]["time_ms"]:
                                 to_bt[uid_key][course] = entry
                 from ..best_times import _save_best_times
-                _save_best_times(db, existing.athleteid, to_bt)
-                delete_best_times(db, ath.athleteid)
+                _save_best_times(db, existing.membersid, to_bt)
+                delete_best_times(db, ath.membersid)
                 # Delete registrations for the duplicate athlete
-                db.query(SwimResult).filter(SwimResult.athleteid == ath.athleteid).delete()
+                db.query(SwimResult).filter(SwimResult.athleteid == ath.membersid).delete()
                 db.flush()
-                db.delete(ath)
+                # Delete the duplicate member
+                db.query(Member).filter(Member.membersid == ath.membersid).delete(synchronize_session=False)
 
         db.flush()
-        db.expire(from_club)
         db.delete(from_club)
         merged += 1
 
@@ -2217,44 +2494,54 @@ def merge_clubs(data: dict, db: Session = Depends(get_db)):
 
 @router.post("/data-management/merge-styles", dependencies=[Depends(require_admin)])
 def merge_styles(data: dict, db: Session = Depends(get_db)):
-    """Remap best_time entries from one style_uid to another, keeping the faster time."""
-    import json as _json
+    """Remap swimstyleid from one style to another across all tables."""
     merges = data.get("merges", [])
-    merged_rows = 0
+    preview = data.get("preview", False)
+
+    changes = []
     for m in merges:
         from_uid = int(m["from_uid"])
         to_uid = int(m["to_uid"])
         if from_uid == to_uid:
             continue
-        from_key = str(from_uid)
-        to_key = str(to_uid)
-        # Iterate all bt_* entries in bsglobal
-        bt_entries = db.query(BsGlobal).filter(BsGlobal.name.like("bt_%")).all()
-        for entry in bt_entries:
-            try:
-                bt_data = _json.loads(entry.data)
-            except (ValueError, TypeError):
-                continue
-            if from_key not in bt_data:
-                continue
-            from_style = bt_data.pop(from_key)
-            if to_key not in bt_data:
-                bt_data[to_key] = from_style
-                merged_rows += sum(1 for _ in from_style)
-            else:
-                for course, val in from_style.items():
-                    if course not in bt_data[to_key]:
-                        bt_data[to_key][course] = val
-                        merged_rows += 1
-                    elif val["time_ms"] < bt_data[to_key][course]["time_ms"]:
-                        bt_data[to_key][course] = val
-                        merged_rows += 1
-                    else:
-                        merged_rows += 1
-            entry.data = _json.dumps(bt_data)
+        from ..models_team import Result as TeamResult
+        results_count = db.query(TeamResult).filter(TeamResult.stylesid == from_uid).count()
+        events_count = db.query(SwimEvent).filter(SwimEvent.swimstyleid == from_uid).count()
+        from_style = db.query(SwimStyle).get(from_uid)
+        to_style = db.query(SwimStyle).get(to_uid)
+        changes.append({
+            "from_uid": from_uid,
+            "to_uid": to_uid,
+            "from_name": from_style.name if from_style else f"UID {from_uid}",
+            "to_name": to_style.name if to_style else f"UID {to_uid}",
+            "results_affected": results_count,
+            "events_affected": events_count,
+        })
+
+    if preview:
+        return {"changes": changes}
+
+    # Execute the merge
+    merged_count = 0
+    for m in merges:
+        from_uid = int(m["from_uid"])
+        to_uid = int(m["to_uid"])
+        if from_uid == to_uid:
+            continue
+
+        # Remap in Team Manager results (all historical meets)
+        from ..models_team import Result as TeamResult
+        merged_count += db.query(TeamResult).filter(
+            TeamResult.stylesid == from_uid
+        ).update({TeamResult.stylesid: to_uid}, synchronize_session=False)
+
+        # Remap in current meet events (swimevent.swimstyleid)
+        merged_count += db.query(SwimEvent).filter(
+            SwimEvent.swimstyleid == from_uid
+        ).update({SwimEvent.swimstyleid: to_uid}, synchronize_session=False)
 
     db.commit()
-    return {"merged_rows": merged_rows}
+    return {"merged_count": merged_count}
 
 
 @router.post("/best-times-public")
@@ -2307,10 +2594,10 @@ def best_times_public(data: dict, request: Request, db: Session = Depends(get_db
 
     # Load athletes with clubs
     athlete_ids = list(athlete_bt.keys())
-    athletes_db = db.query(Athlete).options(
-        joinedload(Athlete.club)
-    ).filter(Athlete.athleteid.in_(athlete_ids)).all() if athlete_ids else []
-    athlete_map = {a.athleteid: a for a in athletes_db}
+    athletes_db = db.query(Member).options(
+        joinedload(Member.club)
+    ).filter(Member.membersid.in_(athlete_ids)).all() if athlete_ids else []
+    athlete_map = {a.membersid: a for a in athletes_db}
 
     # Group by club then athlete
     clubs_map: dict[int, dict] = {}
@@ -2319,10 +2606,10 @@ def best_times_public(data: dict, request: Request, db: Session = Depends(get_db
         if not a or not a.club:
             continue
         c = a.club
-        if c.clubid not in clubs_map:
-            clubs_map[c.clubid] = {"name": c.name, "athletes": {}}
-        if a.athleteid not in clubs_map[c.clubid]["athletes"]:
-            clubs_map[c.clubid]["athletes"][a.athleteid] = {
+        if c.clubsid not in clubs_map:
+            clubs_map[c.clubsid] = {"name": c.name, "athletes": {}}
+        if a.membersid not in clubs_map[c.clubsid]["athletes"]:
+            clubs_map[c.clubsid]["athletes"][a.membersid] = {
                 "name": f"{a.lastname}, {a.firstname}",
                 "times": {},
             }
@@ -2344,3 +2631,144 @@ def best_times_public(data: dict, request: Request, db: Session = Depends(get_db
 
     course = _get_config(db, "meet_course")
     return {"styles": styles, "clubs": clubs_list, "course": course or "LCM"}
+
+
+# ---------------------------------------------------------------------------
+# Team Manager MDB Import (historical meets)
+# ---------------------------------------------------------------------------
+
+@router.post("/admin/import-mdb", dependencies=[Depends(require_admin)])
+async def import_team_mdb_endpoint(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """Import a Splash Team Manager .mdb file (admin only).
+
+    This imports historical meets, members, results, clubs, and swim styles
+    from the Team Manager database into the new team-schema tables.
+    """
+    content = await file.read()
+    if len(content) > 50 * 1024 * 1024:
+        raise HTTPException(413, "File too large (max 50MB)")
+
+    from ..mdb_import import import_team_mdb
+    try:
+        counts = import_team_mdb(db, content)
+    except Exception as e:
+        raise HTTPException(400, f"MDB import failed: {e}")
+
+    return {"ok": True, "tables": counts, "filename": file.filename}
+
+
+@router.get("/admin/historical-meets", dependencies=[Depends(require_admin)])
+def list_historical_meets(db: Session = Depends(get_db)):
+    """List all meets in the Team Manager schema (historical + current)."""
+    from ..models_team import Meet, Result
+    meets = db.query(Meet).order_by(Meet.mindate.desc()).all()
+    current_id = _get_config(db, "current_meetsid")
+    meet_city = _get_config(db, "meet_city") or ""
+    result = []
+    for m in meets:
+        has_results = db.query(Result).filter(
+            Result.meetsid == m.meetsid,
+            Result.totaltime.isnot(None),
+            Result.totaltime > 0,
+        ).limit(1).count() > 0
+        place = m.place or ""
+        # For current meet, fall back to bsglobal meet_city
+        if not place and current_id and str(m.meetsid) == current_id:
+            place = meet_city
+        result.append({
+            "id": m.meetsid,
+            "name": m.name,
+            "place": place,
+            "mindate": m.mindate.isoformat() if m.mindate else None,
+            "maxdate": m.maxdate.isoformat() if m.maxdate else None,
+            "course": m.course,
+            "has_results": has_results,
+        })
+    return result
+
+
+@router.delete("/admin/historical-meets/{meet_id}", dependencies=[Depends(require_admin)])
+def delete_historical_meet(meet_id: int, db: Session = Depends(get_db)):
+    """Delete a historical meet and all its associated data."""
+    from ..models_team import Meet
+    meet = db.query(Meet).get(meet_id)
+    if not meet:
+        raise HTTPException(404, "Meet not found")
+    db.delete(meet)  # cascades to sessions, events, results, membersmeets
+    db.commit()
+    return {"ok": True, "deleted": meet.name}
+
+
+
+@router.get("/admin/historical-best-times/{member_id}", dependencies=[Depends(require_admin)])
+def get_historical_best_times(member_id: int, db: Session = Depends(get_db)):
+    """Get best times for a member computed from historical results."""
+    from ..best_times_v2 import get_best_times_for_member
+    bt = get_best_times_for_member(db, member_id)
+    return {"member_id": member_id, "best_times": bt}
+
+
+
+@router.post("/import-results-lxf", dependencies=[Depends(require_organizer_or_admin)])
+async def import_results_lxf(request: Request, file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """Import a meet-app results .lxf as a historical meet.
+
+    - Organizer: archives meet as historical, then resets current meet,
+      regenerates all club PINs, and clears the organizer role so an admin
+      can invite the next organizer.  Returns reset=true.
+    - Admin: creates or updates a historical meet record only.  No reset.
+      Returns reset=false.
+
+    meet-app exports via File → "Exporter les résultats LENEX…".
+    Clubs/athletes are merged by code/license; if a completed meet with the
+    same name already exists its results are replaced rather than duplicated.
+    """
+    content = await file.read()
+    if len(content) > 50 * 1024 * 1024:
+        raise HTTPException(413, "File too large (max 50MB)")
+
+    from ..lxf_to_team import import_lxf_as_meet
+    from ..best_times import load_best_times
+    try:
+        counts = import_lxf_as_meet(db, content)
+    except Exception as e:
+        raise HTTPException(400, f"LXF import failed: {e}")
+
+    try:
+        load_best_times(db, content, source=file.filename or "import")
+    except Exception:
+        pass  # best-times update is best-effort
+
+    pin = request.headers.get("X-Club-Pin", "")
+    role, _ = _resolve_role(pin, db)
+    did_reset = False
+    if role in ("organizer", "admin"):
+        _reset_for_next_meet(db)
+        # Admin stays connected — restore organizer_club_id clearing only for organizer
+        if role == "admin":
+            # Admin doesn't lose their session; no organizer role to clear
+            pass
+        db.commit()
+        did_reset = True
+
+    return {"ok": True, **counts, "filename": file.filename, "reset": did_reset, "role": role}
+
+
+@router.post("/admin/import-meet-results", dependencies=[Depends(require_admin)])
+async def import_meet_results(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """Import a meet-app .smb file as a historical meet with results.
+
+    Maps Meet Manager schema (CLUB, ATHLETE, SWIMRESULT) to Team Manager
+    schema (CLUBS, MEMBERS, RESULTS). Creates a new MEETS row.
+    """
+    content = await file.read()
+    if len(content) > 50 * 1024 * 1024:
+        raise HTTPException(413, "File too large (max 50MB)")
+
+    from ..smb_to_team import import_smb_as_meet
+    try:
+        counts = import_smb_as_meet(db, content)
+    except Exception as e:
+        raise HTTPException(400, f"SMB import failed: {e}")
+
+    return {"ok": True, **counts, "filename": file.filename}

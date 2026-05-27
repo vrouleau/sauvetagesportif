@@ -3,21 +3,13 @@ import { electronAPI } from '@electron-toolkit/preload'
 
 const api = {
   menu: {
-    onConfigureDb: (cb: () => void) => {
-      ipcRenderer.on('menu:configure-db', cb)
-      return () => { ipcRenderer.removeListener('menu:configure-db', cb) }
-    },
-    onSyncDown: (cb: () => void) => {
-      ipcRenderer.on('menu:sync-down', cb)
-      return () => { ipcRenderer.removeListener('menu:sync-down', cb) }
-    },
-    onSyncUp: (cb: () => void) => {
-      ipcRenderer.on('menu:sync-up', cb)
-      return () => { ipcRenderer.removeListener('menu:sync-up', cb) }
-    },
     onImportLenex: (cb: () => void) => {
       ipcRenderer.on('menu:import-lenex', cb)
       return () => { ipcRenderer.removeListener('menu:import-lenex', cb) }
+    },
+    onExportMeetLenex: (cb: () => void) => {
+      ipcRenderer.on('menu:export-meet-lenex', cb)
+      return () => { ipcRenderer.removeListener('menu:export-meet-lenex', cb) }
     },
     onExportLenexResults: (cb: () => void) => {
       ipcRenderer.on('menu:export-lenex-results', cb)
@@ -63,12 +55,6 @@ const api = {
       ipcRenderer.removeAllListeners(channel),
   },
   db: {
-    configure: (cfg: unknown) =>
-      ipcRenderer.invoke('db:configure', cfg),
-    getConfig: () =>
-      ipcRenderer.invoke('db:get-config'),
-    testConnection: () =>
-      ipcRenderer.invoke('db:test-connection'),
     getHeatListEvents: () =>
       ipcRenderer.invoke('db:heat-list-events'),
     getHeatListSessions: () =>
@@ -155,10 +141,6 @@ const api = {
       ipcRenderer.invoke('db:available-athletes-for-event', eventId),
     saveAthlete: (athlete: unknown) =>
       ipcRenderer.invoke('db:save-athlete', athlete),
-    syncUp: () =>
-      ipcRenderer.invoke('db:sync-up'),
-    syncDown: () =>
-      ipcRenderer.invoke('db:sync-down'),
     flushMeet: () =>
       ipcRenderer.invoke('db:flush-meet'),
     getMeetInfo: () =>
@@ -230,6 +212,8 @@ const api = {
       ipcRenderer.invoke('file:open-lenex-dialog'),
     importLenex: (path: string) =>
       ipcRenderer.invoke('file:import-lenex', path),
+    exportMeetLenex: () =>
+      ipcRenderer.invoke('file:export-meet-lenex'),
     exportLenexResults: () =>
       ipcRenderer.invoke('file:export-lenex-results'),
     saveSMB: () =>

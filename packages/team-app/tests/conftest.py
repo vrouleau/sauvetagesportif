@@ -188,3 +188,17 @@ def export_lxf(headers: dict) -> zipfile.ZipFile:
     bundle = export_bundle(headers)
     inner = bundle.read("inscriptions.lxf")
     return zipfile.ZipFile(BytesIO(inner))
+
+
+def export_registrations_lxf(headers: dict) -> zipfile.ZipFile:
+    """Call /api/export/registrations-lxf directly (organizer + admin accessible)."""
+    r = requests.get(f"{BASE_URL}/api/export/registrations-lxf", headers=headers, timeout=30)
+    r.raise_for_status()
+    return zipfile.ZipFile(BytesIO(r.content))
+
+
+def export_meet_lxf(headers: dict) -> zipfile.ZipFile:
+    """Call /api/export/meet-lxf directly (organizer + admin accessible)."""
+    r = requests.get(f"{BASE_URL}/api/export/meet-lxf", headers=headers, timeout=30)
+    r.raise_for_status()
+    return zipfile.ZipFile(BytesIO(r.content))

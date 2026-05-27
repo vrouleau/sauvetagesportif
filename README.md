@@ -123,9 +123,9 @@ Contains React components shared between both apps:
 Electron desktop app for running competitions at the venue.
 
 - **Local SQLite** (better-sqlite3) — self-contained, works offline
-- **Remote PG sync** — push/pull to venue's Splash Meet Manager database
 - **SMB save/restore** — Splash Meet Backup format (cross-platform)
-- **LENEX import** — .lxf file import for meet structure + results
+- **LENEX import**: entries .lxf (clubs, athletes, registrations) from team-app
+- **LENEX export**: meet structure .lxf (events/sessions/agegroups, no athletes) for team-app invitation setup; results .lxf (full athletes + times) for team-app historical archival
 - **Swiss Timing Quantum** — file-based protocol bridge for live timing
 - **Heat generation** — FINA/World Aquatics-compliant seeding (circle, pyramid, straight) with qualification period, entry priority, and configurable lane order
 - **Timing sheet OCR** — camera barcode scanning + Gemini vision for handwritten time recognition
@@ -137,7 +137,10 @@ Web app for team registration before the competition.
 
 - **FastAPI backend** (Python) + PostgreSQL (Docker)
 - **React frontend** with shared EventsPage from `shared-ui`
-- **Features**: athlete registration, relay assignment, best times, invoices (Stripe), email invitations
+- **Dual-schema architecture**: Team Manager schema (clubs, members, meets, results) + legacy Meet Manager schema (kept in sync via dual-write)
+- **Features**: athlete registration, relay assignment, best times (from historical results), invoices (Stripe), email invitations, database backup/restore (pg_dump)
+- **Historical meets**: import from Team.mdb, .smb, or results .lxf (from meet-app); best times computed across all results (18-month expiry); meets deduplicated by name on re-import
+- **Close-meet flow**: organizer imports results .lxf → archived as historical meet → current meet reset → all club PINs regenerated → organizer cleared → admin invites next organizer
 - **Data adapter**: `meetApi.js` wraps HTTP `fetch('/api/...')` → FastAPI backend
 
 ### Code Sharing Pattern
@@ -153,13 +156,27 @@ shared-ui/EventsPage.tsx
 
 ## Database Schema
 
-Both apps use the **same Splash Meet Manager schema** — identical table names, column names, and data encoding. The Delphi Splash app can connect to either database without issues.
+### Meet-app (SQLite)
+Uses the **Splash Meet Manager schema** — identical table names, column names, and data encoding. The Delphi Splash app can connect to this database without issues.
 
 Key tables: `swimstyle`, `club`, `swimsession`, `athlete`, `swimevent`, `agegroup`, `heat`, `swimresult`, `split`, `bsglobal`
 
+### Team-app (PostgreSQL)
+Uses a **dual-schema** architecture:
+
+**Team Manager schema** (authoritative for auth, clubs, athletes):
+- `clubs`, `members`, `meets`, `sessions`, `events`, `results`, `membersmeets`, `relays`, `relayspos`
+- Supports multi-meet (historical + current), best times computed from results
+
+**Meet Manager schema** (legacy, kept in sync via dual-write):
+- `club`, `athlete`, `swimsession`, `swimevent`, `agegroup`, `swimresult`, `heat`, `split`
+- Still used by registration view, export, combined events
+
+**Shared**: `swimstyle`, `bsglobal`, `secret_links`
+
 ### bsglobal (key-value store)
 
-Meet-level configuration is stored in `bsglobal` using the Splash `MEETVALUES` format (`KEY=TYPE;VALUE\r\n`). Team-app specific data (best times, admin PIN, closure date) also lives here as separate keys.
+Meet-level configuration is stored in `bsglobal` using the Splash `MEETVALUES` format (`KEY=TYPE;VALUE\r\n`). App-specific data (admin PIN, closure date, current meet ID, Gemini keys) also lives here as separate keys.
 
 ### Team-app extra columns
 
@@ -190,7 +207,7 @@ Replaces manual time entry from handwritten timing sheets with a camera-based wo
 - Two keys: free tier (15 req/min, 1500/day) + paid tier (fallback on rate limit)
 - Keys stored in `bsglobal` as `GEMINI_KEY_FREE` / `GEMINI_KEY_PAID`
 - Admin sets keys in team-app (Admin page → "Clés API Gemini")
-- Keys travel with `.smb` export/import — transparent to meet-app users
+- Keys travel to meet-app via `.smb` export/import AND `.lxf` export (embedded as `.keys` dotfile)
 - Auto-fallback: free → paid on 429 → back to free after 60s
 - Background processing runs in main process (works on any page)
 - Toggle ON/OFF in Traitement page header

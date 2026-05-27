@@ -6,6 +6,47 @@ The administrator is responsible for full database backup/restore, managing club
 
 ---
 
+## Complete Meet Lifecycle
+
+```
+┌────────────────────────── MEET LIFECYCLE ────────────────────────────────┐
+│                                                                            │
+│  ① Admin         Invite organizer (set organizer club in Admin page)     │
+│        │                                                                   │
+│        ▼                                                                   │
+│  ② Organizer     Create meet structure                                    │
+│                  (New meet button — or import .lxf from SauvetageMeet)    │
+│        │                                                                   │
+│        ▼                                                                   │
+│  ③ Organizer     Send invitations → coaches receive PIN by email          │
+│        │                                                                   │
+│        ▼                                                                   │
+│  ④ Coaches       Log in · Register athletes · Adjust entry times          │
+│        │                                                                   │
+│        ▼                                                                   │
+│  ⑤ Organizer     Closure date passes → Send Stripe invoices to clubs      │
+│        │                                                                   │
+│        ▼                                                                   │
+│  ⑥ Organizer     Export registrations (.lxf)                              │
+│   SauvetageMeet  Import entries · Seed heats · Run competition            │
+│                  Record times · Generate reports · Export results (.lxf)  │
+│        │                                                                   │
+│        ▼                                                                   │
+│  ⑦ Organizer     Import results (.lxf)   ← closes the meet               │
+│                  → Results archived as historical meet                     │
+│                  → Current meet reset (events + registrations cleared)    │
+│                  → All club PINs regenerated                              │
+│                  → Organizer role cleared · Organizer logged out          │
+│        │                                                                   │
+│        └────────────────────────────────► ① Start next meet cycle        │
+│                                                                            │
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+The admin's role is primarily at **steps ① and ⑦**: inviting the organizer at the start, and being ready to invite the next organizer once the meet closes.
+
+---
+
 ## Login
 
 1. Open the SauvetageTeam app in a browser
@@ -92,10 +133,10 @@ See the [Organizer Guide](team-organizer) for details on these workflows.
 
 | Task | When | Section |
 |------|------|---------|
-| Restore backup (.smb) | Start of season / data transfer | Admin |
-| Designate organizer | Start of season | Admin |
+| Designate organizer | Before each meet | Admin |
 | Configure club emails | Before invitations | Admin |
 | Configure Gemini keys | Before competition | Admin |
 | Save backup (.smb) | After any major change | Admin |
 | Export entries (.lxf) | After updating times | Data Management |
 | Merge clubs/styles | After multiple imports | Data Management |
+| *(After meet closes)* Invite next organizer | After organizer imports results | Admin |

@@ -33,6 +33,8 @@ class MeetEvent:
     style_name: str
     fee_cents: int = 0
     agegroups: list[MeetAgeGroup] = field(default_factory=list)
+    roundname: str = ""
+    is_internal: bool = False
 
     @property
     def is_masters(self) -> bool:

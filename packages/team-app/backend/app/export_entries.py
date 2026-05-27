@@ -6,7 +6,8 @@ from io import BytesIO
 from xml.etree import ElementTree as ET
 
 from sqlalchemy.orm import Session, joinedload
-from .models import Club, Athlete, SwimEvent, SwimStyle, BsGlobal, gender_to_str
+from .models import SwimEvent, SwimStyle, BsGlobal, gender_to_str
+from .models_team import TeamClub, Member
 from .best_times import get_best_times
 
 
@@ -22,18 +23,18 @@ def _ms_to_lenex(ms: int | None) -> str:
 
 def generate_entries_lxf(db: Session) -> bytes:
     """Generate Lenex .lxf with all clubs, athletes, and best times."""
-    clubs = db.query(Club).options(
-        joinedload(Club.athletes)
+    clubs = db.query(TeamClub).options(
+        joinedload(TeamClub.members)
     ).all()
 
     # Collect all style_uids from best times
     style_uids: set[int] = set()
     athlete_bts: dict[int, dict] = {}
     for club in clubs:
-        for ath in club.athletes:
-            bt_data = get_best_times(db, ath.athleteid)
+        for member in club.members:
+            bt_data = get_best_times(db, member.membersid)
             if bt_data:
-                athlete_bts[ath.athleteid] = bt_data
+                athlete_bts[member.membersid] = bt_data
                 for uid_key in bt_data:
                     style_uids.add(int(uid_key))
 
@@ -72,7 +73,7 @@ def generate_entries_lxf(db: Session) -> bytes:
 
     clubs_xml = ET.SubElement(meet, "CLUBS")
     for club in clubs:
-        if not club.athletes:
+        if not club.members:
             continue
         club_xml = ET.SubElement(clubs_xml, "CLUB", {
             "name": club.name,
@@ -82,17 +83,17 @@ def generate_entries_lxf(db: Session) -> bytes:
         if club.email:
             ET.SubElement(club_xml, "CONTACT", {"email": club.email})
         athletes_xml = ET.SubElement(club_xml, "ATHLETES")
-        for ath in club.athletes:
+        for member in club.members:
             ath_xml = ET.SubElement(athletes_xml, "ATHLETE", {
-                "athleteid": str(ath.athleteid),
-                "firstname": ath.firstname,
-                "lastname": ath.lastname,
-                "gender": gender_to_str(ath.gender),
-                "birthdate": str(ath.birthdate.date()) if ath.birthdate else "",
-                "license": ath.license or "",
-                **({"exception": ath.exception} if ath.exception else {}),
+                "athleteid": str(member.membersid),
+                "firstname": member.firstname,
+                "lastname": member.lastname,
+                "gender": gender_to_str(member.gender),
+                "birthdate": str(member.birthdate.date()) if member.birthdate else "",
+                "license": member.license or "",
+                **({"exception": member.handicapex} if member.handicapex else {}),
             })
-            bt_data = athlete_bts.get(ath.athleteid, {})
+            bt_data = athlete_bts.get(member.membersid, {})
             if bt_data:
                 entries_xml = ET.SubElement(ath_xml, "ENTRIES")
                 for uid_key, style_data in bt_data.items():
@@ -118,4 +119,15 @@ def generate_entries_lxf(db: Session) -> bytes:
     buf = BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("entries.lef", xml_bytes)
+        # Embed Gemini API keys as hidden dotfile (key transport to meet-app)
+        gemini_free = db.query(BsGlobal).get("GEMINI_KEY_FREE")
+        gemini_paid = db.query(BsGlobal).get("GEMINI_KEY_PAID")
+        if (gemini_free and gemini_free.data) or (gemini_paid and gemini_paid.data):
+            import json as _json
+            keys = {}
+            if gemini_free and gemini_free.data:
+                keys["gemini_free"] = gemini_free.data
+            if gemini_paid and gemini_paid.data:
+                keys["gemini_paid"] = gemini_paid.data
+            z.writestr(".keys", _json.dumps(keys))
     return buf.getvalue()

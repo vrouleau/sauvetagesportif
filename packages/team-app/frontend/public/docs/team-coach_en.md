@@ -4,6 +4,8 @@
 
 The club coach (team manager) registers athletes for the upcoming competition. This role has access to the **Registration** tab only, limited to their own club's athletes.
 
+**Your role in the meet cycle:** You are notified at step ③ (invitation email with your club PIN). You act during step ④ (register athletes before the closure date). Once the competition ends and the organizer imports results, your PIN is regenerated — you'll need a new invitation for the next meet.
+
 ---
 
 ## Getting Your PIN

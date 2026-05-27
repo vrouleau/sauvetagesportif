@@ -8,7 +8,8 @@ from xml.etree import ElementTree as ET  # noqa: F401 — kept for type hints
 from defusedxml.ElementTree import fromstring as _ET_fromstring
 
 from sqlalchemy.orm import Session
-from .models import Club, Athlete, gender_from_str
+from .models import gender_from_str
+from .models_team import TeamClub, Member
 
 
 def parse_lxf(file_bytes: bytes) -> list[dict]:
@@ -63,14 +64,14 @@ def seed_from_lxf(db: Session, file_bytes: bytes) -> dict:
 
     for cd in clubs_data:
         if cd.get("code"):
-            club = db.query(Club).filter(Club.code == cd["code"]).first()
+            club = db.query(TeamClub).filter(TeamClub.code == cd["code"]).first()
         else:
-            club = db.query(Club).filter(Club.name == cd["name"]).first()
+            club = db.query(TeamClub).filter(TeamClub.name == cd["name"]).first()
         if not club:
             import secrets, string
             pin = ''.join(secrets.choice(string.digits) for _ in range(6))
-            club = Club(name=cd["name"], code=cd["code"], nation=cd["nation"], pin=pin,
-                        email=cd.get("email") or None)
+            club = TeamClub(name=cd["name"], code=cd["code"], nation=cd["nation"],
+                            pin=pin, email=cd.get("email") or None)
             db.add(club)
             db.flush()
             clubs_added += 1
@@ -83,23 +84,28 @@ def seed_from_lxf(db: Session, file_bytes: bytes) -> dict:
                 club.email = cd["email"]
 
         for ad in cd["athletes"]:
-            existing = db.query(Athlete).filter(
-                Athlete.firstname == ad["first_name"],
-                Athlete.lastname == ad["last_name"],
-                Athlete.clubid == club.clubid,
+            existing = db.query(Member).filter(
+                Member.firstname == ad["first_name"],
+                Member.lastname == ad["last_name"],
+                Member.clubsid == club.clubsid,
             ).first()
             if not existing:
-                ath = Athlete(
+                member = Member(
                     firstname=ad["first_name"],
                     lastname=ad["last_name"],
                     gender=gender_from_str(ad["gender"]),
                     birthdate=ad["birthdate"],
                     license=ad["license"],
-                    exception=ad.get("exception"),
-                    clubid=club.clubid,
+                    handicapex=ad.get("exception"),
+                    clubsid=club.clubsid,
                 )
-                db.add(ath)
+                db.add(member)
                 athletes_added += 1
 
+    db.commit()
+    # Reset sequences to avoid conflicts when creating new entries later
+    from sqlalchemy import text
+    db.execute(text("SELECT setval('clubs_clubsid_seq', COALESCE((SELECT MAX(clubsid) FROM clubs), 0))"))
+    db.execute(text("SELECT setval('members_membersid_seq', COALESCE((SELECT MAX(membersid) FROM members), 0))"))
     db.commit()
     return {"clubs_added": clubs_added, "athletes_added": athletes_added}

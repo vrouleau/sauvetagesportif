@@ -36,95 +36,6 @@ class SwimStyle(Base):
 
 
 # ---------------------------------------------------------------------------
-# club
-# ---------------------------------------------------------------------------
-
-class Club(Base):
-    __tablename__ = "club"
-    clubid = Column(Integer, primary_key=True)
-    bonuspoints = Column(Integer)
-    clubtype = Column(SmallInteger)
-    code = Column(String(10))
-    contactname = Column(String(50))
-    contactinternet = Column(String(150))
-    contactcity = Column(String(30))
-    contactcountry = Column(String(2))
-    contactemail = Column(String(50))
-    contactfax = Column(String(20))
-    contactphone = Column(String(20))
-    contactstate = Column(String(5))
-    contactstreet = Column(String(50))
-    contactstreet2 = Column(String(50))
-    contactzip = Column(String(10))
-    externalid = Column(String(40))
-    longcode = Column(String(20))
-    entryclubid = Column(Integer)
-    entryemails = Column(String(255))
-    name = Column(String(80), nullable=False)
-    nameen = Column(String(80))
-    nation = Column(String(3))
-    region = Column(String(10))
-    shortname = Column(String(30))
-    shortnameen = Column(String(30))
-    swrid = Column(Integer)
-    teamnumber = Column(SmallInteger)
-    # --- Team-specific extra columns (not in Splash) ---
-    pin = Column(String(20))
-    email = Column(String(200))
-    stripe_account_id = Column(String(100))
-    invite_send_count = Column(Integer, default=0, nullable=False, server_default="0")
-    stripe_send_count = Column(Integer, default=0, nullable=False, server_default="0")
-
-    athletes = relationship("Athlete", back_populates="club")
-
-
-# ---------------------------------------------------------------------------
-# athlete
-# ---------------------------------------------------------------------------
-
-class Athlete(Base):
-    __tablename__ = "athlete"
-    athleteid = Column(Integer, primary_key=True)
-    clubid = Column(Integer, ForeignKey("club.clubid"))
-    firstname = Column(String(30))
-    firstname_upper = Column(String(5))
-    gender = Column(SmallInteger)  # 1=M, 2=F
-    lastname = Column(String(50))
-    lastname_upper = Column(String(10))
-    nameprefix = Column(String(20))
-    birthdate = Column(DateTime)  # Splash uses TIMESTAMP
-    domicile = Column(String(50))
-    externalid = Column(String(40))
-    firstnameen = Column(String(30))
-    handicapex = Column(String(20))
-    handicaps = Column(SmallInteger)
-    handicapsb = Column(SmallInteger)
-    handicapsm = Column(SmallInteger)
-    lastnameen = Column(String(50))
-    license = Column(String(20))
-    nation = Column(String(3))
-    sdmsid = Column(Integer)
-    status = Column(Integer)
-    swimlevel = Column(String(10))
-    swrid = Column(Integer)
-    swrhashkey = Column(Integer)
-    clubcode2 = Column(String(10))
-    coachname = Column(String(80))
-    schoolyear = Column(String(10))
-    middlename = Column(String(50))
-    middlenameen = Column(String(50))
-    # --- Team-specific extra column ---
-    exception = Column(String(1))  # 'X' for Masters (maps to handicapex in Splash)
-
-    club = relationship("Club", back_populates="athletes")
-    results = relationship("SwimResult", back_populates="athlete")
-
-    __table_args__ = (
-        UniqueConstraint("firstname", "lastname", "clubid", name="uq_athlete"),
-    )
-
-
-# ---------------------------------------------------------------------------
 # swimsession
 # ---------------------------------------------------------------------------
 
@@ -265,7 +176,7 @@ class AgeGroup(Base):
 class SwimResult(Base):
     __tablename__ = "swimresult"
     swimresultid = Column(Integer, primary_key=True)
-    athleteid = Column(Integer, ForeignKey("athlete.athleteid"))
+    athleteid = Column(Integer, ForeignKey("members.membersid"))
     swrabestid = Column(Integer)
     swrabesttime = Column(Integer)
     swrsbestid = Column(Integer)
@@ -311,7 +222,7 @@ class SwimResult(Base):
     age_code = Column(String(10), default="Open")
     created_at = Column(DateTime, default=datetime.utcnow)
 
-    athlete = relationship("Athlete", back_populates="results")
+    member = relationship("Member", back_populates="swim_results")
     event = relationship("SwimEvent", back_populates="results")
     agegroup = relationship("AgeGroup")
 
@@ -375,7 +286,7 @@ class SecretLink(Base):
     __tablename__ = "secret_links"
     id = Column(Integer, primary_key=True)
     token = Column(String(36), unique=True, nullable=False)
-    club_id = Column(Integer, ForeignKey("club.clubid"), nullable=False)
+    club_id = Column(Integer, ForeignKey("clubs.clubsid"), nullable=False)
     pin_encrypted = Column(String(200), nullable=False)
     expires_at = Column(DateTime, nullable=False)
     viewed = Column(Boolean, default=False)

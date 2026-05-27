@@ -10,9 +10,10 @@ import stripe
 from sqlalchemy.orm import Session, joinedload
 
 from .models import (
-    Athlete, BsGlobal, Club, SwimEvent, SwimStyle, SwimResult,
+    BsGlobal, SwimEvent, SwimStyle, SwimResult,
     fee_dollars_to_cents,
 )
+from .models_team import TeamClub, Member
 
 
 MEET_FEE_LABELS = {
@@ -43,7 +44,7 @@ def _stripe_client() -> None:
     stripe.api_key = key
 
 
-def _club_line_items(db: Session, club: Club, meet_fees: dict[str, int]) -> list[dict]:
+def _club_line_items(db: Session, club: TeamClub, meet_fees: dict[str, int]) -> list[dict]:
     """Build flat line items for a club."""
     # Build a map of event_number -> fee_cents
     all_events = db.query(SwimEvent).options(joinedload(SwimEvent.swimstyle)).all()
@@ -54,11 +55,11 @@ def _club_line_items(db: Session, club: Club, meet_fees: dict[str, int]) -> list
             fee_by_number[e.eventnumber] = fee_cents
 
     rows = (
-        db.query(SwimResult, SwimEvent, Athlete)
+        db.query(SwimResult, SwimEvent, Member)
         .join(SwimEvent, SwimResult.swimeventid == SwimEvent.swimeventid)
-        .join(Athlete, SwimResult.athleteid == Athlete.athleteid)
+        .join(Member, SwimResult.athleteid == Member.membersid)
         .join(SwimStyle, SwimEvent.swimstyleid == SwimStyle.swimstyleid)
-        .filter(Athlete.clubid == club.clubid)
+        .filter(Member.clubsid == club.clubsid)
         .all()
     )
 
@@ -109,18 +110,18 @@ def _club_line_items(db: Session, club: Club, meet_fees: dict[str, int]) -> list
     meet_items: list[dict] = []
     if meet_fees:
         athlete_count = (
-            db.query(Athlete.athleteid)
-            .join(SwimResult, SwimResult.athleteid == Athlete.athleteid)
-            .filter(Athlete.clubid == club.clubid)
+            db.query(Member.membersid)
+            .join(SwimResult, SwimResult.athleteid == Member.membersid)
+            .filter(Member.clubsid == club.clubsid)
             .distinct()
             .count()
         )
         relay_event_count = (
             db.query(SwimEvent.swimeventid)
             .join(SwimResult, SwimResult.swimeventid == SwimEvent.swimeventid)
-            .join(Athlete, SwimResult.athleteid == Athlete.athleteid)
+            .join(Member, SwimResult.athleteid == Member.membersid)
             .join(SwimStyle, SwimEvent.swimstyleid == SwimStyle.swimstyleid)
-            .filter(Athlete.clubid == club.clubid, SwimStyle.relaycount > 1)
+            .filter(Member.clubsid == club.clubsid, SwimStyle.relaycount > 1)
             .distinct()
             .count()
         )
@@ -149,7 +150,7 @@ def _club_line_items(db: Session, club: Club, meet_fees: dict[str, int]) -> list
     return meet_items + event_items
 
 
-def _find_or_create_customer(club: Club) -> stripe.Customer:
+def _find_or_create_customer(club: TeamClub) -> stripe.Customer:
     email = (club.email or "").strip()
     if email:
         existing = stripe.Customer.list(email=email, limit=1)
@@ -158,11 +159,11 @@ def _find_or_create_customer(club: Club) -> stripe.Customer:
     return stripe.Customer.create(
         name=club.name,
         email=email or None,
-        metadata={"meetmanager_club_id": str(club.clubid)},
+        metadata={"meetmanager_club_id": str(club.clubsid)},
     )
 
 
-def _create_draft_for_club(club: Club, items: list[dict], meet_name: str) -> dict:
+def _create_draft_for_club(club: TeamClub, items: list[dict], meet_name: str) -> dict:
     customer = _find_or_create_customer(club)
     invoice = stripe.Invoice.create(
         customer=customer.id,
@@ -172,7 +173,7 @@ def _create_draft_for_club(club: Club, items: list[dict], meet_name: str) -> dic
         days_until_due=30,
         description=f"{meet_name} — Inscriptions",
         metadata={
-            "meetmanager_club_id": str(club.clubid),
+            "meetmanager_club_id": str(club.clubsid),
             "meetmanager_meet": meet_name,
         },
         pending_invoice_items_behavior="exclude",
@@ -207,7 +208,7 @@ def _meet_name(db: Session) -> str:
 def create_invoice_for_club(db: Session, club_id: int) -> dict:
     """Create a single Stripe draft invoice for one club."""
     _stripe_client()
-    club = db.query(Club).options(joinedload(Club.athletes)).get(club_id)
+    club = db.query(TeamClub).options(joinedload(TeamClub.members)).get(club_id)
     if not club:
         raise ValueError(f"Club {club_id} not found")
     items = _club_line_items(db, club, _meet_fees(db))
@@ -222,9 +223,9 @@ def create_invoices_for_all_clubs(db: Session) -> dict:
     meet_name = _meet_name(db)
     meet_fees = _meet_fees(db)
     clubs = (
-        db.query(Club)
-        .options(joinedload(Club.athletes))
-        .order_by(Club.name)
+        db.query(TeamClub)
+        .options(joinedload(TeamClub.members))
+        .order_by(TeamClub.name)
         .all()
     )
     created: list[dict] = []
@@ -255,7 +256,7 @@ def generate_invoice_pdf(db: Session, club_id: int) -> bytes:
     from reportlab.lib.units import inch
     from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-    club = db.query(Club).get(club_id)
+    club = db.query(TeamClub).get(club_id)
     if not club:
         raise ValueError(f"Club {club_id} not found")
     items = _club_line_items(db, club, _meet_fees(db))
@@ -264,7 +265,7 @@ def generate_invoice_pdf(db: Session, club_id: int) -> bytes:
 
     meet_name = _meet_name(db)
     issue_date = date.today()
-    invoice_no = f"INV-{issue_date.strftime('%Y%m%d')}-{club.clubid:04d}"
+    invoice_no = f"INV-{issue_date.strftime('%Y%m%d')}-{club.clubsid:04d}"
 
     _BRAND = colors.HexColor("#1e3a8a")
     _BAND = colors.HexColor("#eef2ff")

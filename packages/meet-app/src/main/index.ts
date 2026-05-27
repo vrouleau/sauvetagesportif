@@ -8,7 +8,6 @@ app.setName('SauvetageMeet')
 
 import { QuantumBridge, type ActiveHeat, type ScheduleEvent } from './quantum'
 import {
-  configureDb, getDbConfig, testConnection,
   getHeatListEvents, getHeatListSessions, getSessions, getAthletes,
   saveResult,
   removeFromHeat, assignToHeatLane, swapLanes, addLateEntry,
@@ -18,7 +17,6 @@ import {
   createEvent, deleteEvent, updateEvent,
   createAgeGroup, deleteAgeGroup, updateAgeGroup,
   saveAthlete,
-  syncUp, syncDown,
   flushMeet,
   generateHeats,
   getLocalDb, closeLocalDb,
@@ -32,12 +30,11 @@ import {
   clearFinalSeeding, seedFinals,
   getCombinedResults,
   nextId,
-  type DbConfig,
   type SessionUpdate,
   type EventUpdate,
   type AgeGroupUpdate,
 } from './db'
-import { importLenex, exportLenexResults } from './lenex'
+import { importLenex, exportLenexResults, exportMeetLenex } from './lenex'
 import { saveSMB, restoreSMB } from './smb'
 import {
   getScanDb, closeScanDb, insertScan, getUnprocessedScans,
@@ -73,14 +70,7 @@ ipcMain.handle('quantum:set-schedule', (_event, events: ScheduleEvent[]) => {
 
 // ── DB IPC ────────────────────────────────────────────────────────────────────
 
-ipcMain.handle('db:configure', (_event, cfg: DbConfig) => {
-  configureDb(cfg)
-  return { ok: true }
-})
-
-ipcMain.handle('db:get-config', () => getDbConfig())
-
-ipcMain.handle('db:test-connection', () => testConnection())
+// ── DB IPC ────────────────────────────────────────────────────────────────────
 
 ipcMain.handle('db:heat-list-events', () => getHeatListEvents())
 
@@ -408,24 +398,6 @@ ipcMain.handle('db:seed-finals', (_event, finalEventId: number) => {
   return seedFinals(finalEventId)
 })
 
-ipcMain.handle('db:sync-up', async () => {
-  try {
-    const result = await syncUp()
-    return { ok: true, tablesCreated: result.tablesCreated }
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) }
-  }
-})
-
-ipcMain.handle('db:sync-down', async () => {
-  try {
-    const result = await syncDown()
-    return { ok: true, rowsCopied: result.rowsCopied }
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) }
-  }
-})
-
 ipcMain.handle('db:flush-meet', async () => {
   try {
     await flushMeet()
@@ -453,6 +425,22 @@ ipcMain.handle('file:import-lenex', async (_event, filePath: string) => {
     return { ok: true, summary }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+})
+
+ipcMain.handle('file:export-meet-lenex', async (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender)
+  const result = await dialog.showSaveDialog(win ?? BrowserWindow.getFocusedWindow()!, {
+    title: 'Exporter la structure du meet LENEX',
+    filters: [{ name: 'LENEX', extensions: ['lxf'] }],
+    defaultPath: 'meet.lxf',
+  })
+  if (result.canceled || !result.filePath) return { ok: false, canceled: true }
+  try {
+    const summary = exportMeetLenex(result.filePath, getLocalDb())
+    return { ok: true, summary }
+  } catch (e) {
+    return { ok: false, error: String(e) }
   }
 })
 
@@ -1039,22 +1027,12 @@ function createWindow(): void {
       label: 'Fichier',
       submenu: [
         {
-          label: 'Configurer la base de données…',
-          click: () => mainWindow.webContents.send('menu:configure-db'),
-        },
-        { type: 'separator' },
-        {
-          label: 'Synchronisation ↓ (BD → app)',
-          click: () => mainWindow.webContents.send('menu:sync-down'),
-        },
-        {
-          label: 'Synchronisation ↑ (app → BD)',
-          click: () => mainWindow.webContents.send('menu:sync-up'),
-        },
-        { type: 'separator' },
-        {
           label: 'Importer un fichier LENEX…',
           click: () => mainWindow.webContents.send('menu:import-lenex'),
+        },
+        {
+          label: 'Exporter la structure du meet LENEX…',
+          click: () => mainWindow.webContents.send('menu:export-meet-lenex'),
         },
         {
           label: 'Exporter les résultats LENEX…',

@@ -17,7 +17,7 @@ import requests
 from conftest import (
     BASE_URL, MEET_TEMPLATE, ENTRIES_FILE, RESULTS_FILE,
     get_registration, post_registration, delete_registration,
-    export_bundle, export_lxf,
+    export_bundle, export_lxf, export_registrations_lxf, export_meet_lxf,
 )
 
 SMB_FILE = Path(__file__).resolve().parent / "fixtures" / "meet.smb"
@@ -571,7 +571,7 @@ class TestDataManagement:
     # --- merge-styles ---
 
     def test_merge_styles_noop_same_uid(self, uploaded, admin_headers):
-        """Merging a style uid into itself must return merged_rows == 0."""
+        """Merging a style uid into itself must return merged_count == 0."""
         r = requests.get(f"{BASE_URL}/api/data-management/styles",
                          headers=admin_headers, timeout=10)
         r.raise_for_status()
@@ -583,14 +583,14 @@ class TestDataManagement:
                           json={"merges": [{"from_uid": uid, "to_uid": uid}]},
                           headers=admin_headers, timeout=10)
         r.raise_for_status()
-        assert r.json()["merged_rows"] == 0
+        assert r.json()["merged_count"] == 0
 
     def test_merge_styles_empty_list_is_noop(self, admin_headers):
         r = requests.post(f"{BASE_URL}/api/data-management/merge-styles",
                           json={"merges": []},
                           headers=admin_headers, timeout=10)
         r.raise_for_status()
-        assert r.json()["merged_rows"] == 0
+        assert r.json()["merged_count"] == 0
 
     def test_merge_styles_requires_admin(self, clubs):
         coach_headers = {"X-Club-Pin": clubs[0]["pin"]}
@@ -1303,6 +1303,265 @@ class TestGeminiKeys:
         r = requests.post(f"{BASE_URL}/api/admin/gemini-keys",
                           json={"freeKey": "stolen"}, timeout=10)
         assert r.status_code in (401, 403, 422)
+
+
+# ---------------------------------------------------------------------------
+# /api/export/registrations-lxf  (organizer-accessible inscription export)
+# ---------------------------------------------------------------------------
+
+class TestExportRegistrationsLxf:
+    """Direct tests for /api/export/registrations-lxf.
+
+    Previously untested: only /api/export (admin bundle) was exercised.
+    The organizer endpoint has a different auth level and a separate code path
+    that crashed with 500 when meet.lxf was not on disk (SMB-loaded meets).
+    """
+
+    def test_requires_auth(self):
+        r = requests.get(f"{BASE_URL}/api/export/registrations-lxf", timeout=5)
+        assert r.status_code == 403
+
+    def test_rejects_coach(self, clubs):
+        coach_headers = {"X-Club-Pin": clubs[0]["pin"]}
+        r = requests.get(f"{BASE_URL}/api/export/registrations-lxf",
+                         headers=coach_headers, timeout=5)
+        assert r.status_code == 403
+
+    def test_allows_admin(self, uploaded, admin_headers):
+        r = requests.get(f"{BASE_URL}/api/export/registrations-lxf",
+                         headers=admin_headers, timeout=30)
+        assert r.status_code == 200
+
+    def test_returns_valid_zip_with_lef(self, uploaded, admin_headers):
+        lxf = export_registrations_lxf(admin_headers)
+        assert any(n.endswith(".lef") for n in lxf.namelist())
+
+    def test_contains_sessions_and_events(self, uploaded, admin_headers):
+        """Output must carry meet structure (sessions + events) from DB."""
+        lxf = export_registrations_lxf(admin_headers)
+        lef = lxf.read(next(n for n in lxf.namelist() if n.endswith(".lef"))).decode()
+        assert "<SESSION " in lef, "No SESSION element in registrations-lxf"
+        assert "<EVENT " in lef, "No EVENT element in registrations-lxf"
+
+    def test_event_count_matches_meet(self, uploaded, admin_headers):
+        lxf = export_registrations_lxf(admin_headers)
+        lef = lxf.read(next(n for n in lxf.namelist() if n.endswith(".lef"))).decode()
+        defined = re.findall(r'<EVENT [^>]*\beventid="(\d+)"', lef)
+        assert len(defined) == 57, f"Expected 57 events, got {len(defined)}"
+
+    def test_entry_count_matches_registrations(self, athletes, admin_headers):
+        """Registrations appear as ENTRY elements; count must match what was posted."""
+        ath = _by_birthyear(athletes, 2002, gender="M")[0]
+        reg = get_registration(ath["id"], admin_headers)
+        style = next(s for s in reg["individual_events"]
+                     if any(c["age_code"] == "Open" for c in s["categories"]))
+        cat = next(c for c in style["categories"] if c["age_code"] == "Open")
+        r = post_registration(ath["id"], cat["event_id"], "Open", 65000, admin_headers)
+        reg_id = r["id"]
+        try:
+            lxf = export_registrations_lxf(admin_headers)
+            lef = lxf.read(next(n for n in lxf.namelist() if n.endswith(".lef"))).decode()
+            assert lef.count("<ENTRY ") >= 1
+        finally:
+            delete_registration(reg_id, admin_headers)
+
+    def test_entry_eventid_references_defined_event(self, athletes, admin_headers):
+        """Every ENTRY's eventid must reference an EVENT in SESSIONS."""
+        ath = _by_birthyear(athletes, 2002, gender="M")[0]
+        reg = get_registration(ath["id"], admin_headers)
+        style = next(s for s in reg["individual_events"]
+                     if any(c["age_code"] == "Open" for c in s["categories"]))
+        cat = next(c for c in style["categories"] if c["age_code"] == "Open")
+        r = post_registration(ath["id"], cat["event_id"], "Open", 65000, admin_headers)
+        reg_id = r["id"]
+        try:
+            lxf = export_registrations_lxf(admin_headers)
+            lef = lxf.read(next(n for n in lxf.namelist() if n.endswith(".lef"))).decode()
+            defined = set(re.findall(r'<EVENT [^>]*\beventid="(\d+)"', lef))
+            used = set(re.findall(r'<ENTRY [^/]*\beventid="(\d+)"', lef))
+            assert used <= defined, f"ENTRY references undefined eventids: {used - defined}"
+        finally:
+            delete_registration(reg_id, admin_headers)
+
+
+# ---------------------------------------------------------------------------
+# /api/export/meet-lxf  (meet structure download)
+# ---------------------------------------------------------------------------
+
+class TestExportMeetLxfEndpoint:
+    """Tests for /api/export/meet-lxf — previously had zero coverage.
+
+    This endpoint returned 404 whenever the meet was loaded via SMB
+    (no meet.lxf on disk). The fix generates it from DB; these tests
+    verify both auth and content.
+    """
+
+    def test_requires_auth(self):
+        r = requests.get(f"{BASE_URL}/api/export/meet-lxf", timeout=5)
+        assert r.status_code == 403
+
+    def test_rejects_coach(self, clubs):
+        coach_headers = {"X-Club-Pin": clubs[0]["pin"]}
+        r = requests.get(f"{BASE_URL}/api/export/meet-lxf",
+                         headers=coach_headers, timeout=5)
+        assert r.status_code == 403
+
+    def test_allows_admin(self, uploaded, admin_headers):
+        r = requests.get(f"{BASE_URL}/api/export/meet-lxf",
+                         headers=admin_headers, timeout=30)
+        assert r.status_code == 200
+
+    def test_returns_valid_zip_with_lef(self, uploaded, admin_headers):
+        lxf = export_meet_lxf(admin_headers)
+        assert any(n.endswith(".lef") for n in lxf.namelist())
+
+    def test_contains_sessions_and_events(self, uploaded, admin_headers):
+        lxf = export_meet_lxf(admin_headers)
+        lef = lxf.read(next(n for n in lxf.namelist() if n.endswith(".lef"))).decode()
+        assert "<SESSION " in lef
+        assert "<EVENT " in lef
+
+    def test_event_count_matches_meet(self, uploaded, admin_headers):
+        lxf = export_meet_lxf(admin_headers)
+        lef = lxf.read(next(n for n in lxf.namelist() if n.endswith(".lef"))).decode()
+        events = re.findall(r'<EVENT [^>]*\beventid="(\d+)"', lef)
+        assert len(events) == 57
+
+    def test_events_have_swimstyle(self, uploaded, admin_headers):
+        lxf = export_meet_lxf(admin_headers)
+        lef = lxf.read(next(n for n in lxf.namelist() if n.endswith(".lef"))).decode()
+        # Every EVENT block should have a SWIMSTYLE child with distance
+        event_blocks = re.findall(r'<EVENT [^>]*>(.*?)</EVENT>', lef, re.DOTALL)
+        for block in event_blocks[:10]:  # spot-check first 10
+            assert "<SWIMSTYLE " in block, "EVENT missing SWIMSTYLE element"
+            assert 'distance="' in block, "SWIMSTYLE missing distance attribute"
+
+    def test_content_type_is_zip(self, uploaded, admin_headers):
+        r = requests.get(f"{BASE_URL}/api/export/meet-lxf",
+                         headers=admin_headers, timeout=30)
+        r.raise_for_status()
+        assert "zip" in r.headers.get("content-type", "").lower() or r.content[:2] == b"PK"
+
+
+# ---------------------------------------------------------------------------
+# Gemini key transport via inscription LXF
+# ---------------------------------------------------------------------------
+
+class TestGeminiKeyLxfTransport:
+    """Verify that Gemini keys are embedded in /api/export/registrations-lxf.
+
+    Previously untested: only the BSGLOBAL storage and SMB round-trip were
+    covered. The .keys dotfile embedded in the inscription zip was never
+    verified, so a missing implementation on the meet-app import side went
+    undetected.
+    """
+
+    def _clear_keys(self, admin_headers):
+        requests.post(f"{BASE_URL}/api/admin/gemini-keys",
+                      json={"freeKey": "", "paidKey": ""},
+                      headers=admin_headers, timeout=10)
+
+    def test_no_keys_file_when_unset(self, uploaded, admin_headers):
+        self._clear_keys(admin_headers)
+        lxf = export_registrations_lxf(admin_headers)
+        assert ".keys" not in lxf.namelist(), \
+            ".keys must not be present when no Gemini keys are configured"
+
+    def test_keys_file_present_when_free_key_set(self, uploaded, admin_headers):
+        self._clear_keys(admin_headers)
+        requests.post(f"{BASE_URL}/api/admin/gemini-keys",
+                      json={"freeKey": "AIzaSyTestFreeKey0000000000"},
+                      headers=admin_headers, timeout=10)
+        lxf = export_registrations_lxf(admin_headers)
+        assert ".keys" in lxf.namelist(), \
+            ".keys must be present in zip when a free Gemini key is set"
+        self._clear_keys(admin_headers)
+
+    def test_keys_json_contains_correct_values(self, uploaded, admin_headers):
+        import json as _json
+        self._clear_keys(admin_headers)
+        free = "AIzaSyFreeKeyForExport000000000"
+        paid = "AIzaSyPaidKeyForExport000000000"
+        requests.post(f"{BASE_URL}/api/admin/gemini-keys",
+                      json={"freeKey": free, "paidKey": paid},
+                      headers=admin_headers, timeout=10)
+        lxf = export_registrations_lxf(admin_headers)
+        assert ".keys" in lxf.namelist()
+        keys = _json.loads(lxf.read(".keys").decode())
+        assert keys.get("gemini_free") == free, "gemini_free key value mismatch"
+        assert keys.get("gemini_paid") == paid, "gemini_paid key value mismatch"
+        self._clear_keys(admin_headers)
+
+    def test_keys_file_absent_in_meet_lxf(self, uploaded, admin_headers):
+        """/api/export/meet-lxf must never embed keys (meet structure only)."""
+        requests.post(f"{BASE_URL}/api/admin/gemini-keys",
+                      json={"freeKey": "AIzaSyTestShouldNotLeakHere"},
+                      headers=admin_headers, timeout=10)
+        lxf = export_meet_lxf(admin_headers)
+        assert ".keys" not in lxf.namelist(), \
+            ".keys must not leak into meet-lxf (structure-only export)"
+        self._clear_keys(admin_headers)
+
+
+# ---------------------------------------------------------------------------
+# SMB upload → LXF export regression (destructive — runs last)
+#
+# These tests reproduce the exact failure mode: meet loaded via SMB has no
+# meet.lxf on disk, so both export endpoints used to crash or return 404/500.
+# ---------------------------------------------------------------------------
+
+class TestExportAfterSmbUpload:
+    """Verify export endpoints work when meet was loaded via SMB (no meet.lxf file).
+
+    Runs last because SMB upload wipes all existing meet data.
+    """
+
+    @pytest.fixture(scope="class")
+    def smb_loaded(self, admin_headers):
+        assert SMB_FILE.exists(), f"meet.smb not found at {SMB_FILE}"
+        with open(SMB_FILE, "rb") as f:
+            r = requests.post(
+                f"{BASE_URL}/api/upload/meet-smb",
+                files={"file": ("meet.smb", f, "application/octet-stream")},
+                headers=admin_headers,
+                timeout=60,
+            )
+        assert r.status_code == 200, f"SMB upload failed: {r.status_code} {r.text}"
+        return r.json()
+
+    def test_registrations_lxf_returns_200_after_smb(self, smb_loaded, admin_headers):
+        """Previously crashed with 500: FileNotFoundError meet.lxf not on disk."""
+        r = requests.get(f"{BASE_URL}/api/export/registrations-lxf",
+                         headers=admin_headers, timeout=30)
+        assert r.status_code == 200, \
+            f"Expected 200 after SMB upload, got {r.status_code}: {r.text}"
+
+    def test_registrations_lxf_has_sessions_after_smb(self, smb_loaded, admin_headers):
+        lxf = export_registrations_lxf(admin_headers)
+        lef = lxf.read(next(n for n in lxf.namelist() if n.endswith(".lef"))).decode()
+        assert "<SESSION " in lef, "No sessions in registrations-lxf after SMB load"
+        assert "<EVENT " in lef, "No events in registrations-lxf after SMB load"
+
+    def test_meet_lxf_returns_200_after_smb(self, smb_loaded, admin_headers):
+        """Previously returned 404: No meet .lxf available."""
+        r = requests.get(f"{BASE_URL}/api/export/meet-lxf",
+                         headers=admin_headers, timeout=30)
+        assert r.status_code == 200, \
+            f"Expected 200 after SMB upload, got {r.status_code}: {r.text}"
+
+    def test_meet_lxf_has_events_after_smb(self, smb_loaded, admin_headers):
+        lxf = export_meet_lxf(admin_headers)
+        lef = lxf.read(next(n for n in lxf.namelist() if n.endswith(".lef"))).decode()
+        events = re.findall(r'<EVENT [^>]*\beventid="(\d+)"', lef)
+        assert len(events) > 0, "No events in meet-lxf after SMB load"
+
+    def test_meet_lxf_events_have_swimstyle_after_smb(self, smb_loaded, admin_headers):
+        lxf = export_meet_lxf(admin_headers)
+        lef = lxf.read(next(n for n in lxf.namelist() if n.endswith(".lef"))).decode()
+        event_blocks = re.findall(r'<EVENT [^>]*>(.*?)</EVENT>', lef, re.DOTALL)
+        assert event_blocks, "No EVENT blocks found"
+        for block in event_blocks[:5]:
+            assert "<SWIMSTYLE " in block
 
 
 # ---------------------------------------------------------------------------

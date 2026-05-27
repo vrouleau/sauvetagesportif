@@ -9,6 +9,7 @@ export default function SelfInvite() {
   const [clubs, setClubs] = useState([])
   const [meetName, setMeetName] = useState('')
   const [closed, setClosed] = useState(false)
+  const [noMeet, setNoMeet] = useState(false)
   const [selectedClubId, setSelectedClubId] = useState('')
   const [email, setEmail] = useState('')
   const [sending, setSending] = useState(false)
@@ -28,6 +29,7 @@ export default function SelfInvite() {
       .then(r => r.json())
       .then(data => {
         setMeetName(data.meet_name || '')
+        if (!data.meet_name && data.events === 0) setNoMeet(true)
         if (data.closure_date && new Date(data.closure_date) < new Date()) setClosed(true)
       })
       .catch(() => {})
@@ -114,11 +116,19 @@ export default function SelfInvite() {
           <p className="text-red-600 text-sm font-medium">{t.self_invite_closed}</p>
         )}
 
-        {!closed && clubs.length === 0 && !error && (
+        {noMeet && !closed && (
+          <p className="text-gray-600 text-sm font-medium">
+            {lang === 'fr'
+              ? "Désolé, aucune compétition n'est prévue pour le moment."
+              : 'Sorry, there is no meet planned at this time.'}
+          </p>
+        )}
+
+        {!closed && !noMeet && clubs.length === 0 && !error && (
           <p className="text-gray-500 text-sm">{t.self_invite_no_clubs}</p>
         )}
 
-        {!closed && clubs.length > 0 && (
+        {!closed && !noMeet && clubs.length > 0 && (
           <>
             <div className="mb-3">
               <label className="block text-sm font-medium text-gray-700 mb-1">

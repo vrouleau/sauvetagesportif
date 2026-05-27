@@ -93,7 +93,15 @@ export const meetApiHttp = {
   },
 
   async exportMeet() {
-    window.open('/api/export/meet-lxf', '_blank')
+    const res = await fetch('/api/export/meet-lxf', {
+      headers: { 'X-Club-Pin': localStorage.getItem('pin') || '' }
+    })
+    if (!res.ok) throw new Error(`Export failed: ${res.status}`)
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = 'meet.lxf'; a.click()
+    URL.revokeObjectURL(url)
     return { ok: true }
   },
 }

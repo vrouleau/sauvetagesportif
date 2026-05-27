@@ -4,6 +4,8 @@
 
 Le responsable d'équipe (coach) inscrit les athlètes de son club pour la compétition à venir. Ce rôle a accès à l'onglet **Inscription** uniquement, limité aux athlètes de son propre club.
 
+**Votre rôle dans le cycle de compétition :** Vous êtes notifié à l'étape ③ (courriel d'invitation avec le NIP de votre club). Vous agissez à l'étape ④ (inscrire les athlètes avant la date limite). Une fois la compétition terminée et les résultats importés par l'organisateur, votre NIP est régénéré — vous aurez besoin d'une nouvelle invitation pour le prochain meet.
+
 ---
 
 ## Obtenir votre NIP
