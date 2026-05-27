@@ -137,8 +137,8 @@ Web app for team registration before the competition.
 
 - **FastAPI backend** (Python) + PostgreSQL (Docker)
 - **React frontend** with shared EventsPage from `shared-ui`
-- **Dual-schema architecture**: Team Manager schema (clubs, members, meets, results) + legacy Meet Manager schema (kept in sync via dual-write)
-- **Features**: athlete registration, relay assignment, best times (from historical results), invoices (Stripe), email invitations, database backup/restore (pg_dump)
+- **Unified schema**: Team Manager tables (clubs, members, meets, results) + Meet Manager tables (swimresult.athleteid → members.membersid directly, no separate athlete/club tables)
+- **Features**: athlete registration, relay assignment, best times (from historical results), invoices (Stripe), email invitations, backup/restore (pg_dump with auto-scheduler)
 - **Historical meets**: import from Team.mdb, .smb, or results .lxf (from meet-app); best times computed across all results (18-month expiry); meets deduplicated by name on re-import
 - **Close-meet flow**: organizer imports results .lxf → archived as historical meet → current meet reset → all club PINs regenerated → organizer cleared → admin invites next organizer
 - **Data adapter**: `meetApi.js` wraps HTTP `fetch('/api/...')` → FastAPI backend
@@ -162,17 +162,16 @@ Uses the **Splash Meet Manager schema** — identical table names, column names,
 Key tables: `swimstyle`, `club`, `swimsession`, `athlete`, `swimevent`, `agegroup`, `heat`, `swimresult`, `split`, `bsglobal`
 
 ### Team-app (PostgreSQL)
-Uses a **dual-schema** architecture:
 
-**Team Manager schema** (authoritative for auth, clubs, athletes):
+**Team Manager tables** (authoritative for clubs, athletes, historical data):
 - `clubs`, `members`, `meets`, `sessions`, `events`, `results`, `membersmeets`, `relays`, `relayspos`
 - Supports multi-meet (historical + current), best times computed from results
 
-**Meet Manager schema** (legacy, kept in sync via dual-write):
-- `club`, `athlete`, `swimsession`, `swimevent`, `agegroup`, `swimresult`, `heat`, `split`
-- Still used by registration view, export, combined events
+**Meet Manager tables** (current meet operations — registration, export, heats):
+- `swimstyle`, `swimsession`, `swimevent`, `agegroup`, `swimresult`, `heat`, `split`
+- `swimresult.athleteid` → references `members.membersid` directly (no separate `athlete`/`club` tables)
 
-**Shared**: `swimstyle`, `bsglobal`, `secret_links`
+**Shared**: `bsglobal`, `secret_links`
 
 ### bsglobal (key-value store)
 
@@ -180,7 +179,7 @@ Meet-level configuration is stored in `bsglobal` using the Splash `MEETVALUES` f
 
 ### Team-app extra columns
 
-Team-specific fields (`pin`, `email`, `invite_send_count`, `stripe_account_id`) are appended to the end of existing tables. Splash ignores columns it doesn't know about.
+Team-specific fields (`pin`, `email`, `invite_send_count`, `stripe_account_id`) live on the `clubs` and `members` tables. The `swimresult.athleteid` column references `members.membersid` directly.
 
 ## Encoding Conventions
 

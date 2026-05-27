@@ -15,7 +15,7 @@ The administrator is responsible for full database backup/restore, managing club
 │        │                                                                   │
 │        ▼                                                                   │
 │  ② Organizer     Create meet structure                                    │
-│                  (New meet button — or import .lxf from SauvetageMeet)    │
+│                  (Create Pool/Beach — or import .lxf from SauvetageMeet)  │
 │        │                                                                   │
 │        ▼                                                                   │
 │  ③ Organizer     Send invitations → coaches receive PIN by email          │
@@ -37,6 +37,7 @@ The administrator is responsible for full database backup/restore, managing club
 │                  → Current meet reset (events + registrations cleared)    │
 │                  → All club PINs regenerated                              │
 │                  → Organizer role cleared · Organizer logged out          │
+│                  → Admin meet also reset                                  │
 │        │                                                                   │
 │        └────────────────────────────────► ① Start next meet cycle        │
 │                                                                            │
@@ -59,21 +60,34 @@ The admin's role is primarily at **steps ① and ⑦**: inviting the organizer a
 
 ## Admin Tab — Key Actions
 
-### Restore from Backup (.smb)
+### Database Backup
 
-The primary way to seed the database is by restoring a full `.smb` backup. This loads **everything**: clubs, athletes, events, sessions, age groups, registrations, results, and configuration.
+The Admin page provides full backup and restore capabilities for the database.
 
-1. In the **Restore Backup (.smb)** section, click **Choose file**
-2. Select an `.smb` file (from a previous season or from SauvetageMeet)
-3. The app wipes the current database and loads all data from the backup
+#### Create Backup
+
+1. Click **Create Backup** — a snapshot of the current database is stored on the server
+2. The backup appears in the **Backup List** below
+
+#### Restore (.sql)
+
+1. Click **Restore (.sql)**
+2. Select a `.sql` backup file to upload
+3. The app wipes the current database and restores all data from the file
 
 > **Warning**: This replaces ALL data in the database. Clubs get new PINs assigned automatically.
 
-### Save Backup (.smb)
+#### Auto-Backup Configuration
 
-1. In the **Save Backup (.smb)** section, click **Download**
-2. Save the file — this is a full snapshot of the current database
-3. Use it to transfer data to SauvetageMeet or as a season archive
+1. In the **Auto-Backup** section, set the **interval** (in days) between automatic backups
+2. Set the **maximum copies** to keep — older backups are deleted automatically
+3. Click **Save**
+
+#### Backup List
+
+The backup list displays all stored backups (manual and automatic):
+- Click **Download** to save a backup file locally
+- Click **Delete** to remove a backup from the server
 
 ### Designate the Organizer
 
@@ -100,11 +114,11 @@ The primary way to seed the database is by restoring a full `.smb` backup. This 
 ## Organizer Pages (Admin has full access)
 
 The admin has access to all organizer capabilities:
-- Create new pool/beach meet from templates
 - Upload meet structure (.lxf)
 - Upload entries/results (.lxf)
 - Export registration bundle (.zip)
-- Send invitations, set closure date
+- Send invitations
+- Create new pool/beach meet (from the Invitation page: **Create Pool** / **Create Beach** buttons)
 
 See the [Organizer Guide](team-organizer) for details on these workflows.
 
@@ -125,7 +139,8 @@ See the [Organizer Guide](team-organizer) for details on these workflows.
 ### Merge Diverging Styles
 
 1. In the **Merge Styles** section, select the **source UID** (to eliminate) and **target UID** (canonical)
-2. Click **Merge** — best times are consolidated (fastest per pool size is kept)
+2. A **preview popup** shows the affected records before executing
+3. Confirm to proceed — best times are consolidated (fastest per pool size is kept)
 
 ---
 
@@ -136,7 +151,8 @@ See the [Organizer Guide](team-organizer) for details on these workflows.
 | Designate organizer | Before each meet | Admin |
 | Configure club emails | Before invitations | Admin |
 | Configure Gemini keys | Before competition | Admin |
-| Save backup (.smb) | After any major change | Admin |
+| Create backup | After any major change | Admin |
+| Configure auto-backup | Once (set interval + max copies) | Admin |
 | Export entries (.lxf) | After updating times | Data Management |
 | Merge clubs/styles | After multiple imports | Data Management |
 | *(After meet closes)* Invite next organizer | After organizer imports results | Admin |

@@ -96,35 +96,39 @@ python3 tests/generate_test_results.py \
     --out tests/fixtures/test_results.lxf
 ```
 
-## Schema (dual-schema architecture)
+## Schema (single unified schema)
 
-**Team Manager schema (new — authoritative for auth, clubs, athletes):**
+The old dual-schema architecture (separate `club`/`athlete` tables + dual-write) has been removed. There is now a single source of truth.
+
+**Team Manager tables (authoritative for clubs, athletes, historical data):**
 - `clubs` — club identity, PINs, email (via `TeamClub` model)
 - `members` — athletes (via `Member` model)
 - `meets` — multi-meet support (historical + current)
 - `sessions` — meet sessions (linked to meet)
 - `events` — meet events with `minage`/`maxage` directly (no agegroup table)
-- `results` — registrations AND historical results (best times computed from here)
-- `swimstyle` — shared between both schemas
+- `results` — historical results (best times computed from here)
+- `membersmeets` — registration link (athlete ↔ meet)
+- `relays`, `relayspos` — relay teams and positions
 
-**Meet Manager schema (old — still used for registration view, export, combined events):**
-- `club`, `athlete`, `swimsession`, `swimevent`, `agegroup`, `swimresult`, `heat`, `split`
-- Kept in sync via dual-write on all mutations
-- Will be removed once all read paths are migrated
+**Meet Manager tables (current meet operations — registration, export, heats):**
+- `swimstyle`, `swimsession`, `swimevent`, `agegroup`, `swimresult`, `heat`, `split`
+- `swimresult.athleteid` → references `members.membersid` directly (no separate `athlete` table)
+- `bsglobal` — key-value store for meet config, MEETVALUES, Gemini keys, etc.
+- `secret_links` — self-invite links
 
 **Key bsglobal keys:**
 - `current_meetsid` — ID of the active meet in Team Manager schema
 - `admin_pin` — admin authentication PIN
 - `organizer_club_id` — organizer club ID (references `clubs.clubsid`)
-- `bt_{athlete_id}` — JSON best times (legacy, being replaced by `results` table)
+- `closure_date` — registration deadline (synced with MEETVALUES DEADLINE)
+- `backup_interval_days` — auto-backup interval (default 1)
+- `backup_max_count` — auto-backup retention count (default 7)
 
 ## Best times storage
 
-**Dual system (transition):**
-1. **Legacy JSON blobs** in `bsglobal` as `bt_{athlete_id}` keys: `{style_uid: {course: {time_ms, date, source}}}`. Updated on results upload, expired after 18 months.
-2. **Team Manager `results` table**: `best_times_v2.py` computes best times via SQL query across all historical results. Fed by results upload sync and MDB/SMB import.
+Best times are computed from the Team Manager `results` table via `best_times_v2.py` — SQL query across all historical results (18-month expiry). Fed by results upload and MDB/SMB import.
 
-The registration page tries `best_times_v2` first (queries `results` table), falls back to JSON blobs if empty. **Not updated for beach meets** (positions are not times). Pool styles use 5xx IDs, beach styles use 6xx — no collisions.
+**Not updated for beach meets** (positions are not times). Pool styles use 5xx IDs, beach styles use 6xx — no collisions.
 
 ## API endpoints
 
@@ -143,8 +147,16 @@ The registration page tries `best_times_v2` first (queries `results` table), fal
 | `GET /api/export` | Export registrations as .lxf bundle (.zip) | Admin |
 | `GET /api/export/entries` | Export entries .lxf (clubs + athletes + best times) | Admin |
 | `GET /api/export/registrations-lxf` | Export registrations .lxf (for meet-app import) | Organizer/Admin |
+| `PUT /api/sessions/{id}` | Update session fields (name, date, times, lanes) | Organizer/Admin |
+| `PUT /api/closure-date` | Set registration deadline (syncs to MEETVALUES DEADLINE) | Organizer/Admin |
 | `GET /api/admin/backup-db` | Download full PostgreSQL dump (.sql) | Admin |
 | `POST /api/admin/restore-db` | Restore database from .sql dump | Admin |
+| `GET /api/admin/backup-config` | Get auto-backup config (interval + retention) | Admin |
+| `PUT /api/admin/backup-config` | Update auto-backup config | Admin |
+| `GET /api/admin/backups` | List all stored backups | Admin |
+| `POST /api/admin/backups/create` | Create a manual backup now | Admin |
+| `GET /api/admin/backups/{filename}` | Download a specific backup | Admin |
+| `DELETE /api/admin/backups/{filename}` | Delete a specific backup | Admin |
 | `POST /api/admin/import-mdb` | Import Splash Team Manager .mdb file | Admin |
 | `GET /api/admin/historical-meets` | List historical meets (Team Manager schema) | Admin |
 | `DELETE /api/admin/historical-meets/{id}` | Delete a historical meet | Admin |
@@ -153,23 +165,23 @@ The registration page tries `best_times_v2` first (queries `results` table), fal
 | `GET /api/athletes` | Athlete list | Any authenticated |
 | `GET /api/admin/gemini-keys` | Get masked Gemini API keys | Admin |
 | `POST /api/admin/gemini-keys` | Set free/paid Gemini API keys | Admin |
+| `POST /api/data-management/merge-styles` | Remap swimstyleid across results + events (preview mode available) | Admin |
 
 ## Source layout
 
 ```
 backend/app/
-  main.py               — FastAPI app, startup, audit logging
-  models.py             — SQLAlchemy models (old Meet Manager schema, kept for dual-write)
+  main.py               — FastAPI app, startup, audit logging, auto-backup scheduler
+  models.py             — SQLAlchemy models (meet operations: swimresult.athleteid → members.membersid)
   models_team.py        — Team Manager schema (clubs, members, meets, events, results)
   routers/api.py        — All API endpoints
   combined_events.py    — COMBINEDEVENTS XML generator (Python port)
-  events.py             — LENEX meet structure parser (dual-writes to both schemas)
-  best_times.py         — Best time storage (bsglobal JSON blobs + sync to results table)
+  events.py             — LENEX meet structure parser
   best_times_v2.py      — Best times computed from Team Manager results table
   export.py             — LENEX export (registrations + Gemini key transport; session names + pause events included)
   export_entries.py     — LENEX export (all clubs + athletes + best times)
   invoices.py           — Stripe invoice generation
-  seed.py               — Entries .lxf parser (dual-writes clubs/athletes to both schemas)
+  seed.py               — Entries .lxf parser (clubs/athletes into members table)
   mdb_import.py         — Splash Team Manager .mdb import (via mdbtools)
   smb_to_team.py        — Import .smb as historical meet in Team Manager schema
   lxf_to_team.py        — Import results .lxf as historical meet (merges clubs/members, upserts if same name)
@@ -178,7 +190,7 @@ frontend/src/
   main.jsx              — React app, routing, EventsPage wrapper
   meetApi.js            — MeetAPI adapter (HTTP → FastAPI)
   i18n.jsx              — Team-app specific translations
-  pages/                — Athletes, Organizer, Admin, DataManagement, etc.
+  pages/                — Athletes, Organizer, Admin, DataManagement, SelfInvite, etc.
 ```
 
 ## Meet lifecycle (LXF round-trip)
@@ -195,12 +207,14 @@ Full data flow between meet-app and team-app:
 
 **Step 5 (organizer path) also closes the meet cycle:**
 - Archives results as a completed historical meet (`meetstate=3`)
-- Resets the current meet (clears registrations, events, bsglobal meet keys)
+- Resets the current meet (clears registrations, events, bsglobal meet keys) — **both organizer and admin paths trigger reset**
 - Regenerates all club PINs (coaches must re-authenticate for next meet)
-- Clears `organizer_club_id` — organizer is logged out
+- Clears `organizer_club_id` (organizer path) — organizer is logged out
 - Admin then sets a new organizer for the next meet via Admin page
 
-**Admin import** (`POST /api/import-results-lxf` with admin PIN): same historical archival, **no reset**. If a completed meet with the same name already exists, its results are replaced rather than duplicated.
+**Admin import** (`POST /api/import-results-lxf` with admin PIN): same historical archival + reset. If a completed meet with the same name already exists, its results are replaced rather than duplicated.
+
+**Empty meet state:** After reset (or fresh install), the meet has no events. Self-invite page shows "no meet planned" when empty. Admin or organizer uploads a new meet .lxf to start the next cycle.
 
 ## In-App Documentation
 
@@ -215,3 +229,51 @@ Auto-generated XML in `bsglobal` defining cumulative point standings per age/gen
 
 - **Implementation**: `backend/app/combined_events.py` — called from `api.py` after `upload_meet`
 - **Config**: `../../config/combined-events-config.json` (see `config/CLAUDE.md` at repo root)
+
+## Backup & Restore (Admin page)
+
+Dedicated backup/restore section in the Admin page (replaces the old Data Management page backup).
+
+**Manual backup/restore:**
+- `GET /api/admin/backup-db` — download full pg_dump (.sql)
+- `POST /api/admin/restore-db` — restore from .sql dump (wipes all data)
+- `POST /api/admin/backups/create` — create a named backup stored server-side
+
+**Auto-backup scheduler:**
+- Background loop in `main.py` (`_auto_backup_loop`) runs pg_dump on a configurable interval
+- Config stored in bsglobal: `backup_interval_days` (default 1), `backup_max_count` (default 7)
+- Backups stored in `{MEET_STORAGE}/../backups/` as `auto-YYYY-MM-DD-HHMMSS.sql`
+- Retention enforced: oldest backups deleted when count exceeds `backup_max_count`
+
+**Backup list UI:**
+- `GET /api/admin/backups` — list all backups (name, size, date)
+- `GET /api/admin/backups/{filename}` — download specific backup
+- `DELETE /api/admin/backups/{filename}` — delete specific backup
+
+## Style Merge (Data Management)
+
+Remaps `swimstyleid` from one style to another across **both** historical results (Team Manager `results` table) and current meet events (`swimevent` table).
+
+- Endpoint: `POST /api/data-management/merge-styles`
+- Accepts `{merges: [{from: id, to: id}, ...], preview: bool}`
+- Preview mode returns affected row counts without executing
+- Used when style IDs need consolidation (e.g., after importing data with non-canonical IDs)
+
+## Closure Date
+
+Registration deadline that blocks coach mutations after the date passes.
+
+- Stored in bsglobal as `closure_date` (YYYY-MM-DD format)
+- Synced bidirectionally with MEETVALUES `DEADLINE` field (Splash format: `D;YYYYMMDDHHMMSSMMM`)
+- Editable via `PUT /api/closure-date` (organizer or admin)
+- Organizer page shows it read-only; meet config panel allows editing
+- Enforced on: athlete create/update/delete, registration create/delete
+
+## Session Date
+
+Sessions have a `date` field editable via the EventsPage session properties panel.
+- `PUT /api/sessions/{id}` accepts `{date: "YYYY-MM-DD", ...}` along with other session fields (name, warmupfrom, warmupto, officialfrom, officialto, lanemin, lanemax)
+
+## Age Group Codes
+
+Age groups with `agemax >= 99` are treated as "Open" (19 & over) per Splash convention. The combined events engine matches these to the Open category (`agemax == -1 || agemax == 99`).

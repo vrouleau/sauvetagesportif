@@ -11,7 +11,7 @@ L'organisateur gère le cycle complet de la compétition : création de la struc
 │        │                                                                    │
 │        ▼                                                                    │
 │  ② Organisateur   Créer la structure de compétition                       │
-│                   (bouton Nouveau meet — ou import .lxf de SauvetageMeet)  │
+│                   (Créer Piscine/Plage — ou import .lxf de SauvetageMeet)  │
 │        │                                                                    │
 │        ▼                                                                    │
 │  ③ Organisateur   Envoyer les invitations → responsables reçoivent NIP    │
@@ -33,6 +33,7 @@ L'organisateur gère le cycle complet de la compétition : création de la struc
 │                   → Meet actuel réinitialisé (épreuves et inscriptions)   │
 │                   → NIP de tous les clubs régénérés                       │
 │                   → Rôle d'organisateur effacé · Déconnexion              │
+│                   → Meet admin également réinitialisé                     │
 │        │                                                                    │
 │        └──────────────────────────────────► ① Prochain cycle             │
 │                                                                             │
@@ -55,7 +56,7 @@ L'organisateur gère le cycle complet de la compétition : création de la struc
 
 ### Créer un nouveau meet
 
-1. Dans la barre d'outils de l'onglet **Compétition**, cliquer **Nouveau meet piscine** ou **Nouveau meet plage**
+1. Dans la barre d'outils de l'onglet **Invitation**, cliquer **Créer Piscine** ou **Créer Plage**
 2. Confirmer le dialogue — ceci efface la structure d'épreuves actuelle et charge le gabarit
 3. L'arbre des épreuves se rafraîchit avec les épreuves standard du type choisi
 
@@ -83,15 +84,22 @@ Après le téléversement d'une structure, la boîte **Résumé des frais** affi
 - Frais par épreuve (épreuves chronométrées)
 - Devise
 
+### Date limite d'inscription
+
+La date limite d'inscription est configurée dans le panneau de configuration de la compétition :
+1. Dans l'onglet **Compétition**, ouvrir le panneau de configuration → section **Autres**
+2. Définir la **Date limite d'inscription**
+3. Cette date est affichée en lecture seule dans l'onglet Invitation et applique la clôture des inscriptions
+
 ---
 
 ## Onglet Invitation — Gestion des invitations
 
-### Fixer la date limite d'inscription
+### Date limite d'inscription
 
-1. Naviguer vers l'onglet **Invitation**
-2. Dans la section **Date limite d'inscription**, sélectionner la date et cliquer **Enregistrer**
-3. Les responsables peuvent inscrire jusqu'à cette date ; après la clôture, le formulaire devient en lecture seule
+La date limite d'inscription est configurée dans l'onglet **Compétition** sous **Competition → Autres → Date limite d'inscription**. L'onglet Invitation affiche la date limite en lecture seule à titre de référence.
+
+- Les responsables peuvent inscrire jusqu'à cette date ; après la clôture, le formulaire devient en lecture seule
 
 ### Envoyer les invitations
 
@@ -148,14 +156,14 @@ Une fois la compétition terminée et les résultats exportés depuis SauvetageM
 
 1. Dans SauvetageMeet, utiliser **Fichier → Exporter les résultats LENEX…** pour sauvegarder un fichier `.lxf`
 2. Dans SauvetageTeam (onglet Invitation), cliquer **Importer résultats**
-3. Confirmer l'avertissement — cette action est **irréversible** et va :
+3. Une fenêtre de confirmation apparaît — lire l'avertissement attentivement. Cette action est **irréversible** et va :
    - Archiver les résultats comme meet historique (utilisé pour les futurs meilleurs temps)
-   - Réinitialiser le meet actuel (inscriptions et structure d'épreuves effacées)
+   - Réinitialiser le meet actuel **pour l'admin et l'organisateur** (inscriptions et structure d'épreuves effacées)
    - Régénérer les NIP de tous les clubs (les responsables devront se reconnecter)
    - Effacer le rôle d'organisateur et **vous déconnecter**
 4. Après la déconnexion, l'administrateur peut inviter l'organisateur du prochain meet
 
-> **Note pour l'admin** : Après l'import des résultats, le système est de retour à l'étape ①. Désigner le prochain organisateur dans la page Admin.
+> **Note pour l'admin** : Après l'import des résultats, le système est de retour à l'étape ①. Le meet est réinitialisé pour l'admin et l'organisateur. Désigner le prochain organisateur dans la page Admin.
 
 ---
 

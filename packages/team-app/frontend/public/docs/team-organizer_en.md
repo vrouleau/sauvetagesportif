@@ -11,7 +11,7 @@ The organizer manages the full meet cycle: creating the structure, sending invit
 │        │                                                                   │
 │        ▼                                                                   │
 │  ② Organizer     Create meet structure                                    │
-│                  (New meet button — or import .lxf from SauvetageMeet)    │
+│                  (Create Pool/Beach — or import .lxf from SauvetageMeet)  │
 │        │                                                                   │
 │        ▼                                                                   │
 │  ③ Organizer     Send invitations → coaches receive PIN by email          │
@@ -33,6 +33,7 @@ The organizer manages the full meet cycle: creating the structure, sending invit
 │                  → Current meet reset (events + registrations cleared)    │
 │                  → All club PINs regenerated                              │
 │                  → Organizer role cleared · Organizer logged out          │
+│                  → Admin meet also reset                                  │
 │        │                                                                   │
 │        └────────────────────────────────► ① Start next meet cycle        │
 │                                                                            │
@@ -55,7 +56,7 @@ The organizer manages the full meet cycle: creating the structure, sending invit
 
 ### Create a New Meet
 
-1. In the **Meet** tab toolbar, click **New Pool Meet** or **New Beach Meet**
+1. In the **Invitation** tab toolbar, click **Create Pool** or **Create Beach**
 2. Confirm the dialog — this wipes the current event structure and loads the template
 3. The event tree refreshes with the standard events for the chosen meet type
 
@@ -83,15 +84,22 @@ After uploading a meet structure, the **Fee Summary** box displays:
 - Per-event fees (timing events)
 - Currency
 
+### Entry Deadline
+
+The entry deadline is set in the meet configuration panel:
+1. In the **Meet** tab, open the **Competition** config panel → **Others** section
+2. Set the **Entry deadline** date
+3. This date is displayed read-only on the Invitation tab and enforces registration closure
+
 ---
 
 ## Invitation Tab — Managing Club Invitations
 
-### Set the Entry Closure Date
+### Entry Closure Date
 
-1. Navigate to the **Invitation** tab
-2. In the **Entry Closure Date** section, select the deadline and click **Save**
-3. Coaches can register until this date; after closure the form becomes read-only
+The entry closure date is configured in the **Meet** tab under **Competition → Others → Entry deadline**. The Invitation tab displays the closure date in read-only mode for reference.
+
+- Coaches can register until this date; after closure the form becomes read-only
 
 ### Send Invitations
 
@@ -148,14 +156,14 @@ Once the competition is over and results have been exported from SauvetageMeet:
 
 1. In SauvetageMeet, use **File → Export results LENEX…** to save a `.lxf` results file
 2. In SauvetageTeam (Invitation tab), click **Import Results**
-3. Confirm the warning dialog — this action is **irreversible** and will:
+3. A confirmation modal appears — review the warning carefully. This action is **irreversible** and will:
    - Archive results as a completed historical meet (used for future best times)
-   - Reset the current meet (all registrations and event structure cleared)
+   - Reset the current meet **for both admin and organizer** (all registrations and event structure cleared)
    - Regenerate all club PINs (coaches must re-authenticate for the next meet)
    - Clear the organizer role and **log you out**
 4. After logout, the administrator can invite the organizer for the next meet
 
-> **Admin note**: After a results import, the system is back to step ①. Designate the next organizer in the Admin page.
+> **Admin note**: After a results import, the system is back to step ①. The meet is reset for both admin and organizer. Designate the next organizer in the Admin page.
 
 ---
 

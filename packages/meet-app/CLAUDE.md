@@ -37,6 +37,9 @@ Test files in `tests/`:
 - `heat-generation.test.ts` — 28 tests
 - `gbin.test.ts`, `lenex.test.ts`, `schema.test.ts`, `smb.test.ts`, `meetvalues.test.ts`, `timing-scan.test.ts`
 
+### Key utility: `msToDisplay(ms)`
+Converts integer milliseconds to display format (`M:SS.cc` or `SS.cc`). Returns `undefined` for `null`, `0`, negative values, and max-int sentinel (2147483647) — all treated as "no time" (NT).
+
 ## Critical rule: IPC listener cleanup
 
 Preload `on*` methods return a cleanup function. Always collect them in `useEffect` and call them on unmount:
@@ -100,6 +103,18 @@ src/renderer/src/
 | `file:import-lenex` | Import .lxf (meet structure + entries + best times) |
 | `file:export-meet-lenex` | Export meet structure as .lxf (sessions/events/agegroups, no athletes) — for team-app invitation setup |
 | `file:export-lenex-results` | Export results as .lxf (full athletes + times) — for team-app historical import |
+
+### LXF round-trip details
+
+**Import (`importLenex`):**
+- Remaps `swimstyleid` via `uniqueid` attribute (Splash uses internal auto-increment IDs in MDB but canonical 5xx UIDs in Lenex)
+- Events with `round=11` (MDB encoding for Break/Pause) are marked `internalevent='T'`
+- Extracts MEETVALUES metadata from meet attributes (name, course, agedate, deadline, etc.)
+
+**Export (`exportMeetLenex`, `exportResultsLenex`):**
+- Includes pause event names in the output
+- Uses correct swimstyleids (canonical UIDs)
+- Writes meet-level attributes (course, agedate, organizer, etc.) from MEETVALUES
 | `timing:save-scan` | Store scanned image + barcode metadata |
 | `timing:get-scans-for-processing` | List scans by status filter |
 | `timing:run-ocr` | Run OCR engine on a scan (Gemini/Ollama/etc) |
