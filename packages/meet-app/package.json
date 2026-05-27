@@ -1,6 +1,6 @@
 {
   "name": "@meetmgr/meet-app",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "private": true,
   "author": "Société de sauvetage",
   "description": "Electron desktop app for running lifesaving competitions",
