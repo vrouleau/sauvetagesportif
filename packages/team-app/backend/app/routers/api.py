@@ -165,6 +165,36 @@ def _set_config(db: Session, key: str, value: str):
         db.add(BsGlobal(name=key, data=value))
 
 
+def _update_meetvalue(db: Session, key: str, typed_value: str):
+    """Update a single key in the MEETVALUES blob (Splash format KEY=TYPE;VALUE)."""
+    cfg = db.query(BsGlobal).get("MEETVALUES")
+    existing: dict[str, str] = {}
+    if cfg and cfg.data:
+        for line in cfg.data.split("\r\n"):
+            eq = line.find("=")
+            if eq >= 0:
+                existing[line[:eq]] = line[eq + 1:]
+    existing[key] = typed_value
+    data = "\r\n".join(f"{k}={v}" for k, v in existing.items() if v)
+    _set_config(db, "MEETVALUES", data)
+
+
+def _get_closure_date(db: Session) -> str | None:
+    """Get closure/deadline date — reads from closure_date key first, falls back to MEETVALUES DEADLINE."""
+    val = _get_config(db, "closure_date")
+    if val:
+        return val
+    # Fall back to MEETVALUES DEADLINE
+    cfg = db.query(BsGlobal).get("MEETVALUES")
+    if cfg and cfg.data:
+        for line in cfg.data.split("\r\n"):
+            if line.startswith("DEADLINE=D;"):
+                raw = line[11:]  # after "DEADLINE=D;"
+                if raw and len(raw) >= 8:
+                    return f"{raw[:4]}-{raw[4:6]}-{raw[6:8]}"
+    return None
+
+
 def _get_admin_pin(db: Session) -> str:
     return _get_config(db, "admin_pin") or _DEFAULT_ADMIN_PIN
 
@@ -235,7 +265,7 @@ def _check_closure(db: Session, pin: str = ""):
         org_cfg = _get_config(db, "organizer_club_id")
         if org_cfg and org_cfg == str(club.clubsid):
             return
-    cfg = _get_config(db, "closure_date")
+    cfg = _get_closure_date(db)
     if cfg:
         from datetime import date
         if date.today() > date.fromisoformat(cfg):
@@ -864,7 +894,7 @@ def meet_info(db: Session = Depends(get_db)):
     name = _get_config(db, "meet_name")
     course = _get_config(db, "meet_course")
     masters = _get_config(db, "meet_masters")
-    closure = _get_config(db, "closure_date")
+    closure = _get_closure_date(db)
     currency = _get_config(db, "meet_currency")
     fees_json = _get_config(db, "meet_fees_json")
     try:
@@ -946,9 +976,19 @@ def set_meet_config(entries: dict, db: Session = Depends(get_db)):
         type_code = entry.get("type", "S") if isinstance(entry, dict) else "S"
         value = entry.get("value", "") if isinstance(entry, dict) else str(entry)
         existing[key] = f"{type_code};{value}"
-        # Also sync meet_name for /meet-info compatibility
+        # Sync meet_name for /meet-info compatibility
         if key == "NAME":
             _set_config(db, "meet_name", value)
+        # Sync DEADLINE → closure_date
+        if key == "DEADLINE" and value:
+            # Convert YYYYMMDDHHMMSSMMM → YYYY-MM-DD
+            raw = value
+            if len(raw) >= 8:
+                _set_config(db, "closure_date", f"{raw[:4]}-{raw[4:6]}-{raw[6:8]}")
+            else:
+                _set_config(db, "closure_date", "")
+        elif key == "DEADLINE" and not value:
+            _set_config(db, "closure_date", "")
     # Serialize back
     data = "\r\n".join(f"{k}={v}" for k, v in existing.items())
     if cfg:
@@ -963,6 +1003,11 @@ def set_meet_config(entries: dict, db: Session = Depends(get_db)):
 def set_closure_date(data: ClosureDateUpdate, db: Session = Depends(get_db)):
     val = data.closure_date
     _set_config(db, "closure_date", val)
+    # Also sync to MEETVALUES DEADLINE
+    if val:
+        _update_meetvalue(db, "DEADLINE", f"D;{val.replace('-', '')}000000000")
+    else:
+        _update_meetvalue(db, "DEADLINE", "D;")
     db.commit()
     return {"closure_date": val}
 
@@ -1681,7 +1726,7 @@ def get_registration(athlete_id: int, db: Session = Depends(get_db)):
 
     meet_course = _get_config(db, "meet_course") or "LCM"
     meet_type = (_get_config(db, "meet_type") or "POOL").upper()
-    closure = _get_config(db, "closure_date")
+    closure = _get_closure_date(db)
 
     return {
         "athlete": {

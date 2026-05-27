@@ -252,17 +252,13 @@ export default function Organizer() {
           <button onClick={connectStripe} className="text-xs text-purple-600 hover:underline">{t.stripe_connect_btn}</button>
         )}
         {/* Closure date */}
-        <div className="flex items-center gap-1">
-          <label className="text-xs text-gray-500">{t.closure_date_label}:</label>
-          <input type="date" className="border border-gray-300 px-1.5 py-0.5 rounded text-xs"
-            defaultValue={meetInfo?.closure_date || ''}
-            onKeyDown={e => { if (e.key === 'Enter') e.target.blur() }}
-            onBlur={async e => {
-              await api.put('/closure-date', { closure_date: e.target.value })
-              loadMeetInfo()
-              setMsg(t.closure_saved)
-            }} />
-        </div>
+        {/* Closure date (read-only, set via meet config) */}
+        {meetInfo?.closure_date && (
+          <div className="flex items-center gap-1">
+            <label className="text-xs text-gray-500">{t.closure_date_label}:</label>
+            <span className="text-xs font-medium text-red-600">{meetInfo.closure_date}</span>
+          </div>
+        )}
       </div>
 
       {/* Actions bar */}
