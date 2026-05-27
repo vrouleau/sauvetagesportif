@@ -87,6 +87,11 @@ console.log('\n  Updating package-lock.json...')
 execSync('npm install --package-lock-only', { cwd: root, stdio: 'pipe' })
 console.log('  ✓ package-lock.json')
 
+// Generate release notes
+console.log('\n  Generating release notes...')
+const { generate } = require('./generate-release-notes')
+generate(newVersion)
+
 // Git commit + tag
 console.log()
 execSync('git add -A', { cwd: root })
