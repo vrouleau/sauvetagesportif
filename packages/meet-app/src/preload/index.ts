@@ -161,6 +161,24 @@ const api = {
     seedFinals: (finalEventId: number) =>
       ipcRenderer.invoke('db:seed-finals', finalEventId),
   },
+  pg: {
+    connect: (config: { host: string; port: number; database: string; user: string; password: string }) =>
+      ipcRenderer.invoke('pg:connect', config),
+    disconnect: () =>
+      ipcRenderer.invoke('pg:disconnect'),
+    status: () =>
+      ipcRenderer.invoke('pg:status'),
+    fingerprint: () =>
+      ipcRenderer.invoke('db:fingerprint'),
+    onConnectPg: (cb: () => void) => {
+      ipcRenderer.on('menu:connect-pg', cb)
+      return () => { ipcRenderer.removeListener('menu:connect-pg', cb) }
+    },
+    onDisconnectPg: (cb: () => void) => {
+      ipcRenderer.on('menu:disconnect-pg', cb)
+      return () => { ipcRenderer.removeListener('menu:disconnect-pg', cb) }
+    },
+  },
   report: {
     previewPdf: (html: string, headerInfo: unknown) =>
       ipcRenderer.invoke('report:preview-pdf', html, headerInfo),

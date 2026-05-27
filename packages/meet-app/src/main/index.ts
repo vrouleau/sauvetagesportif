@@ -48,6 +48,10 @@ import { generateTimingSheetsHtml, buildTimingSheetPages } from './timingSheets'
 import { type OcrEngine } from './ocrEngine'
 import { startGeminiBackground, setGeminiBackgroundEnabled, isGeminiBackgroundEnabled, resetGeminiAttempted } from './geminiBackground'
 import { GeminiOcrEngine, getCurrentGeminiTier, loadGeminiKeys, saveGeminiKeys } from './ocrGemini'
+import {
+  connectToPg, disconnectPg, getConnectionInfo, restoreSavedConnection, isPgConnected,
+} from './connectionManager'
+import type { PgConnectionConfig } from './pgBackend'
 
 let quantum: QuantumBridge | null = null
 
@@ -79,6 +83,25 @@ ipcMain.handle('db:heat-list-sessions', () => getHeatListSessions())
 ipcMain.handle('db:sessions', () => getSessions())
 
 ipcMain.handle('db:athletes', () => getAthletes())
+
+// Quick fingerprint for change-detection polling (PG mode)
+ipcMain.handle('db:fingerprint', () => {
+  if (!isPgConnected()) return null
+  const db = getLocalDb()
+  // Use MAX(xmin) across key tables — xmin changes on any INSERT or UPDATE
+  const row = db.prepare(`
+    SELECT
+      (SELECT MAX(xmin::text::bigint) FROM swimsession) AS s_xmin,
+      (SELECT MAX(xmin::text::bigint) FROM swimevent) AS e_xmin,
+      (SELECT MAX(xmin::text::bigint) FROM heat) AS h_xmin,
+      (SELECT MAX(xmin::text::bigint) FROM swimresult) AS r_xmin,
+      (SELECT MAX(xmin::text::bigint) FROM athlete) AS a_xmin,
+      (SELECT MAX(xmin::text::bigint) FROM agegroup) AS ag_xmin,
+      (SELECT COUNT(*) FROM swimresult) AS r_count,
+      (SELECT COUNT(*) FROM heat) AS h_count
+  `).get() as Record<string, number>
+  return row
+})
 
 ipcMain.handle('db:save-result', (
   _event,
@@ -459,6 +482,28 @@ ipcMain.handle('file:export-lenex-results', async (event) => {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
   }
 })
+
+// ── PostgreSQL connection IPC ─────────────────────────────────────────────────
+
+ipcMain.handle('pg:connect', async (_event, config: PgConnectionConfig) => {
+  try {
+    await connectToPg(config)
+    return { ok: true, info: getConnectionInfo() }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+})
+
+ipcMain.handle('pg:disconnect', () => {
+  disconnectPg()
+  return { ok: true, info: getConnectionInfo() }
+})
+
+ipcMain.handle('pg:status', () => {
+  return getConnectionInfo()
+})
+
+// ── File IPC ──────────────────────────────────────────────────────────────────
 
 ipcMain.handle('file:save-smb', async (event) => {
   const win = BrowserWindow.fromWebContents(event.sender)
@@ -1057,6 +1102,15 @@ function createWindow(): void {
           click: () => mainWindow.webContents.send('menu:new-meet', 'beach'),
         },
         { type: 'separator' },
+        {
+          label: 'Connecter à PostgreSQL…',
+          click: () => mainWindow.webContents.send('menu:connect-pg'),
+        },
+        {
+          label: 'Déconnecter PostgreSQL',
+          click: () => mainWindow.webContents.send('menu:disconnect-pg'),
+        },
+        { type: 'separator' },
         { label: 'Quitter', role: 'quit' },
       ],
     },
@@ -1148,7 +1202,7 @@ function createWindow(): void {
   }
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   if (process.platform === 'win32') {
     app.setAppUserModelId('com.sauvetagemeet')
   }
@@ -1157,6 +1211,9 @@ app.whenReady().then(() => {
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
     callback(permission === 'media')
   })
+
+  // Try to restore saved PG connection (falls back to SQLite silently)
+  await restoreSavedConnection()
 
   // Start background Gemini OCR processing
   startGeminiBackground()

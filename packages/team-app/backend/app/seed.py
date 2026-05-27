@@ -105,7 +105,7 @@ def seed_from_lxf(db: Session, file_bytes: bytes) -> dict:
     db.commit()
     # Reset sequences to avoid conflicts when creating new entries later
     from sqlalchemy import text
-    db.execute(text("SELECT setval('clubs_clubsid_seq', COALESCE((SELECT MAX(clubsid) FROM clubs), 0))"))
-    db.execute(text("SELECT setval('members_membersid_seq', COALESCE((SELECT MAX(membersid) FROM members), 0))"))
+    db.execute(text("SELECT setval('clubs_clubsid_seq', GREATEST(COALESCE((SELECT MAX(clubsid) FROM clubs), 0), 1))"))
+    db.execute(text("SELECT setval('members_membersid_seq', GREATEST(COALESCE((SELECT MAX(membersid) FROM members), 0), 1))"))
     db.commit()
     return {"clubs_added": clubs_added, "athletes_added": athletes_added}

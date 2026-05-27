@@ -8,6 +8,7 @@ import TimingScanPage from './pages/TimingScanPage'
 import TimingProcessPage from './pages/TimingProcessPage'
 import GuidePage from './pages/GuidePage'
 import { GeminiKeyDialog } from './components/GeminiKeyDialog'
+import { PgConnectDialog, usePgStatus } from './components/PgConnectDialog'
 import { LangProvider, useLang } from '@shared/context/LangContext'
 import logoSrc from '@shared/assets/icon.png'
 
@@ -76,8 +77,14 @@ function menuApi() {
         onRestoreSMB: (cb: () => void) => () => void
         onNewMeet: (cb: (meetType: string) => void) => () => void
       }
+      pg?: {
+        onConnectPg: (cb: () => void) => () => void
+        onDisconnectPg: (cb: () => void) => () => void
+        disconnect: () => Promise<{ ok: boolean }>
+        fingerprint: () => Promise<Record<string, number> | null>
+      }
     }
-  }).api?.menu ?? null
+  }).api ?? null
 }
 
 // ─── Import Status Dialog ─────────────────────────────────────────────────────
@@ -304,6 +311,7 @@ function AppInner() {
   const [page, setPage] = useState<Page>('events')
   const { lang, setLang, t } = useLang()
   const [showGeminiConfig, setShowGeminiConfig] = useState(false)
+  const [showPgConnect, setShowPgConnect] = useState(false)
   const [showGuide, setShowGuide] = useState<'pool' | 'beach' | null>(null)
   const [importState, setImportState] = useState<ImportState | null>(null)
   const [exportState, setExportState] = useState<{ status: 'done' | 'error'; summary?: ExportSummary; error?: string } | null>(null)
@@ -312,6 +320,7 @@ function AppInner() {
   const [refreshKey, setRefreshKey] = useState(0)
   const [meetType, setMeetType] = useState<string>('POOL')
   const [meetName, setMeetName] = useState<string>('')
+  const pgStatus = usePgStatus()
 
   // Load meet type and name on mount and after refresh
   useEffect(() => {
@@ -319,9 +328,31 @@ function AppInner() {
     dbApi()?.getMeetInfo().then((info: { name: string }) => setMeetName(info?.name || ''))
   }, [refreshKey])
 
+  // Poll for database changes when in PG mode (every 3s)
+  useEffect(() => {
+    if (pgStatus.info.type !== 'pg') return
+    let lastFingerprint: string | null = null
+    const interval = setInterval(async () => {
+      const apis = menuApi()
+      const fp = await apis?.pg?.fingerprint()
+      if (!fp) return
+      const key = JSON.stringify(fp)
+      if (lastFingerprint === null) {
+        lastFingerprint = key
+      } else if (key !== lastFingerprint) {
+        lastFingerprint = key
+        setRefreshKey((k) => k + 1)
+      }
+    }, 3000)
+    return () => clearInterval(interval)
+  }, [pgStatus.info.type])
+
   // Listen for native menu events
   useEffect(() => {
-    const m = menuApi()
+    const apis = menuApi()
+    if (!apis) return
+    const m = apis.menu
+    const pg = apis.pg
     if (!m) return
     const cleanups = [
       m.onConfigureGemini(() => setShowGeminiConfig(true)),
@@ -332,6 +363,14 @@ function AppInner() {
       m.onSaveSMB(() => handleSaveSMB()),
       m.onRestoreSMB(() => handleRestoreSMB()),
       m.onNewMeet((meetType) => setFlushState({ open: true, running: false, meetType: meetType || 'pool' })),
+      ...(pg ? [
+        pg.onConnectPg(() => setShowPgConnect(true)),
+        pg.onDisconnectPg(async () => {
+          await pg.disconnect()
+          pgStatus.refresh()
+          handleRefresh()
+        }),
+      ] : []),
     ]
     return () => { cleanups.forEach((fn) => fn()) }
   }, [])
@@ -443,6 +482,17 @@ function AppInner() {
         <span className="text-gray-300 truncate mr-4">
           {meetName || (lang === 'fr' ? 'Gestion de compétition' : 'Meet Management')}
         </span>
+        {/* PG connection status */}
+        {pgStatus.info.type === 'pg' && (
+          <span className="text-green-400 text-[10px] mr-2" title={pgStatus.info.label}>
+            🟢 PG: {pgStatus.info.label}
+          </span>
+        )}
+        {pgStatus.info.type === 'sqlite' && (
+          <span className="text-gray-500 text-[10px] mr-2">
+            💾 SQLite
+          </span>
+        )}
         {/* Language toggle */}
         <div className="ml-auto flex items-center gap-1 pr-3">
           <button
@@ -519,6 +569,12 @@ function AppInner() {
 
       {/* Modals */}
       {showGeminiConfig && <GeminiKeyDialog onClose={() => setShowGeminiConfig(false)} />}
+      {showPgConnect && (
+        <PgConnectDialog
+          onClose={() => setShowPgConnect(false)}
+          onConnected={() => { pgStatus.refresh(); handleRefresh() }}
+        />
+      )}
       {showGuide && <GuidePage guideType={showGuide} onClose={() => setShowGuide(null)} />}
       {smbState && <SmbStatusDialog state={smbState} onClose={() => setSmbState(null)} />}
       {flushState?.open && (

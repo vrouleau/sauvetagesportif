@@ -782,8 +782,8 @@ async def upload_meet_smb(file: UploadFile = File(...), db: Session = Depends(ge
 
     # Reset sequences after explicit ID inserts
     from sqlalchemy import text
-    db.execute(text("SELECT setval('clubs_clubsid_seq', COALESCE((SELECT MAX(clubsid) FROM clubs), 0))"))
-    db.execute(text("SELECT setval('members_membersid_seq', COALESCE((SELECT MAX(membersid) FROM members), 0))"))
+    db.execute(text("SELECT setval('clubs_clubsid_seq', GREATEST(COALESCE((SELECT MAX(clubsid) FROM clubs), 0), 1))"))
+    db.execute(text("SELECT setval('members_membersid_seq', GREATEST(COALESCE((SELECT MAX(membersid) FROM members), 0), 1))"))
     db.commit()
 
     return {

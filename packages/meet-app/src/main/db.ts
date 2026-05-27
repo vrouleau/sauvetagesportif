@@ -3,8 +3,10 @@ import { app } from 'electron'
 import { join } from 'path'
 import { regenerateCombinedEvents } from './combinedEvents'
 import { regeneratePointScores } from './pointScores'
+import { getDb as getActiveDb, isPgConnected } from './connectionManager'
+import type { DbBackend } from './dbBackend'
 
-// ── Local SQLite database (self-contained, like the .mdb) ─────────────────────
+// ── Database access (delegates to connectionManager) ──────────────────────────
 
 let localDb: Database.Database | null = null
 
@@ -13,22 +15,23 @@ function getLocalDbPath(): string {
   return join(userDataPath, 'meet.db')
 }
 
-export function getLocalDb(): Database.Database {
-  if (!localDb) {
-    localDb = new Database(getLocalDbPath())
-    localDb.pragma('journal_mode = WAL')
-    localDb.pragma('foreign_keys = ON')
-    initLocalSchema()
-  }
-  return localDb
+/**
+ * Get the active database.
+ * In SQLite mode: returns the better-sqlite3 Database instance (legacy behavior).
+ * In PG mode: returns the PgBackend which has the same .prepare()/.exec() API.
+ *
+ * The return type is `any` to avoid rewriting all type annotations in this file.
+ * Both backends implement: prepare(sql).get/all/run(...params), exec(sql), transaction(fn)
+ */
+export function getLocalDb(): any {
+  return getActiveDb()
 }
 
 export function closeLocalDb(): void {
-  localDb?.close()
-  localDb = null
+  // Handled by connectionManager.closeDb() now
+  const { closeDb } = require('./connectionManager')
+  closeDb()
 }
-
-export function getPool(): InstanceType<typeof Pool> { return remoteDb() }
 
 // ── Time helpers ──────────────────────────────────────────────────────────────
 // DB stores times as integer milliseconds.  Display format: "M:SS.cc" or "SS.cc"
@@ -857,6 +860,11 @@ export async function addLateEntry(
 
 export function nextId(table: string, pkCol: string): number {
   const db = getLocalDb()
+  // In PG mode, use Splash's global UID sequence to avoid ID conflicts
+  if (isPgConnected()) {
+    const row = db.prepare(`SELECT nextval('gen_bs_global_uid') AS next`).get() as { next: number | bigint }
+    return Number(row.next)
+  }
   const row = db.prepare(`SELECT COALESCE(MAX(${pkCol}), 0) + 1 AS next FROM ${table}`).get() as { next: number }
   return row.next
 }
@@ -1186,8 +1194,17 @@ const SCHEMA_DDL: string[] = [
 
 function initLocalSchema(): void {
   const db = getLocalDb()
+  // Only run DDL in SQLite mode — PG schema is managed by Splash Meet Manager
+  if (isPgConnected()) return
   for (const ddl of SCHEMA_DDL) {
     db.exec(ddl)
+  }
+}
+
+/** Called by connectionManager when initializing SQLite backend */
+export function runSchemaInit(backend: any): void {
+  for (const ddl of SCHEMA_DDL) {
+    backend.exec(ddl)
   }
 }
 
