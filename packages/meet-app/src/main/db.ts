@@ -8,6 +8,21 @@ import type { DbBackend } from './dbBackend'
 
 // ── Database access (delegates to connectionManager) ──────────────────────────
 
+/**
+ * Build an IN clause that works on both SQLite and PG.
+ * For PG, we inline the integer IDs directly (safe — they come from our own queries).
+ * For SQLite, we use ? placeholders as before.
+ * Returns { clause, params } where clause is the SQL fragment and params are the bind values.
+ */
+function inClause(ids: number[]): { clause: string; params: number[] } {
+  if (isPgConnected()) {
+    // Inline IDs for PG to avoid "could not determine data type" errors
+    return { clause: ids.join(','), params: [] }
+  }
+  return { clause: ids.map(() => '?').join(','), params: ids }
+}
+
+
 let localDb: Database.Database | null = null
 
 function getLocalDbPath(): string {
@@ -385,7 +400,7 @@ export async function getHeatListSessions(): Promise<HeatListSessionRow[]> {
 
   if (sessions.length === 0) return []
   const sessionIds = sessions.map(r => r.swimsessionid)
-  const ph = sessionIds.map(() => '?').join(',')
+  const { clause: ph, params: phParams } = inClause(sessionIds)
 
   const events = db.prepare(`
     SELECT e.swimeventid, e.swimsessionid, e.eventnumber, e.gender, e.round, e.sortcode, e.daytime, e.internalevent,
@@ -395,7 +410,7 @@ export async function getHeatListSessions(): Promise<HeatListSessionRow[]> {
     LEFT JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid
     WHERE e.swimsessionid IN (${ph})
     ORDER BY e.swimsessionid, e.sortcode, e.swimeventid
-  `).all(...sessionIds) as Array<{
+  `).all(...phParams) as Array<{
     swimeventid: number; swimsessionid: number; eventnumber: number | null; gender: number | null
     round: number | null; sortcode: number | null; daytime: string | number | null
     internalevent: string | null; distance: number | null; stroke: number | null
@@ -408,13 +423,13 @@ export async function getHeatListSessions(): Promise<HeatListSessionRow[]> {
   }))
 
   const eventIds = events.map(r => r.swimeventid)
-  const eph = eventIds.map(() => '?').join(',')
+  const { clause: eph, params: ephParams } = inClause(eventIds)
 
   const heats = db.prepare(`
     SELECT heatid, heatnumber, name, racestatus, sortcode, swimeventid
     FROM heat WHERE swimeventid IN (${eph})
     ORDER BY swimeventid, sortcode, heatnumber
-  `).all(...eventIds) as Array<{
+  `).all(...ephParams) as Array<{
     heatid: number; heatnumber: number | null; name: string | null
     racestatus: number | null; sortcode: number | null; swimeventid: number
   }>
@@ -431,7 +446,7 @@ export async function getHeatListSessions(): Promise<HeatListSessionRow[]> {
   }> = []
 
   if (allHeatIds.length > 0) {
-    const hph = allHeatIds.map(() => '?').join(',')
+    const { clause: hph, params: hphParams } = inClause(allHeatIds)
     entries = db.prepare(`
       SELECT r.swimresultid, r.heatid, r.lane,
              r.entrytime, r.swimtime, r.reactiontime, r.resultstatus, r.agegroupid,
@@ -444,16 +459,16 @@ export async function getHeatListSessions(): Promise<HeatListSessionRow[]> {
       LEFT JOIN agegroup ag ON r.agegroupid = ag.agegroupid
       WHERE r.heatid IN (${hph}) AND r.lane IS NOT NULL
       ORDER BY r.heatid, r.lane
-    `).all(...allHeatIds) as typeof entries
+    `).all(...hphParams) as typeof entries
   }
 
   const resultIds = entries.map(r => r.swimresultid)
   let splits: Array<{ swimresultid: number; distance: number; swimtime: number | null }> = []
   if (resultIds.length > 0) {
-    const rph = resultIds.map(() => '?').join(',')
+    const { clause: rph, params: rphParams } = inClause(resultIds)
     splits = db.prepare(
       `SELECT swimresultid, distance, swimtime FROM split WHERE swimresultid IN (${rph})`
-    ).all(...resultIds) as typeof splits
+    ).all(...rphParams) as typeof splits
   }
 
   // Build split map
@@ -568,7 +583,7 @@ export async function getSessions(): Promise<SessionRow[]> {
 
   if (sessions.length === 0) return []
   const sessionIds = sessions.map(r => r.swimsessionid)
-  const ph = sessionIds.map(() => '?').join(',')
+  const { clause: ph, params: phParams } = inClause(sessionIds)
 
   const events = db.prepare(`
     SELECT e.swimeventid, e.swimsessionid, e.eventnumber, e.gender, e.round,
@@ -579,7 +594,7 @@ export async function getSessions(): Promise<SessionRow[]> {
     LEFT JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid
     WHERE e.swimsessionid IN (${ph})
     ORDER BY e.swimsessionid, e.sortcode
-  `).all(...sessionIds) as Array<{
+  `).all(...phParams) as Array<{
     swimeventid: number; swimsessionid: number; eventnumber: number | null
     gender: number | null; round: number | null; distance: number | null
     stroke: number | null; stylename: string | null; swimstyleid: number | null
@@ -595,12 +610,12 @@ export async function getSessions(): Promise<SessionRow[]> {
     finalseedtype: number | null
   }> = []
   if (eventIds.length > 0) {
-    const eph = eventIds.map(() => '?').join(',')
+    const { clause: eph, params: ephParams } = inClause(eventIds)
     ageGroups = db.prepare(`
       SELECT agegroupid, swimeventid, name, agemin, agemax, gender, heatcount, useformedals, sortcode, finalseedtype
       FROM agegroup WHERE swimeventid IN (${eph})
       ORDER BY swimeventid, sortcode
-    `).all(...eventIds) as typeof ageGroups
+    `).all(...ephParams) as typeof ageGroups
   }
 
   const agMap = new Map<number, AgeGroupRow[]>()
@@ -682,7 +697,7 @@ export async function getAthletes(): Promise<AthleteRow[]> {
 
   if (athletes.length === 0) return []
   const athleteIds = athletes.map(r => r.athleteid)
-  const aph = athleteIds.map(() => '?').join(',')
+  const { clause: aph, params: aphParams } = inClause(athleteIds)
 
   const entries = db.prepare(`
     SELECT r.athleteid, r.swimeventid, r.entrytime,
@@ -695,7 +710,7 @@ export async function getAthletes(): Promise<AthleteRow[]> {
     LEFT JOIN agegroup ag ON r.agegroupid = ag.agegroupid
     WHERE r.athleteid IN (${aph})
     ORDER BY r.athleteid, e.eventnumber
-  `).all(...athleteIds) as Array<{
+  `).all(...aphParams) as Array<{
     athleteid: number; swimeventid: number; entrytime: number | null
     agegroupname: string | null; eventnumber: number | null
     distance: number | null; stroke: number | null; stylename: string | null
