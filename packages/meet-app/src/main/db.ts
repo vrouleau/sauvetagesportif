@@ -3,7 +3,7 @@ import { app } from 'electron'
 import { join } from 'path'
 import { regenerateCombinedEvents } from './combinedEvents'
 import { regeneratePointScores } from './pointScores'
-import { getDb as getActiveDb, isPgConnected } from './connectionManager'
+import { getDb as getActiveDb, isPgConnected, closeDb as closeActiveDb } from './connectionManager'
 import type { DbBackend } from './dbBackend'
 
 // ── Database access (delegates to connectionManager) ──────────────────────────
@@ -43,9 +43,7 @@ export function getLocalDb(): any {
 }
 
 export function closeLocalDb(): void {
-  // Handled by connectionManager.closeDb() now
-  const { closeDb } = require('./connectionManager')
-  closeDb()
+  closeActiveDb()
 }
 
 // ── Time helpers ──────────────────────────────────────────────────────────────

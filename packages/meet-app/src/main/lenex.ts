@@ -315,9 +315,12 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
   }
 
   // ── Sessions → swimsession ─────────────────────────────────────────────
-  // Skip event structure import if events already exist (entries-only import)
+  // Skip event structure import if this is an entries-only file being imported
+  // into an existing meet. Detect by: events already exist AND file has CLUB elements.
   const existingEventCount = (db.prepare(`SELECT COUNT(*) AS c FROM swimevent`).get() as { c: number }).c
-  const skipEventStructure = existingEventCount > 0
+  const clubsElemCheck = child(meet, 'CLUBS')
+  const hasClubs = clubsElemCheck ? children(clubsElemCheck, 'CLUB').length > 0 : false
+  const skipEventStructure = existingEventCount > 0 && hasClubs
 
   const sessionsElem = child(meet, 'SESSIONS')
   for (const sess of children(sessionsElem ?? meet, 'SESSION')) {

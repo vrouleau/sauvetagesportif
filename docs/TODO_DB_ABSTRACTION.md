@@ -44,3 +44,14 @@ Or alternatively, a standalone `sqlDialect(db: DbBackend)` helper module.
 - Remove all `typeof db.pragma` sniffing
 - Handle date sentinel values at the DbBackend level (PgBackend normalizes on insert)
 - Add integration tests that run SMB restore on both SQLite and PG
+
+## Testing Strategy
+
+When implementing this refactor, add a PG integration test to CI:
+1. Spin up a PostgreSQL container in the CI workflow
+2. Run SMB restore against PG (verifies INSERT syntax, date handling, FK disable)
+3. Run LXF import against PG (verifies entries import, event structure preservation)
+4. Verify getDsqItems works on both backends (with and without name_en column)
+5. Verify all queries in getHeatListSessions/getAthletes/saveResult work on PG
+
+This catches dialect issues at CI time rather than at user-testing time.
