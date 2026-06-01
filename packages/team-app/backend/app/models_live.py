@@ -6,7 +6,7 @@ schema (results table) and are promoted to historical on finalization.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import (
     Column, Integer, SmallInteger, String, Boolean, DateTime,
     ForeignKey, UniqueConstraint,
@@ -45,7 +45,7 @@ class LiveResult(Base):
     status = Column(String(5), default='')
     dsq_reason = Column(String(250))
     is_official = Column(Boolean, default=False)
-    pushed_at = Column(DateTime, default=datetime.utcnow)
+    pushed_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
         UniqueConstraint("event_id", "heat_number", "lane", name="uq_live_result"),
@@ -88,4 +88,4 @@ class PushSubscription(Base):
     endpoint = Column(String(500), nullable=False, unique=True)
     p256dh = Column(String(200), nullable=False)
     auth = Column(String(100), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
