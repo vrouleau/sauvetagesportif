@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.3.8] - 2026-06-01
+
+### ✨ Features
+
+- move Create Pool/Beach Meet to shared EventsPage toolbar (`3736ed8`)
+- live results — meet-app → team-app real-time push (`247717d`)
+- DSQ catalog + LXF/SMB/PG fixes (`3615e65`)
+- add SERC prototype (`c733274`)
+
+### 🐛 Bug Fixes
+
+- stale club PINs in TestLiveNotifications + SMB email upsert (`907637a`)
+- deprecation + SQLite compat in models_live and seed (`3716e89`)
+- closeLocalDb require + LXF idempotent test + TODO testing notes (`d3dfe95`)
+- integer time input < 100 interpreted as seconds (35 → 35.00, not 0.35) (`7866fff`)
+- use inClause() helper for all IN queries (PG can't infer param types in IN) (`9e32a39`)
+- cast agemin/agemax to TEXT in SQL concatenation (PG strict typing) (`acb28f4`)
+
+# Changelog
+
 ## [0.3.7] - 2026-05-27
 
 ### ✨ Features

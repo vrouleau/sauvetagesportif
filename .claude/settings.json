@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(wsl bash -c \"sleep 3 && docker ps --format 'table {{.Names}}\\\\t{{.Status}}\\\\t{{.Ports}}'\")",
+      "PowerShell(wsl bash -c \"cd /mnt/c/Users/vince/Documents/MeetManager/sauvetagesportif/packages/team-app && python3 -m pytest tests/unit/ -v -x 2>&1 | tail -30\")",
+      "PowerShell(wsl bash -c \"cd /mnt/c/Users/vince/Documents/MeetManager/sauvetagesportif/packages/team-app && pip3 install pytest requests -q && python3 -m pytest tests/unit/ -v -x 2>&1 | tail -30\")",
+      "PowerShell(wsl bash -c \"cd /mnt/c/Users/vince/Documents/MeetManager/sauvetagesportif/packages/team-app && python3 -m pytest tests/unit/ -v --ignore=tests/unit/test_best_times_v2.py 2>&1 | tail -40\")",
+      "PowerShell(git add packages/team-app/backend/app/seed.py)",
+      "PowerShell(git push)",
+      "Bash(git commit -m ' *)",
+      "Bash(git checkout *)",
+      "Bash(git merge --no-ff feature/live-results -m ' *)",
+      "Bash(git reset *)",
+      "Bash(git merge *)",
+      "Bash(gh run *)",
+      "Bash(cat pytest.ini)",
+      "Bash(cat setup.cfg)",
+      "Bash(cat pyproject.toml)",
+      "Read(//mnt/c/Users/vince/Documents/MeetManager/**)",
+      "Bash(python3 packages/team-app/tests/generate_test_entries.py --out packages/team-app/tests/fixtures/test_entries.lxf)",
+      "Bash(python3 /mnt/c/Users/eoivnru/Documents/MeetManager/sauvetagesportif/packages/team-app/tests/generate_test_entries.py --out /mnt/c/Users/eoivnru/Documents/MeetManager/sauvetagesportif/packages/team-app/tests/fixtures/test_entries.lxf)",
+      "Bash(cd c:\\\\\\\\Users\\\\\\\\vince\\\\\\\\Documents\\\\\\\\MeetManager\\\\\\\\sauvetagesportif)",
+      "Read(//mnt/c/Users/eoivnru/Documents/MeetManager/sauvetagesportif/packages/**)",
+      "Bash(python3 -m pytest tests/ -v)",
+      "Bash(wsl -- bash -c \"ls /mnt/c/Users/\")",
+      "Bash(wsl -- bash -c \"cd /mnt/c/Users/vince/Documents/MeetManager/sauvetagesportif/packages/team-app && python3 -m pytest tests/ -v 2>&1\")",
+      "Bash(wsl -- bash -c \"cd /mnt/c/Users/vince/Documents/MeetManager/sauvetagesportif/packages/team-app && pip install -r tests/requirements-test.txt -q 2>&1 | tail -5\")",
+      "Bash(wsl -- bash -c \"cd /mnt/c/Users/vince/Documents/MeetManager/sauvetagesportif/packages/team-app && pip install -r tests/requirements-test.txt --break-system-packages -q 2>&1 | tail -5\")",
+      "Bash(wsl -- bash -c \"cd /mnt/c/Users/vince/Documents/MeetManager/sauvetagesportif/packages/team-app && MEETMGR_SKIP_STACK=1 python3 -m pytest tests/test_integration.py::TestLiveNotifications -v 2>&1\")"
+    ]
+  }
+}
