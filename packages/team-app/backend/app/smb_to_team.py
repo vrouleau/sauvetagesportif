@@ -144,6 +144,8 @@ def import_smb_as_meet(db: DbSession, smb_bytes: bytes) -> dict:
         existing = db.query(TeamClub).filter(TeamClub.code == code).first() if code else None
         if existing:
             club_id_map[old_id] = existing.clubsid
+            if not existing.email and row.get("contactemail"):
+                existing.email = row["contactemail"]
         else:
             new_id = _next_id(db, TeamClub, TeamClub.clubsid)
             pin = ''.join(secrets.choice(string.digits) for _ in range(6))

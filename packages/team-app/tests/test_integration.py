@@ -1722,15 +1722,22 @@ class TestLiveNotifications:
         return {"X-Live-Secret": live_secret, "Content-Type": "application/json"}
 
     @pytest.fixture(scope="class")
-    def club_pin(self, clubs) -> str:
-        """Return the first club's PIN for subscription tests."""
-        assert len(clubs) > 0
-        return clubs[0]["pin"]
+    def live_clubs(self, live_secret, admin_headers) -> list[dict]:
+        """Fetch a fresh club list — SMB tests earlier in the session wipe clubs."""
+        r = requests.get(f"{BASE_URL}/api/clubs", headers=admin_headers, timeout=10)
+        r.raise_for_status()
+        return r.json()
 
     @pytest.fixture(scope="class")
-    def club_name(self, clubs) -> str:
+    def club_pin(self, live_clubs) -> str:
+        """Return the first club's PIN for subscription tests."""
+        assert len(live_clubs) > 0
+        return live_clubs[0]["pin"]
+
+    @pytest.fixture(scope="class")
+    def club_name(self, live_clubs) -> str:
         """Return the first club's name for matching."""
-        return clubs[0]["name"]
+        return live_clubs[0]["name"]
 
     @pytest.fixture(scope="class")
     def subscribed(self, live_secret, club_pin) -> dict:
