@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import ReactDOM from 'react-dom/client'
-import { BrowserRouter, Routes, Route, Link, useLocation, useParams, useNavigate } from 'react-router'
+import { BrowserRouter, Routes, Route, Link, useLocation, useParams, useNavigate, Navigate } from 'react-router'
 import './index.css'
 import { LangProvider, useLang } from './i18n'
 import Login from './pages/Login'
@@ -19,6 +19,7 @@ import DataManagement from './pages/DataManagement'
 import Secret from './pages/Secret'
 import SelfInvite from './pages/SelfInvite'
 import BestTimesPublic from './pages/BestTimesPublic'
+import ResultsPage from './pages/ResultsPage'
 import Workflow from './pages/Workflow'
 import Footer from './Footer'
 import logoSrc from '@shared/assets/icon.png'
@@ -86,7 +87,7 @@ function RegisterPage() {
 
 function AuthLayout({ children, canOrganizer, canAdmin, meetName, toggle, lang, logout, auth, t }) {
   const location = useLocation()
-  const standalone = location.pathname === '/best-times'
+  const standalone = location.pathname === '/best-times' || location.pathname === '/results'
   if (standalone) return children
 
   const tabs = [
@@ -181,7 +182,8 @@ function AppInner() {
       <Routes>
         <Route path="/secret/:token" element={<Secret />} />
         <Route path="/self-invite" element={<SelfInvite />} />
-        <Route path="/best-times" element={<BestTimesPublic />} />
+        <Route path="/best-times" element={<Navigate to="/results" replace />} />
+        <Route path="/results" element={<ResultsPage />} />
         <Route path="/usage" element={<Workflow />} />
         <Route path="*" element={<Login onLogin={setAuth} />} />
       </Routes>
@@ -203,7 +205,8 @@ function AppInner() {
           {canAdmin && <Route path="/admin" element={<Admin />} />}
           {canAdmin && <Route path="/data-management" element={<DataManagement />} />}
           <Route path="/secret/:token" element={<Secret />} />
-          <Route path="/best-times" element={<BestTimesPublic />} />
+          <Route path="/best-times" element={<Navigate to="/results" replace />} />
+          <Route path="/results" element={<ResultsPage />} />
           <Route path="/usage" element={<Workflow />} />
         </Routes>
       </AuthLayout>

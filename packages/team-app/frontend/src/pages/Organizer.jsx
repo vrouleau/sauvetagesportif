@@ -294,6 +294,9 @@ export default function Organizer() {
         {msg && <span className="text-xs text-green-700">{msg}</span>}
       </div>
 
+      {/* Live Mode section */}
+      <LiveModeSection lang={lang} />
+
       {/* Clubs table */}
       <div className="flex-1 overflow-auto">
         <table className="w-full text-xs border-collapse">
@@ -399,6 +402,80 @@ function formatMoney(cents, currency, lang) {
   try {
     return new Intl.NumberFormat(lang === 'fr' ? 'fr-CA' : 'en-CA', { style: 'currency', currency: currency || 'CAD' }).format(amount)
   } catch { return `${amount.toFixed(2)} ${currency || ''}`.trim() }
+}
+
+function LiveModeSection({ lang }) {
+  const [config, setConfig] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [toggling, setToggling] = useState(false)
+  const pin = localStorage.getItem('pin') || ''
+
+  useEffect(() => { loadConfig() }, [])
+
+  async function loadConfig() {
+    try {
+      const res = await fetch('/api/live/config', { headers: { 'X-Club-Pin': pin } })
+      if (res.ok) setConfig(await res.json())
+    } catch { /* ignore */ }
+    setLoading(false)
+  }
+
+  async function toggleLive() {
+    setToggling(true)
+    const endpoint = config?.enabled ? '/api/live/disable' : '/api/live/enable'
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'X-Club-Pin': pin },
+      })
+      if (res.ok) await loadConfig()
+    } catch { /* ignore */ }
+    setToggling(false)
+  }
+
+  if (loading) return null
+
+  return (
+    <div className="px-3 py-2 bg-gray-50 border-b flex items-center gap-3 text-xs">
+      <span className="font-medium text-gray-700">
+        {lang === 'fr' ? 'Mode direct' : 'Live Mode'}:
+      </span>
+      {config?.enabled ? (
+        <span className="flex items-center gap-1 text-green-700">
+          <span className="w-2 h-2 rounded-full bg-green-500" />
+          {lang === 'fr' ? 'Actif' : 'Active'}
+        </span>
+      ) : (
+        <span className="text-gray-500">{lang === 'fr' ? 'Inactif' : 'Inactive'}</span>
+      )}
+      <button
+        onClick={toggleLive}
+        disabled={toggling}
+        className={`px-2 py-0.5 rounded text-xs font-medium ${
+          config?.enabled
+            ? 'bg-red-100 text-red-700 hover:bg-red-200'
+            : 'bg-green-100 text-green-700 hover:bg-green-200'
+        } disabled:opacity-50`}
+      >
+        {toggling ? '…' : (config?.enabled
+          ? (lang === 'fr' ? 'Désactiver' : 'Disable')
+          : (lang === 'fr' ? 'Activer' : 'Enable'))}
+      </button>
+      {config?.enabled && config?.secret_masked && (
+        <span className="text-gray-400 font-mono">{config.secret_masked}</span>
+      )}
+      {config?.last_push && (
+        <span className="text-gray-400 ml-auto">
+          {lang === 'fr' ? 'Dernier push' : 'Last push'}: {new Date(config.last_push).toLocaleTimeString()}
+        </span>
+      )}
+      {config?.spectators > 0 && (
+        <span className="text-blue-600">
+          👁 {config.spectators}
+        </span>
+      )}
+    </div>
+  )
 }
 
 function FeeSummary({ meetInfo, t, lang }) {

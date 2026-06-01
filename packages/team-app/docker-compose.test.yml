@@ -2,5 +2,3 @@ services:
   backend:
     ports:
       - "8000:8000"
-    volumes:
-      - ../../config:/app/templates

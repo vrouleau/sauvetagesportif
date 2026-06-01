@@ -10,8 +10,12 @@ from .database import engine, SessionLocal
 from .models import Base, BsGlobal
 from .models_team import TeamClub
 from . import models_team  # noqa: F401 — register Team Manager tables with Base.metadata
+from . import models_live  # noqa: F401 — register Live results tables with Base.metadata
 from .events import load_events
 from .routers.api import router
+from .routers.live import router as live_router
+from .routers.results import router as results_router
+from .routers.push_notifications import router as push_router
 
 app = FastAPI(title="Meet Manager", docs_url=None, redoc_url=None)
 
@@ -67,6 +71,9 @@ def _identify_user(pin: str) -> str:
         db.close()
 
 app.include_router(router)
+app.include_router(live_router)
+app.include_router(results_router)
+app.include_router(push_router)
 
 
 @app.on_event("startup")

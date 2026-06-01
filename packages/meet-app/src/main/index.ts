@@ -52,6 +52,7 @@ import {
   connectToPg, disconnectPg, getConnectionInfo, restoreSavedConnection, isPgConnected,
 } from './connectionManager'
 import type { PgConnectionConfig } from './pgBackend'
+import { livePush } from './livePush'
 
 let quantum: QuantumBridge | null = null
 
@@ -201,6 +202,24 @@ ipcMain.handle('db:get-meet-config', () => getMeetValues())
 
 ipcMain.handle('db:set-meet-config', (_event, entries: Record<string, { type: string; value: string }>) => {
   setMeetValues(entries)
+  // Reload live push config in case LIVE_URL was changed
+  livePush.reload(getLocalDb())
+  return { ok: true }
+})
+
+// ── Live push IPC ─────────────────────────────────────────────────────────────
+
+ipcMain.handle('live:get-status', () => {
+  return { status: livePush.getStatus(), queueSize: livePush.getQueueSize() }
+})
+
+ipcMain.handle('live:push-all', () => {
+  livePush.pushAll(getLocalDb())
+  return { ok: true }
+})
+
+ipcMain.handle('live:announce', (_event, payload: { type: 'call_to_marshall' | 'call_to_scratch'; event_id: number; event_number: number; event_name: string; gender: string }) => {
+  livePush.notifyAnnouncement(payload)
   return { ok: true }
 })
 
@@ -360,6 +379,8 @@ ipcMain.handle('db:reorder-events', (_event, updates: Array<{ eventId: number; s
 ipcMain.handle('db:generate-heats', async (_event, eventId?: number, sessionId?: number) => {
   try {
     const result = await generateHeats(eventId, sessionId)
+    // Push start lists to team-app for live spectator view
+    _pushStartListsAfterGeneration(eventId, sessionId)
     return { ok: true, ...result }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
@@ -499,6 +520,7 @@ ipcMain.handle('file:open-lenex-dialog', async (event) => {
 ipcMain.handle('file:import-lenex', async (_event, filePath: string) => {
   try {
     const summary = importLenex(filePath, getLocalDb())
+    livePush.reload(getLocalDb())
     return { ok: true, summary }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
@@ -891,6 +913,9 @@ ipcMain.handle('timing:validate-scan', (_event, scanId: number, time1: string, t
           SET backuptime1 = ?, backuptime2 = ?, swimtime = ?
           WHERE swimresultid = ?
         `).run(timeMs1, timeMs2, avgTime, row.swimresultid)
+
+        // Live push notification for single scan validation
+        _notifyLivePushFromScan(db, row.swimresultid, avgTime)
       }
     }
 
@@ -943,6 +968,9 @@ ipcMain.handle('timing:commit-heat-results', async (_event, eventNumber: number,
           SET backuptime1 = ?, backuptime2 = ?, swimtime = ?
           WHERE swimresultid = ?
         `).run(time1, time2, avgTime, row.swimresultid)
+
+        // Live push notification for timing scan result
+        _notifyLivePushFromScan(db, row.swimresultid, avgTime)
       }
     }
 
@@ -1130,10 +1158,6 @@ function createWindow(): void {
       label: 'Fichier',
       submenu: [
         {
-          label: 'Importer un fichier LENEX…',
-          click: () => mainWindow.webContents.send('menu:import-lenex'),
-        },
-        {
           label: 'Exporter la structure du meet LENEX…',
           click: () => mainWindow.webContents.send('menu:export-meet-lenex'),
         },
@@ -1260,6 +1284,140 @@ function createWindow(): void {
   }
 }
 
+// ── Live push helper (used by timing scan handlers) ───────────────────────────
+
+function _notifyLivePushFromScan(db: ReturnType<typeof getLocalDb>, swimresultId: number, swimtime: number | null): void {
+  if (!swimtime) return
+  try {
+    const row = db.prepare(`
+      SELECT sr.swimeventid, sr.lane, sr.athleteid, sr.resultstatus,
+             a.lastname, a.firstname, c.name AS clubname,
+             h.heatnumber
+      FROM swimresult sr
+      LEFT JOIN athlete a ON sr.athleteid = a.athleteid
+      LEFT JOIN club c ON a.clubid = c.clubid
+      LEFT JOIN heat h ON sr.heatid = h.heatid
+      WHERE sr.swimresultid = ?
+    `).get(swimresultId) as {
+      swimeventid: number; lane: number; athleteid: number | null
+      resultstatus: number | null; lastname: string; firstname: string
+      clubname: string; heatnumber: number
+    } | undefined
+
+    if (!row || !row.heatnumber) return
+
+    const statusStr = row.resultstatus === 1 ? 'DNS' : row.resultstatus === 2 ? 'DNF' : row.resultstatus === 3 ? 'DSQ' : ''
+
+    livePush.notifyResultWrite({
+      event_id: row.swimeventid,
+      heat_number: row.heatnumber,
+      lane: row.lane,
+      athlete_id: row.athleteid,
+      athlete_name: `${row.lastname || ''}, ${row.firstname || ''}`.replace(/^, |, $/g, ''),
+      club_name: row.clubname || '',
+      swimtime_ms: swimtime,
+      reaction_time_ms: null,
+      status: statusStr,
+    })
+  } catch (e) {
+    console.error('[LivePush] Error in scan notification:', e)
+  }
+}
+
+/**
+ * Push start lists to team-app after heat generation.
+ * Also pushes event metadata so spectators can see the event list.
+ */
+function _pushStartListsAfterGeneration(eventId?: number, sessionId?: number): void {
+  try {
+    const db = getLocalDb()
+
+    // Determine which events to push
+    let eventFilter = ''
+    const params: unknown[] = []
+    if (eventId) {
+      eventFilter = 'AND e.swimeventid = ?'
+      params.push(eventId)
+    } else if (sessionId) {
+      eventFilter = 'AND e.swimsessionid = ?'
+      params.push(sessionId)
+    }
+
+    // Push event metadata
+    const events = db.prepare(`
+      SELECT e.swimeventid, e.eventnumber, e.gender, e.swimsessionid,
+             s.sessionnumber, s.name AS sessionname,
+             st.distance, st.name AS stylename,
+             e.round, e.daytime,
+             (SELECT COUNT(*) FROM heat h WHERE h.swimeventid = e.swimeventid) AS total_heats
+      FROM swimevent e
+      LEFT JOIN swimsession s ON e.swimsessionid = s.swimsessionid
+      LEFT JOIN swimstyle st ON e.swimstyleid = st.swimstyleid
+      WHERE e.internalevent != 'T' ${eventFilter}
+      ORDER BY s.sessionnumber, e.sortcode
+    `).all(...params) as Array<{
+      swimeventid: number; eventnumber: number; gender: number; swimsessionid: number
+      sessionnumber: number; sessionname: string; distance: number; stylename: string
+      round: number; daytime: string | null; total_heats: number
+    }>
+
+    if (events.length > 0) {
+      const genderMap: Record<number, string> = { 1: 'M', 2: 'F', 3: 'X' }
+      const roundMap: Record<number, string> = { 1: 'PRE', 2: 'SEM', 4: 'FIN', 5: 'TIM' }
+
+      const eventsPayload = events.map(e => ({
+        event_id: e.swimeventid,
+        session_number: e.sessionnumber,
+        session_name: e.sessionname || '',
+        event_number: e.eventnumber,
+        event_name: e.stylename || '',
+        gender: genderMap[e.gender] || 'X',
+        distance: e.distance,
+        round: roundMap[e.round] || 'TIM',
+        scheduled_time: e.daytime ? new Date(e.daytime).toTimeString().slice(0, 5) : '',
+        total_heats: e.total_heats,
+      }))
+
+      livePush.notifyEvents({ events: eventsPayload })
+    }
+
+    // Push start list entries
+    const startlistRows = db.prepare(`
+      SELECT sr.swimeventid AS event_id, h.heatnumber AS heat_number, sr.lane,
+             sr.athleteid AS athlete_id, sr.entrytime AS entry_time_ms,
+             a.lastname, a.firstname, c.name AS clubname
+      FROM swimresult sr
+      JOIN heat h ON sr.heatid = h.heatid
+      LEFT JOIN athlete a ON sr.athleteid = a.athleteid
+      LEFT JOIN club c ON a.clubid = c.clubid
+      WHERE sr.heatid IS NOT NULL AND sr.lane IS NOT NULL
+        ${eventId ? 'AND sr.swimeventid = ?' : sessionId ? 'AND sr.swimeventid IN (SELECT swimeventid FROM swimevent WHERE swimsessionid = ?)' : ''}
+      ORDER BY sr.swimeventid, h.heatnumber, sr.lane
+    `).all(...params) as Array<{
+      event_id: number; heat_number: number; lane: number
+      athlete_id: number | null; entry_time_ms: number | null
+      lastname: string; firstname: string; clubname: string
+    }>
+
+    if (startlistRows.length > 0) {
+      const entries = startlistRows.map(r => ({
+        event_id: r.event_id,
+        heat_number: r.heat_number,
+        lane: r.lane,
+        athlete_id: r.athlete_id,
+        athlete_name: `${r.lastname || ''}, ${r.firstname || ''}`.replace(/^, |, $/g, ''),
+        club_name: r.clubname || '',
+        entry_time_ms: r.entry_time_ms,
+      }))
+
+      livePush.notifyStartlist({ entries })
+    }
+  } catch (e) {
+    console.error('[LivePush] Error pushing start lists:', e)
+  }
+}
+
+
 app.whenReady().then(async () => {
   if (process.platform === 'win32') {
     app.setAppUserModelId('com.sauvetagemeet')
@@ -1276,6 +1434,9 @@ app.whenReady().then(async () => {
   // Start background Gemini OCR processing
   startGeminiBackground()
 
+  // Initialize live push module (reads config from bsglobal)
+  livePush.initialize(getLocalDb())
+
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -1283,6 +1444,7 @@ app.whenReady().then(async () => {
 })
 
 app.on('window-all-closed', () => {
+  livePush.destroy()
   closeLocalDb()
   closeScanDb()
   if (activeOcrEngine) {

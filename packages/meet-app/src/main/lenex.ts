@@ -180,6 +180,15 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
         saveGeminiKeys(freeKey, paidKey)
         summary.geminiKeysImported = true
       }
+      // Extract live push config for live results feature
+      const liveSecret = keys['live_push_secret'] ?? ''
+      const liveUrl = keys['live_url'] ?? ''
+      if (liveSecret) {
+        db.prepare(`INSERT OR REPLACE INTO bsglobal (name, data) VALUES (?, ?)`).run('LIVE_PUSH_SECRET', liveSecret)
+      }
+      if (liveUrl) {
+        db.prepare(`INSERT OR REPLACE INTO bsglobal (name, data) VALUES (?, ?)`).run('LIVE_URL', liveUrl)
+      }
     } catch {
       summary.errors.push('Warning: .keys entry present but could not be parsed')
     }

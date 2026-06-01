@@ -862,6 +862,64 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
     setHeatData(state)
   }
 
+  // ── Announcement helpers (Call to Marshall / Call to Scratch) ────────────────
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const liveApi = () => (window as any).api?.live
+
+  // Call to Marshall: event selected, has heats with entries, no times recorded, not validated
+  const canCallToMarshall = (() => {
+    if (!selectedEvent) return false
+    const eventHeats = selectedEvent.heats
+    if (eventHeats.length === 0) return false
+    // Must have entries (athletes assigned)
+    const hasEntries = eventHeats.some(h => h.entries.length > 0)
+    if (!hasEntries) return false
+    // No times recorded yet
+    const hasAnyTime = eventHeats.some(h => h.entries.some(e => e.finalTime))
+    if (hasAnyTime) return false
+    // Not validated
+    const allValidated = eventHeats.every(h => h.status === 'validated')
+    if (allValidated) return false
+    return true
+  })()
+
+  // Call to Scratch: event is a Finale, heats are empty (not generated yet)
+  const canCallToScratch = (() => {
+    if (!selectedEvent) return false
+    if (selectedEvent.phase !== 'Finale') return false
+    // Heats not generated (no heats or all heats are empty)
+    const hasHeatsWithEntries = selectedEvent.heats.some(h => h.entries.length > 0)
+    if (hasHeatsWithEntries) return false
+    return true
+  })()
+
+  function handleCallToMarshall() {
+    const api = liveApi()
+    if (!api || !selectedEvent) return
+    const eventName = lang === 'fr' ? selectedEvent.nameFr : selectedEvent.nameEn
+    api.announce({
+      type: 'call_to_marshall',
+      event_id: selectedEvent.id,
+      event_number: selectedEvent.number,
+      event_name: eventName || selectedEvent.nameFr,
+      gender: selectedEvent.gender,
+    })
+  }
+
+  function handleCallToScratch() {
+    const api = liveApi()
+    if (!api || !selectedEvent) return
+    const eventName = lang === 'fr' ? selectedEvent.nameFr : selectedEvent.nameEn
+    api.announce({
+      type: 'call_to_scratch',
+      event_id: selectedEvent.id,
+      event_number: selectedEvent.number,
+      event_name: eventName || selectedEvent.nameFr,
+      gender: selectedEvent.gender,
+    })
+  }
+
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
@@ -958,6 +1016,26 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
           >
             🖨 Fiches chrono
           </button>
+          {/* Call to Marshall — event selected, no times, not validated */}
+          {selectedEvent && canCallToMarshall && (
+            <button
+              onClick={handleCallToMarshall}
+              className="border border-orange-400 bg-orange-50 hover:bg-orange-100 px-2 py-0.5 text-xs font-medium text-orange-700"
+              title={lang === 'fr' ? 'Envoyer un appel au maréchal aux entraîneurs' : 'Send call to marshall to coaches'}
+            >
+              📢 {lang === 'fr' ? 'Maréchal' : 'Marshall'}
+            </button>
+          )}
+          {/* Call to Scratch — final event, prelims done, heats not generated */}
+          {selectedEvent && canCallToScratch && (
+            <button
+              onClick={handleCallToScratch}
+              className="border border-pink-400 bg-pink-50 hover:bg-pink-100 px-2 py-0.5 text-xs font-medium text-pink-700"
+              title={lang === 'fr' ? 'Envoyer un appel aux scratches aux entraîneurs' : 'Send call to scratch to coaches'}
+            >
+              ✂️ {lang === 'fr' ? 'Scratches' : 'Scratches'}
+            </button>
+          )}
           <span className="text-gray-500">{t.heats.timingSystems}</span>
           <span className={`w-2 h-2 rounded-full ${quantumConnected ? 'bg-green-500' : 'bg-gray-300'}`} />
         </div>

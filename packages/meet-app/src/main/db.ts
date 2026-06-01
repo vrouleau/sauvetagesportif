@@ -5,6 +5,7 @@ import { regenerateCombinedEvents } from './combinedEvents'
 import { regeneratePointScores } from './pointScores'
 import { getDb as getActiveDb, isPgConnected, closeDb as closeActiveDb } from './connectionManager'
 import type { DbBackend } from './dbBackend'
+import { livePush, type LiveResultPayload } from './livePush'
 
 // ── Database access (delegates to connectionManager) ──────────────────────────
 
@@ -788,6 +789,83 @@ export async function saveResult(
       const ms = displayToMs(t)
       if (ms != null) ins.run(swimresultId, Number(dist), ms)
     }
+  }
+
+  // Live push: notify if a time was written
+  if (swimtime != null || resultstatus) {
+    _notifyLivePushForResult(db, swimresultId, swimtime, reactiontime, resultstatus, splits)
+  }
+}
+
+// ── Live push helper ──────────────────────────────────────────────────────────
+
+function _notifyLivePushForResult(
+  db: DbBackend,
+  swimresultId: number,
+  swimtime: number | null,
+  reactiontime: number | null,
+  resultstatus: number | null,
+  splits?: Record<number, string>,
+): void {
+  try {
+    const row = db.prepare(`
+      SELECT sr.swimeventid, sr.lane, sr.athleteid, sr.dsqitemid,
+             a.lastname, a.firstname, c.name AS clubname,
+             h.heatnumber
+      FROM swimresult sr
+      LEFT JOIN athlete a ON sr.athleteid = a.athleteid
+      LEFT JOIN club c ON a.clubid = c.clubid
+      LEFT JOIN heat h ON sr.heatid = h.heatid
+      WHERE sr.swimresultid = ?
+    `).get(swimresultId) as {
+      swimeventid: number; lane: number; athleteid: number | null
+      dsqitemid: number | null
+      lastname: string; firstname: string; clubname: string
+      heatnumber: number
+    } | undefined
+
+    if (!row || !row.heatnumber) return
+
+    const statusStr = resultstatus === 1 ? 'DNS' : resultstatus === 2 ? 'DNF' : resultstatus === 3 ? 'DSQ' : ''
+
+    // Look up DSQ reason from dsqitem table (if it exists and dsqitemid is set)
+    let dsqReason: string | undefined
+    if (resultstatus === 3 && row.dsqitemid) {
+      try {
+        const dsqRow = db.prepare(
+          `SELECT name, code FROM dsqitem WHERE dsqitemid = ?`
+        ).get(row.dsqitemid) as { name: string; code: string } | undefined
+        if (dsqRow) {
+          dsqReason = dsqRow.code ? `${dsqRow.code} — ${dsqRow.name}` : dsqRow.name
+        }
+      } catch {
+        // dsqitem table may not exist yet — ignore
+      }
+    }
+
+    const payload: LiveResultPayload = {
+      event_id: row.swimeventid,
+      heat_number: row.heatnumber,
+      lane: row.lane,
+      athlete_id: row.athleteid,
+      athlete_name: `${row.lastname || ''}, ${row.firstname || ''}`.replace(/^, |, $/g, ''),
+      club_name: row.clubname || '',
+      swimtime_ms: swimtime,
+      reaction_time_ms: reactiontime,
+      status: statusStr,
+      dsq_reason: dsqReason,
+    }
+
+    // Add splits if present
+    if (splits) {
+      payload.splits = Object.entries(splits)
+        .map(([dist, t]) => ({ distance: Number(dist), swimtime_ms: displayToMs(t) ?? 0 }))
+        .filter(s => s.swimtime_ms > 0)
+    }
+
+    livePush.notifyResultWrite(payload)
+  } catch (e) {
+    console.error('[LivePush] Error building result payload:', e)
   }
 }
 

@@ -1685,3 +1685,374 @@ class TestSmbUploadNormalization:
         assert len(pre_events) > 0
         zero_num = [ev for ev in pre_events if ev["number"] == 0]
         assert len(zero_num) == 0
+
+
+# ---------------------------------------------------------------------------
+# Live Notifications (DSQ push, Call to Marshall, Call to Scratch)
+# ---------------------------------------------------------------------------
+
+class TestLiveNotifications:
+    """Full loop test for push notifications: DSQ alerts + announcements.
+
+    Tests the entire pipeline:
+    - Enable live mode → get push secret
+    - VAPID key generation
+    - Push subscription with team PIN validation
+    - DSQ result push → notification dispatch
+    - Call to Marshall / Call to Scratch announcements
+    - Unsubscribe
+    - Error handling (invalid PIN, invalid announcement type)
+    """
+
+    @pytest.fixture(scope="class")
+    def live_secret(self, admin_headers) -> str:
+        """Enable live mode and return the push secret."""
+        r = requests.post(
+            f"{BASE_URL}/api/live/enable",
+            headers=admin_headers, timeout=10,
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert data["ok"] is True
+        assert len(data["secret"]) == 32  # 16 bytes hex
+        return data["secret"]
+
+    @pytest.fixture(scope="class")
+    def live_headers(self, live_secret) -> dict:
+        return {"X-Live-Secret": live_secret, "Content-Type": "application/json"}
+
+    @pytest.fixture(scope="class")
+    def club_pin(self, clubs) -> str:
+        """Return the first club's PIN for subscription tests."""
+        assert len(clubs) > 0
+        return clubs[0]["pin"]
+
+    @pytest.fixture(scope="class")
+    def club_name(self, clubs) -> str:
+        """Return the first club's name for matching."""
+        return clubs[0]["name"]
+
+    @pytest.fixture(scope="class")
+    def subscribed(self, live_secret, club_pin) -> dict:
+        """Subscribe a fake push endpoint and return subscription info."""
+        r = requests.post(
+            f"{BASE_URL}/api/live/subscribe",
+            json={
+                "pin": club_pin,
+                "subscription": {
+                    "endpoint": "https://fcm.googleapis.com/fcm/send/integration-test-endpoint",
+                    "keys": {
+                        "p256dh": "BNcRdreALRFXTkOOUHK1EtK2wtaz5Ry4YfYCA_0QTpQtUbVlUls0VJXg7A8u-Ts1XbjhazAkj7I99e8p8REfWRk",
+                        "auth": "tBHItJI5svbpC7htDIm2IA",
+                    },
+                },
+            },
+            timeout=10,
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert data["ok"] is True
+        assert data["club_name"]
+        return data
+
+    # ── Live mode ─────────────────────────────────────────────────────────────
+
+    def test_live_mode_enabled(self, live_secret):
+        """Live mode is active after enable."""
+        r = requests.get(f"{BASE_URL}/api/live/status", timeout=5)
+        assert r.status_code == 200
+        assert r.json()["active"] is True
+
+    def test_live_config_shows_secret_masked(self, live_secret, admin_headers):
+        """Organizer config endpoint masks the secret."""
+        r = requests.get(
+            f"{BASE_URL}/api/live/config",
+            headers=admin_headers, timeout=5,
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert data["enabled"] is True
+        assert "…" in data["secret_masked"]
+
+    # ── VAPID keys ────────────────────────────────────────────────────────────
+
+    def test_vapid_public_key_generated(self, live_secret):
+        """VAPID public key is auto-generated and returned."""
+        r = requests.get(f"{BASE_URL}/api/live/vapid-public-key", timeout=5)
+        assert r.status_code == 200
+        key = r.json()["public_key"]
+        # Uncompressed P-256 point = 65 bytes → ~87 chars base64url
+        assert len(key) >= 80
+
+    def test_vapid_key_stable_across_calls(self, live_secret):
+        """Same VAPID key returned on subsequent calls (not regenerated)."""
+        r1 = requests.get(f"{BASE_URL}/api/live/vapid-public-key", timeout=5)
+        r2 = requests.get(f"{BASE_URL}/api/live/vapid-public-key", timeout=5)
+        assert r1.json()["public_key"] == r2.json()["public_key"]
+
+    # ── Subscription ──────────────────────────────────────────────────────────
+
+    def test_subscribe_with_valid_pin(self, subscribed, club_name):
+        """Subscription succeeds with a valid team PIN."""
+        assert subscribed["club_name"] == club_name
+
+    def test_subscribe_invalid_pin_rejected(self, live_secret):
+        """Invalid PIN returns 401."""
+        r = requests.post(
+            f"{BASE_URL}/api/live/subscribe",
+            json={
+                "pin": "999999",
+                "subscription": {
+                    "endpoint": "https://example.com/fake",
+                    "keys": {"p256dh": "x", "auth": "y"},
+                },
+            },
+            timeout=5,
+        )
+        assert r.status_code == 401
+
+    def test_subscribe_admin_pin_rejected(self, live_secret, admin_headers):
+        """Admin PIN (no club) returns 400 — must use a team PIN."""
+        r = requests.post(
+            f"{BASE_URL}/api/live/subscribe",
+            json={
+                "pin": admin_headers["X-Club-Pin"],
+                "subscription": {
+                    "endpoint": "https://example.com/admin-fake",
+                    "keys": {"p256dh": "x", "auth": "y"},
+                },
+            },
+            timeout=5,
+        )
+        assert r.status_code == 400
+
+    def test_subscribe_upsert_same_endpoint(self, subscribed, club_pin):
+        """Re-subscribing the same endpoint updates rather than duplicates."""
+        r = requests.post(
+            f"{BASE_URL}/api/live/subscribe",
+            json={
+                "pin": club_pin,
+                "subscription": {
+                    "endpoint": "https://fcm.googleapis.com/fcm/send/integration-test-endpoint",
+                    "keys": {
+                        "p256dh": "BNcRdreALRFXTkOOUHK1EtK2wtaz5Ry4YfYCA_0QTpQtUbVlUls0VJXg7A8u-Ts1XbjhazAkj7I99e8p8REfWRk",
+                        "auth": "tBHItJI5svbpC7htDIm2IA",
+                    },
+                },
+            },
+            timeout=5,
+        )
+        assert r.status_code == 200
+        assert r.json()["ok"] is True
+
+    # ── Push events ───────────────────────────────────────────────────────────
+
+    def test_push_event_metadata(self, live_headers):
+        """Push event metadata to team-app."""
+        r = requests.post(
+            f"{BASE_URL}/api/live/push-events",
+            headers=live_headers,
+            json={
+                "events": [{
+                    "event_id": 9001,
+                    "session_number": 1,
+                    "session_name": "Session Test",
+                    "event_number": 10,
+                    "event_name": "200m Papillon",
+                    "gender": "M",
+                    "distance": 200,
+                    "round": "TIM",
+                    "total_heats": 2,
+                }],
+            },
+            timeout=10,
+        )
+        assert r.status_code == 200
+        assert r.json()["accepted"] == 1
+
+    # ── Push results (normal + DSQ) ───────────────────────────────────────────
+
+    def test_push_normal_result(self, live_headers, club_name):
+        """Push a normal swim result."""
+        r = requests.post(
+            f"{BASE_URL}/api/live/push-results",
+            headers=live_headers,
+            json={
+                "results": [{
+                    "event_id": 9001,
+                    "heat_number": 1,
+                    "lane": 3,
+                    "athlete_id": 500,
+                    "athlete_name": "Tremblay, Marie",
+                    "club_name": club_name,
+                    "swimtime_ms": 134560,
+                    "reaction_time_ms": 680,
+                    "status": "",
+                    "is_official": False,
+                }],
+            },
+            timeout=10,
+        )
+        assert r.status_code == 200
+        assert r.json()["accepted"] == 1
+
+    def test_push_dsq_result(self, live_headers, club_name, subscribed):
+        """Push a DSQ result — triggers notification dispatch."""
+        r = requests.post(
+            f"{BASE_URL}/api/live/push-results",
+            headers=live_headers,
+            json={
+                "results": [{
+                    "event_id": 9001,
+                    "heat_number": 1,
+                    "lane": 5,
+                    "athlete_id": 501,
+                    "athlete_name": "Gagnon, Jean",
+                    "club_name": club_name,
+                    "swimtime_ms": None,
+                    "reaction_time_ms": None,
+                    "status": "DSQ",
+                    "dsq_reason": "SW 6.4 — Faux départ",
+                    "is_official": False,
+                }],
+            },
+            timeout=10,
+        )
+        assert r.status_code == 200
+        assert r.json()["accepted"] == 1
+
+    def test_dsq_reason_stored(self, live_headers, club_name, subscribed):
+        """DSQ reason is persisted and returned in public results."""
+        # Ensure DSQ was pushed first (depends on test_push_dsq_result)
+        r = requests.get(f"{BASE_URL}/api/live/results/9001", timeout=5)
+        assert r.status_code == 200
+        data = r.json()
+        heats = data["heats"]
+        assert "1" in heats
+        dsq_entries = [e for e in heats["1"] if e["status"] == "DSQ"]
+        assert len(dsq_entries) == 1
+        assert dsq_entries[0]["dsq_reason"] == "SW 6.4 — Faux départ"
+        assert dsq_entries[0]["athlete_name"] == "Gagnon, Jean"
+
+    def test_results_count_correct(self, live_headers, club_name, subscribed):
+        """Both normal and DSQ results are stored."""
+        r = requests.get(f"{BASE_URL}/api/live/results/9001", timeout=5)
+        assert r.status_code == 200
+        heats = r.json()["heats"]
+        total = sum(len(v) for v in heats.values())
+        assert total == 2
+
+    # ── Announcements ─────────────────────────────────────────────────────────
+
+    def test_call_to_marshall(self, live_headers, subscribed):
+        """Call to Marshall announcement is accepted."""
+        r = requests.post(
+            f"{BASE_URL}/api/live/push-announcement",
+            headers=live_headers,
+            json={
+                "type": "call_to_marshall",
+                "event_id": 9001,
+                "event_number": 10,
+                "event_name": "200m Papillon",
+                "gender": "M",
+            },
+            timeout=10,
+        )
+        assert r.status_code == 200
+        assert r.json()["ok"] is True
+
+    def test_call_to_scratch(self, live_headers, subscribed):
+        """Call to Scratch announcement is accepted."""
+        r = requests.post(
+            f"{BASE_URL}/api/live/push-announcement",
+            headers=live_headers,
+            json={
+                "type": "call_to_scratch",
+                "event_id": 9002,
+                "event_number": 11,
+                "event_name": "200m Papillon Finale",
+                "gender": "M",
+            },
+            timeout=10,
+        )
+        assert r.status_code == 200
+        assert r.json()["ok"] is True
+
+    def test_invalid_announcement_type_rejected(self, live_headers):
+        """Invalid announcement type returns 400."""
+        r = requests.post(
+            f"{BASE_URL}/api/live/push-announcement",
+            headers=live_headers,
+            json={
+                "type": "invalid_type",
+                "event_id": 1,
+                "event_number": 1,
+                "event_name": "test",
+                "gender": "M",
+            },
+            timeout=5,
+        )
+        assert r.status_code == 400
+
+    def test_announcement_requires_live_secret(self):
+        """Announcement endpoint rejects requests without valid secret."""
+        r = requests.post(
+            f"{BASE_URL}/api/live/push-announcement",
+            headers={"X-Live-Secret": "wrong", "Content-Type": "application/json"},
+            json={
+                "type": "call_to_marshall",
+                "event_id": 1,
+                "event_number": 1,
+                "event_name": "test",
+                "gender": "M",
+            },
+            timeout=5,
+        )
+        assert r.status_code == 401
+
+    # ── Unsubscribe ───────────────────────────────────────────────────────────
+
+    def test_unsubscribe(self, subscribed):
+        """Unsubscribe removes the push subscription."""
+        r = requests.post(
+            f"{BASE_URL}/api/live/unsubscribe",
+            json={"endpoint": "https://fcm.googleapis.com/fcm/send/integration-test-endpoint"},
+            timeout=5,
+        )
+        assert r.status_code == 200
+        assert r.json()["ok"] is True
+
+    def test_unsubscribe_idempotent(self):
+        """Unsubscribing a non-existent endpoint still returns ok."""
+        r = requests.post(
+            f"{BASE_URL}/api/live/unsubscribe",
+            json={"endpoint": "https://example.com/does-not-exist"},
+            timeout=5,
+        )
+        assert r.status_code == 200
+        assert r.json()["ok"] is True
+
+    # ── Disable live mode ─────────────────────────────────────────────────────
+
+    def test_disable_live_mode(self, admin_headers):
+        """Disable live mode stops accepting pushes."""
+        r = requests.post(
+            f"{BASE_URL}/api/live/disable",
+            headers=admin_headers, timeout=5,
+        )
+        assert r.status_code == 200
+        assert r.json()["ok"] is True
+
+        # Verify status shows inactive
+        r = requests.get(f"{BASE_URL}/api/live/status", timeout=5)
+        assert r.json()["active"] is False
+
+    def test_push_rejected_when_disabled(self, live_headers, admin_headers):
+        """Push endpoints return 409 when live mode is disabled."""
+        r = requests.post(
+            f"{BASE_URL}/api/live/push-results",
+            headers=live_headers,
+            json={"results": [{"event_id": 1, "heat_number": 1, "lane": 1}]},
+            timeout=5,
+        )
+        assert r.status_code == 409

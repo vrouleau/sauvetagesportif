@@ -14,6 +14,7 @@ interface InscriptionPageProps {
   role: string           // 'admin' | 'coach' | 'organizer'
   clubId?: string        // Pre-filter to single club (team-app coach mode)
   refreshKey?: number    // Trigger re-fetch
+  onImportLenex?: () => void  // meet-app only: import inscriptions .lxf
 }
 
 interface InscriptionPageState {
@@ -364,7 +365,7 @@ function SplitPanel({ topPanel, bottomPanel }: { topPanel: React.ReactNode; bott
 
 // ─── InscriptionPage Component ────────────────────────────────────────────────
 
-export default function InscriptionPage({ role, clubId, refreshKey }: InscriptionPageProps) {
+export default function InscriptionPage({ role, clubId, refreshKey, onImportLenex }: InscriptionPageProps) {
   const { t } = useLang()
   const api = useRegistrationApi()
   const tr = t.registration
@@ -418,7 +419,7 @@ export default function InscriptionPage({ role, clubId, refreshKey }: Inscriptio
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Filter text box */}
-      <div className="px-3 py-1.5 bg-white border-b border-gray-300 shrink-0">
+      <div className="px-3 py-1.5 bg-white border-b border-gray-300 shrink-0 flex items-center gap-2">
         <input
           type="text"
           placeholder={tr.search}
@@ -426,6 +427,14 @@ export default function InscriptionPage({ role, clubId, refreshKey }: Inscriptio
           onChange={e => setFilterText(e.target.value)}
           className="border border-gray-300 px-2 py-1 rounded text-xs w-64"
         />
+        {onImportLenex && (
+          <button
+            onClick={onImportLenex}
+            className="px-3 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 shrink-0"
+          >
+            Importer inscriptions (.lxf)
+          </button>
+        )}
       </div>
 
       {/* Split-panel layout with draggable divider */}

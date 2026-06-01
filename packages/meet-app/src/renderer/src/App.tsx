@@ -321,12 +321,23 @@ function AppInner() {
   const [meetType, setMeetType] = useState<string>('POOL')
   const [meetName, setMeetName] = useState<string>('')
   const pgStatus = usePgStatus()
+  const [livePushStatus, setLivePushStatus] = useState<{ status: string; queueSize: number }>({ status: 'disconnected', queueSize: 0 })
 
   // Load meet type and name on mount and after refresh
   useEffect(() => {
     dbApi()?.getMeetType().then((t) => setMeetType(t || 'POOL'))
     dbApi()?.getMeetInfo().then((info: { name: string }) => setMeetName(info?.name || ''))
   }, [refreshKey])
+
+  // Poll live push status every 5s
+  useEffect(() => {
+    const liveApi = (window as any).api?.live
+    if (!liveApi) return
+    const poll = () => liveApi.getStatus().then((s: { status: string; queueSize: number }) => setLivePushStatus(s)).catch(() => {})
+    poll()
+    const interval = setInterval(poll, 5000)
+    return () => clearInterval(interval)
+  }, [])
 
   // Poll for database changes when in PG mode (every 3s)
   useEffect(() => {
@@ -493,6 +504,22 @@ function AppInner() {
             💾 SQLite
           </span>
         )}
+        {/* Live push status */}
+        {livePushStatus.status === 'connected' && (
+          <span className="text-green-400 text-[10px] mr-2" title="Live push active">
+            📡 Live
+          </span>
+        )}
+        {livePushStatus.status === 'queued' && (
+          <span className="text-yellow-400 text-[10px] mr-2" title={`${livePushStatus.queueSize} queued`}>
+            📡 ({livePushStatus.queueSize})
+          </span>
+        )}
+        {livePushStatus.status === 'disconnected' && livePushStatus.queueSize > 0 && (
+          <span className="text-red-400 text-[10px] mr-2" title="Live push disconnected">
+            📡 ✗
+          </span>
+        )}
         {/* Language toggle */}
         <div className="ml-auto flex items-center gap-1 pr-3">
           <button
@@ -559,7 +586,7 @@ function AppInner() {
       {/* Page content */}
       <div className="flex-1 overflow-hidden">
         {page === 'events' && <EventsPage refreshKey={refreshKey} />}
-        {page === 'inscription' && <InscriptionPageWrapper refreshKey={refreshKey} />}
+        {page === 'inscription' && <InscriptionPageWrapper refreshKey={refreshKey} onImportLenex={handleImportLenex} />}
         {page === 'finals' && <FinalsPage refreshKey={refreshKey} meetType={meetType} />}
         {page === 'heats' && <HeatsPage refreshKey={refreshKey} meetType={meetType} />}
         {page === 'report' && <ReportPage refreshKey={refreshKey} />}

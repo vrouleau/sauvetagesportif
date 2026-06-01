@@ -244,6 +244,14 @@ const api = {
     newMeet: (meetType?: string) =>
       ipcRenderer.invoke('file:new-meet', meetType),
   },
+  live: {
+    getStatus: () =>
+      ipcRenderer.invoke('live:get-status'),
+    pushAll: () =>
+      ipcRenderer.invoke('live:push-all'),
+    announce: (payload: { type: 'call_to_marshall' | 'call_to_scratch'; event_id: number; event_number: number; event_name: string; gender: string }) =>
+      ipcRenderer.invoke('live:announce', payload),
+  },
 }
 
 if (process.contextIsolated) {

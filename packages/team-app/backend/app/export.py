@@ -1,6 +1,7 @@
 """Generate Lenex .lxf from registrations (swimresult rows with entrytime)."""
 from __future__ import annotations
 
+import os
 import zipfile
 from datetime import date
 from io import BytesIO
@@ -252,13 +253,23 @@ def generate_lxf(db: Session) -> bytes:
         # Embed Gemini API keys as hidden dotfile (key transport to meet-app)
         gemini_free = db.query(BsGlobal).get("GEMINI_KEY_FREE")
         gemini_paid = db.query(BsGlobal).get("GEMINI_KEY_PAID")
-        if (gemini_free and gemini_free.data) or (gemini_paid and gemini_paid.data):
+        live_secret = db.query(BsGlobal).get("LIVE_PUSH_SECRET")
+        live_url = os.environ.get("APP_BASE_URL", "http://localhost:8001")
+        has_keys = (
+            (gemini_free and gemini_free.data)
+            or (gemini_paid and gemini_paid.data)
+            or (live_secret and live_secret.data)
+        )
+        if has_keys:
             import json as _json
             keys = {}
             if gemini_free and gemini_free.data:
                 keys["gemini_free"] = gemini_free.data
             if gemini_paid and gemini_paid.data:
                 keys["gemini_paid"] = gemini_paid.data
+            if live_secret and live_secret.data:
+                keys["live_push_secret"] = live_secret.data
+                keys["live_url"] = live_url
             z.writestr(".keys", _json.dumps(keys))
     return buf.getvalue()
 

@@ -7,13 +7,14 @@ import { registrationApiElectron } from '../registrationApiElectron'
  * within the meet-app's tab-based navigation.
  * Supplies the Electron-based RegistrationAPI and admin role.
  */
-export default function InscriptionPageWrapper({ refreshKey = 0 }: { refreshKey?: number }) {
+export default function InscriptionPageWrapper({ refreshKey = 0, onImportLenex }: { refreshKey?: number, onImportLenex?: () => void }) {
   return (
     <RegistrationApiProvider api={registrationApiElectron}>
       <InscriptionPage
         key={refreshKey}
         role="admin"
         refreshKey={refreshKey}
+        onImportLenex={onImportLenex}
       />
     </RegistrationApiProvider>
   )

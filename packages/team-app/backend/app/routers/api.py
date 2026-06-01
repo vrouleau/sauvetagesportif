@@ -2927,6 +2927,20 @@ async def import_results_lxf(request: Request, file: UploadFile = File(...), db:
 
     from ..lxf_to_team import import_lxf_as_meet
     from ..best_times import load_best_times
+    from ..models_live import LiveResult, LiveSplit, LiveStartlist, LiveEvent
+
+    # LXF import is authoritative — clear any live results if present
+    db.query(LiveSplit).delete()
+    db.query(LiveResult).delete()
+    db.query(LiveStartlist).delete()
+    db.query(LiveEvent).delete()
+    # Clear live mode keys
+    for key in ("LIVE_PUSH_SECRET", "LIVE_ENABLED", "LIVE_LAST_PUSH"):
+        cfg = db.query(BsGlobal).get(key)
+        if cfg:
+            db.delete(cfg)
+    db.flush()
+
     try:
         counts = import_lxf_as_meet(db, content)
     except Exception as e:
