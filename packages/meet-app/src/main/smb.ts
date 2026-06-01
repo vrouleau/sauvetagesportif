@@ -47,6 +47,16 @@ const SMB_TABLES: { name: string; cols: ColDef[] }[] = [
     ]
   },
   {
+    name: 'DSQITEM', cols: [
+      { name: 'DSQITEMID', type: 'I', size: 32 },
+      { name: 'CODE', type: 'S', size: 10 },
+      { name: 'LENEXCODE', type: 'S', size: 10 },
+      { name: 'NAME', type: 'S', size: 250 },
+      { name: 'OPTIONS', type: 'S', size: 5 },
+      { name: 'SORTCODE', type: 'I', size: 16 },
+    ]
+  },
+  {
     name: 'SWIMSTYLE', cols: [
       { name: 'SWIMSTYLEID', type: 'I', size: 32 },
       { name: 'CODE', type: 'S', size: 10 },
@@ -712,7 +722,12 @@ export function restoreSMB(filePath: string, db: Database.Database): { tables: n
 
   // Disable FK enforcement for bulk import — Splash encodes NULL integers as 0
   // which would fail FK checks mid-load even though the data is self-consistent.
-  db.pragma('foreign_keys = OFF')
+  if (typeof db.pragma === 'function') {
+    db.pragma('foreign_keys = OFF')
+  } else {
+    // PostgreSQL: disable FK triggers temporarily
+    try { db.exec('SET session_replication_role = replica') } catch { /* ignore */ }
+  }
   try {
     // Clear existing data (reverse FK order)
     const reversed = [...SMB_TABLES].reverse()
@@ -739,14 +754,36 @@ export function restoreSMB(filePath: string, db: Database.Database): { tables: n
       const fileColNames = new Set(fileCols.map(c => c.name.toLowerCase()))
       const colNames = tableDef.cols.map(c => c.name.toLowerCase()).filter(c => fileColNames.has(c))
       const placeholders = colNames.map(() => '?').join(', ')
-      const stmt = db.prepare(
-        `INSERT OR IGNORE INTO ${tableDef.name.toLowerCase()} (${colNames.join(', ')}) VALUES (${placeholders})`
-      )
+      const isPg = typeof (db as any).pragma !== 'function'
+      const insertSql = isPg
+        ? `INSERT INTO ${tableDef.name.toLowerCase()} (${colNames.join(', ')}) VALUES (${placeholders}) ON CONFLICT DO NOTHING`
+        : `INSERT OR IGNORE INTO ${tableDef.name.toLowerCase()} (${colNames.join(', ')}) VALUES (${placeholders})`
+      const stmt = db.prepare(insertSql)
 
       let inserted = 0
+      // For PG: identify date columns that need sentinel filtering
+      const dateColIndices = new Set<number>()
+      if (isPg) {
+        const colDefsLower = tableDef.cols.map(c => ({ name: c.name.toLowerCase(), type: c.type }))
+        colNames.forEach((cn, idx) => {
+          const def = colDefsLower.find(d => d.name === cn)
+          if (def && def.type === 'D') dateColIndices.add(idx)
+        })
+      }
+
       const insertAll = db.transaction((recs: Record<string, unknown>[]) => {
         for (const row of recs) {
-          const vals = colNames.map(c => row[c] ?? null)
+          const vals = colNames.map((c, idx) => {
+            const v = row[c] ?? null
+            // For PG date columns: convert invalid OLE date values to null
+            // Valid OLE dates are roughly 2-73000 (1900-2100). Anything else is garbage.
+            if (isPg && dateColIndices.has(idx)) {
+              if (v === null || v === undefined) return null
+              const numVal = typeof v === 'number' ? v : (typeof v === 'string' ? parseFloat(v) : NaN)
+              if (isNaN(numVal) || numVal < 2 || numVal > 73000 || !isFinite(numVal)) return null
+            }
+            return v
+          })
           inserted += stmt.run(...vals).changes
         }
       })
@@ -769,7 +806,12 @@ export function restoreSMB(filePath: string, db: Database.Database): { tables: n
     // Detect MDB encoding by presence of round=9 or round=11 (never used in canonical)
     normalizeRoundEncoding(db)
   } finally {
-    db.pragma('foreign_keys = ON')
+    if (typeof db.pragma === 'function') {
+      db.pragma('foreign_keys = ON')
+    } else {
+      // PostgreSQL: re-enable FK triggers
+      try { db.exec('SET session_replication_role = DEFAULT') } catch { /* ignore */ }
+    }
   }
 
   return { tables: SMB_TABLES.length, rows: totalInserted, detail: tableDetail.join(', ') }
@@ -817,6 +859,9 @@ function normalizeRoundEncoding(db: Database.Database): void {
   db.prepare(`UPDATE swimevent SET round = 5 WHERE round = -1`).run()  // MDB 1 → TIM
   db.prepare(`UPDATE swimevent SET round = 1 WHERE round = -2`).run()  // MDB 2 → PRE
   db.prepare(`UPDATE swimevent SET round = 4 WHERE round = -9`).run()  // MDB 9 → FIN
+
+  // Mark round=11 (Break/Pause) events as internal
+  db.prepare(`UPDATE swimevent SET internalevent = 'T' WHERE round = 11`).run()
 
   // Fix PRE events that have gender=0 and/or eventnumber=0.
   // In Splash MDB, prelim events store gender=0 and eventnumber=0 because

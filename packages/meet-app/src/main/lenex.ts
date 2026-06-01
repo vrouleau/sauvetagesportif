@@ -156,6 +156,12 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
     heats: 0, clubs: 0, athletes: 0, results: 0, errors: [],
   }
 
+  // Local nextId helper (same logic as db.ts nextId but uses the passed db)
+  function nextId(table: string, col: string): number {
+    const row = db.prepare(`SELECT MAX(${col}) AS m FROM ${table}`).get() as { m: number | null } | undefined
+    return (row?.m ?? 0) + 1
+  }
+
   const entries = readZipEntries(filePath)
 
   // Find the .lef XML entry (first entry whose name ends with .lef)
@@ -309,6 +315,10 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
   }
 
   // ── Sessions → swimsession ─────────────────────────────────────────────
+  // Skip event structure import if events already exist (entries-only import)
+  const existingEventCount = (db.prepare(`SELECT COUNT(*) AS c FROM swimevent`).get() as { c: number }).c
+  const skipEventStructure = existingEventCount > 0
+
   const sessionsElem = child(meet, 'SESSIONS')
   for (const sess of children(sessionsElem ?? meet, 'SESSION')) {
     const a = sess.attrs
@@ -319,8 +329,9 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
       const sessName = (a.name ?? '').slice(0, 100)
       if (existing) {
         swimsessionid = existing.swimsessionid
-        stmts.updateSession.run(sessName, swimsessionid)
+        if (!skipEventStructure) stmts.updateSession.run(sessName, swimsessionid)
       } else {
+        if (skipEventStructure) continue  // Don't create new sessions during entries import
         const r = stmts.maxSessionId.get() as { next: number }
         swimsessionid = r.next
         stmts.insertSession.run(swimsessionid, num, sessName)
@@ -332,6 +343,8 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
     }
 
     // ── Events → swimevent ───────────────────────────────────────────────
+    if (skipEventStructure) continue  // Don't overwrite event structure during entries import
+
     const eventsElem = child(sess, 'EVENTS')
     for (const event of children(eventsElem ?? sess, 'EVENT')) {
       const ea = event.attrs
@@ -417,12 +430,23 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
     }
   }
 
-  // ── Clubs → club; Athletes → athlete; Results → swimresult ────────────
+  // ── Clubs → club; Athletes → athlete; Entries/Results → swimresult ────────────
   const clubsElem = child(meet, 'CLUBS')
+  let autoClubId = nextId('club', 'clubid')
+
   for (const club of children(clubsElem ?? meet, 'CLUB')) {
     const ca = club.attrs
-    const clubId = parseInt(ca.clubid ?? '0', 10)
-    if (!clubId) continue
+    let clubId = parseInt(ca.clubid ?? '0', 10)
+    if (!clubId) {
+      // Auto-assign club ID (Splash Lenex exports don't include clubid)
+      // Try to find existing club by code
+      const existing = db.prepare(`SELECT clubid FROM club WHERE code = ?`).get(ca.code ?? '') as { clubid: number } | undefined
+      if (existing) {
+        clubId = existing.clubid
+      } else {
+        clubId = autoClubId++
+      }
+    }
     try {
       stmts.upsertClub.run(clubId, ca.code ?? '', ca.name ?? '')
       summary.clubs++
@@ -433,19 +457,51 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
     const athElem = child(club, 'ATHLETES')
     for (const ath of children(athElem ?? club, 'ATHLETE')) {
       const aa = ath.attrs
-      const athId = parseInt(aa.athleteid ?? '0', 10)
-      if (!athId) continue
+      let athId = parseInt(aa.athleteid ?? '0', 10)
+      if (!athId) {
+        athId = nextId('athlete', 'athleteid')
+      }
+
+      // Read handicap exception
+      const handicapEl = child(ath, 'HANDICAP')
+      const handicapex = handicapEl?.attrs?.exception ?? ''
+
       try {
         stmts.upsertAthlete.run(
           athId, aa.firstname ?? '', aa.lastname ?? '',
           aa.birthdate || null, encodeGender(aa.gender),
           aa.nation ?? '', aa.license || null, clubId
         )
+        // Update handicapex if present
+        if (handicapex) {
+          db.prepare(`UPDATE athlete SET handicapex = ? WHERE athleteid = ?`).run(handicapex, athId)
+        }
         summary.athletes++
       } catch (e) {
         summary.errors.push(`Athlete ${athId}: ${e}`)
       }
 
+      // ── ENTRIES (Splash registration format) → swimresult ──────────────
+      const entriesElem = child(ath, 'ENTRIES')
+      for (const entry of children(entriesElem ?? ath, 'ENTRY')) {
+        const ea2 = entry.attrs
+        const eventId = parseInt(ea2.eventid ?? '0', 10)
+        if (!eventId) continue
+        const entrytime = lenexTimeToMs(ea2.entrytime)
+        const agegroupid = parseInt(ea2.agegroupid ?? '0', 10) || null
+        const entrycourse = ea2.entrycourse ? encodeCourse(ea2.entrycourse) : null
+        const resId = nextId('swimresult', 'swimresultid')
+        try {
+          stmts.upsertResult.run(
+            resId, athId, eventId, agegroupid, null, null, entrytime, entrycourse
+          )
+          summary.results++
+        } catch (e) {
+          summary.errors.push(`Entry athlete=${athId} event=${eventId}: ${e}`)
+        }
+      }
+
+      // ── RESULTS (standard Lenex format) → swimresult ───────────────────
       const resElem = child(ath, 'RESULTS')
       for (const res of children(resElem ?? ath, 'RESULT')) {
         const ra = res.attrs
@@ -467,33 +523,6 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
           summary.results++
         } catch (e) {
           summary.errors.push(`Result ${resId}: ${e}`)
-        }
-      }
-
-      // Also handle <ENTRY> elements (registrations without results yet)
-      const entElem = child(ath, 'ENTRIES')
-      for (const ent of children(entElem ?? ath, 'ENTRY')) {
-        const ea2 = ent.attrs
-        // ENTRY elements don't have a resultid — generate one from eventid + athleteid
-        const eventIdVal = parseInt(ea2.eventid ?? '0', 10)
-        if (!eventIdVal) continue
-        const entryId = parseInt(ea2.entryid ?? '0', 10) || (athId * 100000 + eventIdVal)
-        const entrytime = lenexTimeToMs(ea2.entrytime)
-        const agegroupid = parseInt(ea2.agegroupid ?? '0', 10) || null
-        const entrycourse = ea2.entrycourse ? encodeCourse(ea2.entrycourse) : null
-        try {
-          stmts.upsertResult.run(
-            entryId, athId,
-            eventIdVal,
-            agegroupid,
-            null,  // no heat yet
-            null,  // no lane yet
-            entrytime,
-            entrycourse
-          )
-          summary.results++
-        } catch (e) {
-          summary.errors.push(`Entry ${entryId} (athlete ${athId}, event ${eventIdVal}): ${e}`)
         }
       }
     }
@@ -703,20 +732,19 @@ export function exportLenexResults(filePath: string, db: Database.Database): Exp
     `SELECT swimsessionid, sessionnumber, name, course FROM swimsession ORDER BY sessionnumber`
   ).all() as Array<{ swimsessionid: number; sessionnumber: number; name: string | null; course: number | null }>
 
-  // ── Events (skip internal/break events) ─────────────────────────────────────
+  // ── Events (include internal/break events with internalevent attribute) ──────
   const events = db.prepare(
     `SELECT e.swimeventid, e.swimsessionid, e.eventnumber, e.gender, e.round, e.roundname,
-            e.sortcode, e.swimstyleid,
+            e.internalevent, e.sortcode, e.swimstyleid,
             s.distance, s.stroke, s.relaycount, s.name AS stylename
      FROM swimevent e
      LEFT JOIN swimstyle s ON s.swimstyleid = e.swimstyleid
-     WHERE e.internalevent = 'F'
      ORDER BY e.sortcode, e.eventnumber`
   ).all() as Array<{
     swimeventid: number; swimsessionid: number; eventnumber: number
-    gender: number; round: number; roundname: string | null; sortcode: number
-    swimstyleid: number | null; distance: number | null; stroke: number | null
-    relaycount: number | null; stylename: string | null
+    gender: number; round: number; roundname: string | null; internalevent: string | null
+    sortcode: number; swimstyleid: number | null; distance: number | null
+    stroke: number | null; relaycount: number | null; stylename: string | null
   }>
 
   // ── Age groups ──────────────────────────────────────────────────────────────
@@ -829,7 +857,9 @@ export function exportLenexResults(filePath: string, db: Database.Database): Exp
 
     const sessEvents = events.filter(e => e.swimsessionid === sess.swimsessionid)
     for (const ev of sessEvents) {
-      lines.push(`            <EVENT${attr('eventid', ev.swimeventid)}${attr('number', ev.eventnumber)}${attr('gender', decodeGender(ev.gender))}${attr('round', decodeRound(ev.round))}${attr('order', ev.sortcode)}>`)
+      const internalAttr = ev.internalevent === 'T' ? ' internalevent="T"' : ''
+      const nameAttr = ev.internalevent === 'T' && ev.roundname ? attr('name', ev.roundname) : ''
+      lines.push(`            <EVENT${attr('eventid', ev.swimeventid)}${attr('number', ev.eventnumber)}${attr('gender', decodeGender(ev.gender))}${attr('round', decodeRound(ev.round))}${attr('order', ev.sortcode)}${internalAttr}${nameAttr}>`)
 
       // SWIMSTYLE
       if (ev.swimstyleid) {

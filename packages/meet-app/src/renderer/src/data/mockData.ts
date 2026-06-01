@@ -74,6 +74,7 @@ export interface LaneEntry {
   status?: 'DNS' | 'DNF' | 'DSQ' | null
   dsqCode?: string
   dsqReason?: string
+  dsqItemId?: number
   handicapex?: string
 }
 

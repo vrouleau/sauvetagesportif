@@ -69,7 +69,8 @@ const api = {
       reactionTimeSecs: number | null,
       status: string | null,
       splits: Record<number, string> | undefined,
-    ) => ipcRenderer.invoke('db:save-result', swimresultId, finalTime, reactionTimeSecs, status, splits),
+      dsqItemId?: number | null,
+    ) => ipcRenderer.invoke('db:save-result', swimresultId, finalTime, reactionTimeSecs, status, splits, dsqItemId),
     createSession: (name: string, number: number) =>
       ipcRenderer.invoke('db:create-session', name, number),
     updateSession: (sessionId: number, data: unknown) =>
@@ -103,6 +104,8 @@ const api = {
       ipcRenderer.invoke('db:get-swim-styles'),
     getMeetType: () =>
       ipcRenderer.invoke('db:get-meet-type'),
+    getDsqItems: () =>
+      ipcRenderer.invoke('db:get-dsq-items'),
     register: (data: { athlete_id: number; event_id: number; entry_time_ms: number | null; age_code: string }) =>
       ipcRenderer.invoke('db:register', data),
     unregister: (athleteId: number, eventId: number) =>

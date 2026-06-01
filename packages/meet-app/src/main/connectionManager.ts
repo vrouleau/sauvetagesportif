@@ -11,6 +11,7 @@ import { readFileSync, writeFileSync, existsSync, unlinkSync } from 'fs'
 import type { DbBackend } from './dbBackend'
 import { SqliteBackend } from './sqliteBackend'
 import { PgBackend, type PgConnectionConfig } from './pgBackend'
+import { runSchemaInit } from './schema'
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
@@ -26,8 +27,7 @@ export function getDb(): DbBackend {
     const dbPath = join(app.getPath('userData'), 'meet.db')
     const backend = new SqliteBackend(dbPath)
     activeBackend = backend
-    // Run schema DDL for SQLite (lazy import to avoid circular dependency)
-    const { runSchemaInit } = require('./db')
+    // Run schema DDL for SQLite
     runSchemaInit(backend)
   }
   return activeBackend
@@ -59,6 +59,48 @@ export async function connectToPg(config: PgConnectionConfig): Promise<void> {
   }
   activeBackend = testBackend
   activeConfig = config
+
+  // Ensure dsqitem table exists on PG (safe: IF NOT EXISTS, compatible with Splash)
+  try {
+    testBackend.exec(`CREATE TABLE IF NOT EXISTS dsqitem (
+      dsqitemid INTEGER PRIMARY KEY,
+      code VARCHAR(10),
+      lenexcode VARCHAR(10),
+      name VARCHAR(250),
+      name_en VARCHAR(250),
+      options VARCHAR(5),
+      sortcode SMALLINT
+    )`)
+    // If table is empty, seed from config (same as "Create Meet" does for SQLite)
+    const count = testBackend.prepare(`SELECT COUNT(*) AS c FROM dsqitem`).get() as { c: number }
+    if (count.c === 0) {
+      try {
+        const { readFileSync, existsSync } = require('fs')
+        const configPath = app.isPackaged
+          ? join(process.resourcesPath, 'dsq-codes.json')
+          : join(__dirname, '../../../../config/dsq-codes.json')
+        if (existsSync(configPath)) {
+          const cfg = JSON.parse(readFileSync(configPath, 'utf8'))
+          // Determine meet type from bsglobal if available
+          const meetTypeRow = testBackend.prepare(
+            `SELECT data FROM bsglobal WHERE name = 'MEET_TYPE'`
+          ).get() as { data: string } | undefined
+          const meetType = (meetTypeRow?.data || 'pool').toLowerCase()
+          const codes = meetType === 'beach' ? (cfg.beach || []) : (cfg.pool || [])
+          const baseId = meetType === 'beach' ? 4101 : 4001
+          const stmt = testBackend.prepare(
+            `INSERT INTO dsqitem (dsqitemid, code, lenexcode, name, name_en, sortcode) VALUES (?, ?, ?, ?, ?, ?)`
+          )
+          for (let i = 0; i < codes.length; i++) {
+            const c = codes[i]
+            stmt.run(baseId + i, c.code, c.code, c.name_fr, c.name_en || '', i + 1)
+          }
+        }
+      } catch { /* ignore seeding errors */ }
+    }
+  } catch {
+    // Ignore — table may already exist with slightly different DDL
+  }
 
   // Persist the connection config
   saveConnectionConfig(config)

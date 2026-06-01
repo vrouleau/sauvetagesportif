@@ -36,6 +36,10 @@
         "to": "combined-events-config.json"
       },
       {
+        "from": "../../config/dsq-codes.json",
+        "to": "dsq-codes.json"
+      },
+      {
         "from": "../../config/template_pool.lxf",
         "to": "template_pool.lxf"
       }

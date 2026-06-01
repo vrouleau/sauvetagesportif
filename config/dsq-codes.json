@@ -1,0 +1,356 @@
+{
+  "pool": [
+    {
+      "code": "1",
+      "name_fr": "Ne complète pas l’épreuve conformément à la description générale de cette dernière ou aux règles générales",
+      "name_en": ""
+    },
+    {
+      "code": "2",
+      "name_fr": "Un athlète ou une équipe peut être disqualifié si l’on estime qu’un athlète ou une équipe a compétitionné contrairement aux règles établies. Voici quelques exemples: • Commettre une infraction de dopage ou liée au dopage; Voir manuel de règlements",
+      "name_en": ""
+    },
+    {
+      "code": "3",
+      "name_fr": "Les athlètes peuvent ne pas être autorisés à prendre le départ d’une épreuve s’ils se présentent en retard à l’aire de rassemblement. Cela peut être noté comme « did not start » (DNS) sur les feuilles de résultats.",
+      "name_en": ""
+    },
+    {
+      "code": "4",
+      "name_fr": "Un athlète ou une équipe absente au départ d’une épreuve sera disqualifiée, sauf pour la finale A ou B. Cette absence peut être notée comme « did not start » (DNS) sur les feuilles de résultats.",
+      "name_en": ""
+    },
+    {
+      "code": "5",
+      "name_fr": "Les activités qui endommagent délibérément les sites, les lieux d’hébergement ou les biens d’autrui entraîneront la disqualification des personnes impliquées dans la compétition.",
+      "name_en": ""
+    },
+    {
+      "code": "6",
+      "name_fr": "Un mauvais traitement des officiels peut entraîner la disqualification de la compétition.",
+      "name_en": ""
+    },
+    {
+      "code": "7",
+      "name_fr": "Utiliser des substances collantes ou adhésives (liquides, solides ou en aérosol) sur les mains ou les pieds, ou sur le mannequin ou la bouée tube pour améliorer l’adhérence ou la poussée au fond de la piscine.",
+      "name_en": ""
+    },
+    {
+      "code": "8",
+      "name_fr": ". S’aider du fond de la piscine, sauf lorsque cela est spécifiquement autorisé (ex : nage avec obstacles, relais portage de mannequin 4 x 25 m).",
+      "name_en": ""
+    },
+    {
+      "code": "9",
+      "name_fr": "Sortir de l’eau après une épreuve avant que l’officiel ne l’autorise.",
+      "name_en": ""
+    },
+    {
+      "code": "10",
+      "name_fr": "Entamer un mouvement de départ avant que le signal de départ n’ait été donné.",
+      "name_en": ""
+    },
+    {
+      "code": "11",
+      "name_fr": "Passer au-dessus d’un obstacle sans revenir immédiatement au-dessus ou en dessous de cet obstacle et passer ensuite en dessous.",
+      "name_en": ""
+    },
+    {
+      "code": "12",
+      "name_fr": "Ne pas remonter à la surface après le plongeon ou après un virage avant de passer sous un obstacle.",
+      "name_en": ""
+    },
+    {
+      "code": "13",
+      "name_fr": "Ne pas toucher le mur/bord pendant le virage.",
+      "name_en": ""
+    },
+    {
+      "code": "14",
+      "name_fr": "Ne pas toucher le mur/bord d’arrivée.",
+      "name_en": ""
+    },
+    {
+      "code": "15",
+      "name_fr": "Ne pas remonter à la surface avant de plonger vers le mannequin",
+      "name_en": ""
+    },
+    {
+      "code": "16",
+      "name_fr": "Ne pas remonter à la surface après l'entrée dans l'eau et avant d'avoir touché le mur/bord de virage 50m,  Note: pour les épreuves de relais, cela ne s'applique qu'au premier athlète.",
+      "name_en": ""
+    },
+    {
+      "code": "17",
+      "name_fr": "S’aider d’un accessoire de piscine (ex. : câble de couloir marches, etc.) pour remonter à la surface avec le mannequin (selon l’épreuve) — à l’exception du fond de la piscine, lorsque cela est spécifié.",
+      "name_en": ""
+    },
+    {
+      "code": "18",
+      "name_fr": "Ne pas avoir le mannequin dans une position de portage correcte avant que le haut de la tête du mannequin dépasse la ligne des 5 m (pour les portages sans palmes).",
+      "name_en": ""
+    },
+    {
+      "code": "19",
+      "name_fr": "Utiliser une technique de portage du mannequin incorrecte (telle que décrite dans S3-3).",
+      "name_en": ""
+    },
+    {
+      "code": "20",
+      "name_fr": "Remorquer le mannequin avec la tête sous la surface de l’eau.",
+      "name_en": ""
+    },
+    {
+      "code": "21",
+      "name_fr": "Relâcher le mannequin avant de toucher le mur/bord d’arrivée ou le mur/bord de virage.",
+      "name_en": ""
+    },
+    {
+      "code": "22",
+      "name_fr": "Faire surface après le virage et avant de soulever le mannequin. (sauvetage combiné)",
+      "name_en": ""
+    },
+    {
+      "code": "23",
+      "name_fr": "Ne pas avoir le mannequin dans la position de portage correcte avant que le haut de la tête du mannequin dépasse la ligne des 10 m. (portage avec palme)",
+      "name_en": ""
+    },
+    {
+      "code": "24",
+      "name_fr": "S’aider d’un accessoire de piscine (câble de marches, etc.) lorsque l’athlète atache la bouée tube autour du mannequin même si la profondeur minimale de la piscine permet à l’athlète de se tenir debout lorsqu’il atache la bouée tube autour du mannequ",
+      "name_en": ""
+    },
+    {
+      "code": "25",
+      "name_fr": "À 50 m/150 m (distances valides seulement en piscine de 50m), l’athlète ne touche pas le mur/bord de la piscine avant de toucher intentionnellement le mannequin.",
+      "name_en": ""
+    },
+    {
+      "code": "26",
+      "name_fr": "Le coéquipier lâche le mannequin avant que l'athlète touche le mur/bord de virage.",
+      "name_en": ""
+    },
+    {
+      "code": "27",
+      "name_fr": "Le coéquipier entre intentionnellement dans l’eau pendant l’épreuve ou entre dans l’eau et interfère avec la performance d’un autre athlète ou interfère avec le jugement de l’épreuve.",
+      "name_en": ""
+    },
+    {
+      "code": "28",
+      "name_fr": "L’athlète atache la bouée tube au joint torique avant de toucher le mur/bord de virage.",
+      "name_en": ""
+    },
+    {
+      "code": "29",
+      "name_fr": "La bouée tube est mal atachée autour du mannequin (pas autour du corps et sous les deux bras et pas atachée à un joint torique).",
+      "name_en": ""
+    },
+    {
+      "code": "30",
+      "name_fr": "Ne pas atacher la bouée tube autour du mannequin à ’intérieur de la zone de récupération de 10 m (jugée par le dessus de la tête du mannequin).",
+      "name_en": ""
+    },
+    {
+      "code": "31",
+      "name_fr": "Pousser ou porter le mannequin au lieu de le remorquer.",
+      "name_en": ""
+    },
+    {
+      "code": "32",
+      "name_fr": "La corde et/ou la sangle de la bouée tube est raccourcie intentionnellement par un athlète avant le début de l'épreuve dans le but de remorquer le mannequin.",
+      "name_en": ""
+    },
+    {
+      "code": "33",
+      "name_fr": "Le mannequin se détache de la bouée tube (à l'exeption d'un défaut technique de la bouée) après avoir dépassé la zone de transition de 10m et avant que l'athlète ne touche le bord/mur d'arrivée.",
+      "name_en": ""
+    },
+    {
+      "code": "34",
+      "name_fr": "Toucher le mur/bord d’arrivée, sans la bouée tube et le mannequin en place.",
+      "name_en": ""
+    },
+    {
+      "code": "35",
+      "name_fr": "Aide d’un troisième athlète pendant l’échange entre l’athlète qui arrive et l’athlète qui repart.",
+      "name_en": ""
+    },
+    {
+      "code": "36",
+      "name_fr": "Un athlète répète deux étapes ou plus d’une épreuve.",
+      "name_en": ""
+    },
+    {
+      "code": "37",
+      "name_fr": "Quiter le bloc de départ/relâcher tout contact avec le mur/bord de virage/bloc de départ avant que l’athlète précédent n’ait touché le mur/bord de virage.",
+      "name_en": ""
+    },
+    {
+      "code": "38",
+      "name_fr": "Le mannequin change de main avant ou au-delà de la zone de transition désignée.",
+      "name_en": ""
+    },
+    {
+      "code": "39",
+      "name_fr": "Lâcher le mannequin avant que l’athlète suivant ne le saisisse (c’est-à-dire qu’une main de chaque athlète doit être en contact avec le mannequin).",
+      "name_en": ""
+    },
+    {
+      "code": "40",
+      "name_fr": "L’athlète attache la bouée tube dans l'anneau (relais sauvetage combiné)",
+      "name_en": ""
+    },
+    {
+      "code": "41",
+      "name_fr": "Le coéquipier tient la bouée tube par la sangle.",
+      "name_en": ""
+    },
+    {
+      "code": "42",
+      "name_fr": "Le coéquipier aide avec des mouvements de bras, ou ne tient pas la bouée tube et/ou le mousqueton avec les deux mains.",
+      "name_en": ""
+    },
+    {
+      "code": "43",
+      "name_fr": "Le coéquipier ne tient pas ou perd la bouée tube après avoir dépassé la ligne des 10 m.",
+      "name_en": ""
+    },
+    {
+      "code": "44",
+      "name_fr": "Un athlète rentre dans l’eau après avoir terminé sa partie du relais. (relais obstacle et sauvetage combiné)",
+      "name_en": ""
+    },
+    {
+      "code": "45",
+      "name_fr": "Le coéquipier ne saisit pas la barre transversale avec sa main lorsqu’il utilise une partie de son corps pour récupérer ou saisir la corde pour le remorquage jusqu’au mur/bord d’arrivée.",
+      "name_en": ""
+    },
+    {
+      "code": "46",
+      "name_fr": "Le lanceur qui, après le signal de départ et avant que son coéquipier ne touche le mur/bord d'arrivée, quitte la zone de lancer qui lui est attribuée.",
+      "name_en": ""
+    },
+    {
+      "code": "47",
+      "name_fr": "Le lanceur ne tire pas à l'aide de ses bras, mais marche ou court avec la corde dans ses mains maintenue autour d’une partie quelconque de son corps. Il ne peut pas tirer au-delà de la marque de 2m derrière la ligne pour ramener le receveur vers le m",
+      "name_en": ""
+    },
+    {
+      "code": "48",
+      "name_fr": "Le coéquipier saisit la corde en dehors de son couloir.",
+      "name_en": ""
+    },
+    {
+      "code": "49",
+      "name_fr": "Le coéquipier n’est pas sur son ventre lorsqu’il est tiré vers le mur/bord d’arrivée.",
+      "name_en": ""
+    },
+    {
+      "code": "50",
+      "name_fr": "Le coéquipier ne tient pas la corde avec ses deux mains lorsqu’il est tiré vers le mur/bord d’arrivée (le coéquipier peut lâcher la corde d’une main dans le seul but de toucher le mur/bord).",
+      "name_en": ""
+    },
+    {
+      "code": "51",
+      "name_fr": "Le coéquipier « grimpe » la corde d’une main à l’autre.",
+      "name_en": ""
+    },
+    {
+      "code": "52",
+      "name_fr": "Le lanceur effectue des lancers d’entrainement.",
+      "name_en": ""
+    }
+  ],
+  "beach": [
+    {
+      "code": "DQ1",
+      "name_fr": "Ne complète pas l'épreuve conformément aux règles générales ou à la description de l'épreuve",
+      "name_en": "Not completing the event in accordance with the general rules or event description"
+    },
+    {
+      "code": "DQ2",
+      "name_fr": "Compétitionner de manière déloyale (Code de fair-play)",
+      "name_en": "Competing unfairly (as described in the Code of Fair Play)"
+    },
+    {
+      "code": "STR",
+      "name_fr": "Infraction de départ : mouvement avant le signal de départ",
+      "name_en": "Starting infringement: moving before the starting signal"
+    },
+    {
+      "code": "STI",
+      "name_fr": "Non-respect des instructions du starter",
+      "name_en": "Failing to comply with the starter's instructions"
+    },
+    {
+      "code": "OBS",
+      "name_fr": "Gêner délibérément un autre compétiteur",
+      "name_en": "Deliberately impeding another competitor"
+    },
+    {
+      "code": "CRS",
+      "name_fr": "Courir en dehors du parcours ou couloir désigné / ne pas contourner les bouées correctement",
+      "name_en": "Running outside the designated course/lane or not rounding buoys correctly"
+    },
+    {
+      "code": "BAT",
+      "name_fr": "Bâton non récupéré correctement à l'arrivée",
+      "name_en": "Baton not correctly retrieved at the finish"
+    },
+    {
+      "code": "CHG",
+      "name_fr": "Échange hors de la zone désignée ou départ avant l'arrivée du coéquipier",
+      "name_en": "Exchange not made within the designated zone or leaving before incoming competitor"
+    },
+    {
+      "code": "LNV",
+      "name_fr": "Courir en dehors du couloir attribué",
+      "name_en": "Running outside the allocated lane or course markers"
+    },
+    {
+      "code": "ZNV",
+      "name_fr": "Entrer ou sortir de l'eau en dehors des zones désignées",
+      "name_en": "Entering or exiting the water outside the designated zones"
+    },
+    {
+      "code": "EQP",
+      "name_fr": "Ne pas porter ou utiliser l'équipement correctement (bouée tube, planche, etc.)",
+      "name_en": "Not wearing or using equipment correctly (rescue tube, board, etc.)"
+    },
+    {
+      "code": "CRF",
+      "name_fr": "Violation des règles de contrôle de l'embarcation (planche, ski)",
+      "name_en": "Craft control violation (board, ski)"
+    },
+    {
+      "code": "VIC",
+      "name_fr": "Relâcher la victime avant d'avoir complété le sauvetage",
+      "name_en": "Releasing the victim before completing the rescue"
+    },
+    {
+      "code": "VPK",
+      "name_fr": "Victime non récupérée correctement ou échappée",
+      "name_en": "Victim not picked up correctly or dropped"
+    },
+    {
+      "code": "TEM",
+      "name_fr": "Équipe avec un nombre incorrect de membres",
+      "name_en": "Team competing with incorrect number of members"
+    },
+    {
+      "code": "TRN",
+      "name_fr": "Transition non complétée correctement",
+      "name_en": "Not completing a transition correctly"
+    },
+    {
+      "code": "FIN",
+      "name_fr": "Procédure d'arrivée non complétée correctement",
+      "name_en": "Not completing the finish procedure correctly"
+    },
+    {
+      "code": "DNF",
+      "name_fr": "Ne pas compléter le parcours dans le temps imparti",
+      "name_en": "Failing to complete the course within the time limit"
+    }
+  ]
+}

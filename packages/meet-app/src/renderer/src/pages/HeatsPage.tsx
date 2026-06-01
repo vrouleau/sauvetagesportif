@@ -19,6 +19,36 @@ const quantumApi = () => (window as any).api?.quantum
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const dbApi = () => (window as any).api?.db
 
+// ── DSQ Searchable Dropdown ───────────────────────────────────────────────────
+
+function DsqSearchDropdown({ items, value, onChange, disabled }: {
+  items: Array<{ dsqitemid: number; code: string; name: string; name_en: string }>
+  value: number | null
+  onChange: (id: number | null) => void
+  disabled: boolean
+}) {
+  if (disabled || !items || items.length === 0) {
+    return <select className="flex-1 border border-gray-300 px-1 py-0.5 bg-gray-100 text-xs rounded h-6" disabled />
+  }
+
+  return (
+    <select
+      className="flex-1 border border-gray-300 px-1 py-0.5 bg-white text-xs rounded h-6"
+      value={value ?? ''}
+      onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+    >
+      <option value="">— Sélectionner un code DQ —</option>
+      {items.map(d => (
+        <option key={d.dsqitemid} value={d.dsqitemid}>
+          {d.code} — {d.name.length > 80 ? d.name.slice(0, 80) + '…' : d.name}
+        </option>
+      ))}
+    </select>
+  )
+}
+
+// ── HeatsPage ─────────────────────────────────────────────────────────────────
+
 export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refreshKey?: number; meetType?: string }) {
   const { t, lang } = useLang()
   const isBeach = meetType === 'BEACH'
@@ -37,6 +67,9 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
   const [selectedLane, setSelectedLane] = useState<number | null>(null)
   const [dsqCode, setDsqCode] = useState('')
   const [dsqReason, setDsqReason] = useState('')
+  const [dsqItems, setDsqItems] = useState<Array<{ dsqitemid: number; code: string; name: string; name_en: string }>>([])
+  const [dsqOverrideId, setDsqOverrideId] = useState<number | null>(null)
+  const [dsqOverrideLane, setDsqOverrideLane] = useState<number | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   // Quantum state
@@ -77,6 +110,8 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
       setExpandedSessions(new Set())
       setLoading(false)
     }).catch(() => setLoading(false))
+    // Load DSQ catalog
+    api.getDsqItems?.().then((items: any[]) => setDsqItems(items || [])).catch(() => {})
   }, [refreshKey])
 
   // ── Refs sync ──────────────────────────────────────────────────────────────
@@ -434,7 +469,8 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
         if (e.lane !== lane) return e
         const next: LaneEntry = { ...e, status, finalTime: status ? undefined : e.finalTime }
         if (next.swimresultId) {
-          dbApi()?.saveResult(next.swimresultId, next.finalTime, null, next.status ?? null, next.splitTimes).catch(console.error)
+          const dsqId = status === 'DSQ' ? selectedDsqItemId : null
+          dbApi()?.saveResult(next.swimresultId, next.finalTime, null, next.status ?? null, next.splitTimes, dsqId).catch(console.error)
         }
         return next
       })
@@ -775,6 +811,11 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
 
   const selectedEntry = entries.find((e) => e.lane === selectedLane)
   const maxLane = laneMax
+
+  // Derive DSQ item ID from entry data (or user override for current lane)
+  const selectedDsqItemId = (dsqOverrideLane === selectedLane && dsqOverrideId !== null)
+    ? dsqOverrideId
+    : (selectedEntry?.dsqItemId ?? null)
 
   // ── Validation helpers ─────────────────────────────────────────────────────
 
@@ -1332,37 +1373,30 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
 
               {/* DSQ panel */}
               <div className="flex-1 p-2">
-                <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                <div className="grid grid-cols-1 gap-y-1">
                   <div className="flex items-center gap-2">
                     <label className="text-gray-600 w-24 shrink-0">{t.heats.dsq.reason}:</label>
-                    <input
-                      className="flex-1 border border-gray-300 px-1 py-0.5 bg-white disabled:bg-gray-100"
-                      value={dsqCode}
-                      onChange={(e) => setDsqCode(e.target.value)}
+                    <DsqSearchDropdown
+                      items={dsqItems}
+                      value={selectedDsqItemId}
+                      onChange={(id) => {
+                        setDsqOverrideId(id)
+                        setDsqOverrideLane(selectedLane)
+                        const item = dsqItems.find(d => d.dsqitemid === id)
+                        setDsqCode(item?.code || '')
+                        setDsqReason(item?.name || '')
+                      }}
                       disabled={selectedEntry?.status !== 'DSQ'}
                     />
                   </div>
-                  <div className="flex items-center gap-2">
-                    <label className="text-gray-600 w-24 shrink-0">{t.heats.dsq.time}:</label>
-                    <input className="w-20 border border-gray-300 px-1 py-0.5 bg-white" disabled />
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <label className="text-gray-600 w-24 shrink-0">{t.heats.dsq.codeInfo}:</label>
-                    <input className="w-16 border border-gray-300 px-1 py-0.5 bg-white" disabled />
-                    <label className="flex items-center gap-1 text-gray-500">
-                      <input type="checkbox" className="w-3 h-3" />
-                      {t.heats.dsq.noAdvance}
-                    </label>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <label className="text-gray-600 w-24 shrink-0">{t.heats.dsq.label}:</label>
-                    <input
-                      className="flex-1 border border-gray-300 px-1 py-0.5 bg-white disabled:bg-gray-100"
-                      value={dsqReason}
-                      onChange={(e) => setDsqReason(e.target.value)}
-                      disabled={selectedEntry?.status !== 'DSQ'}
-                    />
-                  </div>
+                  {(() => {
+                    const reason = dsqItems.find(d => d.dsqitemid === selectedDsqItemId)?.name || dsqReason
+                    return reason ? (
+                      <div className="ml-26 pl-24 text-xs text-gray-600 leading-tight max-h-12 overflow-y-auto">
+                        {reason}
+                      </div>
+                    ) : null
+                  })()}
                 </div>
               </div>
 

@@ -55,6 +55,45 @@ import type { PgConnectionConfig } from './pgBackend'
 
 let quantum: QuantumBridge | null = null
 
+// ── DSQ code seeding ──────────────────────────────────────────────────────────
+
+function seedDsqCodes(db: ReturnType<typeof getLocalDb>, meetType: string): void {
+  try {
+    const configPath = app.isPackaged
+      ? join(process.resourcesPath, 'dsq-codes.json')
+      : join(__dirname, '../../../../config/dsq-codes.json')
+
+    const { readFileSync, existsSync } = require('fs')
+    if (!existsSync(configPath)) {
+      console.warn('[DSQ] Config file not found:', configPath)
+      return
+    }
+
+    const config = JSON.parse(readFileSync(configPath, 'utf8'))
+    const codes: Array<{ code: string; name_fr: string; name_en?: string }> =
+      meetType === 'beach' ? (config.beach || []) : (config.pool || [])
+
+    if (codes.length === 0) return
+
+    // ID ranges: pool 4001-4099, beach 4101-4199
+    const baseId = meetType === 'beach' ? 4101 : 4001
+
+    const stmt = db.prepare(
+      `INSERT OR REPLACE INTO dsqitem (dsqitemid, code, lenexcode, name, name_en, sortcode)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    )
+
+    for (let i = 0; i < codes.length; i++) {
+      const c = codes[i]
+      stmt.run(baseId + i, c.code, c.code, c.name_fr, c.name_en || '', i + 1)
+    }
+
+    console.log(`[DSQ] Seeded ${codes.length} ${meetType} DSQ codes`)
+  } catch (e) {
+    console.error('[DSQ] Error seeding codes:', e)
+  }
+}
+
 // ── Quantum IPC ───────────────────────────────────────────────────────────────
 
 ipcMain.handle('quantum:configure', (_event, folder: string) => {
@@ -110,7 +149,8 @@ ipcMain.handle('db:save-result', (
   reactionTimeSecs: number | null,
   status: 'DNS' | 'DNF' | 'DSQ' | null,
   splits: Record<number, string> | undefined,
-) => saveResult(swimresultId, finalTime, reactionTimeSecs, status, splits))
+  dsqItemId?: number | null,
+) => saveResult(swimresultId, finalTime, reactionTimeSecs, status, splits, dsqItemId))
 
 ipcMain.handle('db:create-session', (_event, name: string, number: number) =>
   createSession(name, number).then(id => ({ id }))
@@ -170,6 +210,20 @@ ipcMain.handle('db:get-meet-type', () => {
   const db = getLocalDb()
   const row = db.prepare(`SELECT data FROM bsglobal WHERE name = 'MEET_TYPE'`).get() as { data: string } | undefined
   return (row?.data || 'POOL').toUpperCase()
+})
+
+ipcMain.handle('db:get-dsq-items', () => {
+  const db = getLocalDb()
+  try {
+    // Try with name_en first (our schema), fall back without it (Splash schema)
+    try {
+      return db.prepare(`SELECT dsqitemid, code, name, name_en, sortcode FROM dsqitem WHERE code IS NOT NULL AND code != '' ORDER BY sortcode`).all()
+    } catch {
+      return db.prepare(`SELECT dsqitemid, code, name, '' as name_en, sortcode FROM dsqitem WHERE code IS NOT NULL AND code != '' ORDER BY sortcode`).all()
+    }
+  } catch {
+    return []
+  }
 })
 
 ipcMain.handle('db:register', (_event, data: { athlete_id: number; event_id: number; entry_time_ms: number | null; age_code: string }) => {
@@ -550,6 +604,7 @@ ipcMain.handle('file:new-meet', async (_event, meetType?: string) => {
     db.exec(`DELETE FROM swimevent`)
     db.exec(`DELETE FROM swimsession`)
     db.exec(`DELETE FROM swimstyle`)
+    db.exec(`DELETE FROM dsqitem`)
     db.exec(`DELETE FROM bsglobal`)
 
     // Resolve template path based on meet type
@@ -566,6 +621,9 @@ ipcMain.handle('file:new-meet', async (_event, meetType?: string) => {
       `INSERT INTO bsglobal (name, data) VALUES ('MEET_TYPE', ?)
        ON CONFLICT(name) DO UPDATE SET data = excluded.data`
     ).run(type.toUpperCase())
+
+    // Seed DSQ codes from config/dsq-codes.json
+    seedDsqCodes(db, type)
 
     return { ok: true, summary, meetType: type.toUpperCase() }
   } catch (e) {

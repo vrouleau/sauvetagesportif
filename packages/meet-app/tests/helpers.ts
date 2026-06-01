@@ -121,6 +121,15 @@ export function createTestDb(): { db: Database.Database; cleanup: () => void; pa
       swimtime INTEGER,
       PRIMARY KEY (swimresultid, distance)
     )`,
+    `CREATE TABLE IF NOT EXISTS dsqitem (
+      dsqitemid INTEGER PRIMARY KEY,
+      code TEXT,
+      lenexcode TEXT,
+      name TEXT,
+      name_en TEXT,
+      options TEXT,
+      sortcode INTEGER
+    )`,
   ]
   for (const ddl of SCHEMA) db.exec(ddl)
 
