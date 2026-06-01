@@ -85,4 +85,10 @@ export const meetApiElectron: MeetAPI = {
     if (result.ok) return { ok: true }
     return { ok: false, error: result.error }
   },
+  async createMeet(meetType) {
+    const fileApi = (window as unknown as { api?: { file?: { newMeet: (type: string) => Promise<{ ok: boolean; meetType?: string; error?: string }> } } }).api?.file
+    if (!fileApi) return { ok: false, error: 'File API not available' }
+    const result = await fileApi.newMeet(meetType)
+    return { ok: result.ok, meetType: result.meetType, error: result.error }
+  },
 }

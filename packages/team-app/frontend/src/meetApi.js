@@ -106,4 +106,13 @@ export const meetApiHttp = {
     URL.revokeObjectURL(url)
     return { ok: true }
   },
+
+  async createMeet(meetType) {
+    try {
+      const r = await api.post('/admin/new-meet', { meet_type: meetType })
+      return { ok: true, meetType: r.data.meet_type }
+    } catch (err) {
+      return { ok: false, error: err.response?.data?.detail || err.message || 'Error' }
+    }
+  },
 }

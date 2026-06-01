@@ -124,26 +124,6 @@ export default function Organizer() {
     loadMeetInfo(); loadClubs()
   }
 
-  async function createMeet(meetType) {
-    const label = meetType === 'beach'
-      ? (lang === 'fr' ? 'plage' : 'beach')
-      : (lang === 'fr' ? 'piscine' : 'pool')
-    const confirmMsg = meetInfo?.filename
-      ? (lang === 'fr'
-        ? `Remplacer le meet actuel par un nouveau meet ${label} ?`
-        : `Replace current meet with a new ${label} meet?`)
-      : null
-    if (confirmMsg && !confirm(confirmMsg)) return
-    setMsg(lang === 'fr' ? 'Création...' : 'Creating...')
-    try {
-      const r = await api.post('/admin/new-meet', { meet_type: meetType })
-      setMsg(`${r.data.events_loaded} ${t.events}`)
-      loadMeetInfo(); loadClubs()
-    } catch (e) {
-      setMsg(e.response?.data?.detail || e.message || 'Error')
-    }
-  }
-
   async function sendSelectedInvites() {
     const ids = Object.entries(checked).filter(([,v]) => v).map(([k]) => k)
     if (!ids.length) return
@@ -266,15 +246,6 @@ export default function Organizer() {
         <button onClick={handleMainAction} disabled={!checkedCount}
           className={`text-white px-3 py-1 rounded text-xs disabled:opacity-50 ${buttonColor}`}>
           {buttonLabel} {checkedCount > 0 && `(${checkedCount})`}
-        </button>
-        <div className="w-px h-4 bg-gray-300" />
-        <button onClick={() => createMeet('pool')}
-          className="px-3 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700">
-          {lang === 'fr' ? 'Créer meet piscine' : 'Create Pool Meet'}
-        </button>
-        <button onClick={() => createMeet('beach')}
-          className="px-3 py-1 bg-orange-600 text-white text-xs rounded hover:bg-orange-700">
-          {lang === 'fr' ? 'Créer meet plage' : 'Create Beach Meet'}
         </button>
         <div className="w-px h-4 bg-gray-300" />
         <button onClick={exportLxf} className="px-3 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700">{t.download_lxf}</button>

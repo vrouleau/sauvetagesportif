@@ -1176,15 +1176,6 @@ function createWindow(): void {
         },
         { type: 'separator' },
         {
-          label: 'Nouveau meet piscine…',
-          click: () => mainWindow.webContents.send('menu:new-meet', 'pool'),
-        },
-        {
-          label: 'Nouveau meet plage…',
-          click: () => mainWindow.webContents.send('menu:new-meet', 'beach'),
-        },
-        { type: 'separator' },
-        {
           label: 'Connecter à PostgreSQL…',
           click: () => mainWindow.webContents.send('menu:connect-pg'),
         },

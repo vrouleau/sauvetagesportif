@@ -75,7 +75,6 @@ function menuApi() {
         onExportLenexResults: (cb: () => void) => () => void
         onSaveSMB: (cb: () => void) => () => void
         onRestoreSMB: (cb: () => void) => () => void
-        onNewMeet: (cb: (meetType: string) => void) => () => void
       }
       pg?: {
         onConnectPg: (cb: () => void) => () => void
@@ -227,84 +226,6 @@ function SmbStatusDialog({
   )
 }
 
-function FlushConfirmDialog({
-  onConfirm,
-  onClose,
-  running,
-  error,
-  meetType,
-}: {
-  onConfirm: () => void
-  onClose: () => void
-  running: boolean
-  error?: string
-  meetType?: string
-}) {
-  const isBeach = meetType === 'beach'
-  const typeLabel = isBeach ? 'plage' : 'piscine'
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="bg-white border border-gray-400 shadow-xl w-[420px] text-xs">
-        <div className={`flex items-center justify-between text-white px-3 py-2 ${isBeach ? 'bg-orange-700' : 'bg-red-700'}`}>
-          <span className="font-semibold">Nouveau meet {typeLabel}</span>
-          {!running && (
-            <button onClick={onClose} className="hover:text-red-200 text-lg leading-none">×</button>
-          )}
-        </div>
-
-        <div className="p-5">
-          {running ? (
-            <div className="text-gray-500 italic">Réinitialisation et importation en cours…</div>
-          ) : error ? (
-            <div className="text-red-600">Erreur: {error}</div>
-          ) : (
-            <>
-              <p className="mb-3 font-semibold text-red-700">
-                Cette action supprimera TOUTES les données du meet et importera le gabarit {typeLabel}:
-              </p>
-              <ul className="list-disc ml-5 space-y-0.5 text-gray-700 mb-4">
-                <li>Sessions, épreuves, catégories d'âge, vagues</li>
-                <li>Clubs et athlètes</li>
-                <li>Tous les résultats et temps chronométrés</li>
-                <li>Les styles de nage seront réimportés du gabarit</li>
-              </ul>
-              <p className="text-gray-500">Cette action est irréversible.</p>
-            </>
-          )}
-        </div>
-
-        {!running && (
-          <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-gray-200 bg-gray-50">
-            {error ? (
-              <button
-                onClick={onClose}
-                className="px-4 py-1 bg-blue-600 text-white hover:bg-blue-700 border border-blue-700"
-              >
-                Fermer
-              </button>
-            ) : (
-              <>
-                <button
-                  onClick={onClose}
-                  className="px-4 py-1 border border-gray-400 bg-white hover:bg-gray-100 text-gray-700"
-                >
-                  Annuler
-                </button>
-                <button
-                  onClick={onConfirm}
-                  className={`px-4 py-1 text-white border ${isBeach ? 'bg-orange-600 hover:bg-orange-700 border-orange-700' : 'bg-red-600 hover:bg-red-700 border-red-700'}`}
-                >
-                  Créer meet {typeLabel}
-                </button>
-              </>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
 // ─── App ──────────────────────────────────────────────────────────────────────
 
 function AppInner() {
@@ -316,7 +237,6 @@ function AppInner() {
   const [importState, setImportState] = useState<ImportState | null>(null)
   const [exportState, setExportState] = useState<{ status: 'done' | 'error'; summary?: ExportSummary; error?: string } | null>(null)
   const [smbState, setSmbState] = useState<SmbState | null>(null)
-  const [flushState, setFlushState] = useState<{ open: boolean; running: boolean; meetType?: string; error?: string } | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
   const [meetType, setMeetType] = useState<string>('POOL')
   const [meetName, setMeetName] = useState<string>('')
@@ -373,7 +293,6 @@ function AppInner() {
       m.onExportLenexResults(() => handleExportLenexResults()),
       m.onSaveSMB(() => handleSaveSMB()),
       m.onRestoreSMB(() => handleRestoreSMB()),
-      m.onNewMeet((meetType) => setFlushState({ open: true, running: false, meetType: meetType || 'pool' })),
       ...(pg ? [
         pg.onConnectPg(() => setShowPgConnect(true)),
         pg.onDisconnectPg(async () => {
@@ -460,26 +379,6 @@ function AppInner() {
       handleRefresh()
     } else {
       setSmbState({ status: 'error', action: 'restore', error: result.error })
-    }
-  }
-
-  async function handleFlushConfirm() {
-    const meetType = flushState?.meetType || 'pool'
-    setFlushState({ open: true, running: true, meetType })
-    const f = fileApi()
-    if (!f) {
-      setFlushState({ open: true, running: false, error: 'File API not available', meetType })
-      return
-    }
-    const result = await f.newMeet(meetType)
-    if (result.ok) {
-      setFlushState(null)
-      if (result.summary) {
-        setImportState({ status: 'done', summary: result.summary })
-      }
-      handleRefresh()
-    } else {
-      setFlushState({ open: true, running: false, error: result.error, meetType })
     }
   }
 
@@ -604,15 +503,6 @@ function AppInner() {
       )}
       {showGuide && <GuidePage guideType={showGuide} onClose={() => setShowGuide(null)} />}
       {smbState && <SmbStatusDialog state={smbState} onClose={() => setSmbState(null)} />}
-      {flushState?.open && (
-        <FlushConfirmDialog
-          running={flushState.running}
-          error={flushState.error}
-          meetType={flushState.meetType}
-          onConfirm={handleFlushConfirm}
-          onClose={() => setFlushState(null)}
-        />
-      )}
       {importState && (
         <ImportStatusDialog
           state={importState}

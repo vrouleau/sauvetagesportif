@@ -668,6 +668,34 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
     }
   }
 
+  async function handleNewMeet(meetType: 'pool' | 'beach') {
+    if (!api.createMeet) return
+    if (!window.confirm(t.events.toolbar.confirmNewMeet)) return
+    setLoading(true)
+    try {
+      const result = await api.createMeet(meetType)
+      if (!result.ok) {
+        if (result.error) window.alert(result.error)
+        setLoading(false)
+        return
+      }
+      const [sessions, cfg] = await Promise.all([api.getSessions(), api.getMeetConfig()])
+      setLocalSessions(sessions)
+      setSelected({ type: 'competition' })
+      setExpandedSessions(new Set())
+      setExpandedEvents(new Set())
+      sessionStorage.removeItem('eventsPage_expandedSessions')
+      sessionStorage.removeItem('eventsPage_expandedEvents')
+      if (cfg?.NAME) setMeetName(cfg.NAME)
+      const course = cfg?.COURSE
+      setPoolSize((course === '3' || course === '2') ? 25 : 50)
+    } catch {
+      window.alert('Erreur lors de la création du meet')
+    } finally {
+      setLoading(false)
+    }
+  }
+
   async function handleUpdateSession(sessionId: number, data: Record<string, unknown>) {
     try {
       await api.updateSession(sessionId, data)
@@ -794,6 +822,23 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
                 onClick={handleExportMeet}
               />
             )}
+          </>
+        )}
+        {api.createMeet && (
+          <>
+            <div className="w-px h-4 bg-gray-300 mx-1" />
+            <ToolbarBtn
+              label={t.events.toolbar.newPoolMeet}
+              enabled={true}
+              danger
+              onClick={() => handleNewMeet('pool')}
+            />
+            <ToolbarBtn
+              label={t.events.toolbar.newBeachMeet}
+              enabled={true}
+              danger
+              onClick={() => handleNewMeet('beach')}
+            />
           </>
         )}
       </div>

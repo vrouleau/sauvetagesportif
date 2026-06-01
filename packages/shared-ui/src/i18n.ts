@@ -43,6 +43,9 @@ const fr = {
       delete: 'Effacer',
       importMeet: 'Importer (.lxf)',
       exportMeet: 'Exporter (.lxf)',
+      newPoolMeet: 'Nouveau meet piscine',
+      newBeachMeet: 'Nouveau meet plage',
+      confirmNewMeet: 'Cette action supprimera TOUTES les données du meet actuel et importera le gabarit. Continuer ?',
     },
     props: {
       general: 'Général',
@@ -348,6 +351,9 @@ const en = {
       delete: 'Delete',
       importMeet: 'Import (.lxf)',
       exportMeet: 'Export (.lxf)',
+      newPoolMeet: 'New Pool Meet',
+      newBeachMeet: 'New Beach Meet',
+      confirmNewMeet: 'This will erase ALL current meet data and import the template. Continue?',
     },
     props: {
       general: 'General',

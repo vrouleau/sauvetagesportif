@@ -144,6 +144,9 @@ export interface MeetAPI {
   // Meet import/export (optional — not all hosts support these)
   importMeet?(): Promise<{ ok: boolean; events?: number; error?: string }>
   exportMeet?(): Promise<{ ok: boolean; error?: string }>
+
+  // Create a new meet from template, wiping all current data (optional)
+  createMeet?(meetType: 'pool' | 'beach'): Promise<{ ok: boolean; meetType?: string; error?: string }>
 }
 
 // ─── Registration API (used by AthletesListPage & RegistrationPage) ───────────
