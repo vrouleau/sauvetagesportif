@@ -165,7 +165,35 @@ Best times are computed from the Team Manager `results` table via `best_times_v2
 | `GET /api/athletes` | Athlete list | Any authenticated |
 | `GET /api/admin/gemini-keys` | Get masked Gemini API keys | Admin |
 | `POST /api/admin/gemini-keys` | Set free/paid Gemini API keys | Admin |
+| `GET /api/relay-teams?club_id=X` | Relay page data (events, teams, eligible athletes) | Authenticated |
+| `POST /api/relay-teams` | Create relay team | Authenticated |
+| `DELETE /api/relay-teams/{id}` | Delete relay team | Authenticated |
+| `PUT /api/relay-teams/{id}/members/{pos}` | Assign/remove member at position | Authenticated |
+| `PUT /api/relay-teams/{id}/name` | Set custom team name | Authenticated |
 | `POST /api/data-management/merge-styles` | Remap swimstyleid across results + events (preview mode available) | Admin |
+
+## Relay Teams
+
+Full CRUD management for relay team entries (events with `relaycount > 1`).
+
+### Workflow
+1. Coach navigates to "Inscriptions relais" tab
+2. Selects a relay event → sees existing teams (A, B, C…)
+3. Creates a team → assigns members from dropdown (filtered by eligibility)
+4. Team age group auto-computed from majority of members' individual registration age groups
+5. Exported in .lxf via `relays`/`relayspos` tables (Team Manager schema)
+
+### Key rules
+- Team age group: majority rule (3-1 OK, 2-2 invalid) — see `docs/RELAY_TEAM_RULES.md`
+- Mixed events: exactly 2M + 2F
+- Member eligibility: same club, registered for individual events, not on another team for same event
+- Team naming: auto = concatenated last names; custom name via `PUT /api/relay-teams/{id}/name`
+
+### LXF import
+`upload_entries` (seed.py) also imports relay teams from uploaded .lxf files.
+
+### SMB import/export
+`relay`, `relayposition`, `relaysplit` tables handled in SMB backup/restore.
 
 ## Source layout
 

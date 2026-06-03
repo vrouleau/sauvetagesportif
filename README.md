@@ -114,6 +114,8 @@ Pushing the tag triggers the [Release CI](.github/workflows/release.yml) which b
 
 Contains React components shared between both apps:
 - `EventsPage` — sessions/events tree with drag-and-drop reordering, meet properties panel, event/age group editors
+- `IndividualEntryPage` — individual event entry (relaycount=1)
+- `RelayEntryPage` — relay team management (flat event list, team CRUD, member assignment dropdowns)
 - `LangContext` — FR/EN language toggle
 - `ApiContext` — dependency injection for the data layer
 - `MeetAPI` interface — abstract API that each app implements differently
@@ -159,7 +161,7 @@ shared-ui/EventsPage.tsx
 ### Meet-app (SQLite)
 Uses the **Splash Meet Manager schema** — identical table names, column names, and data encoding. The Delphi Splash app can connect to this database without issues.
 
-Key tables: `swimstyle`, `club`, `swimsession`, `athlete`, `swimevent`, `agegroup`, `heat`, `swimresult`, `split`, `bsglobal`
+Key tables: `swimstyle`, `club`, `swimsession`, `athlete`, `swimevent`, `agegroup`, `heat`, `swimresult`, `split`, `relay`, `relayposition`, `relaysplit`, `bsglobal`
 
 ### Team-app (PostgreSQL)
 

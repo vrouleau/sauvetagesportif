@@ -61,6 +61,8 @@ config/
 packages/
   shared-ui/src/
     pages/EventsPage.tsx    — THE shared component (sessions tree + meet editor)
+    pages/IndividualEntryPage.tsx — Individual event entry (relaycount=1)
+    pages/RelayEntryPage.tsx — Relay team management (team CRUD, member dropdowns)
     context/ApiContext.tsx   — MeetAPI provider (DI for data layer)
     context/LangContext.tsx  — FR/EN language context
     data/api.ts             — MeetAPI interface + shared types
@@ -102,6 +104,61 @@ Team-app `docker-compose.yml` uses `context: ../..` (monorepo root). Always run 
 ### MEETVALUES format
 Meet-level config in `bsglobal` uses Splash's format: `KEY=TYPE;VALUE\r\n`
 Types: `I`=integer, `S`=string, `B`=boolean(T/F), `D`=date(YYYYMMDDHHMMSSMMM), `F`=float
+
+## Relay Entry
+
+Relay team management across both apps. Relay events have `relaycount > 1` (typically 4).
+
+### Shared UI Pages
+- `shared-ui/src/pages/RelayEntryPage.tsx` — relay team management (flat event list, team CRUD, member dropdowns)
+- `shared-ui/src/pages/IndividualEntryPage.tsx` — individual entry (extracted from InscriptionPage, shows only events with `relaycount=1`)
+
+### Navigation Tabs
+Both apps show two entry tabs:
+- "Individual Entries" / "Inscriptions individuelles" → `IndividualEntryPage`
+- "Relay Entries" / "Inscriptions relais" → `RelayEntryPage`
+
+### Meet-app IPC Channels (relay)
+| Channel | Purpose |
+|---|---|
+| `db:get-clubs` | Get real database club IDs |
+| `db:get-relay-page-data` | Relay events, teams, eligible athletes |
+| `db:create-relay-team` | Create relay team |
+| `db:delete-relay-team` | Delete relay team |
+| `db:set-relay-team-member` | Assign/remove member at position |
+| `db:set-relay-team-name` | Set custom team name |
+
+### Team-app API Endpoints (relay)
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/relay-teams?club_id=X` | Relay page data (events, teams, eligible athletes) |
+| `POST /api/relay-teams` | Create relay team |
+| `DELETE /api/relay-teams/{id}` | Delete relay team |
+| `PUT /api/relay-teams/{id}/members/{pos}` | Assign member at position |
+| `PUT /api/relay-teams/{id}/name` | Set custom team name |
+
+### Team Composition Rules (see `docs/RELAY_TEAM_RULES.md`)
+- **Age group**: determined by majority of members' individual registration age groups (not relay record)
+  - 4-0 or 3-1 → valid (team = majority age group)
+  - 2-2 → **invalid** (no clear majority)
+- **Mixed events (gender=X)**: exactly 2M + 2F required (for 4-person relay)
+- **Eligibility**: same club, registered for individual events, no duplicate across teams for same event
+- **Team naming**: concatenated last names ("Tremblay/Gagnon/Roy/Boucher") or custom name
+
+### Data Flow
+```
+RelayEntryPage.tsx
+    ↓ useApi()
+    ├── meet-app: registrationApiElectron.ts → Electron IPC → SQLite (relay/relayposition tables)
+    └── team-app: meetApi.js → HTTP fetch → FastAPI → PostgreSQL (relays/relayspos tables)
+```
+
+### LXF Import (relay)
+- **meet-app**: `importLenex` now processes `RELAY` and `RELAYPOSITION` elements from .lxf files
+- **team-app**: `upload_entries` also imports relay teams from LXF
+
+### SMB Import/Export (relay)
+Both apps handle `relay`, `relayposition`, and `relaysplit` tables in SMB backup/restore.
 
 ## Beach Meets
 

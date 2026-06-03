@@ -1,6 +1,6 @@
 // Data layer
 export type { MeetAPI, Session, CompetitionEvent, AgeGroup, SwimStyle, Athlete, SessionUpdate } from './data/api'
-export type { RegistrationAPI, Club, AthleteListItem, RegistrationData, RegistrationStyle, RegistrationCategory } from './data/api'
+export type { RegistrationAPI, Club, AthleteListItem, RegistrationData, RegistrationStyle, RegistrationCategory, RelayTeamMember, RelayTeam, RelayEventGroup, RelayAgeCategory, RelayPageData, EligibleAthlete } from './data/api'
 
 // Context
 export { ApiProvider, useApi } from './context/ApiContext'
@@ -12,6 +12,8 @@ export { default as EventsPage } from './pages/EventsPage'
 export { default as AthletesListPage } from './pages/AthletesListPage'
 export { default as RegistrationPage } from './pages/RegistrationPage'
 export { default as InscriptionPage } from './pages/InscriptionPage'
+export { default as IndividualEntryPage } from './pages/IndividualEntryPage'
+export { default as RelayEntryPage } from './pages/RelayEntryPage'
 
 // Components
 export { default as CascadeTree } from './components/CascadeTree'

@@ -149,6 +149,54 @@ export interface MeetAPI {
   createMeet?(meetType: 'pool' | 'beach'): Promise<{ ok: boolean; meetType?: string; error?: string }>
 }
 
+// ─── Relay Team Types ─────────────────────────────────────────────────────────
+
+export interface RelayTeamMember {
+  position: number          // 1-based position (1 through relaycount)
+  athleteId: number | null  // null = unassigned
+  athleteName: string | null // "LastName, FirstName" or null
+}
+
+export interface RelayTeam {
+  id: number                // relaysid (team-app) or relayid (meet-app)
+  teamNumber: string        // "A", "B", "C"... (letter based on teamnumb)
+  teamName: string | null   // Custom name or null (auto-generated from members)
+  ageGroup?: string         // Age group code from the relay record (e.g., "15-18", "19+")
+  members: RelayTeamMember[]
+  clubId?: number           // Owning club ID (included in admin all-clubs view)
+  clubName?: string         // Owning club name (included in admin all-clubs view)
+}
+
+export interface RelayEventGroup {
+  eventId: number
+  eventName: string
+  swimstyleId: number
+  relaycount: number        // number of positions per team (typically 4)
+  gender: 'M' | 'F' | 'X'
+  eventNumber: number       // for sorting
+}
+
+export interface RelayAgeCategory {
+  ageCode: string           // "10-", "11-12", etc.
+  ageMin: number
+  ageMax: number | null
+  events: RelayEventGroup[]
+}
+
+export interface RelayPageData {
+  ageCategories: RelayAgeCategory[]       // sorted by age range ascending
+  teamsByEvent: Record<string, RelayTeam[]> // key: `${eventId}-${ageCode}`
+  eligibleAthletes: Record<string, EligibleAthlete[]> // key: `${eventId}-${ageCode}`
+  closureDate: string | null
+  isClosed: boolean
+}
+
+export interface EligibleAthlete {
+  id: number
+  name: string             // "LastName, FirstName"
+  gender: 'M' | 'F'
+}
+
 // ─── Registration API (used by AthletesListPage & RegistrationPage) ───────────
 
 export interface Club {
@@ -216,4 +264,11 @@ export interface RegistrationAPI {
   unregister(registrationId: number): Promise<void>
   setRelayMember?(eventId: number, position: number, athleteId: number | null): Promise<void>
   resetClubPin?(clubId: string): Promise<{ pin: string }>
+
+  // Relay team management
+  getRelayPageData(clubId?: number): Promise<RelayPageData>
+  createRelayTeam(eventId: number, ageCode: string, clubId?: number): Promise<{ teamId: number; teamNumber: string }>
+  deleteRelayTeam(teamId: number): Promise<void>
+  setRelayTeamMember(teamId: number, position: number, athleteId: number | null): Promise<void>
+  setRelayTeamName(teamId: number, name: string | null): Promise<void>
 }

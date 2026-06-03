@@ -130,6 +130,34 @@ export function createTestDb(): { db: Database.Database; cleanup: () => void; pa
       options TEXT,
       sortcode INTEGER
     )`,
+    `CREATE TABLE IF NOT EXISTS relay (
+      relayid INTEGER PRIMARY KEY,
+      clubid INTEGER REFERENCES club(clubid),
+      swimeventid INTEGER REFERENCES swimevent(swimeventid) ON DELETE CASCADE,
+      agegroupid INTEGER, heatid INTEGER, lane INTEGER, name TEXT,
+      gender INTEGER, athletes INTEGER, relaycode INTEGER, teamnumber INTEGER,
+      agemin INTEGER, agemax INTEGER, agetotal INTEGER,
+      entrytime INTEGER, entrycourse INTEGER, swimtime INTEGER,
+      reactiontime INTEGER, resultstatus INTEGER, dsqitemid INTEGER,
+      dsqdaytime TEXT, dsqnotified TEXT DEFAULT 'F', dsqnumber INTEGER,
+      dsqofficialid INTEGER, padtime INTEGER,
+      backuptime1 INTEGER, backuptime2 INTEGER, backuptime3 INTEGER,
+      usetimetype INTEGER, qualcode TEXT, infocode TEXT, reservecode TEXT,
+      comment TEXT, mpoints INTEGER, finalfix TEXT DEFAULT 'F',
+      lateentry TEXT DEFAULT 'F', bonusentry TEXT DEFAULT 'F',
+      noadvance TEXT DEFAULT 'F', finishjudge INTEGER,
+      officialsplits TEXT, qttiming INTEGER, qttime INTEGER,
+      qtdate TEXT, qtcity TEXT, qtname TEXT, qtnation TEXT, qtcourse INTEGER
+    )`,
+    `CREATE TABLE IF NOT EXISTS relayposition (
+      relayid INTEGER REFERENCES relay(relayid) ON DELETE CASCADE,
+      relaynumber INTEGER,
+      athleteid INTEGER REFERENCES athlete(athleteid),
+      reactiontime INTEGER, resultstatus INTEGER,
+      qttiming INTEGER, qttime INTEGER, qtdate TEXT,
+      qtcity TEXT, qtname TEXT, qtnation TEXT, qtcourse INTEGER,
+      qtislap TEXT DEFAULT 'F'
+    )`,
   ]
   for (const ddl of SCHEMA) db.exec(ddl)
 

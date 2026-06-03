@@ -7,7 +7,7 @@
  * - There's no "club PIN" concept (single-user desktop app)
  * - Registration data is built from sessions/events/agegroups + athlete entries
  */
-import type { RegistrationAPI, Club, AthleteListItem, RegistrationData, RegistrationStyle } from '@shared/data/api'
+import type { RegistrationAPI, Club, AthleteListItem, RegistrationData, RegistrationStyle, RelayPageData } from '@shared/data/api'
 
 // Track the last athlete ID for unregister (which only receives registrationId/eventId)
 let _lastAthleteId = 0
@@ -330,5 +330,26 @@ export const registrationApiElectron: RegistrationAPI = {
 
   async setRelayMember(eventId, position, athleteId) {
     await ipc()?.setRelayMember(eventId, _lastAthleteId, position, athleteId)
+  },
+
+  // Relay team management (new team-centric API)
+  async getRelayPageData(clubId?: number): Promise<RelayPageData> {
+    return (await ipc()?.getRelayPageData(clubId)) as RelayPageData
+  },
+
+  async createRelayTeam(eventId: number, ageCode: string, clubId?: number): Promise<{ teamId: number; teamNumber: string }> {
+    return (await ipc()?.createRelayTeam(eventId, ageCode, clubId)) as { teamId: number; teamNumber: string }
+  },
+
+  async deleteRelayTeam(teamId: number): Promise<void> {
+    await ipc()?.deleteRelayTeam(teamId)
+  },
+
+  async setRelayTeamMember(teamId: number, position: number, athleteId: number | null): Promise<void> {
+    await ipc()?.setRelayTeamMember(teamId, position, athleteId)
+  },
+
+  async setRelayTeamName(teamId: number, name: string | null): Promise<void> {
+    await ipc()?.setRelayTeamName(teamId, name)
   },
 }

@@ -1704,6 +1704,31 @@ class TestLiveNotifications:
     - Error handling (invalid PIN, invalid announcement type)
     """
 
+    @pytest.fixture(autouse=True, scope="class")
+    def _ensure_meet(self, admin_headers):
+        """Re-upload meet template so clubs exist after destructive SMB tests."""
+        from pathlib import Path
+        meet_path = Path(__file__).resolve().parent / "fixtures" / "meet_template.lxf"
+        entries_path = Path(__file__).resolve().parent / "fixtures" / "test_entries.lxf"
+        with open(meet_path, "rb") as f:
+            r = requests.post(f"{BASE_URL}/api/upload/meet",
+                              files={"file": ("meet.lxf", f, "application/octet-stream")},
+                              headers=admin_headers, timeout=60)
+            assert r.status_code == 200
+        if entries_path.exists():
+            with open(entries_path, "rb") as f:
+                r = requests.post(f"{BASE_URL}/api/upload/entries",
+                                  files={"file": ("entries.lxf", f, "application/octet-stream")},
+                                  headers=admin_headers, timeout=60)
+                assert r.status_code == 200
+
+    @pytest.fixture(scope="class")
+    def clubs(self, _ensure_meet, admin_headers) -> list:
+        """Fetch clubs fresh after re-upload."""
+        r = requests.get(f"{BASE_URL}/api/clubs", headers=admin_headers, timeout=10)
+        r.raise_for_status()
+        return r.json()
+
     @pytest.fixture(scope="class")
     def live_secret(self, admin_headers) -> str:
         """Enable live mode and return the push secret."""

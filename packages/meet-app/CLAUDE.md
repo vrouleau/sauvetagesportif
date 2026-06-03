@@ -124,6 +124,12 @@ src/renderer/src/
 | `timing:get-gemini-key` | Get masked API keys |
 | `timing:set-gemini-key` | Set free/paid API keys |
 | `timing:clear-all-scans` | Delete all scan records |
+| `db:get-clubs` | Get real database club IDs |
+| `db:get-relay-page-data` | Relay events, teams, eligible athletes |
+| `db:create-relay-team` | Create relay team |
+| `db:delete-relay-team` | Delete relay team |
+| `db:set-relay-team-member` | Assign/remove member at position |
+| `db:set-relay-team-name` | Set custom team name |
 | `db:get-meet-type` | Get meet type (POOL/BEACH) from BSGLOBAL |
 | `menu:open-guide` | Open in-app workflow guide (pool/beach) |
 | `db:register` | Register athlete for event (create swimresult) |
@@ -131,6 +137,35 @@ src/renderer/src/
 | `db:get-relay-members` | Get relay position members by relay ID |
 | `db:get-relay-members-by-event` | Get relay members for event+club |
 | `db:set-relay-member` | Set/clear a relay position member |
+
+## Relay Entry
+
+Relay team management for events with `relaycount > 1`.
+
+### UI
+- `RelayEntryPageWrapper` in renderer wraps the shared `RelayEntryPage` component
+- Two entry tabs: "Inscriptions individuelles" (individual) / "Inscriptions relais" (relay)
+
+### Data flow
+```
+RelayEntryPage (shared-ui)
+  → registrationApiElectron.ts
+    → IPC: db:get-relay-page-data, db:create-relay-team, db:delete-relay-team,
+           db:set-relay-team-member, db:set-relay-team-name
+      → SQLite: relay, relayposition tables
+```
+
+### Schema
+- `relay` table — team records (event, club, letter)
+- `relayposition` table — member assignments (position 1-4)
+- `relaysplit` table — relay split times
+- All three included in SMB save/restore (`SMB_TABLES`)
+
+### LXF import
+`importLenex` processes `RELAY` and `RELAYPOSITION` elements, creating relay teams from imported .lxf files.
+
+### Team composition
+Age group determined by majority of members' individual registration age groups. See `docs/RELAY_TEAM_RULES.md` for full rules (3-1 valid, 2-2 invalid, 2M+2F for mixed).
 
 ## Heat Generation
 

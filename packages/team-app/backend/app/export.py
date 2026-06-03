@@ -12,7 +12,7 @@ from .models import (
     SwimEvent, SwimStyle, SwimResult, AgeGroup, BsGlobal,
     SwimSession, gender_to_str, fee_dollars_to_cents,
 )
-from .models_team import TeamClub, Member
+from .models_team import TeamClub, Member, Relay, RelayPos
 from .best_times import get_best_time_date
 
 
@@ -244,6 +244,145 @@ def generate_lxf(db: Session) -> bytes:
                         "date": str(bt_date) if bt_date else str(date.today()),
                     }
                     ET.SubElement(entry_xml, "MEETINFO", meetinfo_attrs)
+
+    # ── Relay teams (RELAY/RELAYPOSITION elements per club) ────────────────
+    # Query all relay teams and their positions, grouped by club
+    relay_rows = (
+        db.query(Relay)
+        .filter(Relay.clubsid.isnot(None))
+        .order_by(Relay.clubsid, Relay.stylesid, Relay.teamnumb)
+        .all()
+    )
+    relay_pos_rows = (
+        db.query(RelayPos)
+        .join(Relay, RelayPos.relaysid == Relay.relaysid)
+        .filter(RelayPos.membersid.isnot(None))
+        .order_by(RelayPos.relaysid, RelayPos.numb)
+        .all()
+    )
+    # Build lookup: relaysid → list of positions
+    positions_by_relay: dict[int, list[RelayPos]] = {}
+    for pos in relay_pos_rows:
+        positions_by_relay.setdefault(pos.relaysid, []).append(pos)
+
+    # Group relays by club
+    relays_by_club: dict[int, list[Relay]] = {}
+    for relay in relay_rows:
+        relays_by_club.setdefault(relay.clubsid, []).append(relay)
+
+    # Build member ID lookup for athleteid references
+    member_ids_in_export = set()
+    for club_data in clubs_map.values():
+        for mid in club_data["athletes"]:
+            member_ids_in_export.add(mid)
+
+    for club_data in clubs_map.values():
+        club = club_data["club"]
+        club_relays = relays_by_club.get(club.clubsid)
+        if not club_relays:
+            continue
+        # Find the CLUB xml element (already created above)
+        club_xml = None
+        for c_xml in clubs_xml:
+            if c_xml.get("clubid") == str(club.clubsid):
+                club_xml = c_xml
+                break
+        if club_xml is None:
+            continue
+        relays_xml = ET.SubElement(club_xml, "RELAYS")
+        for relay in club_relays:
+            relay_attrs: dict[str, str] = {
+                "number": str(relay.teamnumb or 1),
+            }
+            if relay.gender:
+                relay_attrs["gender"] = gender_to_str(relay.gender)
+            if relay.minage is not None:
+                relay_attrs["agemin"] = str(relay.minage)
+            if relay.maxage is not None:
+                relay_attrs["agemax"] = str(relay.maxage)
+            relay_xml = ET.SubElement(relays_xml, "RELAY", relay_attrs)
+            # RELAYPOSITIONS — only filled positions
+            positions = positions_by_relay.get(relay.relaysid, [])
+            if positions:
+                positions_xml = ET.SubElement(relay_xml, "RELAYPOSITIONS")
+                for pos in positions:
+                    pos_attrs: dict[str, str] = {
+                        "number": str(pos.numb),
+                        "athleteid": str(pos.membersid),
+                    }
+                    if pos.entrytime:
+                        pos_attrs["entrytime"] = _ms_to_lenex(pos.entrytime)
+                    ET.SubElement(positions_xml, "RELAYPOSITION", pos_attrs)
+            # ENTRIES — include relay entry time if available
+            if relay.entrytime:
+                relay_entries_xml = ET.SubElement(relay_xml, "ENTRIES")
+                relay_entry_attrs: dict[str, str] = {
+                    "entrytime": _ms_to_lenex(relay.entrytime),
+                    "entrycourse": meet_struct.course or "LCM",
+                }
+                # Find matching event by stylesid + gender + age range
+                for ses in meet_struct.sessions:
+                    for m_ev in ses.events:
+                        if m_ev.swimstyleid == relay.stylesid:
+                            relay_entry_attrs["eventid"] = str(m_ev.eventid)
+                            break
+                    if "eventid" in relay_entry_attrs:
+                        break
+                ET.SubElement(relay_entries_xml, "ENTRY", relay_entry_attrs)
+
+    # Also handle clubs that have relay data but no individual registrations
+    for club_id, club_relays in relays_by_club.items():
+        if club_id in clubs_map:
+            continue  # Already handled above
+        # Query the club
+        club = db.query(TeamClub).get(club_id)
+        if not club:
+            continue
+        club_xml = ET.SubElement(clubs_xml, "CLUB", {
+            "name": club.name or "",
+            "code": club.code or "",
+            "nation": club.nation or "CAN",
+            "clubid": str(club.clubsid),
+        })
+        # Empty ATHLETES element (required by Lenex schema)
+        ET.SubElement(club_xml, "ATHLETES")
+        relays_xml = ET.SubElement(club_xml, "RELAYS")
+        for relay in club_relays:
+            relay_attrs: dict[str, str] = {
+                "number": str(relay.teamnumb or 1),
+            }
+            if relay.gender:
+                relay_attrs["gender"] = gender_to_str(relay.gender)
+            if relay.minage is not None:
+                relay_attrs["agemin"] = str(relay.minage)
+            if relay.maxage is not None:
+                relay_attrs["agemax"] = str(relay.maxage)
+            relay_xml = ET.SubElement(relays_xml, "RELAY", relay_attrs)
+            positions = positions_by_relay.get(relay.relaysid, [])
+            if positions:
+                positions_xml = ET.SubElement(relay_xml, "RELAYPOSITIONS")
+                for pos in positions:
+                    pos_attrs: dict[str, str] = {
+                        "number": str(pos.numb),
+                        "athleteid": str(pos.membersid),
+                    }
+                    if pos.entrytime:
+                        pos_attrs["entrytime"] = _ms_to_lenex(pos.entrytime)
+                    ET.SubElement(positions_xml, "RELAYPOSITION", pos_attrs)
+            if relay.entrytime:
+                relay_entries_xml = ET.SubElement(relay_xml, "ENTRIES")
+                relay_entry_attrs: dict[str, str] = {
+                    "entrytime": _ms_to_lenex(relay.entrytime),
+                    "entrycourse": meet_struct.course or "LCM",
+                }
+                for ses in meet_struct.sessions:
+                    for m_ev in ses.events:
+                        if m_ev.swimstyleid == relay.stylesid:
+                            relay_entry_attrs["eventid"] = str(m_ev.eventid)
+                            break
+                    if "eventid" in relay_entry_attrs:
+                        break
+                ET.SubElement(relay_entries_xml, "ENTRY", relay_entry_attrs)
 
     xml_bytes = ET.tostring(root, encoding="unicode", xml_declaration=True).encode("utf-8")
 

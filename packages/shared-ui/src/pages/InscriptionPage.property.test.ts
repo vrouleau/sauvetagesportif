@@ -111,6 +111,11 @@ describe('InscriptionPage - Property 3: Coach Role Isolation', () => {
             updateAthlete: async () => {},
             register: async () => {},
             unregister: async () => {},
+            getRelayPageData: async () => ({ ageCategories: [], teamsByEvent: {}, eligibleAthletes: {}, closureDate: null, isClosed: false }),
+            createRelayTeam: async () => ({ teamId: 0, teamNumber: 'A' }),
+            deleteRelayTeam: async () => {},
+            setRelayTeamMember: async () => {},
+            setRelayTeamName: async () => {},
           }
 
           // Call with role="coach" and the coach's clubId
@@ -167,6 +172,11 @@ describe('InscriptionPage - Property 3: Coach Role Isolation', () => {
             updateAthlete: async () => {},
             register: async () => {},
             unregister: async () => {},
+            getRelayPageData: async () => ({ ageCategories: [], teamsByEvent: {}, eligibleAthletes: {}, closureDate: null, isClosed: false }),
+            createRelayTeam: async () => ({ teamId: 0, teamNumber: 'A' }),
+            deleteRelayTeam: async () => {},
+            setRelayTeamMember: async () => {},
+            setRelayTeamName: async () => {},
           }
 
           // Call with role="admin" (no clubId restriction)
@@ -215,6 +225,11 @@ describe('InscriptionPage - Property 3: Coach Role Isolation', () => {
             updateAthlete: async () => {},
             register: async () => {},
             unregister: async () => {},
+            getRelayPageData: async () => ({ ageCategories: [], teamsByEvent: {}, eligibleAthletes: {}, closureDate: null, isClosed: false }),
+            createRelayTeam: async () => ({ teamId: 0, teamNumber: 'A' }),
+            deleteRelayTeam: async () => {},
+            setRelayTeamMember: async () => {},
+            setRelayTeamName: async () => {},
           }
 
           const result = await loadInscriptionData(mockApi, 'coach', nonExistentClubId)

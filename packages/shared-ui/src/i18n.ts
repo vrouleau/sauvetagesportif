@@ -4,6 +4,8 @@ const fr = {
   nav: {
     events: 'Épreuves / Sessions',
     inscription: 'Inscription',
+    individualEntries: 'Inscriptions individuelles',
+    relayEntries: 'Inscriptions relais',
     finals: 'Finales',
     heats: 'Séries / Chronométrage',
     athletes: 'Athlètes',
@@ -304,6 +306,25 @@ const fr = {
     entriesClosed: 'Les inscriptions sont fermées.',
     saving: 'enregistrement...',
     loading: 'Chargement...',
+    importLxf: 'Importer (.lxf)',
+    exportLxf: 'Exporter (.lxf)',
+  },
+  relay: {
+    pageTitle: 'Inscriptions relais',
+    addTeam: 'Ajouter une équipe',
+    deleteConfirmation: 'Êtes-vous sûr de vouloir supprimer cette équipe?',
+    closureMessage: 'Les inscriptions relais sont fermées',
+    noRelayEvents: 'Aucune épreuve relais disponible',
+    positionLabel: (n: number) => `Position ${n}`,
+    emptyPosition: '— Vacant —',
+    noEligibleAthletes: 'Aucun athlète éligible',
+    teamName: "Nom de l'équipe",
+    selectClubToAdd: 'Sélectionnez un club pour ajouter une équipe',
+    errors: {
+      uniquenessViolation: 'Cet athlète est déjà assigné à une autre équipe pour cette épreuve',
+      entriesClosed: 'Les inscriptions sont fermées',
+      invalidPosition: 'Numéro de position invalide',
+    },
   },
 }
 
@@ -311,6 +332,8 @@ const en = {
   nav: {
     events: 'Events / Sessions',
     inscription: 'Registration',
+    individualEntries: 'Individual Entries',
+    relayEntries: 'Relay Entries',
     finals: 'Finals',
     heats: 'Heats / Timing',
     athletes: 'Athletes',
@@ -612,6 +635,25 @@ const en = {
     entriesClosed: 'Entries are closed.',
     saving: 'saving...',
     loading: 'Loading...',
+    importLxf: 'Import (.lxf)',
+    exportLxf: 'Export (.lxf)',
+  },
+  relay: {
+    pageTitle: 'Relay Entries',
+    addTeam: 'Add Team',
+    deleteConfirmation: 'Are you sure you want to delete this team?',
+    closureMessage: 'Relay entries are closed',
+    noRelayEvents: 'No relay events available',
+    positionLabel: (n: number) => `Position ${n}`,
+    emptyPosition: '— Vacant —',
+    noEligibleAthletes: 'No eligible athletes',
+    teamName: 'Team name',
+    selectClubToAdd: 'Select a club to add a team',
+    errors: {
+      uniquenessViolation: 'This athlete is already assigned to another team for this event',
+      entriesClosed: 'Entries are closed',
+      invalidPosition: 'Invalid position number',
+    },
   },
 }
 

@@ -372,6 +372,513 @@ ipcMain.handle('db:set-relay-member', (_event, eventId: number, athleteId: numbe
   return { ok: true, relayId: relay.relayid }
 })
 
+// ── Relay Team Management (new team-centric handlers) ─────────────────────────
+
+/**
+ * Parse AGEDATE from MEETVALUES. Format after getMeetValues() strips type prefix: "YYYYMMDD..."
+ * Returns a Date object for age calculation or null.
+ */
+function parseAgeDate(raw: string | undefined): Date {
+  if (raw && raw.length >= 8) {
+    const y = parseInt(raw.slice(0, 4), 10)
+    const m = parseInt(raw.slice(4, 6), 10) - 1
+    const d = parseInt(raw.slice(6, 8), 10)
+    const dt = new Date(y, m, d)
+    if (!isNaN(dt.getTime())) return dt
+  }
+  // Default: Dec 31 of current year
+  return new Date(new Date().getFullYear(), 11, 31)
+}
+
+/**
+ * Parse DEADLINE from MEETVALUES. Returns ISO date string (YYYY-MM-DD) or null.
+ */
+function parseDeadline(raw: string | undefined): string | null {
+  if (!raw || raw.length < 8) return null
+  const y = raw.slice(0, 4)
+  const m = raw.slice(4, 6)
+  const d = raw.slice(6, 8)
+  return `${y}-${m}-${d}`
+}
+
+/**
+ * Convert team number (1-based) to letter: 1=A, 2=B, etc.
+ */
+function teamNumberToLetter(n: number): string {
+  return String.fromCharCode(64 + n) // 65='A'
+}
+
+/**
+ * Compute age as of a given base date.
+ */
+function computeAge(birthdate: string | number | null, baseDate: Date): number | null {
+  if (!birthdate) return null
+  const bd = typeof birthdate === 'string' ? new Date(birthdate) : new Date(birthdate)
+  if (isNaN(bd.getTime())) return null
+  let age = baseDate.getFullYear() - bd.getFullYear()
+  const m = baseDate.getMonth() - bd.getMonth()
+  if (m < 0 || (m === 0 && baseDate.getDate() < bd.getDate())) age--
+  return age
+}
+
+/**
+ * Build the ageCode string from agemin/agemax.
+ */
+function buildAgeCode(agemin: number | null, agemax: number | null): string {
+  const min = agemin ?? 0
+  if (agemax == null || agemax < 0 || agemax >= 99) return `${min}+`
+  return `${min}-${agemax}`
+}
+
+/**
+ * Decode event gender: 1=M 2=F 3=X
+ */
+function decodeRelayGender(g: number | null): 'M' | 'F' | 'X' {
+  if (g === 1) return 'M'
+  if (g === 2) return 'F'
+  return 'X'
+}
+
+ipcMain.handle('db:get-clubs', () => {
+  const db = getLocalDb()
+  const rows = db.prepare(
+    `SELECT c.clubid, c.name, c.code,
+            (SELECT COUNT(*) FROM athlete a WHERE a.clubid = c.clubid) AS athlete_count
+     FROM club c ORDER BY c.name, c.code`
+  ).all() as Array<{ clubid: number; name: string | null; code: string | null; athlete_count: number }>
+  return rows.map(r => ({
+    id: r.clubid,
+    name: r.name || r.code || String(r.clubid),
+    athlete_count: r.athlete_count,
+  }))
+})
+
+ipcMain.handle('db:get-relay-page-data', (_event, clubId?: number) => {
+  const db = getLocalDb()
+  const meetValues = getMeetValues()
+  const ageBaseDate = parseAgeDate(meetValues['AGEDATE'])
+  const closureDate = parseDeadline(meetValues['DEADLINE'])
+  const isClosed = closureDate ? new Date() > new Date(closureDate + 'T23:59:59') : false
+
+  // 1. Get all relay events (relaycount > 1) with their swim styles
+  const relayEvents = db.prepare(`
+    SELECT e.swimeventid, e.eventnumber, e.gender AS eventgender, e.swimstyleid,
+           ss.distance, ss.relaycount, ss.name AS stylename
+    FROM swimevent e
+    JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid
+    WHERE ss.relaycount > 1
+      AND (e.internalevent IS NULL OR e.internalevent = 'F')
+    ORDER BY e.eventnumber
+  `).all() as Array<{
+    swimeventid: number; eventnumber: number; eventgender: number; swimstyleid: number
+    distance: number | null; relaycount: number; stylename: string | null
+  }>
+
+  if (relayEvents.length === 0) {
+    return {
+      ageCategories: [],
+      teamsByEvent: {},
+      eligibleAthletes: {},
+      closureDate,
+      isClosed,
+    }
+  }
+
+  // 2. Get all age groups for these relay events
+  const eventIds = relayEvents.map(e => e.swimeventid)
+  const placeholders = eventIds.map(() => '?').join(',')
+  const ageGroups = db.prepare(`
+    SELECT agegroupid, swimeventid, name, agemin, agemax, gender, sortcode
+    FROM agegroup
+    WHERE swimeventid IN (${placeholders})
+    ORDER BY swimeventid, sortcode
+  `).all(...eventIds) as Array<{
+    agegroupid: number; swimeventid: number; name: string | null
+    agemin: number | null; agemax: number | null; gender: number | null; sortcode: number | null
+  }>
+
+  // 3. Build age categories and event groups
+  // Group age groups by their age range to form categories
+  const ageCategoryMap = new Map<string, {
+    ageCode: string; ageMin: number; ageMax: number | null
+    events: Array<{
+      eventId: number; eventName: string; swimstyleId: number
+      relaycount: number; gender: 'M' | 'F' | 'X'; eventNumber: number
+      agegroupid: number
+    }>
+  }>()
+
+  for (const ag of ageGroups) {
+    const ev = relayEvents.find(e => e.swimeventid === ag.swimeventid)
+    if (!ev) continue
+
+    const ageCode = buildAgeCode(ag.agemin, ag.agemax)
+    if (!ageCategoryMap.has(ageCode)) {
+      ageCategoryMap.set(ageCode, {
+        ageCode,
+        ageMin: ag.agemin ?? 0,
+        ageMax: (ag.agemax == null || ag.agemax < 0 || ag.agemax >= 99) ? null : ag.agemax,
+        events: [],
+      })
+    }
+
+    const category = ageCategoryMap.get(ageCode)!
+    // Avoid duplicates (same event in same category)
+    if (!category.events.some(e => e.eventId === ev.swimeventid)) {
+      category.events.push({
+        eventId: ev.swimeventid,
+        eventName: ev.stylename || `${ev.distance}m Relay`,
+        swimstyleId: ev.swimstyleid,
+        relaycount: ev.relaycount,
+        gender: decodeRelayGender(ev.eventgender),
+        eventNumber: ev.eventnumber ?? 0,
+        agegroupid: ag.agegroupid,
+      })
+    }
+  }
+
+  // Sort age categories by ageMin ascending
+  const ageCategories = Array.from(ageCategoryMap.values())
+    .sort((a, b) => a.ageMin - b.ageMin)
+    .map(cat => ({
+      ageCode: cat.ageCode,
+      ageMin: cat.ageMin,
+      ageMax: cat.ageMax,
+      events: cat.events
+        .sort((a, b) => a.eventNumber - b.eventNumber)
+        .map(e => ({
+          eventId: e.eventId,
+          eventName: e.eventName,
+          swimstyleId: e.swimstyleId,
+          relaycount: e.relaycount,
+          gender: e.gender,
+          eventNumber: e.eventNumber,
+        })),
+    }))
+
+  // 4. Load existing relay teams
+  const teamsByEvent: Record<string, Array<{
+    id: number; teamNumber: string; teamName: string | null
+    members: Array<{ position: number; athleteId: number | null; athleteName: string | null }>
+    clubId?: number; clubName?: string
+  }>> = {}
+
+  // Build a lookup for agegroupid -> ageCode
+  const agegroupToAgeCode = new Map<number, string>()
+  for (const ag of ageGroups) {
+    agegroupToAgeCode.set(ag.agegroupid, buildAgeCode(ag.agemin, ag.agemax))
+  }
+
+  // Query relays
+  let relayQuery = `
+    SELECT r.relayid, r.clubid, r.swimeventid, r.agegroupid, r.teamnumber, r.name
+    FROM relay r
+    WHERE r.swimeventid IN (${placeholders})
+  `
+  const relayParams: unknown[] = [...eventIds]
+  if (clubId != null) {
+    relayQuery += ` AND r.clubid = ?`
+    relayParams.push(clubId)
+  }
+  relayQuery += ` ORDER BY r.swimeventid, r.teamnumber`
+
+  const relays = db.prepare(relayQuery).all(...relayParams) as Array<{
+    relayid: number; clubid: number; swimeventid: number
+    agegroupid: number | null; teamnumber: number | null; name: string | null
+  }>
+
+  // Load all relay positions for these relays
+  const relayIds = relays.map(r => r.relayid)
+  let positions: Array<{ relayid: number; relaynumber: number; athleteid: number; firstname: string | null; lastname: string | null }> = []
+  if (relayIds.length > 0) {
+    const rph = relayIds.map(() => '?').join(',')
+    positions = db.prepare(`
+      SELECT rp.relayid, rp.relaynumber, rp.athleteid, a.firstname, a.lastname
+      FROM relayposition rp
+      LEFT JOIN athlete a ON rp.athleteid = a.athleteid
+      WHERE rp.relayid IN (${rph})
+      ORDER BY rp.relayid, rp.relaynumber
+    `).all(...relayIds) as typeof positions
+  }
+
+  // Group positions by relayid
+  const positionsByRelay = new Map<number, typeof positions>()
+  for (const p of positions) {
+    if (!positionsByRelay.has(p.relayid)) positionsByRelay.set(p.relayid, [])
+    positionsByRelay.get(p.relayid)!.push(p)
+  }
+
+  // Build club names lookup for admin all-clubs view
+  const clubNamesMap = new Map<number, string>()
+  if (clubId == null) {
+    const clubIds = [...new Set(relays.map(r => r.clubid).filter(Boolean))]
+    if (clubIds.length > 0) {
+      const cph = clubIds.map(() => '?').join(',')
+      const clubs = db.prepare(`SELECT clubid, name, code FROM club WHERE clubid IN (${cph})`).all(...clubIds) as Array<{ clubid: number; name: string | null; code: string | null }>
+      for (const c of clubs) {
+        clubNamesMap.set(c.clubid, c.name || c.code || String(c.clubid))
+      }
+    }
+  }
+
+  // Build teamsByEvent
+  // First, compute each athlete's registered age group from their individual entries
+  const athleteAgeGroupMap = new Map<number, string>() // athleteId → age code
+  {
+    // Get the dominant age group per athlete (from their individual swimresult registrations)
+    const regRows = db.prepare(`
+      SELECT sr.athleteid, ag.agemin, ag.agemax, COUNT(*) as cnt
+      FROM swimresult sr
+      JOIN agegroup ag ON sr.agegroupid = ag.agegroupid
+      JOIN swimevent e ON sr.swimeventid = e.swimeventid
+      JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid
+      WHERE ss.relaycount = 1
+      GROUP BY sr.athleteid, ag.agemin, ag.agemax
+      ORDER BY sr.athleteid, cnt DESC
+    `).all() as Array<{ athleteid: number; agemin: number | null; agemax: number | null; cnt: number }>
+
+    // For each athlete, take their most common age group registration
+    const seen = new Set<number>()
+    for (const row of regRows) {
+      if (seen.has(row.athleteid)) continue // already picked most common (ORDER BY cnt DESC)
+      seen.add(row.athleteid)
+      athleteAgeGroupMap.set(row.athleteid, buildAgeCode(row.agemin, row.agemax))
+    }
+  }
+
+  for (const r of relays) {
+    const ageCode = r.agegroupid ? (agegroupToAgeCode.get(r.agegroupid) ?? 'Open') : 'Open'
+    const key = `${r.swimeventid}-${ageCode}`
+    if (!teamsByEvent[key]) teamsByEvent[key] = []
+
+    // Find relaycount for this event
+    const ev = relayEvents.find(e => e.swimeventid === r.swimeventid)
+    const relaycount = ev?.relaycount ?? 4
+
+    // Build members list (fill empty positions)
+    const relayPositions = positionsByRelay.get(r.relayid) ?? []
+    const members: Array<{ position: number; athleteId: number | null; athleteName: string | null }> = []
+    for (let pos = 1; pos <= relaycount; pos++) {
+      const rp = relayPositions.find(p => p.relaynumber === pos)
+      if (rp) {
+        members.push({
+          position: pos,
+          athleteId: rp.athleteid,
+          athleteName: rp.lastname || rp.firstname ? `${rp.lastname ?? ''}, ${rp.firstname ?? ''}` : null,
+        })
+      } else {
+        members.push({ position: pos, athleteId: null, athleteName: null })
+      }
+    }
+
+    // Compute team age group from members' individual registrations (majority rule)
+    const memberAgeCodes: string[] = []
+    for (const m of members) {
+      if (m.athleteId) {
+        const ac = athleteAgeGroupMap.get(m.athleteId)
+        if (ac) memberAgeCodes.push(ac)
+      }
+    }
+    let computedAgeGroup = ageCode // fallback to event agegroup
+    if (memberAgeCodes.length > 0) {
+      // Find the most common age code
+      const counts = new Map<string, number>()
+      for (const ac of memberAgeCodes) counts.set(ac, (counts.get(ac) ?? 0) + 1)
+      let maxCount = 0
+      for (const [ac, cnt] of counts) {
+        if (cnt > maxCount) { maxCount = cnt; computedAgeGroup = ac }
+      }
+    }
+
+    teamsByEvent[key].push({
+      id: r.relayid,
+      teamNumber: teamNumberToLetter(r.teamnumber ?? 1),
+      teamName: r.name ?? null,
+      ageGroup: computedAgeGroup,
+      members,
+      clubId: r.clubid,
+      clubName: clubNamesMap.get(r.clubid) ?? undefined,
+    })
+  }
+
+  // 5. Compute eligible athletes per event/ageCode
+  const eligibleAthletes: Record<string, Array<{ id: number; name: string; gender: 'M' | 'F' }>> = {}
+
+  // Get all athletes (filtered by club if specified)
+  let athleteQuery = `SELECT athleteid, clubid, firstname, lastname, gender, birthdate FROM athlete`
+  const athleteParams: unknown[] = []
+  if (clubId != null) {
+    athleteQuery += ` WHERE clubid = ?`
+    athleteParams.push(clubId)
+  }
+  athleteQuery += ` ORDER BY lastname, firstname`
+
+  const athletes = db.prepare(athleteQuery).all(...athleteParams) as Array<{
+    athleteid: number; clubid: number | null; firstname: string | null; lastname: string | null
+    gender: number | null; birthdate: string | number | null
+  }>
+
+  for (const cat of ageCategories) {
+    for (const ev of cat.events) {
+      const key = `${ev.eventId}-${cat.ageCode}`
+      if (eligibleAthletes[key]) continue // already computed
+
+      const eligible: Array<{ id: number; name: string; gender: 'M' | 'F' }> = []
+      for (const ath of athletes) {
+        // Gender filter only — age group is determined by team composition, not pre-filtered
+        const athGender: 'M' | 'F' = ath.gender === 1 ? 'M' : 'F'
+        if (ev.gender !== 'X' && athGender !== ev.gender) continue
+
+        eligible.push({
+          id: ath.athleteid,
+          name: `${ath.lastname ?? ''}, ${ath.firstname ?? ''}`,
+          gender: athGender,
+        })
+      }
+
+      eligibleAthletes[key] = eligible
+    }
+  }
+
+  return {
+    ageCategories,
+    teamsByEvent,
+    eligibleAthletes,
+    closureDate,
+    isClosed,
+  }
+})
+
+ipcMain.handle('db:create-relay-team', (_event, eventId: number, ageCode: string, clubId?: number) => {
+  const db = getLocalDb()
+
+  // Meet-app is admin/organizer context — no closure enforcement
+  // (Closure is only enforced for coach role; meet-app desktop user is always admin)
+
+  // Find the age group id for the given event and ageCode
+  const ageGroups = db.prepare(
+    `SELECT agegroupid, agemin, agemax FROM agegroup WHERE swimeventid = ? ORDER BY sortcode`
+  ).all(eventId) as Array<{ agegroupid: number; agemin: number | null; agemax: number | null }>
+
+  let agegroupId: number | null = null
+  for (const ag of ageGroups) {
+    const code = buildAgeCode(ag.agemin, ag.agemax)
+    if (code === ageCode) {
+      agegroupId = ag.agegroupid
+      break
+    }
+  }
+  if (!agegroupId && ageGroups.length > 0) {
+    agegroupId = ageGroups[0].agegroupid
+  }
+
+  // Determine next team number for this event + agegroup + club
+  let teamQuery = `SELECT COALESCE(MAX(teamnumber), 0) AS maxnum FROM relay WHERE swimeventid = ?`
+  const teamParams: unknown[] = [eventId]
+  if (agegroupId) {
+    teamQuery += ` AND agegroupid = ?`
+    teamParams.push(agegroupId)
+  }
+  if (clubId != null) {
+    teamQuery += ` AND clubid = ?`
+    teamParams.push(clubId)
+  }
+  const maxRow = db.prepare(teamQuery).get(...teamParams) as { maxnum: number }
+  const teamNumber = (maxRow?.maxnum ?? 0) + 1
+
+  if (teamNumber > 26) {
+    throw new Error('Maximum of 26 teams per event/category/club')
+  }
+
+  const relayId = nextId('relay', 'relayid')
+  db.prepare(
+    `INSERT INTO relay (relayid, clubid, swimeventid, agegroupid, teamnumber) VALUES (?, ?, ?, ?, ?)`
+  ).run(relayId, clubId ?? null, eventId, agegroupId, teamNumber)
+
+  return { teamId: relayId, teamNumber: teamNumberToLetter(teamNumber) }
+})
+
+ipcMain.handle('db:delete-relay-team', (_event, teamId: number) => {
+  const db = getLocalDb()
+
+  // Delete relay positions first (CASCADE should handle it, but be explicit)
+  db.prepare(`DELETE FROM relayposition WHERE relayid = ?`).run(teamId)
+  // Delete the relay team itself
+  db.prepare(`DELETE FROM relay WHERE relayid = ?`).run(teamId)
+
+  return { ok: true }
+})
+
+ipcMain.handle('db:set-relay-team-member', (_event, teamId: number, position: number, athleteId: number | null) => {
+  const db = getLocalDb()
+
+  // Validate position
+  const relay = db.prepare(
+    `SELECT r.relayid, r.swimeventid, r.agegroupid, r.clubid
+     FROM relay r WHERE r.relayid = ?`
+  ).get(teamId) as { relayid: number; swimeventid: number; agegroupid: number | null; clubid: number | null } | undefined
+  if (!relay) throw new Error('Relay team not found')
+
+  // Get relaycount for position validation
+  const eventStyle = db.prepare(`
+    SELECT ss.relaycount FROM swimevent e
+    JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid
+    WHERE e.swimeventid = ?
+  `).get(relay.swimeventid) as { relaycount: number } | undefined
+  const relaycount = eventStyle?.relaycount ?? 4
+
+  if (position < 1 || position > relaycount) {
+    throw new Error(`Invalid position: must be between 1 and ${relaycount}`)
+  }
+
+  // Remove existing position entry
+  db.prepare(
+    `DELETE FROM relayposition WHERE relayid = ? AND relaynumber = ?`
+  ).run(teamId, position)
+
+  // Insert new member if provided
+  if (athleteId != null) {
+    // Uniqueness check: athlete cannot be on another team for the same event + agegroup + club
+    const existingAssignment = db.prepare(`
+      SELECT r.relayid, r.teamnumber
+      FROM relay r
+      JOIN relayposition rp ON r.relayid = rp.relayid
+      WHERE r.swimeventid = ? AND r.agegroupid = ? AND r.clubid = ?
+        AND rp.athleteid = ? AND r.relayid != ?
+    `).get(relay.swimeventid, relay.agegroupid, relay.clubid, athleteId, teamId) as { relayid: number; teamnumber: number } | undefined
+
+    if (existingAssignment) {
+      const teamLetter = teamNumberToLetter(existingAssignment.teamnumber ?? 1)
+      throw new Error(`Athlete is already assigned to Team ${teamLetter} for this event`)
+    }
+
+    // Intra-team uniqueness: athlete cannot already be in another position on the same team
+    const sameTeamDup = db.prepare(`
+      SELECT relaynumber FROM relayposition
+      WHERE relayid = ? AND athleteid = ? AND relaynumber != ?
+    `).get(teamId, athleteId, position) as { relaynumber: number } | undefined
+
+    if (sameTeamDup) {
+      throw new Error(`Athlete is already assigned to position ${sameTeamDup.relaynumber} on this team`)
+    }
+
+    db.prepare(
+      `INSERT INTO relayposition (relayid, relaynumber, athleteid) VALUES (?, ?, ?)`
+    ).run(teamId, position, athleteId)
+  }
+
+  return { ok: true }
+})
+
+ipcMain.handle('db:set-relay-team-name', (_event, teamId: number, name: string | null) => {
+  const db = getLocalDb()
+
+  // Update the relay team name
+  db.prepare(`UPDATE relay SET name = ? WHERE relayid = ?`).run(name, teamId)
+
+  return { ok: true }
+})
+
 ipcMain.handle('db:reorder-events', (_event, updates: Array<{ eventId: number; sessionId: number; sortcode: number }>) =>
   reorderEvents(updates).then(() => ({ ok: true }))
 )

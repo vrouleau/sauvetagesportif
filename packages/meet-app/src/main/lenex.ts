@@ -538,6 +538,53 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
         }
       }
     }
+
+    // ── RELAYS (relay teams for this club) ──────────────────────────────
+    const relaysElem = child(club, 'RELAYS')
+    for (const relay of children(relaysElem ?? club, 'RELAY')) {
+      const ra = relay.attrs
+      const teamNumber = parseInt(ra.number ?? '1', 10)
+      const teamName = ra.name || null
+      const relayGender = encodeGender(ra.gender)
+
+      // Each relay can have entries for multiple events
+      const relayEntriesElem = child(relay, 'ENTRIES')
+      for (const entry of children(relayEntriesElem ?? relay, 'ENTRY')) {
+        const ea3 = entry.attrs
+        const eventId = parseInt(ea3.eventid ?? '0', 10)
+        if (!eventId) continue
+        const agegroupid = parseInt(ea3.agegroupid ?? '0', 10) || null
+        const entrytime = lenexTimeToMs(ea3.entrytime)
+        const entrycourse = ea3.entrycourse ? encodeCourse(ea3.entrycourse) : null
+
+        // Create relay team record
+        const relayId = nextId('relay', 'relayid')
+        try {
+          db.prepare(
+            `INSERT OR IGNORE INTO relay (relayid, clubid, swimeventid, agegroupid, teamnumber, name, gender, entrytime, entrycourse)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          ).run(relayId, clubId, eventId, agegroupid, teamNumber, teamName, relayGender, entrytime, entrycourse)
+
+          // Import relay positions
+          const positionsElem = child(entry, 'RELAYPOSITIONS')
+          for (const pos of children(positionsElem ?? entry, 'RELAYPOSITION')) {
+            const pa = pos.attrs
+            const posNumber = parseInt(pa.number ?? '0', 10)
+            const posAthleteId = parseInt(pa.athleteid ?? '0', 10)
+            if (!posNumber || !posAthleteId) continue
+            try {
+              db.prepare(
+                `INSERT OR IGNORE INTO relayposition (relayid, relaynumber, athleteid) VALUES (?, ?, ?)`
+              ).run(relayId, posNumber, posAthleteId)
+            } catch (e2) {
+              summary.errors.push(`RelayPosition relay=${relayId} pos=${posNumber}: ${e2}`)
+            }
+          }
+        } catch (e) {
+          summary.errors.push(`Relay club=${clubId} event=${eventId} team=${teamNumber}: ${e}`)
+        }
+      }
+    }
   }
 
   return summary
@@ -951,6 +998,59 @@ export function exportLenexResults(filePath: string, db: Database.Database): Exp
     }
 
     lines.push('          </ATHLETES>')
+
+    // ── RELAYS (relay teams from relay/relayposition tables) ────────────
+    const clubRelays = db.prepare(
+      `SELECT r.relayid, r.teamnumber, r.swimeventid, r.agegroupid
+       FROM relay r
+       WHERE r.clubid = ?
+       ORDER BY r.swimeventid, r.teamnumber`
+    ).all(clubId) as Array<{
+      relayid: number; teamnumber: number | null; swimeventid: number | null; agegroupid: number | null
+    }>
+    if (clubRelays.length > 0) {
+      // Get event gender info for relay gender attribute
+      const relayEventIds = [...new Set(clubRelays.map(r => r.swimeventid).filter(Boolean))]
+      const eventGenderMap = new Map<number, number>()
+      if (relayEventIds.length > 0) {
+        const eph = relayEventIds.map(() => '?').join(',')
+        const eventGenders = db.prepare(
+          `SELECT swimeventid, gender FROM swimevent WHERE swimeventid IN (${eph})`
+        ).all(...relayEventIds) as Array<{ swimeventid: number; gender: number | null }>
+        for (const eg of eventGenders) eventGenderMap.set(eg.swimeventid, eg.gender ?? 3)
+      }
+      // Load all positions for this club's relays
+      const relayIds = clubRelays.map(r => r.relayid)
+      const rph = relayIds.map(() => '?').join(',')
+      const relayPositions = db.prepare(
+        `SELECT rp.relayid, rp.relaynumber, rp.athleteid
+         FROM relayposition rp
+         WHERE rp.relayid IN (${rph}) AND rp.athleteid IS NOT NULL
+         ORDER BY rp.relayid, rp.relaynumber`
+      ).all(...relayIds) as Array<{ relayid: number; relaynumber: number; athleteid: number }>
+      const posByRelay = new Map<number, typeof relayPositions>()
+      for (const p of relayPositions) {
+        if (!posByRelay.has(p.relayid)) posByRelay.set(p.relayid, [])
+        posByRelay.get(p.relayid)!.push(p)
+      }
+
+      lines.push('          <RELAYS>')
+      for (const relay of clubRelays) {
+        const gender = relay.swimeventid ? eventGenderMap.get(relay.swimeventid) : undefined
+        lines.push(`            <RELAY${attr('number', relay.teamnumber ?? 1)}${attr('gender', gender != null ? decodeGender(gender) : undefined)}>`)
+        const positions = posByRelay.get(relay.relayid) ?? []
+        if (positions.length > 0) {
+          lines.push('              <RELAYPOSITIONS>')
+          for (const pos of positions) {
+            lines.push(`                <RELAYPOSITION${attr('number', pos.relaynumber)}${attr('athleteid', pos.athleteid)} />`)
+          }
+          lines.push('              </RELAYPOSITIONS>')
+        }
+        lines.push('            </RELAY>')
+      }
+      lines.push('          </RELAYS>')
+    }
+
     lines.push('        </CLUB>')
     summary.clubs++
   }

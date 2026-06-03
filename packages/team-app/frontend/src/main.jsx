@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import ReactDOM from 'react-dom/client'
 import { BrowserRouter, Routes, Route, Link, useLocation, useParams, useNavigate, Navigate } from 'react-router'
 import './index.css'
@@ -6,6 +6,8 @@ import { LangProvider, useLang } from './i18n'
 import Login from './pages/Login'
 import EventsPageShared from '@shared/pages/EventsPage'
 import InscriptionPageShared from '@shared/pages/InscriptionPage'
+import IndividualEntryPageShared from '@shared/pages/IndividualEntryPage'
+import RelayEntryPageShared from '@shared/pages/RelayEntryPage'
 import { ApiProvider } from '@shared/context/ApiContext'
 import { LangProvider as SharedLangProvider } from '@shared/context/LangContext'
 import { RegistrationApiProvider } from '@shared/context/RegistrationApiContext'
@@ -13,6 +15,7 @@ import AthletesListPageShared from '@shared/pages/AthletesListPage'
 import RegistrationPageShared from '@shared/pages/RegistrationPage'
 import { meetApiHttp } from './meetApi'
 import { registrationApiHttp } from './registrationApi'
+import api from './api'
 import Admin from './pages/Admin'
 import Organizer from './pages/Organizer'
 import DataManagement from './pages/DataManagement'
@@ -68,6 +71,94 @@ function InscriptionPage({ role, clubId }) {
   )
 }
 
+// Wrap the shared IndividualEntryPage
+function IndividualEntryPage({ role, clubId }) {
+  const { lang, t } = useLang()
+  const importRef = useRef(null)
+
+  async function handleImportLxf() {
+    if (importRef.current) importRef.current.click()
+  }
+
+  async function handleImportFile(e) {
+    const file = e.target.files[0]
+    if (!file) return
+    const fdPreview = new FormData()
+    fdPreview.append('file', file)
+    let preview
+    try {
+      const r = await api.post('/upload/preview', fdPreview)
+      preview = r.data
+    } catch (err) {
+      alert('Cannot read file: ' + (err.detail || err.message))
+      e.target.value = ''
+      return
+    }
+    const prompt = t.confirm_upload_lenex
+      .replace('%clubs_total%', preview.clubs_in_file)
+      .replace('%athletes_total%', preview.athletes_in_file)
+      .replace('%clubs%', preview.clubs_new)
+      .replace('%athletes%', preview.athletes_new)
+    if (!confirm(prompt)) { e.target.value = ''; return }
+    const fd = new FormData()
+    fd.append('file', file)
+    try {
+      await api.post('/upload/entries', fd)
+    } catch (err) {
+      alert(err.message || 'Import failed')
+    }
+    e.target.value = ''
+  }
+
+  async function handleExportLxf() {
+    try {
+      const res = await fetch('/api/export/registrations-lxf', {
+        headers: { 'X-Club-Pin': localStorage.getItem('pin') || '' }
+      })
+      if (!res.ok) throw new Error(`${res.status}`)
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url; a.download = 'inscriptions.lxf'; a.click()
+      URL.revokeObjectURL(url)
+    } catch (e) { alert(e.message || 'Export failed') }
+  }
+
+  // Only show import/export for admin and organizer roles
+  const showImportExport = role === 'admin' || role === 'organizer'
+
+  return (
+    <SharedLangProvider initialLang={lang}>
+      <RegistrationApiProvider api={registrationApiHttp}>
+        <IndividualEntryPageShared
+          role={role}
+          clubId={clubId}
+          onImportLxf={showImportExport ? handleImportLxf : undefined}
+          onExportLxf={showImportExport ? handleExportLxf : undefined}
+        />
+        {showImportExport && (
+          <input ref={importRef} type="file" accept=".lxf" className="hidden" onChange={handleImportFile} />
+        )}
+      </RegistrationApiProvider>
+    </SharedLangProvider>
+  )
+}
+
+// Wrap the shared RelayEntryPage
+function RelayEntryPage({ role, clubId }) {
+  const { lang } = useLang()
+  return (
+    <SharedLangProvider initialLang={lang}>
+      <RegistrationApiProvider api={registrationApiHttp}>
+        <RelayEntryPageShared
+          role={role}
+          clubId={clubId ? parseInt(clubId) : undefined}
+        />
+      </RegistrationApiProvider>
+    </SharedLangProvider>
+  )
+}
+
 // Wrap the shared RegistrationPage
 function RegisterPage() {
   const { id } = useParams()
@@ -93,7 +184,8 @@ function AuthLayout({ children, canOrganizer, canAdmin, meetName, toggle, lang, 
   const tabs = [
     { to: '/meet', label: t.tab_meet || 'Compétition', show: canOrganizer },
     { to: '/invitation', label: t.tab_invitation || 'Invitation', show: canOrganizer },
-    { to: '/', label: t.tab_registration || 'Inscription', show: true },
+    { to: '/', label: t.tab_individual_entries || 'Individual Entries', show: true },
+    { to: '/relay-entries', label: t.tab_relay_entries || 'Relay Entries', show: true },
     { to: '/admin', label: t.admin, show: canAdmin },
     { to: '/data-management', label: t.data_management, show: canAdmin },
   ]
@@ -198,7 +290,8 @@ function AppInner() {
     <BrowserRouter>
       <AuthLayout canOrganizer={canOrganizer} canAdmin={canAdmin} meetName={meetName} toggle={toggle} lang={lang} logout={logout} auth={auth} t={t}>
         <Routes>
-          <Route path="/" element={<InscriptionPage role={auth.role} clubId={auth.club_id} />} />
+          <Route path="/" element={<IndividualEntryPage role={auth.role} clubId={auth.club_id} />} />
+          <Route path="/relay-entries" element={<RelayEntryPage role={auth.role} clubId={auth.club_id} />} />
           <Route path="/athletes/:id/register" element={<RegisterPage />} />
           {canOrganizer && <Route path="/meet" element={<EventsPage />} />}
           {canOrganizer && <Route path="/invitation" element={<Organizer />} />}

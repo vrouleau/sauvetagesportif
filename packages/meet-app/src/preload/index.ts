@@ -116,6 +116,19 @@ const api = {
       ipcRenderer.invoke('db:get-relay-members-by-event', eventId, athleteId),
     setRelayMember: (eventId: number, athleteId: number, position: number, memberAthleteId: number | null) =>
       ipcRenderer.invoke('db:set-relay-member', eventId, athleteId, position, memberAthleteId),
+    // Relay team management (new team-centric API)
+    getClubsReal: () =>
+      ipcRenderer.invoke('db:get-clubs'),
+    getRelayPageData: (clubId?: number) =>
+      ipcRenderer.invoke('db:get-relay-page-data', clubId),
+    createRelayTeam: (eventId: number, ageCode: string, clubId?: number) =>
+      ipcRenderer.invoke('db:create-relay-team', eventId, ageCode, clubId),
+    deleteRelayTeam: (teamId: number) =>
+      ipcRenderer.invoke('db:delete-relay-team', teamId),
+    setRelayTeamMember: (teamId: number, position: number, athleteId: number | null) =>
+      ipcRenderer.invoke('db:set-relay-team-member', teamId, position, athleteId),
+    setRelayTeamName: (teamId: number, name: string | null) =>
+      ipcRenderer.invoke('db:set-relay-team-name', teamId, name),
     reorderEvents: (updates: Array<{ eventId: number; sessionId: number; sortcode: number }>) =>
       ipcRenderer.invoke('db:reorder-events', updates),
     generateHeats: (eventId?: number, sessionId?: number) =>

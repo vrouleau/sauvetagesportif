@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import EventsPage from './pages/EventsPage'
 import HeatsPage from './pages/HeatsPage'
 import InscriptionPageWrapper from './pages/InscriptionPageWrapper'
+import IndividualEntryPageWrapper from './pages/IndividualEntryPageWrapper'
+import RelayEntryPageWrapper from './pages/RelayEntryPageWrapper'
 import FinalsPage from './pages/FinalsPage'
 import ReportPage from './pages/ReportPage'
 import TimingScanPage from './pages/TimingScanPage'
@@ -12,7 +14,7 @@ import { PgConnectDialog, usePgStatus } from './components/PgConnectDialog'
 import { LangProvider, useLang } from '@shared/context/LangContext'
 import logoSrc from '@shared/assets/icon.png'
 
-type Page = 'events' | 'inscription' | 'finals' | 'heats' | 'report' | 'scan' | 'process'
+type Page = 'events' | 'individualEntries' | 'relayEntries' | 'inscription' | 'finals' | 'heats' | 'report' | 'scan' | 'process'
 
 interface ImportSummary {
   sessions: number; events: number; ageGroups: number
@@ -446,9 +448,11 @@ function AppInner() {
 
       {/* Tab bar */}
       <div className="flex h-8 bg-gray-700 shrink-0 border-b border-gray-900">
-        {(['events', 'inscription', 'finals', 'heats', 'report', ...(meetType !== 'BEACH' ? ['scan', 'process'] : [])] as Page[]).map((p) => {
+        {(['events', 'individualEntries', 'relayEntries', 'finals', 'heats', 'report', ...(meetType !== 'BEACH' ? ['scan', 'process'] : [])] as Page[]).map((p) => {
           const labels: Record<Page, string> = {
             events: t.nav.events,
+            individualEntries: t.nav.individualEntries,
+            relayEntries: t.nav.relayEntries,
             inscription: t.nav.inscription,
             finals: t.nav.finals,
             heats: t.nav.heats,
@@ -485,7 +489,9 @@ function AppInner() {
       {/* Page content */}
       <div className="flex-1 overflow-hidden">
         {page === 'events' && <EventsPage refreshKey={refreshKey} />}
-        {page === 'inscription' && <InscriptionPageWrapper refreshKey={refreshKey} onImportLenex={handleImportLenex} />}
+        {page === 'individualEntries' && <IndividualEntryPageWrapper refreshKey={refreshKey} onImportLxf={handleImportLenex} onExportLxf={handleExportMeetLenex} />}
+        {page === 'relayEntries' && <RelayEntryPageWrapper refreshKey={refreshKey} />}
+        {page === 'inscription' && <InscriptionPageWrapper refreshKey={refreshKey} />}
         {page === 'finals' && <FinalsPage refreshKey={refreshKey} meetType={meetType} />}
         {page === 'heats' && <HeatsPage refreshKey={refreshKey} meetType={meetType} />}
         {page === 'report' && <ReportPage refreshKey={refreshKey} />}
