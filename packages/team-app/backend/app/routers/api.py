@@ -231,6 +231,11 @@ def _check_rate_limit(ip: str):
     _auth_attempts[ip].append(now)
 
 
+def _reset_rate_limits():
+    """Clear all rate limit state (used by tests)."""
+    _auth_attempts.clear()
+
+
 def _resolve_role(pin: str, db: Session) -> tuple[str, int | None]:
     """Return (role, club_id) for a given PIN."""
     if pin == _get_admin_pin(db):
@@ -283,6 +288,13 @@ def _caller_club_id(db: Session, pin: str) -> int | None:
 # ---------------------------------------------------------------------------
 # Auth
 # ---------------------------------------------------------------------------
+
+@router.post("/admin/reset-rate-limits", dependencies=[Depends(require_admin)])
+def reset_rate_limits():
+    """Reset auth rate limit state (admin-only, used by tests)."""
+    _reset_rate_limits()
+    return {"ok": True}
+
 
 @router.post("/auth")
 def auth(data: dict, request: Request, db: Session = Depends(get_db)):
@@ -834,11 +846,12 @@ async def upload_meet_smb(file: UploadFile = File(...), db: Session = Depends(ge
 
     db.commit()
 
-    # Reset sequences after explicit ID inserts
+    # Reset sequences after explicit ID inserts (PostgreSQL only)
     from sqlalchemy import text
-    db.execute(text("SELECT setval('clubs_clubsid_seq', GREATEST(COALESCE((SELECT MAX(clubsid) FROM clubs), 0), 1))"))
-    db.execute(text("SELECT setval('members_membersid_seq', GREATEST(COALESCE((SELECT MAX(membersid) FROM members), 0), 1))"))
-    db.commit()
+    if db.bind and db.bind.dialect.name == "postgresql":
+        db.execute(text("SELECT setval('clubs_clubsid_seq', GREATEST(COALESCE((SELECT MAX(clubsid) FROM clubs), 0), 1))"))
+        db.execute(text("SELECT setval('members_membersid_seq', GREATEST(COALESCE((SELECT MAX(membersid) FROM members), 0), 1))"))
+        db.commit()
 
     return {
         "events_loaded": events_imported,
@@ -2485,34 +2498,47 @@ def export_registrations_lxf(db: Session = Depends(get_db)):
 
 
 # ---------------------------------------------------------------------------
-# Database backup / restore (pg_dump / psql)
+# Database backup / restore (pg_dump / psql or SQLite file copy)
 # ---------------------------------------------------------------------------
 
 @router.get("/admin/backup-db", dependencies=[Depends(require_admin)])
 def backup_db():
-    """Download a full PostgreSQL dump (plain SQL)."""
-    import subprocess
-    db_url = os.environ.get("DATABASE_URL", "")
-    # Parse DATABASE_URL: postgresql://user:pass@host:port/dbname
-    from urllib.parse import urlparse
-    parsed = urlparse(db_url)
-    env = {**os.environ, "PGPASSWORD": parsed.password or ""}
-    cmd = [
-        "pg_dump",
-        "-h", parsed.hostname or "db",
-        "-p", str(parsed.port or 5432),
-        "-U", parsed.username or "meetmgr",
-        "-d", parsed.path.lstrip("/") or "meet",
-        "--no-owner", "--no-acl",
-    ]
-    result = subprocess.run(cmd, capture_output=True, env=env, timeout=60)
-    if result.returncode != 0:
-        raise HTTPException(500, f"pg_dump failed: {result.stderr.decode()[:500]}")
-    return Response(
-        content=result.stdout,
-        media_type="application/sql",
-        headers={"Content-Disposition": "attachment; filename=team_backup.sql"},
-    )
+    """Download a full database backup (pg_dump SQL for Postgres, raw .db file for SQLite)."""
+    from ..database import is_sqlite, DATABASE_URL
+    if is_sqlite():
+        import shutil
+        # Extract file path from sqlite:///path
+        db_path = DATABASE_URL.replace("sqlite:///", "")
+        if not Path(db_path).exists():
+            raise HTTPException(404, "Database file not found")
+        content = Path(db_path).read_bytes()
+        return Response(
+            content=content,
+            media_type="application/octet-stream",
+            headers={"Content-Disposition": "attachment; filename=team_backup.db"},
+        )
+    else:
+        import subprocess
+        db_url = os.environ.get("DATABASE_URL", "")
+        from urllib.parse import urlparse
+        parsed = urlparse(db_url)
+        env = {**os.environ, "PGPASSWORD": parsed.password or ""}
+        cmd = [
+            "pg_dump",
+            "-h", parsed.hostname or "db",
+            "-p", str(parsed.port or 5432),
+            "-U", parsed.username or "meetmgr",
+            "-d", parsed.path.lstrip("/") or "meet",
+            "--no-owner", "--no-acl",
+        ]
+        result = subprocess.run(cmd, capture_output=True, env=env, timeout=60)
+        if result.returncode != 0:
+            raise HTTPException(500, f"pg_dump failed: {result.stderr.decode()[:500]}")
+        return Response(
+            content=result.stdout,
+            media_type="application/sql",
+            headers={"Content-Disposition": "attachment; filename=team_backup.sql"},
+        )
 
 
 @router.post("/admin/restore-db", dependencies=[Depends(require_admin)])
@@ -2555,7 +2581,11 @@ BACKUP_DIR = Path(os.environ.get("MEET_STORAGE", "/app/data/meet.lxf")).parent /
 
 
 def _run_pg_dump_bytes() -> bytes:
-    """Run pg_dump and return SQL bytes."""
+    """Run pg_dump and return SQL bytes (Postgres) or read .db file (SQLite)."""
+    from ..database import is_sqlite, DATABASE_URL
+    if is_sqlite():
+        db_path = DATABASE_URL.replace("sqlite:///", "")
+        return Path(db_path).read_bytes()
     import subprocess
     from urllib.parse import urlparse
     db_url = os.environ.get("DATABASE_URL", "")

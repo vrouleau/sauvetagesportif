@@ -1,24 +1,15 @@
-services:
-  db:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: meetmgr
-      POSTGRES_PASSWORD: meetmgr
-      POSTGRES_DB: meetmgr
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U meetmgr"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
+# Default compose — SQLite backend (no external DB needed)
+# Usage: docker compose up --build -d
+#
+# To use PostgreSQL instead:
+#   docker compose -f docker-compose.yml -f docker-compose.postgres.yml up --build -d
 
+services:
   backend:
     build:
       context: ../..
       dockerfile: packages/team-app/backend/Dockerfile
     environment:
-      DATABASE_URL: postgresql://meetmgr:meetmgr@db:5432/meetmgr
       ADMIN_PIN: "${ADMIN_PIN:-314159}"
       RESEND_API_KEY: "${RESEND_API_KEY:-}"
       RESEND_FROM_EMAIL: "${RESEND_FROM_EMAIL:-noreply@example.com}"
@@ -29,11 +20,9 @@ services:
       TURNSTILE_SECRET_KEY: "${TURNSTILE_SECRET_KEY:-}"
       MEET_TEMPLATE_POOL: "/app/templates/template_pool.lxf"
       MEET_TEMPLATE_BEACH: "/app/templates/template_beach.lxf"
-    depends_on:
-      db:
-        condition: service_healthy
     volumes:
       - appdata:/app/data
+    restart: unless-stopped
 
   frontend:
     build:
@@ -46,7 +35,7 @@ services:
       - "8001:80"
     depends_on:
       - backend
+    restart: unless-stopped
 
 volumes:
-  pgdata:
   appdata:

@@ -3,11 +3,16 @@ dist/
 out/
 .env
 *.db
+*.db-wal
+*.db-shm
 *.tsbuildinfo
 .kiro/
 
 env
 .env
+
+# Backend data (local dev artifacts)
+packages/team-app/backend/data/
 
 # Test artifacts
 packages/meet-app/scan_*.png

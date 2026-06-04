@@ -30,7 +30,9 @@ app.add_middleware(
 # --- Audit log ---
 _audit = logging.getLogger("audit")
 _audit.setLevel(logging.INFO)
-_audit_handler = logging.FileHandler("/app/data/audit.log")
+_audit_log_path = os.environ.get("AUDIT_LOG", "/app/data/audit.log")
+Path(_audit_log_path).parent.mkdir(parents=True, exist_ok=True)
+_audit_handler = logging.FileHandler(_audit_log_path)
 _audit_handler.setFormatter(logging.Formatter("%(asctime)s  %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
 _audit.addHandler(_audit_handler)
 _audit.propagate = False
@@ -101,11 +103,13 @@ def startup():
 
 
 async def _auto_backup_loop():
-    """Background loop: run pg_dump on schedule, enforce retention."""
+    """Background loop: create periodic database backups (SQLite file copy or pg_dump)."""
     import asyncio
+    import shutil
     import subprocess
     from urllib.parse import urlparse
     from .models import BsGlobal
+    from .database import is_sqlite, DATABASE_URL
 
     BACKUP_DIR = Path(os.environ.get("MEET_STORAGE", "/app/data/meet.lxf")).parent / "backups"
 
@@ -128,7 +132,8 @@ async def _auto_backup_loop():
 
             # Check if a backup is needed (last backup older than interval)
             BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-            existing = sorted(BACKUP_DIR.glob("auto-*.sql"), key=lambda p: p.stat().st_mtime)
+            backup_ext = "db" if is_sqlite() else "sql"
+            existing = sorted(BACKUP_DIR.glob(f"auto-*.{backup_ext}"), key=lambda p: p.stat().st_mtime)
             needs_backup = True
             if existing:
                 from datetime import datetime, timedelta
@@ -137,34 +142,44 @@ async def _auto_backup_loop():
                     needs_backup = False
 
             if needs_backup:
-                # Run pg_dump
-                db_url = os.environ.get("DATABASE_URL", "")
-                parsed = urlparse(db_url)
-                env = {**os.environ, "PGPASSWORD": parsed.password or ""}
-                cmd = [
-                    "pg_dump",
-                    "-h", parsed.hostname or "db",
-                    "-p", str(parsed.port or 5432),
-                    "-U", parsed.username or "meetmgr",
-                    "-d", parsed.path.lstrip("/") or "meetmgr",
-                    "--no-owner", "--no-acl",
-                ]
-                result = subprocess.run(cmd, capture_output=True, env=env, timeout=60)
-                if result.returncode == 0:
-                    from datetime import datetime
-                    timestamp = datetime.now().strftime("%Y-%m-%d-%H%M%S")
-                    filename = f"auto-{timestamp}.sql"
-                    (BACKUP_DIR / filename).write_bytes(result.stdout)
-                    print(f"Auto-backup created: {filename} ({len(result.stdout)} bytes)")
+                from datetime import datetime
+                timestamp = datetime.now().strftime("%Y-%m-%d-%H%M%S")
 
-                    # Enforce retention
-                    backups = sorted(BACKUP_DIR.glob("auto-*.sql"), key=lambda p: p.stat().st_mtime)
-                    while len(backups) > max_count:
-                        removed = backups.pop(0)
-                        removed.unlink()
-                        print(f"Auto-backup removed (retention): {removed.name}")
+                if is_sqlite():
+                    # SQLite: simple file copy
+                    db_path = DATABASE_URL.replace("sqlite:///", "")
+                    if Path(db_path).exists():
+                        filename = f"auto-{timestamp}.db"
+                        shutil.copy2(db_path, BACKUP_DIR / filename)
+                        size = (BACKUP_DIR / filename).stat().st_size
+                        print(f"Auto-backup created: {filename} ({size} bytes)")
                 else:
-                    print(f"Auto-backup pg_dump failed: {result.stderr.decode()[:200]}")
+                    # PostgreSQL: pg_dump
+                    db_url = os.environ.get("DATABASE_URL", "")
+                    parsed = urlparse(db_url)
+                    env = {**os.environ, "PGPASSWORD": parsed.password or ""}
+                    cmd = [
+                        "pg_dump",
+                        "-h", parsed.hostname or "db",
+                        "-p", str(parsed.port or 5432),
+                        "-U", parsed.username or "meetmgr",
+                        "-d", parsed.path.lstrip("/") or "meetmgr",
+                        "--no-owner", "--no-acl",
+                    ]
+                    result = subprocess.run(cmd, capture_output=True, env=env, timeout=60)
+                    if result.returncode == 0:
+                        filename = f"auto-{timestamp}.sql"
+                        (BACKUP_DIR / filename).write_bytes(result.stdout)
+                        print(f"Auto-backup created: {filename} ({len(result.stdout)} bytes)")
+                    else:
+                        print(f"Auto-backup pg_dump failed: {result.stderr.decode()[:200]}")
+
+                # Enforce retention
+                backups = sorted(BACKUP_DIR.glob(f"auto-*.{backup_ext}"), key=lambda p: p.stat().st_mtime)
+                while len(backups) > max_count:
+                    removed = backups.pop(0)
+                    removed.unlink()
+                    print(f"Auto-backup removed (retention): {removed.name}")
 
         except Exception as e:
             print(f"Auto-backup error: {e}")

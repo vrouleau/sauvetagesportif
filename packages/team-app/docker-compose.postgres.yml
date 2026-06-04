@@ -1,0 +1,28 @@
+# PostgreSQL overlay — adds a db service and points backend at it
+# Usage: docker compose -f docker-compose.yml -f docker-compose.postgres.yml up --build -d
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: meetmgr
+      POSTGRES_PASSWORD: meetmgr
+      POSTGRES_DB: meetmgr
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U meetmgr"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  backend:
+    environment:
+      DATABASE_URL: postgresql://meetmgr:meetmgr@db:5432/meetmgr
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:

@@ -7,11 +7,40 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from ..database import get_db
+from ..database import get_db, is_sqlite
 from ..models import BsGlobal
 from ..models_live import LiveEvent, LiveResult, LiveSplit, LiveStartlist
+
+
+def _upsert(db: Session, model, conflict_columns: list[str], values: dict, update_values: dict):
+    """Dialect-agnostic upsert: INSERT ... ON CONFLICT DO UPDATE.
+
+    Works on both PostgreSQL and SQLite (3.24+).
+    """
+    if is_sqlite():
+        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+        stmt = sqlite_insert(model).values(**values)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=conflict_columns,
+            set_=update_values,
+        )
+    else:
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+        stmt = pg_insert(model).values(**values)
+        # Try constraint name first, fall back to index_elements
+        constraint_name = getattr(model, '__table__', None)
+        if any('uq_' in str(c.name) for c in model.__table__.constraints if hasattr(c, 'name') and c.name):
+            # Find the unique constraint matching our conflict columns
+            for c in model.__table__.constraints:
+                if hasattr(c, 'columns') and set(col.name for col in c.columns) == set(conflict_columns):
+                    stmt = stmt.on_conflict_do_update(constraint=c.name, set_=update_values)
+                    break
+            else:
+                stmt = stmt.on_conflict_do_update(index_elements=conflict_columns, set_=update_values)
+        else:
+            stmt = stmt.on_conflict_do_update(index_elements=conflict_columns, set_=update_values)
+    db.execute(stmt)
 
 router = APIRouter(prefix="/api/live")
 
@@ -113,7 +142,7 @@ async def push_results(data: dict, db: Session = Depends(get_db)):
             continue
 
         # Upsert live_result
-        stmt = pg_insert(LiveResult).values(
+        values = dict(
             event_id=event_id,
             heat_number=heat_number,
             lane=lane,
@@ -126,21 +155,19 @@ async def push_results(data: dict, db: Session = Depends(get_db)):
             dsq_reason=r.get("dsq_reason"),
             is_official=r.get("is_official", False),
             pushed_at=datetime.utcnow(),
-        ).on_conflict_do_update(
-            constraint="uq_live_result",
-            set_={
-                "athlete_id": r.get("athlete_id"),
-                "athlete_name": r.get("athlete_name"),
-                "club_name": r.get("club_name"),
-                "swimtime_ms": r.get("swimtime_ms"),
-                "reaction_time_ms": r.get("reaction_time_ms"),
-                "status": r.get("status", ""),
-                "dsq_reason": r.get("dsq_reason"),
-                "is_official": r.get("is_official", False),
-                "pushed_at": datetime.utcnow(),
-            },
         )
-        db.execute(stmt)
+        update_vals = {
+            "athlete_id": r.get("athlete_id"),
+            "athlete_name": r.get("athlete_name"),
+            "club_name": r.get("club_name"),
+            "swimtime_ms": r.get("swimtime_ms"),
+            "reaction_time_ms": r.get("reaction_time_ms"),
+            "status": r.get("status", ""),
+            "dsq_reason": r.get("dsq_reason"),
+            "is_official": r.get("is_official", False),
+            "pushed_at": datetime.utcnow(),
+        }
+        _upsert(db, LiveResult, ["event_id", "heat_number", "lane"], values, update_vals)
 
         # Handle splits
         splits = r.get("splits", [])
@@ -221,7 +248,7 @@ async def push_events(data: dict, db: Session = Depends(get_db)):
         if not event_id:
             continue
 
-        stmt = pg_insert(LiveEvent).values(
+        stmt_values = dict(
             event_id=event_id,
             session_number=e.get("session_number"),
             session_name=e.get("session_name"),
@@ -232,21 +259,19 @@ async def push_events(data: dict, db: Session = Depends(get_db)):
             round=e.get("round"),
             scheduled_time=e.get("scheduled_time"),
             total_heats=e.get("total_heats", 0),
-        ).on_conflict_do_update(
-            index_elements=["event_id"],
-            set_={
-                "session_number": e.get("session_number"),
-                "session_name": e.get("session_name"),
-                "event_number": e.get("event_number"),
-                "event_name": e.get("event_name", ""),
-                "gender": e.get("gender"),
-                "distance": e.get("distance"),
-                "round": e.get("round"),
-                "scheduled_time": e.get("scheduled_time"),
-                "total_heats": e.get("total_heats", 0),
-            },
         )
-        db.execute(stmt)
+        stmt_update = {
+            "session_number": e.get("session_number"),
+            "session_name": e.get("session_name"),
+            "event_number": e.get("event_number"),
+            "event_name": e.get("event_name", ""),
+            "gender": e.get("gender"),
+            "distance": e.get("distance"),
+            "round": e.get("round"),
+            "scheduled_time": e.get("scheduled_time"),
+            "total_heats": e.get("total_heats", 0),
+        }
+        _upsert(db, LiveEvent, ["event_id"], stmt_values, stmt_update)
         accepted += 1
 
     db.commit()
@@ -273,7 +298,7 @@ async def push_startlist(data: dict, db: Session = Depends(get_db)):
         if not all([event_id, heat_number is not None, lane is not None]):
             continue
 
-        stmt = pg_insert(LiveStartlist).values(
+        sl_values = dict(
             event_id=event_id,
             heat_number=heat_number,
             lane=lane,
@@ -281,16 +306,14 @@ async def push_startlist(data: dict, db: Session = Depends(get_db)):
             athlete_name=e.get("athlete_name"),
             club_name=e.get("club_name"),
             entry_time_ms=e.get("entry_time_ms"),
-        ).on_conflict_do_update(
-            constraint="uq_live_startlist",
-            set_={
-                "athlete_id": e.get("athlete_id"),
-                "athlete_name": e.get("athlete_name"),
-                "club_name": e.get("club_name"),
-                "entry_time_ms": e.get("entry_time_ms"),
-            },
         )
-        db.execute(stmt)
+        sl_update = {
+            "athlete_id": e.get("athlete_id"),
+            "athlete_name": e.get("athlete_name"),
+            "club_name": e.get("club_name"),
+            "entry_time_ms": e.get("entry_time_ms"),
+        }
+        _upsert(db, LiveStartlist, ["event_id", "heat_number", "lane"], sl_values, sl_update)
         events_touched.add(event_id)
         accepted += 1
 

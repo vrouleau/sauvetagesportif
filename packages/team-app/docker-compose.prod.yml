@@ -1,28 +1,14 @@
-# Production compose — pulls pre-built images from ghcr.io
+# Production compose — pulls pre-built images, SQLite by default
 # Usage: docker compose -f docker-compose.prod.yml up -d
 #
-# Requires .env file with secrets (see .env_template)
+# For PostgreSQL: docker compose -f docker-compose.prod.yml -f docker-compose.postgres.yml up -d
+#
+# Requires .env file with secrets (ADMIN_PIN, SECRET_KEY, etc.)
 
 services:
-  db:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: meetmgr
-      POSTGRES_PASSWORD: meetmgr
-      POSTGRES_DB: meetmgr
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U meetmgr"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-    restart: unless-stopped
-
   backend:
     image: ghcr.io/vrouleau/sauvetagesportif/team-backend:latest
     environment:
-      DATABASE_URL: postgresql://meetmgr:meetmgr@db:5432/meetmgr
       ADMIN_PIN: "${ADMIN_PIN}"
       RESEND_API_KEY: "${RESEND_API_KEY:-}"
       RESEND_FROM_EMAIL: "${RESEND_FROM_EMAIL:-noreply@example.com}"
@@ -31,9 +17,6 @@ services:
       STRIPE_API_KEY: "${STRIPE_API_KEY:-}"
       SUPPORT_EMAIL: "${SUPPORT_EMAIL:-}"
       TURNSTILE_SECRET_KEY: "${TURNSTILE_SECRET_KEY:-}"
-    depends_on:
-      db:
-        condition: service_healthy
     volumes:
       - appdata:/app/data
     restart: unless-stopped
@@ -50,5 +33,4 @@ services:
     restart: unless-stopped
 
 volumes:
-  pgdata:
   appdata:

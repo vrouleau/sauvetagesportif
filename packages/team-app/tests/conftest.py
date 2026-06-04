@@ -31,6 +31,7 @@ def _run_compose(args: list[str], check: bool = True) -> subprocess.CompletedPro
     return subprocess.run(
         ["docker", "compose",
          "-f", "docker-compose.yml",
+         "-f", "docker-compose.postgres.yml",
          "-f", "docker-compose.test.yml",
          "--env-file", str(TEST_ENV_FILE), *args],
         cwd=REPO_ROOT, check=check, capture_output=True,
