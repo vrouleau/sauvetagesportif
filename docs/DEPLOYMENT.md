@@ -2,69 +2,140 @@
 
 ## Current Production Setup
 
-The team-app currently runs on a local mini-PC with:
-- Docker Compose (`docker-compose.prod.yml`)
-- PostgreSQL 16 container
-- Backend container (FastAPI/Python)
-- Frontend container (Nginx serving static React build)
-- Cloudflare DNS pointing to the mini-PC's public IP
-- Env file with secrets (ADMIN_PIN, SECRET_KEY, RESEND_API_KEY, etc.)
+The team-app runs on Docker Compose with SQLite (default) or PostgreSQL (optional overlay).
 
-### Known Issue
+### Local / Mini-PC
 
-Frequent power outages at the hosting location make this setup unreliable.
+```bash
+# SQLite (default — simplest):
+docker compose up -d
+
+# With PostgreSQL:
+docker compose -f docker-compose.yml -f docker-compose.postgres.yml up -d
+```
 
 ---
 
-## Cloud Deployment Options (Evaluated)
+## Cloud Deployment — Oracle Cloud Free Tier
 
-### Fly.io (Recommended — paused)
+Oracle Cloud provides **2 free ARM VMs** (Ampere A1) with 4 CPUs, 24GB RAM, 200GB storage — forever free. You run the same `docker compose` setup as locally.
 
-**Architecture:**
-- Backend → Fly app (from existing Dockerfile)
-- Frontend → Fly app (from existing frontend Dockerfile)
-- Postgres → Fly Managed Postgres or external (Neon.tech)
-- Persistent volume for `/app/data` (meet .lxf storage)
-- Cloudflare DNS → Fly app hostname
+### One-Time Setup
 
-**Status:** Paused. Fly's unmanaged Postgres provisioning was broken during evaluation (Consul URL generation error). Two sub-options remain:
-1. Use Neon.tech for free managed Postgres externally
-2. Migrate to SQLite (eliminates the DB service entirely) — see `docs/SQLITE_MIGRATION_PLAN.md`
+#### 1. Create an Oracle Cloud account
 
-**Free Tier Limits:**
-- 3 shared-cpu-1x VMs (256MB RAM each)
-- 3GB persistent storage
-- 160GB outbound bandwidth/month
+- Sign up at https://cloud.oracle.com (requires credit card for identity, no charges on free tier)
+- Select your home region (pick one close to Quebec: Toronto or Ashburn)
 
-**Secrets to configure (via `fly secrets set`):**
-- `ADMIN_PIN`
-- `SECRET_KEY`
-- `DATABASE_URL` (Postgres connection string or SQLite path)
-- `RESEND_API_KEY`
-- `RESEND_FROM_EMAIL`
-- `APP_BASE_URL`
-- `STRIPE_API_KEY`
-- `SUPPORT_EMAIL`
-- `TURNSTILE_SITE_KEY`
-- `TURNSTILE_SECRET_KEY`
+#### 2. Create a free-tier VM
 
-### Other Options Considered
+- Go to: Compute → Instances → Create Instance
+- Shape: **VM.Standard.A1.Flex** (Ampere ARM) — 1 OCPU, 6GB RAM is plenty
+- Image: **Ubuntu 22.04** (or Oracle Linux 8)
+- Networking: create a VCN with public subnet, assign a public IP
+- SSH key: upload your public key
+
+#### 3. Open firewall ports
+
+In the Oracle Console → Networking → VCN → Security Lists → Default Security List:
+- Add ingress rule: **port 80** (HTTP) from 0.0.0.0/0
+- Add ingress rule: **port 443** (HTTPS) from 0.0.0.0/0
+
+Also on the VM itself (Ubuntu):
+```bash
+sudo iptables -I INPUT -p tcp --dport 80 -j ACCEPT
+sudo iptables -I INPUT -p tcp --dport 443 -j ACCEPT
+sudo netfilter-persistent save
+```
+
+#### 4. Install Docker
+
+```bash
+# SSH into the VM
+ssh ubuntu@<your-vm-public-ip>
+
+# Install Docker
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER
+# Log out and back in for group to take effect
+
+# Install Docker Compose plugin
+sudo apt-get install docker-compose-plugin
+```
+
+#### 5. Clone and deploy
+
+```bash
+git clone https://github.com/vrouleau/sauvetagesportif.git
+cd sauvetagesportif/packages/team-app
+
+# Create .env file with your secrets
+cat > .env << 'EOF'
+ADMIN_PIN=your-admin-pin
+SECRET_KEY=your-random-secret-key-here
+RESEND_API_KEY=your-resend-key
+RESEND_FROM_EMAIL=noreply@yourdomain.com
+APP_BASE_URL=https://yourdomain.com
+STRIPE_API_KEY=
+SUPPORT_EMAIL=your@email.com
+TURNSTILE_SITE_KEY=
+TURNSTILE_SECRET_KEY=
+EOF
+
+# Start (SQLite mode — no Postgres needed)
+docker compose -f docker-compose.prod.yml up -d
+```
+
+#### 6. Point your Cloudflare DNS
+
+- In Cloudflare dashboard → DNS → add an A record:
+  - Name: `team` (or whatever subdomain you want)
+  - Content: your Oracle VM public IP
+  - Proxy: ON (orange cloud) — gives you free HTTPS
+
+#### 7. Enable Cloudflare SSL
+
+- SSL/TLS → Overview → set to **Full (strict)** if you add a cert on the VM, or **Flexible** to let Cloudflare handle HTTPS
+
+---
+
+### Updating the App
+
+```bash
+ssh ubuntu@<your-vm-ip>
+cd sauvetagesportif/packages/team-app
+git pull
+docker compose -f docker-compose.prod.yml up --build -d
+```
+
+### Backups
+
+SQLite DB is a single file inside the Docker volume. To backup:
+
+```bash
+# Copy the DB out of the container
+docker compose -f docker-compose.prod.yml exec backend cat /app/data/meetmgr.db > ~/backup-$(date +%Y%m%d).db
+```
+
+Or use the built-in auto-backup (creates daily `.db` copies inside the container volume).
+
+### Monitoring
+
+```bash
+# Check logs
+docker compose -f docker-compose.prod.yml logs -f backend
+
+# Check status
+curl http://localhost:8001/api/status
+```
+
+---
+
+## Alternatives Considered
 
 | Platform | Verdict |
 |----------|---------|
-| Google Cloud Run | Doesn't support docker-compose; needs Cloud SQL ($) |
-| Oracle Cloud Free Tier | 2 free ARM VMs forever; run docker-compose as-is; good fallback |
-| Railway.app | $5/month free credit; easy but limited |
+| Fly.io | Works but requires new Dockerfile (supervisord), micro-VMs are small (256MB), Postgres provisioning was broken |
+| Google Cloud Run | Doesn't support persistent volumes (no SQLite), needs Cloud SQL ($) |
+| Railway.app | $5/month credit; easy but limited free tier |
 | Render.com | Free Postgres expires after 90 days |
-
----
-
-## Recommended Path Forward
-
-**SQLite migration** → eliminates the Postgres dependency entirely:
-- Single container deployment (backend only serves API + static frontend)
-- Database is a file on a persistent volume
-- Dramatically simpler (no DB service, no connection strings, no backups to configure)
-- Same approach as the meet-app (Electron) already uses successfully
-
-See `docs/SQLITE_MIGRATION_PLAN.md` for the migration plan.
