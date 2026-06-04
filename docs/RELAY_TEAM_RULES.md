@@ -4,6 +4,18 @@
 
 Relay teams are composed of members from the same club. The team's age category and gender composition must follow specific rules to be valid for competition.
 
+These rules apply **identically to both pool and beach meets**. Although the ILS defines 3-person relays for some beach events (Board Relay, Ski Relay), Sauvetage Sportif Québec runs all relay events with **4-person teams**. The same validation logic applies regardless of meet type.
+
+### Meet Types and Relay Events
+
+| Meet Type | Example Relay Events | Team Size | Gender Rules |
+|-----------|---------------------|-----------|--------------|
+| Pool | Manikin Relay 4×25m, Obstacle Relay 4×50m, Medley Relay 4×50m, Pool Lifesaver Relay 4×50m, Rescue Tow Relay 4×50m | 4 | M, F, or X (Pool Lifesaver = 2M+2F) |
+| Beach | Relais Sprint Sur Plage 4×90m | 4 | X (Mixed: 2M+2F) |
+
+> **ILS Reference**: Pool Lifesaver Relay (CRB S3-30): "Each team shall consist of two males and two females. Teams are permitted to select their own gender order."  
+> The same 2M+2F rule is applied to mixed beach relay events by Sauvetage Sportif Québec.
+
 ## Age Group Categories
 
 Athletes are classified into the following age groups based on their age as of the meet's age base date:

@@ -195,6 +195,7 @@ export interface EligibleAthlete {
   id: number
   name: string             // "LastName, FirstName"
   gender: 'M' | 'F'
+  ageGroup?: string        // Registration age code (e.g., "15-18", "19+") from individual entries
 }
 
 // ─── Registration API (used by AthletesListPage & RegistrationPage) ───────────

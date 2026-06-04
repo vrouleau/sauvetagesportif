@@ -233,7 +233,39 @@ function RelayTeamRow({
           // Filter eligible athletes for this position:
           // - Exclude athletes assigned to OTHER positions on THIS team (intra-team)
           // - Exclude athletes assigned to OTHER teams for same event/ageCode (cross-team)
+          // - For mixed (X) events: enforce N/2 men + N/2 women balance
+          // - For age groups: exclude athletes that would make a valid majority impossible
           // - BUT keep the currently selected athlete for this position in the list
+
+          // For mixed events, compute gender counts on this team (excluding current position)
+          let allowedGender: 'M' | 'F' | null = null
+          if (event.gender === 'X') {
+            const maxPerGender = event.relaycount / 2
+            let mCount = 0
+            let fCount = 0
+            for (const m of team.members) {
+              if (m.position === position || m.athleteId == null) continue
+              const assigned = eligibleAthletes.find(a => a.id === m.athleteId)
+              if (assigned?.gender === 'M') mCount++
+              else if (assigned?.gender === 'F') fCount++
+            }
+            if (mCount >= maxPerGender) allowedGender = 'F'
+            else if (fCount >= maxPerGender) allowedGender = 'M'
+          }
+
+          // For age group filtering: compute current age groups on this team (excluding current position)
+          // and determine how many remaining unfilled positions exist after this one
+          const currentAgeGroups: string[] = []
+          let filledCount = 0
+          for (const m of team.members) {
+            if (m.position === position || m.athleteId == null) continue
+            filledCount++
+            const assigned = eligibleAthletes.find(a => a.id === m.athleteId)
+            if (assigned?.ageGroup) currentAgeGroups.push(assigned.ageGroup)
+          }
+          const remainingAfterThis = event.relaycount - filledCount - 1
+          const requiredMajority = Math.floor(event.relaycount / 2) + 1
+
           const filteredAthletes = eligibleAthletes.filter(athlete => {
             // Always show the currently assigned athlete for this position
             if (athlete.id === currentAthleteId) return true
@@ -241,6 +273,19 @@ function RelayTeamRow({
             if (intraTeamAssignedIds.has(athlete.id) && athlete.id !== currentAthleteId) return false
             // Exclude if assigned to another team for same event
             if (crossTeamAssignedIds.has(athlete.id)) return false
+            // For mixed events: exclude gender that has reached its quota
+            if (allowedGender != null && athlete.gender !== allowedGender) return false
+            // Age group check: would adding this athlete make a valid majority impossible?
+            if (athlete.ageGroup && currentAgeGroups.length > 0) {
+              const groupsAfter = [...currentAgeGroups, athlete.ageGroup]
+              // Count occurrences of each age group
+              const counts = new Map<string, number>()
+              for (const g of groupsAfter) counts.set(g, (counts.get(g) ?? 0) + 1)
+              // Best possible outcome: the most common group gets all remaining positions
+              let maxCount = 0
+              for (const c of counts.values()) { if (c > maxCount) maxCount = c }
+              if (maxCount + remainingAfterThis < requiredMajority) return false
+            }
             return true
           })
 

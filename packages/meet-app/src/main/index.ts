@@ -702,7 +702,7 @@ ipcMain.handle('db:get-relay-page-data', (_event, clubId?: number) => {
   }
 
   // 5. Compute eligible athletes per event/ageCode
-  const eligibleAthletes: Record<string, Array<{ id: number; name: string; gender: 'M' | 'F' }>> = {}
+  const eligibleAthletes: Record<string, Array<{ id: number; name: string; gender: 'M' | 'F'; ageGroup?: string }>> = {}
 
   // Get all athletes (filtered by club if specified)
   let athleteQuery = `SELECT athleteid, clubid, firstname, lastname, gender, birthdate FROM athlete`
@@ -723,7 +723,7 @@ ipcMain.handle('db:get-relay-page-data', (_event, clubId?: number) => {
       const key = `${ev.eventId}-${cat.ageCode}`
       if (eligibleAthletes[key]) continue // already computed
 
-      const eligible: Array<{ id: number; name: string; gender: 'M' | 'F' }> = []
+      const eligible: Array<{ id: number; name: string; gender: 'M' | 'F'; ageGroup?: string }> = []
       for (const ath of athletes) {
         // Gender filter only — age group is determined by team composition, not pre-filtered
         const athGender: 'M' | 'F' = ath.gender === 1 ? 'M' : 'F'
@@ -733,6 +733,7 @@ ipcMain.handle('db:get-relay-page-data', (_event, clubId?: number) => {
           id: ath.athleteid,
           name: `${ath.lastname ?? ''}, ${ath.firstname ?? ''}`,
           gender: athGender,
+          ageGroup: athleteAgeGroupMap.get(ath.athleteid) ?? undefined,
         })
       }
 
@@ -860,6 +861,111 @@ ipcMain.handle('db:set-relay-team-member', (_event, teamId: number, position: nu
 
     if (sameTeamDup) {
       throw new Error(`Athlete is already assigned to position ${sameTeamDup.relaynumber} on this team`)
+    }
+
+    // Gender balance validation for mixed (X) events:
+    // Exactly N/2 men and N/2 women required (e.g., 2M+2F for 4-person relay)
+    const eventInfo = db.prepare(`
+      SELECT e.gender AS eventGender, ss.relaycount
+      FROM swimevent e
+      JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid
+      WHERE e.swimeventid = ?
+    `).get(relay.swimeventid) as { eventGender: number | null; relaycount: number } | undefined
+
+    const eventGenderVal = eventInfo?.eventGender ?? 0
+    // gender 3 = mixed (X)
+    if (eventGenderVal === 3) {
+      const rc = eventInfo?.relaycount ?? 4
+      const maxPerGender = Math.floor(rc / 2)
+
+      // Get athlete's gender
+      const athlete = db.prepare(`SELECT gender FROM athlete WHERE athleteid = ?`).get(athleteId) as { gender: number | null } | undefined
+      const athleteGender = athlete?.gender // 1=M, 2=F
+
+      // Count current genders on this team (excluding current position)
+      const currentMembers = db.prepare(`
+        SELECT a.gender FROM relayposition rp
+        JOIN athlete a ON rp.athleteid = a.athleteid
+        WHERE rp.relayid = ? AND rp.relaynumber != ?
+      `).all(teamId, position) as Array<{ gender: number | null }>
+
+      let mCount = 0
+      let fCount = 0
+      for (const cm of currentMembers) {
+        if (cm.gender === 1) mCount++
+        else if (cm.gender === 2) fCount++
+      }
+
+      if (athleteGender === 1 && mCount >= maxPerGender) {
+        throw new Error(`Cannot add another man: mixed relay requires exactly ${maxPerGender} men and ${maxPerGender} women`)
+      }
+      if (athleteGender === 2 && fCount >= maxPerGender) {
+        throw new Error(`Cannot add another woman: mixed relay requires exactly ${maxPerGender} men and ${maxPerGender} women`)
+      }
+    }
+
+    // Age group majority validation:
+    // Adding this athlete must not make it impossible for any single age group
+    // to achieve a strict majority (≥ relaycount/2 + 1) once all positions are filled.
+    const requiredMajority = Math.floor(relaycount / 2) + 1
+
+    // Get the new athlete's dominant registration age group (from individual entries)
+    const newAthleteAgRow = db.prepare(`
+      SELECT ag.agemin, ag.agemax, COUNT(*) as cnt
+      FROM swimresult sr
+      JOIN agegroup ag ON sr.agegroupid = ag.agegroupid
+      JOIN swimevent e ON sr.swimeventid = e.swimeventid
+      JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid
+      WHERE sr.athleteid = ? AND ss.relaycount = 1
+      GROUP BY ag.agemin, ag.agemax
+      ORDER BY cnt DESC
+      LIMIT 1
+    `).get(athleteId) as { agemin: number | null; agemax: number | null } | undefined
+
+    if (newAthleteAgRow) {
+      const newAthleteAgeCode = buildAgeCode(newAthleteAgRow.agemin, newAthleteAgRow.agemax)
+
+      // Get age groups of other assigned team members (excluding current position)
+      const otherMembers = db.prepare(`
+        SELECT rp.athleteid FROM relayposition rp
+        WHERE rp.relayid = ? AND rp.relaynumber != ? AND rp.athleteid IS NOT NULL
+      `).all(teamId, position) as Array<{ athleteid: number }>
+
+      if (otherMembers.length > 0) {
+        const memberAgeCodes: string[] = []
+        for (const om of otherMembers) {
+          const agRow = db.prepare(`
+            SELECT ag.agemin, ag.agemax, COUNT(*) as cnt
+            FROM swimresult sr
+            JOIN agegroup ag ON sr.agegroupid = ag.agegroupid
+            JOIN swimevent e ON sr.swimeventid = e.swimeventid
+            JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid
+            WHERE sr.athleteid = ? AND ss.relaycount = 1
+            GROUP BY ag.agemin, ag.agemax
+            ORDER BY cnt DESC
+            LIMIT 1
+          `).get(om.athleteid) as { agemin: number | null; agemax: number | null } | undefined
+          if (agRow) {
+            memberAgeCodes.push(buildAgeCode(agRow.agemin, agRow.agemax))
+          }
+        }
+
+        // Simulate adding the new athlete
+        const allAgeCodes = [...memberAgeCodes, newAthleteAgeCode]
+        const remainingPositions = relaycount - allAgeCodes.length
+
+        // Count occurrences
+        const counts = new Map<string, number>()
+        for (const ac of allAgeCodes) counts.set(ac, (counts.get(ac) ?? 0) + 1)
+        let maxCount = 0
+        for (const c of counts.values()) { if (c > maxCount) maxCount = c }
+
+        if (maxCount + remainingPositions < requiredMajority) {
+          throw new Error(
+            `Cannot assign: adding this athlete would make it impossible to achieve an age group majority (${requiredMajority} of ${relaycount} required)`
+          )
+        }
+      }
     }
 
     db.prepare(

@@ -2088,3 +2088,414 @@ class TestLiveNotifications:
             timeout=5,
         )
         assert r.status_code == 409
+
+
+# ---------------------------------------------------------------------------
+# Relay Team Composition Validation (gender balance + age group majority)
+# ---------------------------------------------------------------------------
+
+class TestRelayTeamComposition:
+    """Tests for relay team gender balance (2M+2F for mixed) and age group majority."""
+
+    @pytest.fixture(autouse=True, scope="class")
+    def _ensure_meet(self, admin_headers):
+        """Re-upload meet template so events and athletes exist."""
+        meet_path = Path(__file__).resolve().parent / "fixtures" / "meet_template.lxf"
+        entries_path = Path(__file__).resolve().parent / "fixtures" / "test_entries.lxf"
+        with open(meet_path, "rb") as f:
+            r = requests.post(f"{BASE_URL}/api/upload/meet",
+                              files={"file": ("meet.lxf", f, "application/octet-stream")},
+                              headers=admin_headers, timeout=60)
+            assert r.status_code == 200
+        if entries_path.exists():
+            with open(entries_path, "rb") as f:
+                r = requests.post(f"{BASE_URL}/api/upload/entries",
+                                  files={"file": ("entries.lxf", f, "application/octet-stream")},
+                                  headers=admin_headers, timeout=60)
+                assert r.status_code == 200
+
+    @pytest.fixture(scope="class")
+    def clubs(self, _ensure_meet, admin_headers) -> list:
+        r = requests.get(f"{BASE_URL}/api/clubs", headers=admin_headers, timeout=10)
+        r.raise_for_status()
+        return r.json()
+
+    @pytest.fixture(scope="class")
+    def athletes(self, _ensure_meet, admin_headers) -> list:
+        r = requests.get(f"{BASE_URL}/api/athletes", headers=admin_headers, timeout=10)
+        r.raise_for_status()
+        return r.json()
+
+    @pytest.fixture(scope="class")
+    def relay_page_data(self, _ensure_meet, clubs, admin_headers) -> dict:
+        """Fetch relay page data for the first club."""
+        r = requests.get(f"{BASE_URL}/api/relay-teams?club_id={clubs[0]['id']}",
+                         headers=admin_headers, timeout=10)
+        r.raise_for_status()
+        return r.json()
+
+    def _find_mixed_relay_event(self, relay_page_data) -> tuple[int, str] | None:
+        """Find a mixed (X) relay event. Returns (event_id, age_code) or None."""
+        for cat in relay_page_data.get("ageCategories", []):
+            for ev in cat.get("events", []):
+                if ev["gender"] == "X":
+                    return ev["eventId"], cat["ageCode"]
+        return None
+
+    def _find_gendered_relay_event(self, relay_page_data, gender: str) -> tuple[int, str] | None:
+        """Find a M or F relay event. Returns (event_id, age_code) or None."""
+        for cat in relay_page_data.get("ageCategories", []):
+            for ev in cat.get("events", []):
+                if ev["gender"] == gender:
+                    return ev["eventId"], cat["ageCode"]
+        return None
+
+    def _get_eligible_athletes_by_gender(self, relay_page_data, event_id, age_code, gender):
+        """Get eligible athletes filtered by gender for a given event/ageCode."""
+        key = f"{event_id}-{age_code}"
+        eligible = relay_page_data.get("eligibleAthletes", {}).get(key, [])
+        return [a for a in eligible if a["gender"] == gender]
+
+    # ── Gender balance tests ──────────────────────────────────────────────────
+
+    def test_mixed_relay_eligible_athletes_include_both_genders(self, relay_page_data):
+        """Mixed events should have both M and F athletes in eligible list."""
+        result = self._find_mixed_relay_event(relay_page_data)
+        if result is None:
+            pytest.skip("No mixed relay event in test meet")
+        event_id, age_code = result
+        key = f"{event_id}-{age_code}"
+        eligible = relay_page_data.get("eligibleAthletes", {}).get(key, [])
+        genders = {a["gender"] for a in eligible}
+        assert "M" in genders, "Mixed event should have male athletes eligible"
+        assert "F" in genders, "Mixed event should have female athletes eligible"
+
+    def test_mixed_relay_rejects_third_man(self, relay_page_data, clubs, admin_headers):
+        """Assigning more than N/2 males to a mixed relay returns 400."""
+        result = self._find_mixed_relay_event(relay_page_data)
+        if result is None:
+            pytest.skip("No mixed relay event in test meet")
+        event_id, age_code = result
+
+        # Get the relaycount for this event
+        relaycount = 4
+        for cat in relay_page_data.get("ageCategories", []):
+            for ev in cat.get("events", []):
+                if ev["eventId"] == event_id:
+                    relaycount = ev["relaycount"]
+                    break
+
+        max_per_gender = relaycount // 2
+
+        # Create a relay team
+        r = requests.post(f"{BASE_URL}/api/relay-teams",
+                          json={"event_id": event_id, "age_code": age_code,
+                                "club_id": clubs[0]["id"]},
+                          headers=admin_headers, timeout=10)
+        r.raise_for_status()
+        team_id = r.json()["teamId"]
+
+        try:
+            # Get male athletes
+            males = self._get_eligible_athletes_by_gender(
+                relay_page_data, event_id, age_code, "M")
+            needed = max_per_gender + 1
+            if len(males) < needed:
+                pytest.skip(f"Need at least {needed} male athletes, only {len(males)} available")
+
+            # Assign max_per_gender men (valid)
+            for pos, athlete in enumerate(males[:max_per_gender], start=1):
+                r = requests.put(
+                    f"{BASE_URL}/api/relay-teams/{team_id}/members/{pos}",
+                    json={"athleteId": athlete["id"]},
+                    headers=admin_headers, timeout=10)
+                assert r.status_code == 200, f"Position {pos} assignment failed: {r.text}"
+
+            # Assign one more man → should be rejected
+            next_pos = max_per_gender + 1
+            r = requests.put(
+                f"{BASE_URL}/api/relay-teams/{team_id}/members/{next_pos}",
+                json={"athleteId": males[max_per_gender]["id"]},
+                headers=admin_headers, timeout=10)
+            assert r.status_code == 400, (
+                f"Expected 400 for extra male on mixed relay, got {r.status_code}: {r.text}"
+            )
+            assert "mixed relay" in r.json().get("detail", "").lower()
+        finally:
+            # Cleanup
+            requests.delete(f"{BASE_URL}/api/relay-teams/{team_id}",
+                            headers=admin_headers, timeout=10)
+
+    def test_mixed_relay_allows_balanced_team(self, relay_page_data, clubs, admin_headers):
+        """A mixed relay team with N/2 M + N/2 F should be fully assignable."""
+        result = self._find_mixed_relay_event(relay_page_data)
+        if result is None:
+            pytest.skip("No mixed relay event in test meet")
+        event_id, age_code = result
+
+        # Get the relaycount for this event
+        relaycount = 4
+        for cat in relay_page_data.get("ageCategories", []):
+            for ev in cat.get("events", []):
+                if ev["eventId"] == event_id:
+                    relaycount = ev["relaycount"]
+                    break
+
+        max_per_gender = relaycount // 2
+
+        r = requests.post(f"{BASE_URL}/api/relay-teams",
+                          json={"event_id": event_id, "age_code": age_code,
+                                "club_id": clubs[0]["id"]},
+                          headers=admin_headers, timeout=10)
+        r.raise_for_status()
+        team_id = r.json()["teamId"]
+
+        try:
+            males = self._get_eligible_athletes_by_gender(
+                relay_page_data, event_id, age_code, "M")
+            females = self._get_eligible_athletes_by_gender(
+                relay_page_data, event_id, age_code, "F")
+            assert len(males) >= max_per_gender, f"Need at least {max_per_gender} male athletes"
+            if len(females) < max_per_gender:
+                pytest.skip(f"Need at least {max_per_gender} female athletes, only {len(females)} available")
+
+            # Assign N/2 men + N/2 women (should all succeed)
+            team_members = males[:max_per_gender] + females[:max_per_gender]
+            for pos, athlete in enumerate(team_members, start=1):
+                r = requests.put(
+                    f"{BASE_URL}/api/relay-teams/{team_id}/members/{pos}",
+                    json={"athleteId": athlete["id"]},
+                    headers=admin_headers, timeout=10)
+                assert r.status_code == 200, (
+                    f"Position {pos} failed: {r.status_code} {r.text}"
+                )
+        finally:
+            requests.delete(f"{BASE_URL}/api/relay-teams/{team_id}",
+                            headers=admin_headers, timeout=10)
+
+    # ── Age group majority tests ──────────────────────────────────────────────
+
+    def test_eligible_athletes_include_age_group(self, relay_page_data, athletes, admin_headers):
+        """Eligible athlete entries should include an ageGroup field when registered."""
+        # Register an athlete for an individual event first
+        club_athletes = [a for a in athletes if a.get("club_id")]
+        if not club_athletes:
+            pytest.skip("No athletes with clubs")
+
+        # Pick an athlete and register them for an individual event
+        ath = club_athletes[0]
+        reg = get_registration(ath["id"], admin_headers)
+        ind_events = reg.get("individual_events", [])
+        if not ind_events:
+            pytest.skip("No individual events for athlete")
+
+        # Find a valid category and register
+        style = ind_events[0]
+        cats = style.get("categories", [])
+        if not cats:
+            pytest.skip("No categories available")
+        cat = cats[0]
+
+        r = post_registration(ath["id"], cat["event_id"], cat["age_code"], 60000, admin_headers)
+        reg_id = r["id"]
+
+        try:
+            # Reload relay page data and check that the athlete now has ageGroup
+            r = requests.get(
+                f"{BASE_URL}/api/relay-teams?club_id={ath['club_id']}",
+                headers=admin_headers, timeout=10)
+            r.raise_for_status()
+            page = r.json()
+
+            found_with_age_group = False
+            for key, eligible_list in page.get("eligibleAthletes", {}).items():
+                for ea in eligible_list:
+                    if ea["id"] == ath["id"] and ea.get("ageGroup"):
+                        found_with_age_group = True
+                        break
+                if found_with_age_group:
+                    break
+
+            assert found_with_age_group, (
+                f"Athlete {ath['id']} should have ageGroup after individual registration"
+            )
+        finally:
+            delete_registration(reg_id, admin_headers)
+
+    def test_age_group_majority_rejects_invalid_split(
+            self, relay_page_data, athletes, clubs, admin_headers):
+        """Assigning athletes that create an impossible age group majority returns 400.
+
+        Scenario: on a 4-person relay, fill 3 positions with 2×groupA + 1×groupB.
+        Then try to assign a 4th athlete from groupB → would create 2-2 split → rejected.
+        """
+        # Find a gendered relay event (simpler than mixed for this test)
+        result = self._find_gendered_relay_event(relay_page_data, "M")
+        if result is None:
+            result = self._find_gendered_relay_event(relay_page_data, "F")
+        if result is None:
+            pytest.skip("No gendered relay event in test meet")
+        event_id, age_code = result
+
+        # We need athletes from at least 2 different age groups
+        # Register athletes into different age categories
+        club_id = clubs[0]["id"]
+        club_athletes = [a for a in athletes
+                         if a["club_id"] == club_id
+                         and a["gender"] == ("M" if result else "F")]
+
+        if len(club_athletes) < 4:
+            pytest.skip("Not enough athletes for age group test")
+
+        # Register athletes in different age categories
+        # Athletes born in different years will naturally fall into different age groups
+        reg_ids = []
+        registered_athletes = []
+        try:
+            for ath in club_athletes[:4]:
+                reg = get_registration(ath["id"], admin_headers)
+                ind_events = reg.get("individual_events", [])
+                if not ind_events:
+                    continue
+                style = ind_events[0]
+                cats = style.get("categories", [])
+                if not cats:
+                    continue
+                cat = cats[0]
+                r = post_registration(
+                    ath["id"], cat["event_id"], cat["age_code"], 60000, admin_headers)
+                reg_ids.append(r["id"])
+                registered_athletes.append({"id": ath["id"], "age_code": cat["age_code"]})
+
+            if len(registered_athletes) < 4:
+                pytest.skip("Could not register enough athletes in different age groups")
+
+            # Check if we have athletes in at least 2 different age groups
+            age_groups = {ra["age_code"] for ra in registered_athletes}
+            if len(age_groups) < 2:
+                pytest.skip("All athletes in same age group; cannot test majority rule")
+
+            # Create a relay team
+            r = requests.post(f"{BASE_URL}/api/relay-teams",
+                              json={"event_id": event_id, "age_code": age_code,
+                                    "club_id": club_id},
+                              headers=admin_headers, timeout=10)
+            r.raise_for_status()
+            team_id = r.json()["teamId"]
+
+            try:
+                # Find 2 athletes from groupA and 2 from groupB
+                groups = {}
+                for ra in registered_athletes:
+                    groups.setdefault(ra["age_code"], []).append(ra["id"])
+
+                group_codes = list(groups.keys())
+                group_a = group_codes[0]
+                group_b = group_codes[1]
+
+                athletes_a = groups[group_a]
+                athletes_b = groups[group_b]
+
+                if len(athletes_a) < 2 or len(athletes_b) < 2:
+                    pytest.skip("Not enough athletes per age group for 2-2 test")
+
+                # Assign 2 from group A + 1 from group B (positions 1-3)
+                for pos, ath_id in enumerate([athletes_a[0], athletes_a[1], athletes_b[0]], start=1):
+                    r = requests.put(
+                        f"{BASE_URL}/api/relay-teams/{team_id}/members/{pos}",
+                        json={"athleteId": ath_id},
+                        headers=admin_headers, timeout=10)
+                    assert r.status_code == 200, f"Pos {pos} failed: {r.status_code} {r.text}"
+
+                # Assign 2nd from group B → would create 2A-2B split → should be rejected
+                r = requests.put(
+                    f"{BASE_URL}/api/relay-teams/{team_id}/members/4",
+                    json={"athleteId": athletes_b[1]},
+                    headers=admin_headers, timeout=10)
+                assert r.status_code == 400, (
+                    f"Expected 400 for 2-2 age group split, got {r.status_code}: {r.text}"
+                )
+                assert "majority" in r.json().get("detail", "").lower()
+
+            finally:
+                requests.delete(f"{BASE_URL}/api/relay-teams/{team_id}",
+                                headers=admin_headers, timeout=10)
+        finally:
+            for rid in reg_ids:
+                try:
+                    delete_registration(rid, admin_headers)
+                except Exception:
+                    pass
+
+    def test_age_group_majority_allows_valid_composition(
+            self, relay_page_data, athletes, clubs, admin_headers):
+        """A relay with 3 athletes from the same age group should be fully assignable."""
+        result = self._find_gendered_relay_event(relay_page_data, "M")
+        if result is None:
+            result = self._find_gendered_relay_event(relay_page_data, "F")
+        if result is None:
+            pytest.skip("No gendered relay event in test meet")
+        event_id, age_code = result
+
+        club_id = clubs[0]["id"]
+        club_athletes = [a for a in athletes
+                         if a["club_id"] == club_id
+                         and a["gender"] == ("M" if result else "F")]
+
+        if len(club_athletes) < 4:
+            pytest.skip("Not enough athletes")
+
+        # Register all 4 athletes in the SAME age category
+        reg_ids = []
+        registered_ids = []
+        try:
+            for ath in club_athletes[:4]:
+                reg = get_registration(ath["id"], admin_headers)
+                ind_events = reg.get("individual_events", [])
+                if not ind_events:
+                    continue
+                # Use the first category (same for all to ensure same age group)
+                style = ind_events[0]
+                cats = style.get("categories", [])
+                if not cats:
+                    continue
+                # Pick a specific age code (use the first one consistently)
+                target_code = cats[0]["age_code"]
+                target_cat = next((c for c in cats if c["age_code"] == target_code), None)
+                if not target_cat:
+                    continue
+                r = post_registration(
+                    ath["id"], target_cat["event_id"], target_code, 60000, admin_headers)
+                reg_ids.append(r["id"])
+                registered_ids.append(ath["id"])
+
+            if len(registered_ids) < 4:
+                pytest.skip("Could not register 4 athletes in same age group")
+
+            # Create a relay team
+            r = requests.post(f"{BASE_URL}/api/relay-teams",
+                              json={"event_id": event_id, "age_code": age_code,
+                                    "club_id": club_id},
+                              headers=admin_headers, timeout=10)
+            r.raise_for_status()
+            team_id = r.json()["teamId"]
+
+            try:
+                # Assign all 4 (same age group → 4-0 composition, valid)
+                for pos, ath_id in enumerate(registered_ids[:4], start=1):
+                    r = requests.put(
+                        f"{BASE_URL}/api/relay-teams/{team_id}/members/{pos}",
+                        json={"athleteId": ath_id},
+                        headers=admin_headers, timeout=10)
+                    assert r.status_code == 200, (
+                        f"Position {pos} failed: {r.status_code} {r.text}"
+                    )
+            finally:
+                requests.delete(f"{BASE_URL}/api/relay-teams/{team_id}",
+                                headers=admin_headers, timeout=10)
+        finally:
+            for rid in reg_ids:
+                try:
+                    delete_registration(rid, admin_headers)
+                except Exception:
+                    pass

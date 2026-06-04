@@ -689,3 +689,265 @@ describe('RelayEntryPage - Property 9: Event Filtering by Relay Count', () => {
     )
   })
 })
+
+
+// ─── Mixed Gender Balance Filtering Logic ─────────────────────────────────────
+
+/**
+ * For mixed (X) events, filters the dropdown to enforce N/2 men + N/2 women.
+ * Returns the allowed gender (only that gender shown) or null (both shown).
+ */
+function computeAllowedGender(
+  teamMembers: Array<{ position: number; athleteId: number | null }>,
+  eligibleAthletes: EligibleAthlete[],
+  currentPosition: number,
+  relaycount: number
+): 'M' | 'F' | null {
+  const maxPerGender = relaycount / 2
+  let mCount = 0
+  let fCount = 0
+  for (const m of teamMembers) {
+    if (m.position === currentPosition || m.athleteId == null) continue
+    const assigned = eligibleAthletes.find(a => a.id === m.athleteId)
+    if (assigned?.gender === 'M') mCount++
+    else if (assigned?.gender === 'F') fCount++
+  }
+  if (mCount >= maxPerGender) return 'F'
+  if (fCount >= maxPerGender) return 'M'
+  return null
+}
+
+// ─── Age Group Majority Filtering Logic ───────────────────────────────────────
+
+/**
+ * Determines if adding an athlete with a given age group would make it impossible
+ * to achieve a strict majority once all positions are filled.
+ * Returns true if the athlete should be BLOCKED (excluded from dropdown).
+ */
+function wouldBlockAgeGroupMajority(
+  currentAgeGroups: string[],
+  candidateAgeGroup: string,
+  relaycount: number
+): boolean {
+  const allAgeCodes = [...currentAgeGroups, candidateAgeGroup]
+  const remainingPositions = relaycount - allAgeCodes.length
+  const requiredMajority = Math.floor(relaycount / 2) + 1
+
+  // Count occurrences of each age group
+  const counts = new Map<string, number>()
+  for (const g of allAgeCodes) counts.set(g, (counts.get(g) ?? 0) + 1)
+
+  // Best possible: the most common group gets all remaining positions
+  let maxCount = 0
+  for (const c of counts.values()) { if (c > maxCount) maxCount = c }
+
+  return maxCount + remainingPositions < requiredMajority
+}
+
+// ─── Property Tests for Mixed Gender Balance ──────────────────────────────────
+
+describe('RelayEntryPage - Property 10: Mixed Event Gender Balance Filtering', () => {
+  /**
+   * **Validates: RELAY_TEAM_RULES.md - Gender Rules for Mixed (X) Events**
+   *
+   * For mixed relay events with N positions, exactly N/2 men and N/2 women are
+   * required. The dropdown SHALL only show athletes of a gender that still has
+   * available slots. Once N/2 of one gender are assigned, only the other gender
+   * is shown.
+   */
+  it('once N/2 men are assigned, only women are allowed (and vice versa)', () => {
+    const relaycountArb = fc.constantFrom(2, 4)
+
+    fc.assert(
+      fc.property(
+        relaycountArb,
+        fc.array(eligibleAthleteArb, { minLength: 4, maxLength: 20 }),
+        (relaycount, athletes) => {
+          const maxPerGender = relaycount / 2
+
+          // Simulate filling positions with men up to the max
+          const menAthletes = athletes.filter(a => a.gender === 'M').slice(0, maxPerGender)
+          if (menAthletes.length < maxPerGender) return // not enough men to test
+
+          const teamMembers = menAthletes.map((a, i) => ({
+            position: i + 1,
+            athleteId: a.id,
+          }))
+
+          // Check the next unfilled position
+          const nextPosition = maxPerGender + 1
+          const allowed = computeAllowedGender(teamMembers, athletes, nextPosition, relaycount)
+
+          // Should only allow women now
+          expect(allowed).toBe('F')
+        }
+      ),
+      { numRuns: 200 }
+    )
+  })
+
+  it('when both genders have room, no gender restriction is applied', () => {
+    fc.assert(
+      fc.property(
+        fc.array(eligibleAthleteArb, { minLength: 4, maxLength: 20 }),
+        (athletes) => {
+          const relaycount = 4
+          // Only 1 man assigned — both genders still have room
+          const oneMan = athletes.find(a => a.gender === 'M')
+          if (!oneMan) return
+
+          const teamMembers = [{ position: 1, athleteId: oneMan.id }]
+          const allowed = computeAllowedGender(teamMembers, athletes, 2, relaycount)
+
+          // Both genders still have room (1M < 2 max, 0F < 2 max)
+          expect(allowed).toBeNull()
+        }
+      ),
+      { numRuns: 200 }
+    )
+  })
+
+  it('empty team has no gender restriction', () => {
+    fc.assert(
+      fc.property(
+        fc.array(eligibleAthleteArb, { minLength: 1, maxLength: 10 }),
+        fc.constantFrom(2, 4),
+        (athletes, relaycount) => {
+          const teamMembers: Array<{ position: number; athleteId: number | null }> = []
+          const allowed = computeAllowedGender(teamMembers, athletes, 1, relaycount)
+          expect(allowed).toBeNull()
+        }
+      ),
+      { numRuns: 100 }
+    )
+  })
+})
+
+// ─── Property Tests for Age Group Majority ────────────────────────────────────
+
+describe('RelayEntryPage - Property 11: Age Group Majority Filtering', () => {
+  /**
+   * **Validates: RELAY_TEAM_RULES.md - Team Age Group Determination**
+   *
+   * A relay team must have a clear majority (≥3 out of 4 for 4-person relays,
+   * ≥2 out of 2 for 2-person relays). The dropdown SHALL exclude athletes whose
+   * age group would make achieving a majority impossible given remaining positions.
+   */
+
+  const ageGroupArb = fc.constantFrom('10-', '11-12', '13-14', '15-18', '19+')
+
+  it('2-2 split on a 4-person relay is always blocked (last position)', () => {
+    fc.assert(
+      fc.property(
+        ageGroupArb,
+        ageGroupArb.filter(g => true), // second group (may be same or different)
+        (groupA, groupB) => {
+          // Scenario: 3 positions filled with 2×groupA + 1×groupB
+          // The 4th position with groupB would create 2-2 → should be blocked
+          if (groupA === groupB) return // same group → would be 3-1, not 2-2
+
+          const currentAgeGroups = [groupA, groupA, groupB]
+          const blocked = wouldBlockAgeGroupMajority(currentAgeGroups, groupB, 4)
+          expect(blocked).toBe(true) // 2A + 2B → no majority possible, 0 remaining
+
+          // But adding groupA should be allowed (3A + 1B → valid majority)
+          const allowedA = wouldBlockAgeGroupMajority(currentAgeGroups, groupA, 4)
+          expect(allowedA).toBe(false)
+        }
+      ),
+      { numRuns: 200 }
+    )
+  })
+
+  it('3-1 split on a 4-person relay is always valid', () => {
+    fc.assert(
+      fc.property(
+        ageGroupArb,
+        ageGroupArb,
+        (groupA, groupB) => {
+          // 3 positions already from groupA, adding anyone is fine (already majority)
+          const currentAgeGroups = [groupA, groupA, groupA]
+          const blocked = wouldBlockAgeGroupMajority(currentAgeGroups, groupB, 4)
+          expect(blocked).toBe(false) // 3A already ≥ required majority of 3
+        }
+      ),
+      { numRuns: 200 }
+    )
+  })
+
+  it('with remaining positions, candidate is allowed if majority is still achievable', () => {
+    fc.assert(
+      fc.property(
+        ageGroupArb,
+        ageGroupArb,
+        (groupA, groupB) => {
+          // 1 position filled with groupA, adding groupB for 2nd position
+          // Remaining = 4 - 2 = 2 positions. Best = max(1,1) + 2 = 3 ≥ 3 → allowed
+          const currentAgeGroups = [groupA]
+          const blocked = wouldBlockAgeGroupMajority(currentAgeGroups, groupB, 4)
+          expect(blocked).toBe(false)
+        }
+      ),
+      { numRuns: 200 }
+    )
+  })
+
+  it('all-different groups with no remaining positions is blocked', () => {
+    // 4 different age groups → max count = 1, no majority possible
+    const blocked = wouldBlockAgeGroupMajority(
+      ['10-', '11-12', '13-14'],
+      '15-18',
+      4
+    )
+    expect(blocked).toBe(true) // 1-1-1-1 → max=1, remaining=0, 1+0 < 3
+  })
+
+  it('2-person relay: 1-1 split is blocked', () => {
+    fc.assert(
+      fc.property(
+        ageGroupArb,
+        ageGroupArb.filter(g => true),
+        (groupA, groupB) => {
+          if (groupA === groupB) return // same group → 2-0, valid
+          // For 2-person relay, required majority = 2
+          // 1 position filled with groupA, adding groupB → 1-1, remaining=0, max=1 < 2
+          const currentAgeGroups = [groupA]
+          const blocked = wouldBlockAgeGroupMajority(currentAgeGroups, groupB, 2)
+          expect(blocked).toBe(true)
+        }
+      ),
+      { numRuns: 200 }
+    )
+  })
+
+  it('2-person relay: same group is always allowed', () => {
+    fc.assert(
+      fc.property(
+        ageGroupArb,
+        (group) => {
+          const currentAgeGroups = [group]
+          const blocked = wouldBlockAgeGroupMajority(currentAgeGroups, group, 2)
+          expect(blocked).toBe(false) // 2-0 → max=2 ≥ required 2
+        }
+      ),
+      { numRuns: 100 }
+    )
+  })
+
+  it('empty team never blocks any athlete', () => {
+    fc.assert(
+      fc.property(
+        ageGroupArb,
+        fc.constantFrom(2, 4),
+        (group, relaycount) => {
+          // No existing members → remaining = relaycount - 1, max = 1
+          // For 4-person: 1 + 3 = 4 ≥ 3 → allowed
+          // For 2-person: 1 + 1 = 2 ≥ 2 → allowed
+          const blocked = wouldBlockAgeGroupMajority([], group, relaycount)
+          expect(blocked).toBe(false)
+        }
+      ),
+      { numRuns: 100 }
+    )
+  })
+})

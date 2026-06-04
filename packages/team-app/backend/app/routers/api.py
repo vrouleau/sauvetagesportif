@@ -20,7 +20,7 @@ from ..models import (
     SwimEvent, SwimStyle, SwimSession, AgeGroup, SwimResult, BsGlobal, SecretLink,
     Heat, Split,
     gender_to_str, gender_from_str, fee_dollars_to_cents, fee_cents_to_dollars,
-    GENDER_M, GENDER_F, ROUND_FIN, ROUND_TIM, ROUND_PRE,
+    GENDER_M, GENDER_F, GENDER_MIXED, ROUND_FIN, ROUND_TIM, ROUND_PRE,
 )
 from ..models_team import TeamClub, Member
 from ..seed import seed_from_lxf
@@ -3600,6 +3600,66 @@ def get_relay_teams(request: Request, club_id: int | None = None, db: Session = 
         # Get all athletes for this club
         club_members = db.query(Member).filter(Member.clubsid == target_club_id).all()
 
+        # Compute each athlete's registration age group from individual entries
+        # (dominant age group from non-relay swimresults)
+        # Uses age_code directly when set, falls back to agegroup FK join
+        club_member_ids = [m.membersid for m in club_members]
+        athlete_age_group_map: dict[int, str] = {}
+        if club_member_ids:
+            from sqlalchemy import func as sqla_func2
+            # Primary path: use age_code column directly (set by team-app registrations)
+            ac_counts = (
+                db.query(
+                    SwimResult.athleteid,
+                    SwimResult.age_code,
+                    sqla_func2.count().label("cnt"),
+                )
+                .join(SwimEvent, SwimResult.swimeventid == SwimEvent.swimeventid)
+                .join(SwimStyle, SwimEvent.swimstyleid == SwimStyle.swimstyleid)
+                .filter(
+                    SwimResult.athleteid.in_(club_member_ids),
+                    SwimStyle.relaycount == 1,  # only individual events
+                    SwimResult.age_code.isnot(None),
+                    SwimResult.age_code != "",
+                )
+                .group_by(SwimResult.athleteid, SwimResult.age_code)
+                .order_by(SwimResult.athleteid, sqla_func2.count().desc())
+                .all()
+            )
+            seen_ag: set[int] = set()
+            for row in ac_counts:
+                if row.athleteid in seen_ag:
+                    continue
+                seen_ag.add(row.athleteid)
+                athlete_age_group_map[row.athleteid] = row.age_code
+
+            # Fallback: for athletes not found via age_code, try agegroupid FK
+            remaining_ids = [mid for mid in club_member_ids if mid not in seen_ag]
+            if remaining_ids:
+                ag_counts = (
+                    db.query(
+                        SwimResult.athleteid,
+                        AgeGroup.agemin,
+                        AgeGroup.agemax,
+                        sqla_func2.count().label("cnt"),
+                    )
+                    .join(AgeGroup, SwimResult.agegroupid == AgeGroup.agegroupid)
+                    .join(SwimEvent, SwimResult.swimeventid == SwimEvent.swimeventid)
+                    .join(SwimStyle, SwimEvent.swimstyleid == SwimStyle.swimstyleid)
+                    .filter(
+                        SwimResult.athleteid.in_(remaining_ids),
+                        SwimStyle.relaycount == 1,
+                    )
+                    .group_by(SwimResult.athleteid, AgeGroup.agemin, AgeGroup.agemax)
+                    .order_by(SwimResult.athleteid, sqla_func2.count().desc())
+                    .all()
+                )
+                for row in ag_counts:
+                    if row.athleteid in seen_ag:
+                        continue
+                    seen_ag.add(row.athleteid)
+                    athlete_age_group_map[row.athleteid] = _relay_age_code(row.agemin, row.agemax)
+
         for key, group in event_groups_by_key.items():
             parts = key.split("-", 1)
             if len(parts) != 2:
@@ -3616,11 +3676,15 @@ def get_relay_teams(request: Request, club_id: int | None = None, db: Session = 
                     continue
 
                 gender_str = "M" if m.gender == GENDER_M else "F"
-                eligible.append({
+                age_group_str = athlete_age_group_map.get(m.membersid)
+                entry: dict = {
                     "id": m.membersid,
                     "name": f"{m.lastname}, {m.firstname}",
                     "gender": gender_str,
-                })
+                }
+                if age_group_str:
+                    entry["ageGroup"] = age_group_str
+                eligible.append(entry)
 
             eligible.sort(key=lambda a: a["name"])
             eligible_athletes[key] = eligible
@@ -4111,6 +4175,120 @@ def set_relay_team_member(
                 f"Athlete '{athlete_name}' already has a relay registration (legacy lock) for this event. "
                 f"Modify the existing team instead."
             )
+
+        # Gender balance validation for mixed (X) events:
+        # Exactly N/2 men and N/2 women required (e.g., 2M+2F for 4-person relay)
+        # In the DB, gender=1 is M-only, gender=2 is F-only, anything else (0/3/None) is mixed
+        if relay.gender not in (GENDER_M, GENDER_F):
+            max_per_gender = relaycount // 2
+
+            # Count current gender assignments on this team (excluding current position)
+            current_positions = (
+                db.query(RelayPos)
+                .filter(
+                    RelayPos.relaysid == team_id,
+                    RelayPos.numb != position,
+                    RelayPos.membersid.isnot(None),
+                )
+                .all()
+            )
+            m_count = 0
+            f_count = 0
+            for rp in current_positions:
+                pos_member = db.query(Member).get(rp.membersid)
+                if pos_member:
+                    if pos_member.gender == GENDER_M:
+                        m_count += 1
+                    elif pos_member.gender == GENDER_F:
+                        f_count += 1
+
+            if member.gender == GENDER_M and m_count >= max_per_gender:
+                raise HTTPException(
+                    400,
+                    f"Cannot add another man: mixed relay requires exactly {max_per_gender} men and {max_per_gender} women"
+                )
+            if member.gender == GENDER_F and f_count >= max_per_gender:
+                raise HTTPException(
+                    400,
+                    f"Cannot add another woman: mixed relay requires exactly {max_per_gender} men and {max_per_gender} women"
+                )
+
+        # Age group majority validation:
+        # Adding this athlete must not make it impossible for any single age group
+        # to achieve a strict majority (≥ relaycount/2 + 1) once all positions are filled.
+        from sqlalchemy import func as sqla_func_ag
+        required_majority = relaycount // 2 + 1
+
+        # Get age groups of currently assigned members (excluding current position)
+        current_positions_ag = (
+            db.query(RelayPos)
+            .filter(
+                RelayPos.relaysid == team_id,
+                RelayPos.numb != position,
+                RelayPos.membersid.isnot(None),
+            )
+            .all()
+        )
+        current_member_ids = [rp.membersid for rp in current_positions_ag]
+
+        # Get the new athlete's registration age group (non-relay individual entries)
+        new_athlete_ag_row = (
+            db.query(AgeGroup.agemin, AgeGroup.agemax, sqla_func_ag.count().label("cnt"))
+            .join(SwimResult, SwimResult.agegroupid == AgeGroup.agegroupid)
+            .join(SwimEvent, SwimResult.swimeventid == SwimEvent.swimeventid)
+            .join(SwimStyle, SwimEvent.swimstyleid == SwimStyle.swimstyleid)
+            .filter(
+                SwimResult.athleteid == athlete_id,
+                SwimStyle.relaycount == 1,
+            )
+            .group_by(AgeGroup.agemin, AgeGroup.agemax)
+            .order_by(sqla_func_ag.count().desc())
+            .first()
+        )
+        new_athlete_age_code = (
+            _relay_age_code(new_athlete_ag_row.agemin, new_athlete_ag_row.agemax)
+            if new_athlete_ag_row else None
+        )
+
+        if new_athlete_age_code and current_member_ids:
+            # Get age groups for current team members
+            existing_ag_rows = (
+                db.query(SwimResult.athleteid, AgeGroup.agemin, AgeGroup.agemax, sqla_func_ag.count().label("cnt"))
+                .join(AgeGroup, SwimResult.agegroupid == AgeGroup.agegroupid)
+                .join(SwimEvent, SwimResult.swimeventid == SwimEvent.swimeventid)
+                .join(SwimStyle, SwimEvent.swimstyleid == SwimStyle.swimstyleid)
+                .filter(
+                    SwimResult.athleteid.in_(current_member_ids),
+                    SwimStyle.relaycount == 1,
+                )
+                .group_by(SwimResult.athleteid, AgeGroup.agemin, AgeGroup.agemax)
+                .order_by(SwimResult.athleteid, sqla_func_ag.count().desc())
+                .all()
+            )
+            # Take the dominant age group per member
+            member_age_codes: list[str] = []
+            seen_ids: set[int] = set()
+            for row in existing_ag_rows:
+                if row.athleteid in seen_ids:
+                    continue
+                seen_ids.add(row.athleteid)
+                member_age_codes.append(_relay_age_code(row.agemin, row.agemax))
+
+            # Simulate adding the new athlete
+            all_age_codes = member_age_codes + [new_athlete_age_code]
+            remaining_positions = relaycount - len(all_age_codes)
+
+            # Count occurrences
+            from collections import Counter
+            counts = Counter(all_age_codes)
+            max_count = max(counts.values())
+
+            if max_count + remaining_positions < required_majority:
+                raise HTTPException(
+                    400,
+                    f"Cannot assign: adding this athlete would make it impossible to achieve "
+                    f"an age group majority ({required_majority} of {relaycount} required)"
+                )
 
     # Upsert the position record
     existing_pos = db.query(RelayPos).filter(
