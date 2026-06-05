@@ -1879,6 +1879,24 @@ function EventPropertiesPanel({ event, onUpdate }: { event: CompetitionEvent; on
                 </td>
               </tr>
               <tr className="border-b border-gray-100 hover:bg-gray-50">
+                <td className="px-4 py-0.5 text-gray-600 w-64">Frais par inscription ($)</td>
+                <td className="px-2 py-0.5">
+                  <input
+                    type="number"
+                    step="0.01"
+                    min={0}
+                    className="w-20 border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
+                    defaultValue={event.fee ?? ''}
+                    placeholder="0.00"
+                    onBlur={(e) => {
+                      const v = e.target.value ? parseFloat(e.target.value) : null
+                      save({ fee: v })
+                    }}
+                    onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                  />
+                </td>
+              </tr>
+              <tr className="border-b border-gray-100 hover:bg-gray-50">
                 <td className="px-4 py-0.5 text-gray-600 w-64">{t.events.eventPanel.externalId}</td>
                 <td className="px-2 py-0.5 text-gray-500">{event.id}</td>
               </tr>
@@ -2276,13 +2294,24 @@ function CompetitionPropertiesPanel({ onMeetNameChange }: { onMeetNameChange: (n
               <TextFieldRow label={t.events.meetPanel.contactInternet} fieldKey="CONTACTINTERNET" />
             </>
           )}
+          {/* Frais d'inscription */}
+          <SectionHeader title="Frais d'inscription" />
+          {!collapsed.has("Frais d'inscription") && (
+            <>
+              <NumberFieldRow label="Frais par club ($)" fieldKey="FEECLUB" />
+              <NumberFieldRow label="Frais par athlète ($)" fieldKey="FEEPERSON" />
+              <NumberFieldRow label="Frais par relais ($)" fieldKey="FEERELAY" />
+              <NumberFieldRow label="Frais inscription tardive individuelle ($)" fieldKey="FEELATEINDIVIDUAL" />
+              <NumberFieldRow label="Frais inscription tardive relais ($)" fieldKey="FEELATERELAY" />
+              <NumberFieldRow label="Réduction inscriptions multiples (%)" fieldKey="FEEDISCOUNT" />
+            </>
+          )}
+
         </tbody>
       </table>
     </div>
   )
 }
-
-// ─── Session Properties Panel (editable, matches Splash layout) ───────────────
 
 function SessionPropertiesPanel({
   session,

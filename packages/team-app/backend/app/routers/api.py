@@ -1524,6 +1524,7 @@ def list_sessions(db: Session = Depends(get_db)):
                 "phase": "Eliminatoire" if e.round == 1 else "Finale" if e.round == 4 else "Finale directe",
                 "isAdmin": is_admin,
                 "swimstyleId": e.swimstyleid,
+                "fee": e.fee,
                 "ageGroups": [{
                     "id": ag.agegroupid,
                     "number": i + 1,
@@ -1772,6 +1773,7 @@ def update_event(event_id: int, data: dict = Body(default={}), db: Session = Dep
         "round": "round",
         "swimstyleid": "swimstyleid",
         "maxentries": "maxentries",
+        "fee": "fee",
         "sortcode": "sortcode",
         "comment": "comment",
         "masters": "masters",

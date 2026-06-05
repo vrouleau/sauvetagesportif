@@ -45,6 +45,7 @@ export interface CompetitionEvent {
   swimstyleId?: number | null
   finalOrder?: number | null  // 1=fast-first (A swum first), 2=slow-first (A swum last, standard)
   maxEntries?: number | null  // beach: max participants per heat (overrides swimstyle.distance)
+  fee?: number | null         // per-event entry fee in dollars (e.g., 5.00)
   ageGroups: AgeGroup[]
 }
 
