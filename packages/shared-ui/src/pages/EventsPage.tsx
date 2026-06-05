@@ -1644,6 +1644,13 @@ function EventPropertiesPanel({ event, onUpdate }: { event: CompetitionEvent; on
   const [swimStyles, setSwimStyles] = useState<SwimStyle[]>([])
   const [selectedStyleId, setSelectedStyleId] = useState<number | null>(null)
   const [finalOrder, setFinalOrder] = useState<number>(event.finalOrder ?? 2)
+  const [isBeach, setIsBeach] = useState(false)
+
+  useEffect(() => {
+    api.getMeetConfig().then(cfg => {
+      setIsBeach((cfg?.MEETTYPE || '').toUpperCase() === 'BEACH')
+    }).catch(() => {})
+  }, [api])
 
   useEffect(() => {
     setEvNumber(event.number)
@@ -1825,6 +1832,7 @@ function EventPropertiesPanel({ event, onUpdate }: { event: CompetitionEvent; on
                   </td>
                 </tr>
               )}
+              {isBeach && (
               <tr className="border-b border-gray-100 hover:bg-gray-50">
                 <td className="px-4 py-0.5 text-gray-600 w-64">Max participants / vague</td>
                 <td className="px-2 py-0.5">
@@ -1843,6 +1851,7 @@ function EventPropertiesPanel({ event, onUpdate }: { event: CompetitionEvent; on
                   <span className="ml-1 text-gray-400 text-[10px]">(défaut: {event.distance})</span>
                 </td>
               </tr>
+              )}
             </>
           )}
         </tbody>
