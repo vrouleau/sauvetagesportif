@@ -2060,6 +2060,29 @@ function CompetitionPropertiesPanel({ onMeetNameChange }: { onMeetNameChange: (n
     )
   }
 
+  function FeeFieldRow({ label, fieldKey }: { label: string; fieldKey: string }) {
+    const [val, setVal] = useState(meetValues[fieldKey] ?? '')
+    useEffect(() => { setVal(meetValues[fieldKey] ?? '') }, [meetValues[fieldKey]])
+    return (
+      <tr className="border-b border-gray-100 hover:bg-gray-50">
+        <td className="px-4 py-0.5 text-gray-600 w-64">{label}</td>
+        <td className="px-2 py-0.5">
+          <input
+            type="number"
+            step="0.01"
+            min={0}
+            className="w-20 border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
+            value={val}
+            onChange={(e) => setVal(e.target.value)}
+            onBlur={() => saveField(fieldKey, val, 'F')}
+            onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+            placeholder="0.00"
+          />
+        </td>
+      </tr>
+    )
+  }
+
   function DateFieldRow({ label, fieldKey }: { label: string; fieldKey: string }) {
     // Splash date format: YYYYMMDDHHMMSSMMM → display as YYYY-MM-DD
     const raw = meetValues[fieldKey] ?? ''
@@ -2298,12 +2321,10 @@ function CompetitionPropertiesPanel({ onMeetNameChange }: { onMeetNameChange: (n
           <SectionHeader title="Frais d'inscription" />
           {!collapsed.has("Frais d'inscription") && (
             <>
-              <NumberFieldRow label="Frais par club ($)" fieldKey="FEECLUB" />
-              <NumberFieldRow label="Frais par athlète ($)" fieldKey="FEEPERSON" />
-              <NumberFieldRow label="Frais par relais ($)" fieldKey="FEERELAY" />
-              <NumberFieldRow label="Frais inscription tardive individuelle ($)" fieldKey="FEELATEINDIVIDUAL" />
-              <NumberFieldRow label="Frais inscription tardive relais ($)" fieldKey="FEELATERELAY" />
-              <NumberFieldRow label="Réduction inscriptions multiples (%)" fieldKey="FEEDISCOUNT" />
+              <FeeFieldRow label="Frais par club ($)" fieldKey="FEECLUB" />
+              <FeeFieldRow label="Frais par athlète ($)" fieldKey="FEEPERSON" />
+              <FeeFieldRow label="Frais par relais ($)" fieldKey="FEERELAY" />
+              <FeeFieldRow label="Frais inscription tardive ($)" fieldKey="FEELATEINDIVIDUAL" />
             </>
           )}
 

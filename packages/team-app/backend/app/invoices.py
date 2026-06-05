@@ -27,14 +27,55 @@ MEET_FEE_LABELS = {
 
 
 def _meet_fees(db: Session) -> dict[str, int]:
-    cfg = db.query(BsGlobal).get("meet_fees_json")
-    if not cfg or not cfg.data:
-        return {}
-    try:
-        data = json.loads(cfg.data)
-    except ValueError:
-        return {}
-    return {k: int(v) for k, v in data.items() if isinstance(v, (int, float))}
+    """Read meet-level fees from MEETVALUES (Splash-compatible format).
+
+    Falls back to meet_fees_json for backward compatibility with LXF imports.
+    MEETVALUES keys: FEECLUB, FEEPERSON, FEERELAY (stored as F;dollars)
+    Returns: {CLUB: cents, ATHLETE: cents, RELAY: cents, ...}
+    """
+    # Primary: read from MEETVALUES (Splash interoperable)
+    fees: dict[str, int] = {}
+    cfg = db.query(BsGlobal).get("MEETVALUES")
+    if cfg and cfg.data:
+        key_map = {
+            "FEECLUB": "CLUB",
+            "FEEPERSON": "ATHLETE",
+            "FEERELAY": "RELAY",
+            "FEELATEINDIVIDUAL": "LATEFEE",
+            "FEELATERELAY": "LATERELAYFE",
+        }
+        for line in cfg.data.split("\r\n"):
+            eq = line.find("=")
+            if eq < 0:
+                continue
+            key = line[:eq]
+            if key not in key_map:
+                continue
+            val_part = line[eq + 1:]
+            # Format: TYPE;VALUE (e.g., F;5.00 or I;500)
+            semi = val_part.find(";")
+            if semi >= 0:
+                raw_val = val_part[semi + 1:]
+            else:
+                raw_val = val_part
+            try:
+                dollars = float(raw_val)
+                if dollars > 0:
+                    fees[key_map[key]] = int(round(dollars * 100))
+            except (ValueError, TypeError):
+                pass
+
+    # Fallback: read from meet_fees_json (LXF import legacy)
+    if not fees:
+        cfg2 = db.query(BsGlobal).get("meet_fees_json")
+        if cfg2 and cfg2.data:
+            try:
+                data = json.loads(cfg2.data)
+                fees = {k: int(v) for k, v in data.items() if isinstance(v, (int, float)) and v > 0}
+            except ValueError:
+                pass
+
+    return fees
 
 
 def _stripe_client() -> None:
