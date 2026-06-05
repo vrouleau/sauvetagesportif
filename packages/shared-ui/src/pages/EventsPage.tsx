@@ -457,6 +457,72 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
     }
   }
 
+  async function handleConvertToFinal() {
+    // Convert the selected TIM event to Prelim + Final pair
+    if (selected.type !== 'event') return
+    const event = selected.event
+    if (event.phase !== 'Finale directe') {
+      window.alert('Only Timed Final events can be converted to Prelim + Final')
+      return
+    }
+
+    // Find or create a Finals session
+    let finalsSession = localSessions.find(s =>
+      s.name.toLowerCase().includes('finale') || s.events.some(e => e.phase === 'Finale')
+    )
+    if (!finalsSession) {
+      // Create a new finals session
+      const maxNum = Math.max(...localSessions.map(s => s.number), 0)
+      try {
+        const result = await api.createSession('Finales', maxNum + 1)
+        // Reload to get the session object
+        const updatedSessions = await api.getSessions()
+        setLocalSessions(updatedSessions)
+        finalsSession = updatedSessions.find((s: Session) => s.id === result.id)
+        if (!finalsSession) return
+      } catch {
+        window.alert('Failed to create Finals session')
+        return
+      }
+    }
+
+    try {
+      // 1. Convert original event: TIM → PRE (Eliminatoire)
+      await api.updateEvent(event.id, { round: 1 })  // ROUND_PRE = 1
+
+      // 2. Create the Final event in the finals session
+      const allNums = localSessions.flatMap((s) => s.events.map((e) => e.number))
+      const finalNum = Math.max(...allNums, 0) + 1
+      const result = await api.createEvent(
+        finalsSession.id,
+        finalNum,
+        event.gender,
+        event.distance,
+        'Finale',
+        event.nameFr,
+      )
+
+      // 3. Link the final to the prelim via preveventid
+      await api.updateEvent(result.id, { preveventid: event.id, swimstyleid: event.swimstyleId })
+
+      // 4. Reload
+      const updatedSessions = await api.getSessions()
+      setLocalSessions(updatedSessions)
+
+      // Select the new final event
+      for (const s of updatedSessions) {
+        const ev = s.events.find((e: CompetitionEvent) => e.id === result.id)
+        if (ev) {
+          setSelected({ type: 'event', event: ev, session: s })
+          setExpandedSessions(prev => new Set([...prev, s.id]))
+          break
+        }
+      }
+    } catch {
+      window.alert('Failed to convert to Prelim + Final')
+    }
+  }
+
   async function handleAddAward() {
     const targetSession =
       selected.type === 'session'
@@ -1017,7 +1083,7 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
             if (action === 'addSession') handleAddSession()
             else if (action === 'addDirectFinal') handleAddEventWithPhase('Finale directe')
             else if (action === 'addSemiFinal') handleAddEventWithPhase('Eliminatoire')
-            else if (action === 'addFinal') handleAddEventWithPhase('Finale')
+            else if (action === 'addFinal') handleConvertToFinal()
             else if (action === 'addMainHeat') handleAddEventWithPhase('Eliminatoire')
             else if (action === 'addSeparateHeats') handleAddEventWithPhase('Eliminatoire')
             else if (action === 'addTimeTrial') handleAddEventWithPhase('Finale directe')
@@ -1139,7 +1205,11 @@ function SortableEventItem({
         ) : (
           <span className="w-4 mr-1" />
         )}
-        <span className="w-4 mr-1 text-cyan-500">
+        <span className={`w-4 mr-1 ${
+          event.phase === 'Finale' ? 'text-amber-500' :
+          event.phase === 'Eliminatoire' ? 'text-blue-500' :
+          'text-green-500'
+        }`}>
           <svg className="w-3 h-3 inline" fill="currentColor" viewBox="0 0 20 20">
             <circle cx="10" cy="10" r="7" />
           </svg>

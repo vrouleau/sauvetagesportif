@@ -1777,6 +1777,7 @@ def update_event(event_id: int, data: dict = Body(default={}), db: Session = Dep
         "masters": "masters",
         "internalevent": "internalevent",
         "finalorder": "finalorder",
+        "preveventid": "preveventid",
         "daytime": "daytime",
         "duration": "duration",
     }

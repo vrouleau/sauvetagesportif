@@ -1943,6 +1943,7 @@ export interface EventUpdate {
   comment?: string | null
   finalorder?: number | null
   maxentries?: number | null
+  preveventid?: number | null
 }
 
 export async function updateEvent(eventId: number, data: EventUpdate): Promise<void> {
@@ -1969,6 +1970,7 @@ export async function updateEvent(eventId: number, data: EventUpdate): Promise<v
   if (data.comment !== undefined) { sets.push('comment=?'); vals.push(data.comment) }
   if (data.finalorder !== undefined) { sets.push('finalorder=?'); vals.push(data.finalorder) }
   if (data.maxentries !== undefined) { sets.push('maxentries=?'); vals.push(data.maxentries) }
+  if (data.preveventid !== undefined) { sets.push('preveventid=?'); vals.push(data.preveventid) }
 
   if (sets.length === 0) return
   vals.push(eventId)
