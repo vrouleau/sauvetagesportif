@@ -109,6 +109,38 @@ Types: `I`=integer, `S`=string, `B`=boolean(T/F), `D`=date(YYYYMMDDHHMMSSMMM), `
 
 Relay team management across both apps. Relay events have `relaycount > 1` (typically 4).
 
+### SERC (Simulated Emergency Response Competition)
+
+SERC is a judged technical relay event (swimstyle ID 530). Teams of 4 respond to a staged water emergency with multiple victims.
+
+**Key differences from normal relays:**
+- **No gender/age restrictions** — any mix of men/women, any age group
+- **No age group labels** displayed on teams
+- **Scoring** instead of timing — judges rate criteria 0-10 (×0.5 increments), weighted by factors
+- **Separate SERC tab** in organizer view with setup, scoring grid, results, and print
+
+**SERC components:**
+| Component | What |
+|-----------|------|
+| `backend/app/models_serc.py` | SQLAlchemy models (serc_config, serc_draw_order, serc_score) |
+| `backend/app/routers/serc.py` | CRUD API (config, teams, scores, results, draw order) |
+| `backend/app/routers/serc_print.py` | Printable judge sheets (one page per team per section, bilingual) |
+| `frontend/src/pages/Serc.jsx` | Organizer page (setup, scoring grid, results, QR codes) |
+| `frontend/src/pages/SercJudge.jsx` | Judge tablet form (public, no login, FR/EN toggle) |
+
+**SERC API endpoints:**
+| Endpoint | Purpose |
+|----------|---------|
+| `GET/POST /api/serc/config` | Get/save SERC configuration (victims, factors) |
+| `GET /api/serc/teams` | List relay teams for swimstyle 530 |
+| `GET/POST /api/serc/draw-order/1/randomize` | Randomize team order |
+| `PUT /api/serc/score` | Save a single score (draw, team, section, field, value) |
+| `GET /api/serc/scores/1` | Get all scores grouped by team |
+| `GET /api/serc/results` | Compute ranked results |
+| `GET /api/serc/print/sheets?lang=fr` | Print judge sheets (fr/en/bilingual) |
+
+**Judge tablet form:** `/serc/judge/overall`, `/serc/judge/bystander`, `/serc/judge/victim/1` — public URLs, no login needed. QR codes generated from the scoring page.
+
 ### Shared UI Pages
 - `shared-ui/src/pages/RelayEntryPage.tsx` — relay team management (flat event list, team CRUD, member dropdowns)
 - `shared-ui/src/pages/IndividualEntryPage.tsx` — individual entry (extracted from InscriptionPage, shows only events with `relaycount=1`)
@@ -142,6 +174,7 @@ Both apps show two entry tabs:
   - 4-0 or 3-1 → valid (team = majority age group)
   - 2-2 → **invalid** (no clear majority)
 - **Mixed events (gender=X)**: exactly 2M + 2F required (for 4-person relay)
+- **SERC events (swimstyle 530)**: NO gender or age restrictions — any composition allowed
 - **Eligibility**: same club, registered for individual events, no duplicate across teams for same event
 - **Team naming**: concatenated last names ("Tremblay/Gagnon/Roy/Boucher") or custom name
 

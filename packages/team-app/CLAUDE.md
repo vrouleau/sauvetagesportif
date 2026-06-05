@@ -171,6 +171,13 @@ Best times are computed from the Team Manager `results` table via `best_times_v2
 | `PUT /api/relay-teams/{id}/members/{pos}` | Assign/remove member at position | Authenticated |
 | `PUT /api/relay-teams/{id}/name` | Set custom team name | Authenticated |
 | `POST /api/data-management/merge-styles` | Remap swimstyleid across results + events (preview mode available) | Admin |
+| `GET/POST /api/serc/config` | SERC configuration (victims, factors, bystander) | Organizer/Admin |
+| `GET /api/serc/teams` | SERC relay teams (swimstyle 530) | Organizer/Admin |
+| `PUT /api/serc/score` | Save individual score (0-10 or -10 rough) | Public |
+| `GET /api/serc/scores/1` | All scores grouped by team | Public |
+| `GET /api/serc/results` | Ranked results (weighted totals) | Public |
+| `POST /api/serc/draw-order/1/randomize` | Randomize team draw order | Organizer/Admin |
+| `GET /api/serc/print/sheets?lang=fr` | Printable judge sheets (fr/en/bilingual) | Public |
 
 ## Relay Teams
 
@@ -186,6 +193,7 @@ Full CRUD management for relay team entries (events with `relaycount > 1`).
 ### Key rules
 - Team age group: majority rule (3-1 OK, 2-2 invalid) — see `docs/RELAY_TEAM_RULES.md`
 - Mixed events: exactly 2M + 2F
+- **SERC events (swimstyle 530): NO gender/age restrictions** — any mix allowed
 - Member eligibility: same club, registered for individual events, not on another team for same event
 - Team naming: auto = concatenated last names; custom name via `PUT /api/relay-teams/{id}/name`
 
@@ -202,7 +210,10 @@ backend/app/
   main.py               — FastAPI app, startup, audit logging, auto-backup scheduler
   models.py             — SQLAlchemy models (meet operations: swimresult.athleteid → members.membersid)
   models_team.py        — Team Manager schema (clubs, members, meets, events, results)
+  models_serc.py        — SERC models (serc_config, serc_draw_order, serc_score)
   routers/api.py        — All API endpoints
+  routers/serc.py       — SERC API (config, teams, scores, draw order, results)
+  routers/serc_print.py — SERC printable judge sheets (bilingual, one page per team per section)
   combined_events.py    — COMBINEDEVENTS XML generator (Python port)
   events.py             — LENEX meet structure parser
   best_times_v2.py      — Best times computed from Team Manager results table
@@ -218,7 +229,7 @@ frontend/src/
   main.jsx              — React app, routing, EventsPage wrapper
   meetApi.js            — MeetAPI adapter (HTTP → FastAPI)
   i18n.jsx              — Team-app specific translations
-  pages/                — Athletes, Organizer, Admin, DataManagement, SelfInvite, etc.
+  pages/                — Athletes, Organizer, Admin, DataManagement, Serc, SercJudge, etc.
 ```
 
 ## Meet lifecycle (LXF round-trip)
