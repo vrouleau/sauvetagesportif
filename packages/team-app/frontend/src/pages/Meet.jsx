@@ -125,7 +125,7 @@ export default function Meet() {
                     {info.event_fees.filter(e => e.fee_cents > 0).map((e, i) => (
                       <Row
                         key={i}
-                        label={`#${e.event_number} ${e.distance}m ${e.style_name}`}
+                        label={`#${e.event_number} ${e.style_name}`}
                         value={`${(e.fee_cents / 100).toFixed(2)} ${info.currency}`}
                       />
                     ))}

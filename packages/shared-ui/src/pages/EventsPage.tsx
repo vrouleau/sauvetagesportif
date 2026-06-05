@@ -1126,7 +1126,7 @@ function SortableEventItem({
               ? t.events.youthGenderLabel(event.gender)
               : t.events.genderLabel(event.gender)
           },{' '}
-          {event.distance}m {event.nameEn}
+          {event.nameEn}
           {event.maxEntries != null && (
             <span className="ml-1 text-orange-600 text-[10px]">[max:{event.maxEntries}]</span>
           )}
@@ -1349,7 +1349,7 @@ function AgeGroupPropertiesPanel({ group, event }: { group: AgeGroup; event: Com
   }
 
   const gLabel = t.events.genderLabel(event.gender)
-  const headerTitle = `${t.events.props.general} - ${event.number}. ${gLabel}, ${event.distance}m ${event.nameEn} / ${event.nameFr}, ${t.events.phaseLabel(event.phase)}`
+  const headerTitle = `${t.events.props.general} - ${event.number}. ${gLabel}, ${event.nameFr} / ${event.nameEn}, ${t.events.phaseLabel(event.phase)}`
 
   const genderOptions = [
     { value: 'M', label: 'M', intVal: 1 },
@@ -1688,7 +1688,7 @@ function EventPropertiesPanel({ event, onUpdate }: { event: CompetitionEvent; on
   ]
 
   const gLabel = t.events.genderLabel(event.gender)
-  const headerTitle = `${event.number}. ${gLabel}, ${event.distance}m ${event.nameFr} / ${event.nameEn}`
+  const headerTitle = `${event.number}. ${gLabel}, ${event.nameFr} / ${event.nameEn}`
 
   return (
     <div className="text-xs">
@@ -1737,7 +1737,7 @@ function EventPropertiesPanel({ event, onUpdate }: { event: CompetitionEvent; on
                   >
                     <option value="">—</option>
                     {swimStyles.map((s) => (
-                      <option key={s.id} value={s.id}>{s.distance} m {s.name}</option>
+                      <option key={s.id} value={s.id}>{s.name}</option>
                     ))}
                   </select>
                 </td>
