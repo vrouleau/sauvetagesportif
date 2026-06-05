@@ -1830,6 +1830,100 @@ def _update_exception(db: Session, athlete_id: int):
         member.handicapex = "X" if has_masters else None
 
 
+@router.get("/athletes/{athlete_id}/history")
+def get_athlete_history(athlete_id: int, db: Session = Depends(get_db)):
+    """Return an athlete's results across all historical meets."""
+    from ..models_team import Meet, Result, Member as TMember
+
+    member = db.query(TMember).get(athlete_id)
+    if not member:
+        raise HTTPException(404, "Athlete not found")
+
+    # Get all results for this athlete, grouped by meet
+    results = (
+        db.query(Result)
+        .filter(Result.membersid == athlete_id, Result.totaltime.isnot(None), Result.totaltime > 0)
+        .order_by(Result.meetsid, Result.eventnumb)
+        .all()
+    )
+
+    # Load meet info and style names
+    meet_ids = list({r.meetsid for r in results})
+    meets_map = {}
+    if meet_ids:
+        for m in db.query(Meet).filter(Meet.meetsid.in_(meet_ids)).all():
+            if m.name == "__best_times_import__":
+                continue
+            meets_map[m.meetsid] = {
+                "id": m.meetsid,
+                "name": m.name,
+                "date": m.mindate.strftime("%Y-%m-%d") if m.mindate else None,
+                "course": {1: "LCM", 2: "SCY", 3: "SCM"}.get(m.course, "LCM"),
+            }
+
+    # Load style names
+    import json as _json
+    style_names_cfg = db.query(BsGlobal).get("style_names_json")
+    style_names: dict[int, str] = {}
+    if style_names_cfg and style_names_cfg.data:
+        try:
+            style_names = {int(k): v for k, v in _json.loads(style_names_cfg.data).items()}
+        except (ValueError, TypeError):
+            pass
+    # Also check swimstyle table
+    for s in db.query(SwimStyle).all():
+        if s.swimstyleid not in style_names and s.name:
+            style_names[s.swimstyleid] = s.name
+
+    # Build response grouped by meet
+    meets_data = []
+    for meet_id, meet_info in sorted(meets_map.items(), key=lambda x: x[1].get("date") or "", reverse=True):
+        meet_results = [r for r in results if r.meetsid == meet_id]
+        events = []
+        for r in meet_results:
+            events.append({
+                "eventNumber": r.eventnumb,
+                "style": style_names.get(r.stylesid, f"Style {r.stylesid}") if r.stylesid else "?",
+                "styleId": r.stylesid,
+                "time_ms": r.totaltime,
+                "rank": r.rank,
+                "course": {1: "LCM", 2: "SCY", 3: "SCM"}.get(r.course, "?"),
+            })
+        meets_data.append({**meet_info, "results": events})
+
+    # Compute best times from historical results
+    best_times = []
+    style_best: dict[tuple[int, int], tuple[int, str, str | None]] = {}  # (style, course) → (time, meet_name, date)
+    for r in results:
+        if r.meetsid not in meets_map or not r.stylesid:
+            continue
+        key = (r.stylesid, r.course or 1)
+        if key not in style_best or r.totaltime < style_best[key][0]:
+            mi = meets_map[r.meetsid]
+            style_best[key] = (r.totaltime, mi["name"], mi.get("date"))
+
+    for (style_id, course_int), (time_ms, meet_name, meet_date) in sorted(style_best.items()):
+        best_times.append({
+            "style": style_names.get(style_id, f"Style {style_id}"),
+            "styleId": style_id,
+            "course": {1: "LCM", 2: "SCY", 3: "SCM"}.get(course_int, "?"),
+            "time_ms": time_ms,
+            "meetName": meet_name,
+            "meetDate": meet_date,
+        })
+
+    return {
+        "athlete": {
+            "id": member.membersid,
+            "name": f"{member.lastname}, {member.firstname}",
+            "club": member.club.name if member.club else "",
+            "gender": "M" if member.gender == 1 else "F",
+        },
+        "meets": meets_data,
+        "bestTimes": best_times,
+    }
+
+
 @router.post("/registrations")
 def create_registration(data: RegistrationCreate, request: Request, db: Session = Depends(get_db)):
     pin = request.headers.get("X-Club-Pin", "")
@@ -1994,11 +2088,40 @@ async def upload_entries(file: UploadFile = File(...), db: Session = Depends(get
 
 
 @router.post("/upload/results", dependencies=[Depends(require_admin)])
-async def upload_results(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    """Upload results .lxf to populate best times."""
+async def upload_results(file: UploadFile = File(...), force: bool = False, db: Session = Depends(get_db)):
+    """Upload results .lxf to populate best times for the current meet.
+
+    Warns if the LXF meet name doesn't match the current meet
+    (suggesting to use the historical import endpoint instead).
+    """
     content = await file.read()
     if len(content) > 10 * 1024 * 1024:
         raise HTTPException(413, "File too large (max 10MB)")
+
+    # Cross-validation: warn if this looks like a different (historical) meet
+    if not force:
+        import zipfile
+        from io import BytesIO
+        from defusedxml.ElementTree import fromstring as _safe_parse
+        try:
+            with zipfile.ZipFile(BytesIO(content)) as z:
+                lef_name = next(n for n in z.namelist() if n.endswith(".lef"))
+                xml_root = _safe_parse(z.read(lef_name))
+            meet_el = xml_root.find(".//MEET")
+            if meet_el is not None:
+                lxf_meet_name = meet_el.get("name", "").strip()
+                current_meet_name = (_get_config(db, "meet_name") or "").strip()
+                if lxf_meet_name and current_meet_name and lxf_meet_name.lower() != current_meet_name.lower():
+                    raise HTTPException(409, (
+                        f"This LXF is from '{lxf_meet_name}' but your current meet is "
+                        f"'{current_meet_name}'. Use Admin → Import Historical instead. "
+                        f"Pass ?force=true to override."
+                    ))
+        except (zipfile.BadZipFile, StopIteration, HTTPException) as e:
+            if isinstance(e, HTTPException):
+                raise
+            # If we can't parse, just continue with the import
+
     seed_result = seed_from_lxf(db, content)
     # Skip best-time import for beach meets (positions are not times)
     meet_type = (_get_config(db, "meet_type") or "POOL").upper()
@@ -2007,6 +2130,66 @@ async def upload_results(file: UploadFile = File(...), db: Session = Depends(get
     else:
         times_result = {"times_updated": 0, "athletes_skipped": 0, "athletes_created": 0}
     return {**seed_result, **times_result}
+
+
+@router.post("/admin/import-historical", dependencies=[Depends(require_admin)])
+async def import_historical(file: UploadFile = File(...), force: bool = False, db: Session = Depends(get_db)):
+    """Import a results LXF as a historical meet record.
+
+    Stores the meet, events, and individual results separately from the current meet.
+    Warns if the LXF meet name matches the current meet (use /upload/results instead).
+    Pass ?force=true to override warnings.
+    """
+    content = await file.read()
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(413, "File too large (max 10MB)")
+    from ..historical_import import import_historical_meet
+    result = import_historical_meet(db, content, force=force)
+    if result.get("needs_force"):
+        raise HTTPException(409, result["warning"])
+    return result
+
+
+@router.get("/admin/historical-meets", dependencies=[Depends(require_admin)])
+def list_historical_meets(db: Session = Depends(get_db)):
+    """List all historical meets (excludes __best_times_import__ internal meet)."""
+    from ..models_team import Meet, Result
+    meets = (
+        db.query(Meet)
+        .filter(Meet.name != "__best_times_import__")
+        .order_by(Meet.mindate.desc())
+        .all()
+    )
+    result = []
+    for m in meets:
+        count = db.query(Result).filter(Result.meetsid == m.meetsid).count()
+        result.append({
+            "id": m.meetsid,
+            "name": m.name,
+            "date": m.mindate.strftime("%Y-%m-%d") if m.mindate else None,
+            "course": {1: "LCM", 2: "SCY", 3: "SCM"}.get(m.course, "LCM"),
+            "city": m.place or "",
+            "resultCount": count,
+        })
+    return result
+
+
+@router.delete("/admin/historical-meets/{meet_id}", dependencies=[Depends(require_admin)])
+def delete_historical_meet(meet_id: int, db: Session = Depends(get_db)):
+    """Delete a historical meet and all its results."""
+    from ..models_team import Meet, Result, MemberMeet, Event
+    meet = db.query(Meet).get(meet_id)
+    if not meet:
+        raise HTTPException(404, "Meet not found")
+    # Don't allow deleting the __best_times_import__ pseudo-meet
+    if meet.name == "__best_times_import__":
+        raise HTTPException(400, "Cannot delete the best-times import record")
+    db.query(Result).filter(Result.meetsid == meet_id).delete()
+    db.query(MemberMeet).filter(MemberMeet.meetsid == meet_id).delete()
+    db.query(Event).filter(Event.meetsid == meet_id).delete()
+    db.delete(meet)
+    db.commit()
+    return {"ok": True, "deleted_meet": meet.name}
 
 
 @router.get("/status")
