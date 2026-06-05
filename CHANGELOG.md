@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.3.12] - 2026-06-05
+
+### ✨ Features
+
+- SERC integration — scoring, judge tablet form, bilingual print sheets, 12 integration tests (`30f4efa`)
+- fees UI — meet-level fees section + per-event fee field (`b71dbcf`)
+- convert TIM to Prelim+Final pair, colored phase dots (`a38b66b`)
+- event/session/agegroup CRUD in team-app + swimstyle dropdown fix (`0b44fd6`)
+- historical meet import with full results storage (`f6dce75`)
+
+### 🐛 Bug Fixes
+
+- fees stored in MEETVALUES (Splash-compatible), invoice reads from MEETVALUES (`229b9c7`)
+- hide 'Max participants / vague' field for pool events (beach-only) (`cc96530`)
+- remove redundant distance prefix from event names in UI (`7aef8ce`)
+
+### 📝 Documentation
+
+- update CLAUDE.md and team-app CLAUDE.md with SERC documentation (`d22b81e`)
+
+### 🔧 Chores
+
+- remove serc_claude prototype (no longer needed) (`ccaa170`)
+
+# Changelog
+
 ## [0.3.10] - 2026-06-04
 
 # Changelog
