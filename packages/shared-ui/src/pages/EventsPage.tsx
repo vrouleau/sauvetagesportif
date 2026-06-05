@@ -436,26 +436,25 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
     const newNum = Math.max(...allNums, 0) + 1
     let realId: number
     try {
-      const result = await api.createEvent(targetSession.id, newNum, 'M', 100, phase, 'Freestyle')
+      // Pass distance=0 and styleName='' to signal "pick for me" to the backend
+      const result = await api.createEvent(targetSession.id, newNum, 'X', 0, phase, '')
       realId = result.id
     } catch {
       window.alert("Erreur lors de la création de l'épreuve")
       return
     }
-    const newEvent: CompetitionEvent = {
-      id: realId,
-      sessionId: targetSession.id,
-      number: newNum,
-      nameFr: 'Freestyle',
-      nameEn: 'Freestyle',
-      gender: 'M',
-      distance: 100,
-      phase,
-      ageGroups: [],
+    // Reload sessions to get the full event data (name from swimstyle)
+    const updatedSessions = await api.getSessions()
+    setLocalSessions(updatedSessions)
+    // Find the newly created event and select it
+    for (const s of updatedSessions) {
+      const ev = s.events.find((e: CompetitionEvent) => e.id === realId)
+      if (ev) {
+        setSelected({ type: 'event', event: ev, session: s })
+        setExpandedSessions((prev) => new Set([...prev, s.id]))
+        break
+      }
     }
-    await insertEventAfterSelected(newEvent, targetSession)
-    setSelected({ type: 'event', event: newEvent, session: targetSession })
-    setExpandedSessions((prev) => new Set([...prev, targetSession.id]))
   }
 
   async function handleAddAward() {
@@ -750,7 +749,32 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
         else if (key === 'comment') { localUpdate.nameFr = val as string; localUpdate.nameEn = val as string }
         else if (key === 'eventnumber') localUpdate.number = val as number
         else if (key === 'finalorder') localUpdate.finalOrder = val as number | null
+        else if (key === 'swimstyleid') localUpdate.swimstyleId = val as number | null
+        else if (key === 'maxentries') localUpdate.maxEntries = val as number | null
+        else if (key === 'gender') {
+          const g = val as number | string
+          localUpdate.gender = typeof g === 'number' ? (g === 1 ? 'M' : g === 2 ? 'F' : 'X') : g
+        }
       }
+
+      // If swimstyle changed, reload to get the new event name from the DB
+      if ('swimstyleid' in data) {
+        // Find the style name from the loaded session data or swim styles
+        const styleId = data.swimstyleid as number
+        // Update the local event with the new swimstyle info
+        const updatedSessions = await api.getSessions()
+        setLocalSessions(updatedSessions)
+        // Find and re-select the updated event
+        for (const s of updatedSessions) {
+          const ev = s.events.find((e: CompetitionEvent) => e.id === eventId)
+          if (ev) {
+            setSelected({ type: 'event', event: ev, session: s })
+            break
+          }
+        }
+        return
+      }
+
       // Update local state
       setLocalSessions((prev) =>
         prev.map((s) => s.id === sessionId ? {
@@ -1661,7 +1685,14 @@ function EventPropertiesPanel({ event, onUpdate }: { event: CompetitionEvent; on
     setSelectedStyleId(event.swimstyleId ?? null)
     setFinalOrder(event.finalOrder ?? 2)
     // Load swim styles
-    api.getSwimStyles().then((styles) => setSwimStyles(styles)).catch(() => {})
+    api.getSwimStyles().then((styles) => {
+      setSwimStyles(styles || [])
+      // Ensure selectedStyleId is valid; if not, use the event's value
+      const evStyleId = event.swimstyleId
+      if (evStyleId && styles && styles.some((s: SwimStyle) => s.id === evStyleId)) {
+        setSelectedStyleId(evStyleId)
+      }
+    }).catch(() => setSwimStyles([]))
   }, [event.id])
 
   function save(data: Record<string, unknown>) {
@@ -1735,16 +1766,15 @@ function EventPropertiesPanel({ event, onUpdate }: { event: CompetitionEvent; on
                 <td className="px-2 py-0.5">
                   <select
                     className="w-full border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
-                    value={selectedStyleId ?? ''}
+                    value={String(selectedStyleId || '')}
                     onChange={(e) => {
-                      const id = Number(e.target.value)
+                      const id = e.target.value ? Number(e.target.value) : null
                       setSelectedStyleId(id)
-                      save({ swimstyleid: id })
+                      if (id) save({ swimstyleid: id })
                     }}
                   >
-                    <option value="">—</option>
                     {swimStyles.map((s) => (
-                      <option key={s.id} value={s.id}>{s.name}</option>
+                      <option key={s.id} value={String(s.id)}>{s.name}</option>
                     ))}
                   </select>
                 </td>

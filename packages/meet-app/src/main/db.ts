@@ -1071,18 +1071,48 @@ export async function createEvent(
   const gNum = gender === 'M' ? 1 : gender === 'F' ? 2 : 3
   const round = phase === 'Eliminatoire' ? 1 : phase === 'Finale' ? 4 : 5
 
-  const styleRow = db.prepare(
-    `SELECT swimstyleid FROM swimstyle WHERE distance=? AND relaycount=1 ORDER BY swimstyleid LIMIT 1`
-  ).get(distance) as { swimstyleid: number } | undefined
+  const styleRow = distance > 0
+    ? db.prepare(
+        `SELECT swimstyleid FROM swimstyle WHERE distance=? AND relaycount=1 ORDER BY swimstyleid LIMIT 1`
+      ).get(distance) as { swimstyleid: number } | undefined
+    : null
 
   let swimstyleid: number
   if (styleRow) {
     swimstyleid = styleRow.swimstyleid
   } else {
-    swimstyleid = nextId('swimstyle', 'swimstyleid')
-    db.prepare(
-      `INSERT INTO swimstyle (swimstyleid, distance, relaycount, name, stroke) VALUES (?, ?, 1, ?, 1)`
-    ).run(swimstyleid, distance, styleName)
+    // Pick the first style not already in use, or first available
+    const usedStyles = db.prepare(
+      `SELECT DISTINCT swimstyleid FROM swimevent WHERE swimstyleid IS NOT NULL`
+    ).all() as Array<{ swimstyleid: number }>
+    const usedSet = new Set(usedStyles.map(r => r.swimstyleid))
+
+    const available = db.prepare(
+      `SELECT swimstyleid FROM swimstyle WHERE relaycount=1 ORDER BY sortcode, swimstyleid`
+    ).all() as Array<{ swimstyleid: number }>
+
+    const unused = available.find(s => !usedSet.has(s.swimstyleid))
+    if (unused) {
+      swimstyleid = unused.swimstyleid
+    } else if (available.length > 0) {
+      // All used — cycle: pick the next style after the last event in this session
+      const lastEvent = db.prepare(
+        `SELECT swimstyleid FROM swimevent WHERE swimsessionid=? AND swimstyleid IS NOT NULL ORDER BY sortcode DESC LIMIT 1`
+      ).get(sessionId) as { swimstyleid: number } | undefined
+      const styleIds = available.map(s => s.swimstyleid)
+      if (lastEvent && styleIds.includes(lastEvent.swimstyleid)) {
+        const idx = styleIds.indexOf(lastEvent.swimstyleid)
+        swimstyleid = styleIds[(idx + 1) % styleIds.length]
+      } else {
+        swimstyleid = styleIds[0]
+      }
+    } else {
+      // No styles at all — create one
+      swimstyleid = nextId('swimstyle', 'swimstyleid')
+      db.prepare(
+        `INSERT INTO swimstyle (swimstyleid, distance, relaycount, name, stroke) VALUES (?, ?, 1, ?, 1)`
+      ).run(swimstyleid, distance || 100, styleName || 'New Event')
+    }
   }
 
   const sortRow = db.prepare(

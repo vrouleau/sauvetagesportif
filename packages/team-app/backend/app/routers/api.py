@@ -1635,6 +1635,247 @@ def list_swim_styles(db: Session = Depends(get_db)):
 
 
 # ---------------------------------------------------------------------------
+# Session / Event / AgeGroup CRUD (organizer + admin)
+# ---------------------------------------------------------------------------
+
+@router.post("/sessions", dependencies=[Depends(require_organizer_or_admin)])
+def create_session(data: dict = Body(default={}), db: Session = Depends(get_db)):
+    """Create a new session."""
+    from sqlalchemy import func
+    next_id = (db.query(func.max(SwimSession.swimsessionid)).scalar() or 0) + 1
+    name = data.get("name", "New Session")
+    number = data.get("number", 1)
+    session = SwimSession(swimsessionid=next_id, name=name, sessionnumber=number,
+                          course=1, following='F', poolglobal='F', roundtotenths='F')
+    db.add(session)
+    db.commit()
+    return {"id": next_id}
+
+
+@router.delete("/sessions/{session_id}", dependencies=[Depends(require_organizer_or_admin)])
+def delete_session(session_id: int, db: Session = Depends(get_db)):
+    """Delete a session and all its events."""
+    session = db.query(SwimSession).get(session_id)
+    if not session:
+        raise HTTPException(404, "Session not found")
+    # Delete events in this session (cascades to agegroups, heats, results)
+    db.query(AgeGroup).filter(
+        AgeGroup.swimeventid.in_(
+            db.query(SwimEvent.swimeventid).filter(SwimEvent.swimsessionid == session_id)
+        )
+    ).delete(synchronize_session=False)
+    db.query(SwimEvent).filter(SwimEvent.swimsessionid == session_id).delete()
+    db.delete(session)
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/events", dependencies=[Depends(require_organizer_or_admin)])
+def create_event(data: dict = Body(default={}), db: Session = Depends(get_db)):
+    """Create a new event in a session.
+
+    Accepts: sessionId, number, gender, phase, swimstyleId (optional).
+    If no swimstyleId provided, picks the first available style not already used in the meet.
+    """
+    from sqlalchemy import func
+
+    session_id = data.get("sessionId") or data.get("session_id")
+    if not session_id:
+        raise HTTPException(400, "sessionId required")
+
+    number = data.get("number", 1)
+    gender_str = data.get("gender", "X")
+    gender_int = {"M": 1, "F": 2, "X": 0}.get(gender_str, 0)
+    phase = data.get("phase", "Finale directe")
+    round_int = {"Eliminatoire": 1, "Finale": 4, "Finale directe": 5}.get(phase, 5)
+
+    # Determine swimstyle
+    swimstyle_id = data.get("swimstyleId") or data.get("swimstyleid")
+    if not swimstyle_id:
+        # Pick the next available style not yet used in this meet.
+        # If all styles are used, pick the next one after the last event's style
+        # in the target session (cycling through the style list).
+        used_styles = [e.swimstyleid for e in db.query(SwimEvent).filter(
+            SwimEvent.swimstyleid.isnot(None)
+        ).all()]
+        used_set = set(used_styles)
+
+        all_individual_styles = db.query(SwimStyle).filter(
+            SwimStyle.relaycount == 1,
+        ).order_by(SwimStyle.sortcode, SwimStyle.swimstyleid).all()
+
+        if not all_individual_styles:
+            swimstyle_id = None
+        else:
+            # Try to find an unused style first
+            unused = [s for s in all_individual_styles if s.swimstyleid not in used_set]
+            if unused:
+                swimstyle_id = unused[0].swimstyleid
+            else:
+                # All used — cycle: find the last style used in this session and pick the next one
+                last_event = db.query(SwimEvent).filter(
+                    SwimEvent.swimsessionid == session_id,
+                    SwimEvent.swimstyleid.isnot(None),
+                ).order_by(SwimEvent.sortcode.desc()).first()
+
+                style_ids = [s.swimstyleid for s in all_individual_styles]
+                if last_event and last_event.swimstyleid in style_ids:
+                    idx = style_ids.index(last_event.swimstyleid)
+                    next_idx = (idx + 1) % len(style_ids)
+                    swimstyle_id = style_ids[next_idx]
+                else:
+                    swimstyle_id = style_ids[0]
+
+    # Get next sort code
+    max_sort = db.query(func.max(SwimEvent.sortcode)).filter(
+        SwimEvent.swimsessionid == session_id
+    ).scalar() or 0
+
+    next_id = (db.query(func.max(SwimEvent.swimeventid)).scalar() or 0) + 1
+
+    event = SwimEvent(
+        swimeventid=next_id,
+        swimsessionid=session_id,
+        eventnumber=number,
+        gender=gender_int,
+        round=round_int,
+        swimstyleid=swimstyle_id,
+        sortcode=max_sort + 1,
+        internalevent='F',
+        splashmecanedit='F',
+        masters='F',
+        pfineignore='F',
+    )
+    db.add(event)
+    db.commit()
+
+    # Return event info including name from swimstyle
+    style = db.query(SwimStyle).get(swimstyle_id) if swimstyle_id else None
+    return {
+        "id": next_id,
+        "name": style.name if style else "",
+        "distance": style.distance if style else 0,
+        "swimstyleId": swimstyle_id,
+    }
+
+
+@router.put("/events/{event_id}", dependencies=[Depends(require_organizer_or_admin)])
+def update_event(event_id: int, data: dict = Body(default={}), db: Session = Depends(get_db)):
+    """Update event fields (gender, swimstyle, number, round, maxentries, etc.)."""
+    event = db.query(SwimEvent).get(event_id)
+    if not event:
+        raise HTTPException(404, "Event not found")
+
+    field_map = {
+        "gender": "gender",
+        "eventnumber": "eventnumber",
+        "round": "round",
+        "swimstyleid": "swimstyleid",
+        "maxentries": "maxentries",
+        "sortcode": "sortcode",
+        "comment": "comment",
+        "masters": "masters",
+        "internalevent": "internalevent",
+        "finalorder": "finalorder",
+        "daytime": "daytime",
+        "duration": "duration",
+    }
+
+    for key, col in field_map.items():
+        if key in data:
+            val = data[key]
+            # Convert gender string to int if needed
+            if key == "gender" and isinstance(val, str):
+                val = {"M": 1, "F": 2, "X": 0}.get(val, 0)
+            setattr(event, col, val)
+
+    db.commit()
+    return {"ok": True}
+
+
+@router.delete("/events/{event_id}", dependencies=[Depends(require_organizer_or_admin)])
+def delete_event(event_id: int, db: Session = Depends(get_db)):
+    """Delete an event and its age groups."""
+    event = db.query(SwimEvent).get(event_id)
+    if not event:
+        raise HTTPException(404, "Event not found")
+    db.query(AgeGroup).filter(AgeGroup.swimeventid == event_id).delete()
+    db.delete(event)
+    db.commit()
+    return {"ok": True}
+
+
+@router.put("/events/reorder", dependencies=[Depends(require_organizer_or_admin)])
+def reorder_events(data: dict = Body(default={}), db: Session = Depends(get_db)):
+    """Reorder events: accepts {updates: [{eventId, sessionId, sortcode}]}."""
+    updates = data.get("updates", [])
+    for u in updates:
+        event = db.query(SwimEvent).get(u["eventId"])
+        if event:
+            event.swimsessionid = u.get("sessionId", event.swimsessionid)
+            event.sortcode = u["sortcode"]
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/age-groups", dependencies=[Depends(require_organizer_or_admin)])
+def create_age_group(data: dict = Body(default={}), db: Session = Depends(get_db)):
+    """Create an age group for an event."""
+    from sqlalchemy import func
+    event_id = data.get("eventId") or data.get("event_id")
+    if not event_id:
+        raise HTTPException(400, "eventId required")
+
+    next_id = (db.query(func.max(AgeGroup.agegroupid)).scalar() or 0) + 1
+    name = data.get("name", "")
+    min_age = data.get("minAge", 0)
+    max_age = data.get("maxAge")
+    gender_str = data.get("gender", "X")
+    gender_int = {"M": 1, "F": 2, "X": 0}.get(gender_str, 0)
+
+    max_sort = db.query(func.max(AgeGroup.sortcode)).filter(
+        AgeGroup.swimeventid == event_id
+    ).scalar() or 0
+
+    ag = AgeGroup(
+        agegroupid=next_id,
+        swimeventid=event_id,
+        name=name,
+        agemin=min_age,
+        agemax=max_age if max_age and max_age > 0 else -1,
+        gender=gender_int,
+        sortcode=max_sort + 1,
+    )
+    db.add(ag)
+    db.commit()
+    return {"id": next_id}
+
+
+@router.put("/age-groups/{agegroup_id}", dependencies=[Depends(require_organizer_or_admin)])
+def update_age_group(agegroup_id: int, data: dict = Body(default={}), db: Session = Depends(get_db)):
+    """Update age group fields."""
+    ag = db.query(AgeGroup).get(agegroup_id)
+    if not ag:
+        raise HTTPException(404, "Age group not found")
+    for key in ("name", "agemin", "agemax", "gender", "heatcount", "sortcode"):
+        if key in data:
+            setattr(ag, key, data[key])
+    db.commit()
+    return {"ok": True}
+
+
+@router.delete("/age-groups/{agegroup_id}", dependencies=[Depends(require_organizer_or_admin)])
+def delete_age_group(agegroup_id: int, db: Session = Depends(get_db)):
+    """Delete an age group."""
+    ag = db.query(AgeGroup).get(agegroup_id)
+    if not ag:
+        raise HTTPException(404, "Age group not found")
+    db.delete(ag)
+    db.commit()
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
 # Registration detail (athlete entry page)
 # ---------------------------------------------------------------------------
 

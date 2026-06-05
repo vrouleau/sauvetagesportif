@@ -1,7 +1,6 @@
 /**
  * MeetAPI adapter for the team-app (HTTP → FastAPI backend).
- * Implements the same interface as the Electron IPC adapter.
- * Write operations are stubs for now — will be implemented as backend endpoints are added.
+ * Implements the same MeetAPI interface as the Electron IPC adapter.
  */
 import api from './api'
 
@@ -11,21 +10,67 @@ export const meetApiHttp = {
     return r.data || []
   },
 
-  async createSession(name, number) { return { id: Date.now() } },
+  async createSession(name, number) {
+    const r = await api.post('/sessions', { name, number })
+    return { id: r.data.id }
+  },
+
   async updateSession(sessionId, data) {
     await api.put(`/sessions/${sessionId}`, data)
   },
-  async deleteSession(sessionId) {},
 
-  async createEvent(sessionId, number, gender, distance, phase, styleName) { return { id: Date.now() } },
-  async createBreak(sessionId, number, name) { return { id: Date.now() } },
-  async deleteEvent(eventId) {},
-  async updateEvent(eventId, data) {},
-  async reorderEvents(updates) {},
+  async deleteSession(sessionId) {
+    await api.delete(`/sessions/${sessionId}`)
+  },
 
-  async createAgeGroup(eventId, name, minAge, maxAge, gender) { return { id: Date.now() } },
-  async deleteAgeGroup(agegroupId) {},
-  async updateAgeGroup(agegroupId, data) {},
+  async createEvent(sessionId, number, gender, distance, phase, styleName) {
+    const r = await api.post('/events', {
+      sessionId,
+      number,
+      gender,
+      phase,
+      // Don't pass distance/styleName — backend picks the best available swimstyle
+    })
+    return { id: r.data.id }
+  },
+
+  async createBreak(sessionId, number, name) {
+    // Breaks are events with internalevent='T'
+    const r = await api.post('/events', {
+      sessionId,
+      number,
+      gender: 'X',
+      phase: 'Finale directe',
+      isBreak: true,
+      breakName: name,
+    })
+    return { id: r.data.id }
+  },
+
+  async deleteEvent(eventId) {
+    await api.delete(`/events/${eventId}`)
+  },
+
+  async updateEvent(eventId, data) {
+    await api.put(`/events/${eventId}`, data)
+  },
+
+  async reorderEvents(updates) {
+    await api.put('/events/reorder', { updates })
+  },
+
+  async createAgeGroup(eventId, name, minAge, maxAge, gender) {
+    const r = await api.post('/age-groups', { eventId, name, minAge, maxAge, gender })
+    return { id: r.data.id }
+  },
+
+  async deleteAgeGroup(agegroupId) {
+    await api.delete(`/age-groups/${agegroupId}`)
+  },
+
+  async updateAgeGroup(agegroupId, data) {
+    await api.put(`/age-groups/${agegroupId}`, data)
+  },
 
   async getAthletes() {
     const r = await api.get('/athletes', { headers: { 'X-Club-Pin': localStorage.getItem('pin') } })
@@ -48,7 +93,6 @@ export const meetApiHttp = {
       const r = await api.get('/meet-config')
       return r.data || {}
     } catch {
-      // Fallback to meet-info for read-only contexts
       try {
         const r = await api.get('/meet-info')
         const info = r.data || {}
@@ -60,6 +104,7 @@ export const meetApiHttp = {
       } catch { return {} }
     }
   },
+
   async setMeetConfig(entries) {
     await api.put('/meet-config', entries)
   },
@@ -71,8 +116,11 @@ export const meetApiHttp = {
     } catch { return [] }
   },
 
+  async generateHeats(eventId, sessionId) {
+    return { heatsCreated: 0, entriesAssigned: 0 }
+  },
+
   async importMeet() {
-    // Create a file input, let user pick a .lxf, upload it
     return new Promise((resolve) => {
       const input = document.createElement('input')
       input.type = 'file'
