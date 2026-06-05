@@ -19,6 +19,8 @@ import api from './api'
 import Admin from './pages/Admin'
 import Organizer from './pages/Organizer'
 import DataManagement from './pages/DataManagement'
+import SercPage from './pages/Serc'
+import SercJudgePage from './pages/SercJudge'
 import Secret from './pages/Secret'
 import SelfInvite from './pages/SelfInvite'
 import BestTimesPublic from './pages/BestTimesPublic'
@@ -186,6 +188,7 @@ function AuthLayout({ children, canOrganizer, canAdmin, meetName, toggle, lang, 
     { to: '/invitation', label: t.tab_invitation || 'Invitation', show: canOrganizer },
     { to: '/', label: t.tab_individual_entries || 'Individual Entries', show: true },
     { to: '/relay-entries', label: t.tab_relay_entries || 'Relay Entries', show: true },
+    { to: '/serc', label: 'SERC', show: canOrganizer },
     { to: '/admin', label: t.admin, show: canAdmin },
     { to: '/data-management', label: t.data_management, show: canAdmin },
   ]
@@ -277,6 +280,8 @@ function AppInner() {
         <Route path="/best-times" element={<Navigate to="/results" replace />} />
         <Route path="/results" element={<ResultsPage />} />
         <Route path="/usage" element={<Workflow />} />
+        <Route path="/serc/judge/:section" element={<SercJudgePage />} />
+        <Route path="/serc/judge/:section/:num" element={<SercJudgePage />} />
         <Route path="*" element={<Login onLogin={setAuth} />} />
       </Routes>
       <Footer />
@@ -295,12 +300,15 @@ function AppInner() {
           <Route path="/athletes/:id/register" element={<RegisterPage />} />
           {canOrganizer && <Route path="/meet" element={<EventsPage />} />}
           {canOrganizer && <Route path="/invitation" element={<Organizer />} />}
+          {canOrganizer && <Route path="/serc" element={<SercPage />} />}
           {canAdmin && <Route path="/admin" element={<Admin />} />}
           {canAdmin && <Route path="/data-management" element={<DataManagement />} />}
           <Route path="/secret/:token" element={<Secret />} />
           <Route path="/best-times" element={<Navigate to="/results" replace />} />
           <Route path="/results" element={<ResultsPage />} />
           <Route path="/usage" element={<Workflow />} />
+          <Route path="/serc/judge/:section" element={<SercJudgePage />} />
+          <Route path="/serc/judge/:section/:num" element={<SercJudgePage />} />
         </Routes>
       </AuthLayout>
     </BrowserRouter>

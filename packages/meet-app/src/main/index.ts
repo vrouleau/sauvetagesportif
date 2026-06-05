@@ -865,16 +865,18 @@ ipcMain.handle('db:set-relay-team-member', (_event, teamId: number, position: nu
 
     // Gender balance validation for mixed (X) events:
     // Exactly N/2 men and N/2 women required (e.g., 2M+2F for 4-person relay)
+    // SERC events (swimstyle 530) have NO gender/age restrictions
     const eventInfo = db.prepare(`
-      SELECT e.gender AS eventGender, ss.relaycount
+      SELECT e.gender AS eventGender, ss.relaycount, e.swimstyleid
       FROM swimevent e
       JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid
       WHERE e.swimeventid = ?
-    `).get(relay.swimeventid) as { eventGender: number | null; relaycount: number } | undefined
+    `).get(relay.swimeventid) as { eventGender: number | null; relaycount: number; swimstyleid: number | null } | undefined
 
+    const isSERC = eventInfo?.swimstyleid === 530
     const eventGenderVal = eventInfo?.eventGender ?? 0
     // gender 3 = mixed (X)
-    if (eventGenderVal === 3) {
+    if (!isSERC && eventGenderVal === 3) {
       const rc = eventInfo?.relaycount ?? 4
       const maxPerGender = Math.floor(rc / 2)
 
@@ -907,6 +909,8 @@ ipcMain.handle('db:set-relay-team-member', (_event, teamId: number, position: nu
     // Age group majority validation:
     // Adding this athlete must not make it impossible for any single age group
     // to achieve a strict majority (≥ relaycount/2 + 1) once all positions are filled.
+    // SERC events skip this check.
+    if (!isSERC) {
     const requiredMajority = Math.floor(relaycount / 2) + 1
 
     // Get the new athlete's dominant registration age group (from individual entries)
@@ -967,6 +971,7 @@ ipcMain.handle('db:set-relay-team-member', (_event, teamId: number, position: nu
         }
       }
     }
+    } // end if (!isSERC)
 
     db.prepare(
       `INSERT INTO relayposition (relayid, relaynumber, athleteid) VALUES (?, ?, ?)`

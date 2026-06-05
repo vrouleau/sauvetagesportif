@@ -4636,7 +4636,9 @@ def set_relay_team_member(
         # Gender balance validation for mixed (X) events:
         # Exactly N/2 men and N/2 women required (e.g., 2M+2F for 4-person relay)
         # In the DB, gender=1 is M-only, gender=2 is F-only, anything else (0/3/None) is mixed
-        if relay.gender not in (GENDER_M, GENDER_F):
+        # SERC events (swimstyle 530) have NO gender/age restrictions
+        is_serc = relay.stylesid == 530
+        if not is_serc and relay.gender not in (GENDER_M, GENDER_F):
             max_per_gender = relaycount // 2
 
             # Count current gender assignments on this team (excluding current position)
@@ -4673,6 +4675,7 @@ def set_relay_team_member(
         # Age group majority validation:
         # Adding this athlete must not make it impossible for any single age group
         # to achieve a strict majority (≥ relaycount/2 + 1) once all positions are filled.
+        # SERC events skip this check.
         from sqlalchemy import func as sqla_func_ag
         required_majority = relaycount // 2 + 1
 
@@ -4707,7 +4710,7 @@ def set_relay_team_member(
             if new_athlete_ag_row else None
         )
 
-        if new_athlete_age_code and current_member_ids:
+        if new_athlete_age_code and current_member_ids and not is_serc:
             # Get age groups for current team members
             existing_ag_rows = (
                 db.query(SwimResult.athleteid, AgeGroup.agemin, AgeGroup.agemax, sqla_func_ag.count().label("cnt"))

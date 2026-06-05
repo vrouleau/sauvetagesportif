@@ -197,7 +197,7 @@ function RelayTeamRow({
         <span className="text-xs font-semibold text-blue-700 shrink-0">
           {team.teamNumber}
         </span>
-        {team.ageGroup && (
+        {team.ageGroup && event.swimstyleId !== 530 && (
           <span className="text-xs text-gray-500 shrink-0">
             {team.ageGroup}
           </span>
@@ -238,8 +238,10 @@ function RelayTeamRow({
           // - BUT keep the currently selected athlete for this position in the list
 
           // For mixed events, compute gender counts on this team (excluding current position)
+          // SERC events (swimstyle 530) have no restrictions
+          const isSERC = event.swimstyleId === 530
           let allowedGender: 'M' | 'F' | null = null
-          if (event.gender === 'X') {
+          if (!isSERC && event.gender === 'X') {
             const maxPerGender = event.relaycount / 2
             let mCount = 0
             let fCount = 0
@@ -274,9 +276,9 @@ function RelayTeamRow({
             // Exclude if assigned to another team for same event
             if (crossTeamAssignedIds.has(athlete.id)) return false
             // For mixed events: exclude gender that has reached its quota
-            if (allowedGender != null && athlete.gender !== allowedGender) return false
+            if (!isSERC && allowedGender != null && athlete.gender !== allowedGender) return false
             // Age group check: would adding this athlete make a valid majority impossible?
-            if (athlete.ageGroup && currentAgeGroups.length > 0) {
+            if (!isSERC && athlete.ageGroup && currentAgeGroups.length > 0) {
               const groupsAfter = [...currentAgeGroups, athlete.ageGroup]
               // Count occurrences of each age group
               const counts = new Map<string, number>()

@@ -11,11 +11,14 @@ from .models import Base, BsGlobal
 from .models_team import TeamClub
 from . import models_team  # noqa: F401 — register Team Manager tables with Base.metadata
 from . import models_live  # noqa: F401 — register Live results tables with Base.metadata
+from . import models_serc  # noqa: F401 — register SERC tables with Base.metadata
 from .events import load_events
 from .routers.api import router
 from .routers.live import router as live_router
 from .routers.results import router as results_router
 from .routers.push_notifications import router as push_router
+from .routers.serc import router as serc_router
+from .routers.serc_print import router as serc_print_router
 
 app = FastAPI(title="Meet Manager", docs_url=None, redoc_url=None)
 
@@ -76,6 +79,8 @@ app.include_router(router)
 app.include_router(live_router)
 app.include_router(results_router)
 app.include_router(push_router)
+app.include_router(serc_router)
+app.include_router(serc_print_router)
 
 
 @app.on_event("startup")
@@ -83,6 +88,20 @@ def startup():
     # Refuse to start with the default insecure SECRET_KEY
     if os.environ.get("SECRET_KEY", "change-me-to-a-random-string") == "change-me-to-a-random-string":
         raise RuntimeError("SECRET_KEY must be changed from the default value")
+
+    # Migrate old SERC schema: if serc_team table exists, drop all serc_* and let create_all rebuild
+    from .database import is_sqlite
+    if is_sqlite():
+        from sqlalchemy import text
+        with engine.connect() as conn:
+            result = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='serc_team'"))
+            if result.fetchone():
+                print("Migrating SERC tables: dropping old schema (serc_team → relay-based)")
+                conn.execute(text("DROP TABLE IF EXISTS serc_score"))
+                conn.execute(text("DROP TABLE IF EXISTS serc_draw_order"))
+                conn.execute(text("DROP TABLE IF EXISTS serc_team"))
+                conn.execute(text("DROP TABLE IF EXISTS serc_config"))
+                conn.commit()
 
     Base.metadata.create_all(bind=engine)
 
