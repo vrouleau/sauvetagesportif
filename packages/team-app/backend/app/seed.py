@@ -95,13 +95,18 @@ def parse_lxf(file_bytes: bytes) -> list[dict]:
                             "entrycourse": entry_el.get("entrycourse", ""),
                         })
 
+                    handicap_el = ath_el.find("HANDICAP")
+                    exception_code = (
+                        handicap_el.get("exception") if handicap_el is not None else None
+                    ) or ath_el.get("exception") or None
+
                     club_info["athletes"].append({
                         "first_name": ath_el.get("firstname", "").strip().rstrip(","),
                         "last_name": ath_el.get("lastname", "").strip().rstrip(","),
                         "gender": ath_el.get("gender", "M"),
                         "birthdate": birthdate,
                         "license": ath_el.get("license", ""),
-                        "exception": ath_el.get("exception", "") or None,
+                        "exception": exception_code,
                         "entries": entries,
                     })
                 clubs_data.append(club_info)
@@ -166,6 +171,8 @@ def seed_from_lxf(db: Session, file_bytes: bytes) -> dict:
                 athletes_added += 1
             else:
                 member = existing
+                if ad.get("exception") and not member.handicapex:
+                    member.handicapex = ad["exception"]
 
             for entry in ad.get("entries", []):
                 event_id = entry["event_id"]

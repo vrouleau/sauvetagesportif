@@ -11,7 +11,7 @@ cp .env_template .env    # first time only; set SECRET_KEY
 docker compose up -d     # builds images, starts DB + backend + frontend
 ```
 
-**Access:** http://localhost:8001 (WSL localhost is forwarded to Windows)
+**Access:** http://localhost:8001 — also http://127.0.0.1:8001 with WSL2 mirrored networking (`networkingMode=mirrored` in `~/.wslconfig`)
 **Default admin PIN:** `314159`
 
 **Key .env variables** (see `.env_template` for full list):
@@ -170,7 +170,6 @@ Best times are computed from the Team Manager `results` table via `best_times_v2
 | `DELETE /api/relay-teams/{id}` | Delete relay team | Authenticated |
 | `PUT /api/relay-teams/{id}/members/{pos}` | Assign/remove member at position | Authenticated |
 | `PUT /api/relay-teams/{id}/name` | Set custom team name | Authenticated |
-| `POST /api/data-management/merge-styles` | Remap swimstyleid across results + events (preview mode available) | Admin |
 | `GET/POST /api/serc/config` | SERC configuration (victims, factors, bystander) | Organizer/Admin |
 | `GET /api/serc/teams` | SERC relay teams (swimstyle 530) | Organizer/Admin |
 | `PUT /api/serc/score` | Save individual score (0-10 or -10 rough) | Public |
@@ -220,16 +219,17 @@ backend/app/
   export.py             — LENEX export (registrations + Gemini key transport; session names + pause events included)
   export_entries.py     — LENEX export (all clubs + athletes + best times)
   invoices.py           — Stripe invoice generation
-  seed.py               — Entries .lxf parser (clubs/athletes into members table)
+  seed.py               — Entries .lxf parser (clubs/athletes/HANDICAP into members table)
   mdb_import.py         — Splash Team Manager .mdb import (via mdbtools)
   smb_to_team.py        — Import .smb as historical meet in Team Manager schema
-  lxf_to_team.py        — Import results .lxf as historical meet (merges clubs/members, upserts if same name)
+  lxf_to_team.py        — Import results .lxf as historical meet (merges clubs/members/HANDICAP, upserts if same name)
+  historical_import.py  — Import older results .lxf as historical meet (merges clubs/members/HANDICAP)
   smb.py                — SMB file format handler (Splash Meet Backup)
 frontend/src/
   main.jsx              — React app, routing, EventsPage wrapper
   meetApi.js            — MeetAPI adapter (HTTP → FastAPI)
   i18n.jsx              — Team-app specific translations
-  pages/                — Athletes, Organizer, Admin, DataManagement, Serc, SercJudge, etc.
+  pages/                — Athletes, Organizer, Admin, Serc, SercJudge, etc.
 ```
 
 ## Meet lifecycle (LXF round-trip)
@@ -289,14 +289,29 @@ Dedicated backup/restore section in the Admin page (replaces the old Data Manage
 - `GET /api/admin/backups/{filename}` — download specific backup
 - `DELETE /api/admin/backups/{filename}` — delete specific backup
 
-## Style Merge (Data Management)
+## LXF Normalization (offline tool)
 
-Remaps `swimstyleid` from one style to another across **both** historical results (Team Manager `results` table) and current meet events (`swimevent` table).
+Historic .lxf files from previous seasons often have stale swimstyle IDs, accent issues, or missing HANDICAP exception codes. Fix them offline with `scripts/normalize_lxf.py` before importing:
 
-- Endpoint: `POST /api/data-management/merge-styles`
-- Accepts `{merges: [{from: id, to: id}, ...], preview: bool}`
-- Preview mode returns affected row counts without executing
-- Used when style IDs need consolidation (e.g., after importing data with non-canonical IDs)
+```bash
+python scripts/normalize_lxf.py TEMPLATE.lxf ENTRIES.lxf HISTORIC.lxf
+```
+
+- Remaps swimstyle IDs to the current template's canonical IDs (matched by name, not ID)
+- Fuzzy-matches clubs (code → name → difflib 0.80) and athletes (license → exact → difflib 0.85)
+- Copies `<HANDICAP exception="X" />` child elements to athletes missing them
+- Logs all changes verbosely; `⚠ verify` suffix on fuzzy matches for manual review
+
+## HANDICAP / Para exception codes
+
+Athletes with a Para/disability classification carry `<HANDICAP exception="X" />` as a child element of `<ATHLETE>` in LXF (not a direct attribute).
+
+All three LXF import paths read this element and set `members.handicapex`:
+- `seed.py` — Upload Lenex (Admin page)
+- `lxf_to_team.py` — Import results .lxf (Invitation / Admin page)
+- `historical_import.py` — Import historical .lxf (Admin page)
+
+Existing members missing `handicapex` are backfilled on re-import; existing non-null values are never overwritten.
 
 ## Closure Date
 

@@ -228,6 +228,10 @@ def import_historical_meet(db: Session, file_bytes: bytes, force: bool = False) 
             license_val = ath_el.get("license", "")
             gender_str = ath_el.get("gender", "M")
             bd_str = ath_el.get("birthdate", "")
+            handicap_el = ath_el.find("HANDICAP")
+            exception_code = (
+                handicap_el.get("exception") if handicap_el is not None else None
+            ) or ath_el.get("exception") or None
 
             # Check if athlete exists before find_or_create
             existing_member = None
@@ -245,7 +249,7 @@ def import_historical_meet(db: Session, file_bytes: bytes, force: bool = False) 
             if not existing_member:
                 athletes_created += 1
 
-            # Update birthdate/gender if missing
+            # Update birthdate/gender/handicapex if missing
             if bd_str and not member.birthdate:
                 try:
                     member.birthdate = _date.fromisoformat(bd_str)
@@ -254,6 +258,8 @@ def import_historical_meet(db: Session, file_bytes: bytes, force: bool = False) 
             if not member.gender:
                 from .models import gender_from_str
                 member.gender = gender_from_str(gender_str)
+            if exception_code and not member.handicapex:
+                member.handicapex = exception_code
 
             athletes_matched += 1
 

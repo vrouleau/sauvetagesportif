@@ -258,6 +258,9 @@ export default function Admin() {
         {/* Database Backup */}
         <BackupSection />
 
+        {/* Historical Meets */}
+        <HistoricalMeetsSection />
+
         {/* Club Manager */}
         <div className="border border-gray-300 rounded bg-white">
           <div className="px-3 py-1.5 bg-gray-100 border-b border-gray-300 flex items-center justify-between">
@@ -326,6 +329,193 @@ function Section({ title, desc, children }) {
       </div>
       <div className="px-3 py-2">
         {children}
+      </div>
+    </div>
+  )
+}
+
+function HistoricalMeetsSection() {
+  const [meets, setMeets] = useState([])
+  const [mdbUploading, setMdbUploading] = useState(false)
+  const [smbUploading, setSmbUploading] = useState(false)
+  const [lxfUploading, setLxfUploading] = useState(false)
+  const [msg, setMsg] = useState('')
+  const { lang } = useLang()
+
+  useEffect(() => { loadMeets() }, [])
+
+  async function loadMeets() {
+    try {
+      const r = await api.get('/admin/historical-meets')
+      setMeets(r.data)
+    } catch {}
+  }
+
+  async function deleteMeet(id, name) {
+    const label = lang === 'fr'
+      ? `Supprimer "${name}" et toutes ses données ? Irréversible.`
+      : `Delete "${name}" and all its data? This cannot be undone.`
+    if (!confirm(label)) return
+    try {
+      await api.delete(`/admin/historical-meets/${id}`)
+      setMsg(lang === 'fr' ? 'Compétition supprimée' : 'Meet deleted')
+      loadMeets()
+    } catch (e) { setMsg(e.response?.data?.detail || e.message || 'Error') }
+  }
+
+  async function importMdb(e) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setMdbUploading(true)
+    try {
+      const form = new FormData()
+      form.append('file', file)
+      const r = await api.post('/admin/import-mdb', form)
+      const t = r.data.tables
+      setMsg(lang === 'fr'
+        ? `Importé: ${t.MEETS} compétitions, ${t.MEMBERS} athlètes, ${t.RESULTS} résultats`
+        : `Imported: ${t.MEETS} meets, ${t.MEMBERS} members, ${t.RESULTS} results`)
+      loadMeets()
+    } catch (err) { setMsg(err.response?.data?.detail || err.message || 'Error') }
+    finally { setMdbUploading(false); e.target.value = '' }
+  }
+
+  async function importSmb(e) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setSmbUploading(true)
+    try {
+      const form = new FormData()
+      form.append('file', file)
+      const r = await api.post('/admin/import-meet-results', form)
+      setMsg(lang === 'fr'
+        ? `Importé: "${r.data.meet_name}" — ${r.data.members} athlètes, ${r.data.results} résultats`
+        : `Imported: "${r.data.meet_name}" — ${r.data.members} members, ${r.data.results} results`)
+      loadMeets()
+    } catch (err) { setMsg(err.response?.data?.detail || err.message || 'Error') }
+    finally { setSmbUploading(false); e.target.value = '' }
+  }
+
+  async function importLxf(e) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setLxfUploading(true)
+    try {
+      const form = new FormData()
+      form.append('file', file)
+      const r = await api.post('/admin/import-historical', form)
+      if (r.data.warning || r.data.needs_force) {
+        setMsg(r.data.warning)
+      } else {
+        const d = r.data
+        const report = lang === 'fr'
+          ? `✅ Import terminé: "${d.meet_name}" (${d.meet_date || '?'})\n\n` +
+            `• Résultats importés: ${d.results_imported}\n` +
+            `• Épreuves: ${d.events_created}\n` +
+            `• Athlètes trouvés: ${d.athletes_matched}\n` +
+            `• Athlètes créés: ${d.athletes_created}\n` +
+            `• Clubs: ${d.clubs_matched} (${d.clubs_created} nouveaux)`
+          : `✅ Import complete: "${d.meet_name}" (${d.meet_date || '?'})\n\n` +
+            `• Results imported: ${d.results_imported}\n` +
+            `• Events: ${d.events_created}\n` +
+            `• Athletes matched: ${d.athletes_matched}\n` +
+            `• Athletes created: ${d.athletes_created}\n` +
+            `• Clubs: ${d.clubs_matched} (${d.clubs_created} new)`
+        alert(report)
+        setMsg(lang === 'fr'
+          ? `Importé: "${d.meet_name}" — ${d.results_imported} résultats`
+          : `Imported: "${d.meet_name}" — ${d.results_imported} results`)
+      }
+      loadMeets()
+    } catch (err) {
+      const detail = err.response?.data?.detail || err.message || 'Error'
+      if (err.response?.status === 409) {
+        const forceLabel = lang === 'fr'
+          ? `${detail}\n\nVoulez-vous forcer l'importation ?`
+          : `${detail}\n\nDo you want to force the import?`
+        if (confirm(forceLabel)) {
+          try {
+            const form2 = new FormData()
+            form2.append('file', file)
+            const r2 = await api.post('/admin/import-historical?force=true', form2)
+            const d2 = r2.data
+            const report2 = lang === 'fr'
+              ? `✅ Import forcé: "${d2.meet_name}"\n\n• Résultats: ${d2.results_imported}\n• Athlètes: ${d2.athletes_matched} (${d2.athletes_created} créés)\n• Épreuves: ${d2.events_created}`
+              : `✅ Forced import: "${d2.meet_name}"\n\n• Results: ${d2.results_imported}\n• Athletes: ${d2.athletes_matched} (${d2.athletes_created} created)\n• Events: ${d2.events_created}`
+            alert(report2)
+            setMsg(lang === 'fr'
+              ? `Importé: "${d2.meet_name}" — ${d2.results_imported} résultats`
+              : `Imported: "${d2.meet_name}" — ${d2.results_imported} results`)
+            loadMeets()
+          } catch (err2) { setMsg(err2.response?.data?.detail || err2.message || 'Error') }
+        } else {
+          setMsg('')
+        }
+      } else {
+        setMsg(detail)
+      }
+    }
+    finally { setLxfUploading(false); e.target.value = '' }
+  }
+
+  return (
+    <div className="border border-gray-300 rounded bg-white">
+      <div className="px-3 py-1.5 bg-gray-100 border-b border-gray-300 flex items-center justify-between flex-wrap gap-2">
+        <div>
+          <span className="text-xs font-semibold text-gray-700">
+            {lang === 'fr' ? 'Compétitions historiques' : 'Historical Meets'}
+          </span>
+          {msg && <span className="ml-3 text-xs text-green-700">{msg}</span>}
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <label className={`px-3 py-1 text-xs rounded cursor-pointer ${mdbUploading ? 'bg-gray-400' : 'bg-green-600 hover:bg-green-700'} text-white`}>
+            {mdbUploading ? (lang === 'fr' ? 'Import…' : 'Importing…') : (lang === 'fr' ? 'Importer Team.mdb' : 'Import Team.mdb')}
+            <input type="file" accept=".mdb" className="hidden" onChange={importMdb} disabled={mdbUploading} />
+          </label>
+          <label className={`px-3 py-1 text-xs rounded cursor-pointer ${smbUploading ? 'bg-gray-400' : 'bg-purple-600 hover:bg-purple-700'} text-white`}>
+            {smbUploading ? (lang === 'fr' ? 'Import…' : 'Importing…') : (lang === 'fr' ? 'Importer résultats .smb' : 'Import results .smb')}
+            <input type="file" accept=".smb" className="hidden" onChange={importSmb} disabled={smbUploading} />
+          </label>
+          <label className={`px-3 py-1 text-xs rounded cursor-pointer ${lxfUploading ? 'bg-gray-400' : 'bg-blue-600 hover:bg-blue-700'} text-white`}>
+            {lxfUploading ? (lang === 'fr' ? 'Import…' : 'Importing…') : (lang === 'fr' ? 'Importer résultats .lxf' : 'Import results .lxf')}
+            <input type="file" accept=".lxf" className="hidden" onChange={importLxf} disabled={lxfUploading} />
+          </label>
+        </div>
+      </div>
+      <div className="max-h-56 overflow-y-auto">
+        <table className="w-full text-xs border-collapse">
+          <thead className="sticky top-0 bg-gray-50 z-10">
+            <tr>
+              <th className="px-2 py-1 border-b border-gray-300 text-left font-medium">{lang === 'fr' ? 'Nom' : 'Name'}</th>
+              <th className="px-2 py-1 border-b border-gray-300 text-left font-medium w-24">{lang === 'fr' ? 'Lieu' : 'Location'}</th>
+              <th className="px-2 py-1 border-b border-gray-300 text-left font-medium w-24">Date</th>
+              <th className="px-2 py-1 border-b border-gray-300 text-center font-medium w-8">R</th>
+              <th className="px-2 py-1 border-b border-gray-300 w-16"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {meets.map(m => (
+              <tr key={m.id} className="border-b border-gray-200 hover:bg-blue-50">
+                <td className="px-2 py-0.5">{m.name}</td>
+                <td className="px-2 py-0.5 text-gray-600">{m.city || m.place || '—'}</td>
+                <td className="px-2 py-0.5 text-gray-600 font-mono">
+                  {m.date || (m.mindate ? m.mindate.slice(0, 10) : '—')}
+                </td>
+                <td className="px-2 py-0.5 text-center">
+                  {(m.resultCount > 0 || m.has_results) && <span className="text-green-700 font-bold">R</span>}
+                </td>
+                <td className="px-2 py-0.5 text-right">
+                  <button onClick={() => deleteMeet(m.id, m.name)} className="text-red-500 hover:text-red-700 text-xs">✕</button>
+                </td>
+              </tr>
+            ))}
+            {meets.length === 0 && (
+              <tr><td colSpan={5} className="px-2 py-3 text-center text-gray-400">
+                {lang === 'fr' ? 'Aucune compétition importée' : 'No meets imported'}
+              </td></tr>
+            )}
+          </tbody>
+        </table>
       </div>
     </div>
   )

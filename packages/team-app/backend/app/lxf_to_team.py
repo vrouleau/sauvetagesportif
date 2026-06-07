@@ -228,6 +228,10 @@ def import_lxf_as_meet(db: DbSession, content: bytes) -> dict:
             gender_str = ath_el.get("gender") or "M"
             gender_int = {"M": 1, "F": 2}.get(gender_str.upper(), 1)
             nation_ath = ath_el.get("nation") or nation
+            handicap_el = ath_el.find("HANDICAP")
+            exception_code = (
+                handicap_el.get("exception") if handicap_el is not None else None
+            ) or ath_el.get("exception") or None
 
             # Merge by license
             existing_member = None
@@ -236,6 +240,8 @@ def import_lxf_as_meet(db: DbSession, content: bytes) -> dict:
 
             if existing_member:
                 member_id = existing_member.membersid
+                if exception_code and not existing_member.handicapex:
+                    existing_member.handicapex = exception_code
             else:
                 member_id = _next_id(db, Member, Member.membersid)
                 db.add(Member(
@@ -247,6 +253,7 @@ def import_lxf_as_meet(db: DbSession, content: bytes) -> dict:
                     nation=nation_ath,
                     license=license_val,
                     clubsid=club_team_id,
+                    handicapex=exception_code,
                 ))
                 db.flush()
                 members_imported += 1

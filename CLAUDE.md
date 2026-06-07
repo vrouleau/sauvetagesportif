@@ -79,6 +79,12 @@ packages/
     backend/app/            — FastAPI: models, routers, exporters, importers
     frontend/src/           — React UI: pages/, meetApi.js
     tests/                  — pytest integration tests + unit tests
+
+scripts/
+  normalize_lxf.py         — Standalone tool: normalizes historic .lxf files against a current
+                             template (remaps swimstyle IDs, fuzzy-matches clubs/athletes, copies
+                             HANDICAP exception codes). Usage:
+                             python scripts/normalize_lxf.py TEMPLATE.lxf ENTRIES.lxf HISTORIC.lxf
 ```
 
 ## Shared critical rules
