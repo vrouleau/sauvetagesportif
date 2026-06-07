@@ -28,7 +28,26 @@
       "Bash(git -C \"c:\\\\Users\\\\vince\\\\Documents\\\\MeetManager\\\\sauvetagesportif\" push origin --delete feature/live-results)",
       "Bash(git -C \"c:\\\\Users\\\\vince\\\\Documents\\\\MeetManager\\\\sauvetagesportif\" push origin --delete feature/timing-sheet-ocr)",
       "Bash(git -C \"c:\\\\Users\\\\vince\\\\Documents\\\\MeetManager\\\\sauvetagesportif\" fetch --prune)",
-      "Bash(git -C \"c:\\\\Users\\\\vince\\\\Documents\\\\MeetManager\\\\sauvetagesportif\" branch -a)"
+      "Bash(git -C \"c:\\\\Users\\\\vince\\\\Documents\\\\MeetManager\\\\sauvetagesportif\" branch -a)",
+      "Bash(Get-ChildItem \"C:\\\\Users\\\\vince\\\\Downloads\\\\historic\")",
+      "Bash(Select-Object Name, Length, LastWriteTime)",
+      "Bash(Format-Table -AutoSize)",
+      "Bash(wsl ls *)",
+      "Bash(dir \"C:\\\\Users\\\\vince\\\\Documents\\\\MeetManager\\\\sauvetagesportif\")",
+      "Bash(rm \"/mnt/c/Users/vince/Documents/MeetManager/sauvetagesportif/packages/team-app/tests/unit/test_historical_import_style_resolve.py\" 2>/dev/null && echo \"deleted\" || echo \"not found\")",
+      "PowerShell(\"done\")",
+      "Bash(Remove-Item \"c:\\\\Users\\\\vince\\\\Documents\\\\MeetManager\\\\sauvetagesportif\\\\packages\\\\team-app\\\\frontend\\\\src\\\\pages\\\\DataManagement.jsx\")",
+      "PowerShell(wsl -- docker compose -f /mnt/c/Users/vince/Documents/MeetManager/sauvetagesportif/packages/team-app/docker-compose.yml up -d --build 2>&1)",
+      "PowerShell(wsl -- docker logs team-app-backend-1 --tail 50 2>&1)",
+      "PowerShell(wsl -- docker logs team-app-frontend-1 --tail 20 2>&1)",
+      "PowerShell(wsl -- docker logs team-app-backend-1 2>&1)",
+      "PowerShell(tail -80)",
+      "PowerShell(wsl -- docker ps -a 2>&1)",
+      "PowerShell(wsl -- docker start team-app-db-1 2>&1)",
+      "PowerShell(wsl -- docker ps 2>&1)"
+    ],
+    "additionalDirectories": [
+      "\\mnt\\c\\Users\\vince\\Documents\\MeetManager\\sauvetagesportif\\packages\\team-app\\tests\\unit"
     ]
   }
 }

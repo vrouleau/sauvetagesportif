@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.14] - 2026-06-07
+
+### ✨ Features
+
+- HANDICAP exception codes, normalize_lxf tool, WSL2 mirrored networking (`a060d6b`)
+
+### 🐛 Bug Fixes
+
+- remove TestDataManagement integration tests for deleted endpoints (`613ddf3`)
+
+# Changelog
+
 ## [0.3.12] - 2026-06-05
 
 ### ✨ Features
