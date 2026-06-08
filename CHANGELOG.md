@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.15] - 2026-06-08
+
+### 🐛 Bug Fixes
+
+- organizer and coach role access for individual/relay entry pages (`42f3c1a`)
+
+### Other
+
+- Add meet history files and oracle cloud podman restart script (`de9a7d1`)
+
+# Changelog
+
 ## [0.3.14] - 2026-06-07
 
 ### ✨ Features
