@@ -21,8 +21,8 @@ export default function Organizer() {
   }
 
   async function loadClubs() {
-    const [r, org] = await Promise.all([api.get('/clubs'), api.get('/admin/organizer')])
-    const orgId = org.data.club_id
+    const r = await api.get('/clubs')
+    const orgId = parseInt(localStorage.getItem('club_id') || '0')
     setClubs(r.data.filter(c => c.id !== orgId))
   }
 

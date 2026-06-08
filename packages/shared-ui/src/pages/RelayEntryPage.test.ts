@@ -21,10 +21,10 @@ function isControlsDisabled(isClosed: boolean, role: string): boolean {
 }
 
 /**
- * Determines if admin club filter should be shown.
+ * Determines if admin/organizer club filter should be shown.
  */
 function shouldShowClubFilter(role: string): boolean {
-  return role === 'admin'
+  return role === 'admin' || role === 'organizer'
 }
 
 /**
@@ -158,22 +158,22 @@ describe('RelayEntryPage - Closure date message display', () => {
   })
 })
 
-describe('RelayEntryPage - Admin club filter dropdown', () => {
+describe('RelayEntryPage - Admin/organizer club filter dropdown', () => {
   /**
    * **Validates: Requirements 9.3**
-   * Admin club filter dropdown appears only for admin role.
+   * Admin and organizer see the club filter dropdown; coach does not.
    */
 
   it('shows club filter for admin role', () => {
     expect(shouldShowClubFilter('admin')).toBe(true)
   })
 
-  it('does not show club filter for coach role', () => {
-    expect(shouldShowClubFilter('coach')).toBe(false)
+  it('shows club filter for organizer role', () => {
+    expect(shouldShowClubFilter('organizer')).toBe(true)
   })
 
-  it('does not show club filter for organizer role', () => {
-    expect(shouldShowClubFilter('organizer')).toBe(false)
+  it('does not show club filter for coach role', () => {
+    expect(shouldShowClubFilter('coach')).toBe(false)
   })
 })
 
@@ -196,6 +196,53 @@ describe('RelayEntryPage - Empty state message', () => {
       makeAgeCategory({ ageCode: '10-12' }),
       makeAgeCategory({ ageCode: '13-14' }),
     ])).toBe(false)
+  })
+})
+
+describe('RelayEntryPage - Athlete gender filter for M/F events', () => {
+  /**
+   * For Male or Female relay events, only athletes of the matching gender appear
+   * in the member selection dropdown. SERC (swimstyle 530) and Mixed events are exempt.
+   */
+
+  type Athlete = { id: number; gender: 'M' | 'F' }
+
+  function filterAthletesByEventGender(
+    athletes: Athlete[],
+    eventGender: 'M' | 'F' | 'X',
+    isSERC: boolean,
+  ): Athlete[] {
+    if (isSERC || eventGender === 'X') return athletes
+    return athletes.filter(a => a.gender === eventGender)
+  }
+
+  const athletes: Athlete[] = [
+    { id: 1, gender: 'M' },
+    { id: 2, gender: 'F' },
+    { id: 3, gender: 'M' },
+    { id: 4, gender: 'F' },
+  ]
+
+  it('male event returns only male athletes', () => {
+    const result = filterAthletesByEventGender(athletes, 'M', false)
+    expect(result.every(a => a.gender === 'M')).toBe(true)
+    expect(result).toHaveLength(2)
+  })
+
+  it('female event returns only female athletes', () => {
+    const result = filterAthletesByEventGender(athletes, 'F', false)
+    expect(result.every(a => a.gender === 'F')).toBe(true)
+    expect(result).toHaveLength(2)
+  })
+
+  it('mixed event returns all athletes regardless of gender', () => {
+    const result = filterAthletesByEventGender(athletes, 'X', false)
+    expect(result).toHaveLength(4)
+  })
+
+  it('SERC event (swimstyle 530) returns all athletes regardless of event gender', () => {
+    const result = filterAthletesByEventGender(athletes, 'M', true)
+    expect(result).toHaveLength(4)
   })
 })
 

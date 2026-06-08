@@ -275,6 +275,8 @@ function RelayTeamRow({
             if (intraTeamAssignedIds.has(athlete.id) && athlete.id !== currentAthleteId) return false
             // Exclude if assigned to another team for same event
             if (crossTeamAssignedIds.has(athlete.id)) return false
+            // For M/F events: hard-filter by event gender
+            if (!isSERC && event.gender !== 'X' && athlete.gender !== event.gender) return false
             // For mixed events: exclude gender that has reached its quota
             if (!isSERC && allowedGender != null && athlete.gender !== allowedGender) return false
             // Age group check: would adding this athlete make a valid majority impossible?
@@ -345,9 +347,9 @@ export default function RelayEntryPage({ role, clubId, refreshKey }: RelayEntryP
   const [clubs, setClubs] = useState<Club[]>([])
   const [selectedClubId, setSelectedClubId] = useState<number | undefined>(clubId)
 
-  // Load clubs for admin filter
+  // Load clubs for admin/organizer filter
   useEffect(() => {
-    if (role === 'admin') {
+    if (role === 'admin' || role === 'organizer') {
       // Try Electron IPC first (meet-app has real DB club IDs via dedicated handler)
       const ipcDb = (window as unknown as { api?: { db?: Record<string, (...args: unknown[]) => Promise<unknown>> } }).api?.db
       const clubsPromise = ipcDb?.getClubsReal
@@ -363,9 +365,9 @@ export default function RelayEntryPage({ role, clubId, refreshKey }: RelayEntryP
     }
   }, [role, api])
 
-  // Load relay page data — for admin, loads when a club is selected; for coach, loads immediately
+  // Load relay page data — for admin/organizer, loads when a club is selected; for coach, loads immediately
   const loadData = useCallback(async () => {
-    if (role === 'admin' && !selectedClubId) return
+    if ((role === 'admin' || role === 'organizer') && !selectedClubId) return
     setLoading(true)
     setError(null)
     try {
@@ -575,8 +577,8 @@ export default function RelayEntryPage({ role, clubId, refreshKey }: RelayEntryP
       <div className="px-4 py-3 bg-white border-b border-gray-300 shrink-0 flex items-center justify-between">
         <h2 className="text-sm font-semibold text-gray-800">{t.relay.pageTitle}</h2>
 
-        {/* Admin club filter */}
-        {role === 'admin' && clubs.length > 0 && (
+        {/* Admin/organizer club filter */}
+        {(role === 'admin' || role === 'organizer') && clubs.length > 0 && (
           <select
             value={selectedClubId ?? ''}
             onChange={handleClubFilterChange}

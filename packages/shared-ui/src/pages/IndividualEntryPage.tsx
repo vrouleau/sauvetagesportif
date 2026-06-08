@@ -64,9 +64,9 @@ async function loadInscriptionData(
   const clubs = await api.getClubs()
   const athletesByClub = new Map<number, AthleteListItem[]>()
 
-  if (role !== 'admin' && clubId) {
+  if (role === 'coach' && clubId) {
     // Coach mode: only load their club
-    const visibleClubs = clubs.filter(c => String(c.id) === clubId)
+    const visibleClubs = clubs.filter(c => String(c.id) === String(clubId))
     for (const club of visibleClubs) {
       const athletes = await api.getAthletesByClub(String(club.id))
       athletesByClub.set(club.id, athletes)

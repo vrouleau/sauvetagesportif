@@ -3733,11 +3733,12 @@ def get_relay_teams(request: Request, club_id: int | None = None, db: Session = 
 
     for relay in existing_relays:
         age_code = _relay_age_code(relay.minage, relay.maxage)
-        # Find the event key by matching stylesid to the event groups
-        # Match by stylesid only — age code on the relay is the computed team age, not the event category
+        # Find the event key by matching stylesid + gender to the event groups
+        # Age code on the relay is the computed team age, not the event category
+        relay_gender_str = "M" if relay.gender == GENDER_M else "F" if relay.gender == GENDER_F else "X"
         event_key = None
         for key, group in event_groups_by_key.items():
-            if group["swimstyleId"] == relay.stylesid:
+            if group["swimstyleId"] == relay.stylesid and group["gender"] == relay_gender_str:
                 event_key = key
                 break
 
