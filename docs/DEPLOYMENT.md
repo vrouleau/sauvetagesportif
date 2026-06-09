@@ -1,79 +1,96 @@
-# Deployment Guide
+# Deployment Guide — Oracle Cloud Free Tier + Podman
 
-## Current Production Setup
+## Architecture
 
-The team-app runs on Docker Compose with SQLite (default) or PostgreSQL (optional overlay).
-
-### Local / Mini-PC
-
-```bash
-# SQLite (default — simplest):
-docker compose up -d
-
-# With PostgreSQL:
-docker compose -f docker-compose.yml -f docker-compose.postgres.yml up -d
 ```
+[Users] → [Cloudflare CDN/HTTPS] → [Oracle VM :80] → [Podman Pod]
+                                                        ├── frontend (nginx :80)
+                                                        └── backend (uvicorn :8000)
+```
+
+- **Oracle Cloud Free Tier**: VM.Standard.E2.1.Micro (1 OCPU, 1GB RAM) — forever free
+- **Podman** (rootless): replaces Docker on the VM, lighter footprint
+- **SQLite**: single-file database, no external DB needed
+- **Cloudflare**: free HTTPS, DNS proxy, DDoS protection
+- **systemd user service**: auto-start on boot via `loginctl enable-linger`
 
 ---
 
-## Cloud Deployment — Oracle Cloud Free Tier
+## One-Time Setup
 
-Oracle Cloud provides **2 free ARM VMs** (Ampere A1) with 4 CPUs, 24GB RAM, 200GB storage — forever free. You run the same `docker compose` setup as locally.
+### 1. Create Oracle Cloud Account
 
-### One-Time Setup
+Sign up at https://cloud.oracle.com (credit card for identity, no charges on free tier).
+Select home region close to users (Toronto or Ashburn for Quebec).
 
-#### 1. Create an Oracle Cloud account
+### 2. Create a Free-Tier VM
 
-- Sign up at https://cloud.oracle.com (requires credit card for identity, no charges on free tier)
-- Select your home region (pick one close to Quebec: Toronto or Ashburn)
-
-#### 2. Create a free-tier VM
-
-- Go to: Compute → Instances → Create Instance
-- Shape: **VM.Standard.A1.Flex** (Ampere ARM) — 1 OCPU, 6GB RAM is plenty
-- Image: **Ubuntu 22.04** (or Oracle Linux 8)
-- Networking: create a VCN with public subnet, assign a public IP
+- Compute → Instances → Create Instance
+- Shape: **VM.Standard.E2.1.Micro** (AMD, 1 OCPU, 1GB RAM — Always Free)
+- Image: **Ubuntu 22.04** (Canonical)
+- Networking: create VCN with public subnet, assign public IPv4
 - SSH key: upload your public key
 
-#### 3. Open firewall ports
+### 3. Oracle VCN Security Rules
 
-In the Oracle Console → Networking → VCN → Security Lists → Default Security List:
-- Add ingress rule: **port 80** (HTTP) from 0.0.0.0/0
-- Add ingress rule: **port 443** (HTTPS) from 0.0.0.0/0
+In Oracle Console → Networking → VCN → Subnet → Security List:
 
-Also on the VM itself (Ubuntu):
+**Ingress rules:**
+| Source | Protocol | Dest Port | Description |
+|--------|----------|-----------|-------------|
+| 0.0.0.0/0 | TCP | 80 | HTTP |
+| 0.0.0.0/0 | TCP | 443 | HTTPS |
+
+**Egress rules** (needed for Resend API, Docker pulls, etc.):
+| Destination | Protocol | Dest Port | Description |
+|-------------|----------|-----------|-------------|
+| 0.0.0.0/0 | TCP | 443 | HTTPS outbound |
+| 0.0.0.0/0 | TCP | 80 | HTTP outbound |
+
+### 4. VM Firewall (iptables)
+
+Oracle's Ubuntu image has iptables rules that block traffic even if VCN allows it:
+
 ```bash
 sudo iptables -I INPUT -p tcp --dport 80 -j ACCEPT
 sudo iptables -I INPUT -p tcp --dport 443 -j ACCEPT
 sudo netfilter-persistent save
 ```
 
-#### 4. Install Docker
+### 5. Install Podman
 
 ```bash
-# SSH into the VM
-ssh ubuntu@<your-vm-public-ip>
-
-# Install Docker
-curl -fsSL https://get.docker.com | sh
-sudo usermod -aG docker $USER
-# Log out and back in for group to take effect
-
-# Install Docker Compose plugin
-sudo apt-get install docker-compose-plugin
+sudo apt-get update
+sudo apt-get install -y podman
 ```
 
-#### 5. Clone and deploy
+### 6. Enable Lingering (auto-start without login)
 
 ```bash
-git clone https://github.com/vrouleau/sauvetagesportif.git
-cd sauvetagesportif/packages/team-app
+loginctl enable-linger ubuntu
+```
 
-# Create .env file with your secrets
-cat > .env << 'EOF'
+This allows user-level systemd services to run even when not logged in.
+
+### 7. Authenticate to GHCR (GitHub Container Registry)
+
+```bash
+echo "YOUR_GITHUB_PAT" | podman login ghcr.io -u vrouleau --password-stdin
+```
+
+---
+
+## Deployment
+
+### Environment File
+
+Create `~/.env` (or wherever you run the restart script from):
+
+```bash
+cat > ~/.env << 'EOF'
 ADMIN_PIN=your-admin-pin
 SECRET_KEY=your-random-secret-key-here
-RESEND_API_KEY=your-resend-key
+RESEND_API_KEY=re_xxxxxxxxxxxx
 RESEND_FROM_EMAIL=noreply@yourdomain.com
 APP_BASE_URL=https://yourdomain.com
 STRIPE_API_KEY=
@@ -81,52 +98,128 @@ SUPPORT_EMAIL=your@email.com
 TURNSTILE_SITE_KEY=
 TURNSTILE_SECRET_KEY=
 EOF
-
-# Start (SQLite mode — no Postgres needed)
-docker compose -f docker-compose.prod.yml up -d
 ```
 
-#### 6. Point your Cloudflare DNS
+### Deploy / Update
 
-- In Cloudflare dashboard → DNS → add an A record:
-  - Name: `team` (or whatever subdomain you want)
-  - Content: your Oracle VM public IP
-  - Proxy: ON (orange cloud) — gives you free HTTPS
+```bash
+cd ~
+bash podman_restartmeet.sh
+```
 
-#### 7. Enable Cloudflare SSL
+The script (`scripts/podman_restartmeet.sh`):
+1. Pulls latest images from `ghcr.io/vrouleau/sauvetagesportif/team-backend:latest` and `team-frontend:latest`
+2. Stops and removes old containers + pod
+3. Loads `.env` from current directory
+4. Creates a pod (`sauvetage-pod`) on port 80 with `--add-host backend:127.0.0.1`
+5. Starts backend container (env vars passed via `-e` flags)
+6. Starts frontend container (nginx proxies `/api` to `backend:8000`)
+7. Prunes old images
 
-- SSL/TLS → Overview → set to **Full (strict)** if you add a cert on the VM, or **Flexible** to let Cloudflare handle HTTPS
+### Register as systemd Service (auto-start on boot)
+
+After a successful deployment:
+
+```bash
+# Generate service files from the running pod
+mkdir -p ~/.config/systemd/user/
+cd ~/.config/systemd/user/
+podman generate systemd --new --files --name sauvetage-pod
+
+# Enable
+systemctl --user daemon-reload
+systemctl --user enable pod-sauvetage-pod.service
+
+# Verify
+systemctl --user status pod-sauvetage-pod.service
+```
+
+### ⚠️ Updating env vars
+
+`podman generate systemd --new` **bakes env vars into the service file**. When you change `.env`, you must:
+
+```bash
+# 1. Stop the systemd service
+systemctl --user stop pod-sauvetage-pod.service
+
+# 2. Re-deploy with updated .env
+cd ~ && bash podman_restartmeet.sh
+
+# 3. Verify new env is active
+podman exec ubuntu_backend_1 env | grep RESEND
+
+# 4. Re-generate systemd files (bakes new env vars)
+cd ~/.config/systemd/user/
+podman generate systemd --new --files --name sauvetage-pod
+
+# 5. Reload
+systemctl --user daemon-reload
+systemctl --user enable pod-sauvetage-pod.service
+```
 
 ---
 
-### Updating the App
+## Cloudflare DNS + HTTPS
+
+### DNS Setup
+
+In Cloudflare → your domain → DNS:
+- **A record**: `team` (or `@`) → Oracle VM public IP, Proxy ON (orange cloud)
+
+### SSL/TLS
+
+- Cloudflare SSL/TLS → Overview → **Flexible**
+  - Cloudflare handles HTTPS to users
+  - Connection to Oracle VM is HTTP (port 80)
+  - No cert needed on the VM
+
+### Resend Email (sender domain)
+
+For `RESEND_FROM_EMAIL` to work:
+1. Resend dashboard → Domains → Add your domain
+2. Add the DNS records (SPF + DKIM TXT records) in Cloudflare
+3. Wait for verification (usually instant with Cloudflare)
+
+---
+
+## Operations
+
+### Check status
 
 ```bash
-ssh ubuntu@<your-vm-ip>
-cd sauvetagesportif/packages/team-app
-git pull
-docker compose -f docker-compose.prod.yml up --build -d
+podman ps --pod
+podman exec ubuntu_backend_1 python -c "import urllib.request; print(urllib.request.urlopen('http://localhost:8000/api/status').read().decode())"
 ```
 
-### Backups
-
-SQLite DB is a single file inside the Docker volume. To backup:
+### View logs
 
 ```bash
-# Copy the DB out of the container
-docker compose -f docker-compose.prod.yml exec backend cat /app/data/meetmgr.db > ~/backup-$(date +%Y%m%d).db
+podman logs ubuntu_backend_1 --tail 50
+podman logs ubuntu_frontend_1 --tail 20
 ```
 
-Or use the built-in auto-backup (creates daily `.db` copies inside the container volume).
+### Backup
 
-### Monitoring
+SQLite DB lives in a Podman volume (`appdata`). Auto-backup creates daily copies inside the volume.
+
+Manual backup:
+```bash
+podman exec ubuntu_backend_1 cat /app/data/meetmgr.db > ~/backup-$(date +%Y%m%d).db
+```
+
+### Restart
 
 ```bash
-# Check logs
-docker compose -f docker-compose.prod.yml logs -f backend
+systemctl --user restart pod-sauvetage-pod.service
+```
 
-# Check status
-curl http://localhost:8001/api/status
+### Full redeploy (new version)
+
+```bash
+systemctl --user stop pod-sauvetage-pod.service
+cd ~ && bash podman_restartmeet.sh
+cd ~/.config/systemd/user/ && podman generate systemd --new --files --name sauvetage-pod
+systemctl --user daemon-reload
 ```
 
 ---
@@ -135,7 +228,8 @@ curl http://localhost:8001/api/status
 
 | Platform | Verdict |
 |----------|---------|
-| Fly.io | Works but requires new Dockerfile (supervisord), micro-VMs are small (256MB), Postgres provisioning was broken |
-| Google Cloud Run | Doesn't support persistent volumes (no SQLite), needs Cloud SQL ($) |
+| Fly.io | Micro-VMs too small (256MB), Postgres provisioning broken, needs custom Dockerfile |
+| Google Cloud Run | No persistent volumes (no SQLite), needs Cloud SQL ($) |
 | Railway.app | $5/month credit; easy but limited free tier |
 | Render.com | Free Postgres expires after 90 days |
+| Docker on Oracle | Works but rootless Podman is lighter, no daemon, better systemd integration |
