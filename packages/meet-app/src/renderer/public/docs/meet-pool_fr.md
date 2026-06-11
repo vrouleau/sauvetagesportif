@@ -71,16 +71,20 @@ L'onglet **Épreuves** affiche la structure complète sous forme d'arbre :
 
 ---
 
-## Onglet Inscription — Inscriptions des athlètes
+## Onglets Inscriptions — Inscriptions des athlètes
 
-L'onglet **Inscription** affiche tous les athlètes inscrits et leurs épreuves :
+L'onglet **Inscriptions individuelles** affiche tous les athlètes inscrits et leurs épreuves individuelles :
 
 - Athlètes regroupés par club
 - Cocher/décocher les épreuves pour inscrire ou désinscrire
 - Temps d'inscription affichés et modifiables
-- Assignation des membres de relais
 
-![Onglet inscription](assets/meet-pool-inscription.png)
+L'onglet **Inscriptions relais** gère les équipes de relais :
+
+- Composition des équipes et assignation des membres
+- Cocher/décocher les épreuves de relais par club
+
+![Onglets inscriptions](assets/meet-pool-inscription.png)
 
 ---
 

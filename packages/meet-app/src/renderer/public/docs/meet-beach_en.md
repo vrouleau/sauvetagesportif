@@ -57,13 +57,13 @@ The events tab works the same as pool mode, but beach events have different char
 
 ---
 
-## Registration Tab
+## Individual Entries & Relay Entries Tabs
 
 Registration for beach events is simplified:
 
-- **Checkbox only** — no entry time needed
+- **Individual Entries** tab — **checkbox only** — no entry time needed
 - No best times displayed (not applicable for ranked events)
-- Relay assignment works the same as pool mode
+- **Relay Entries** tab — relay assignment works the same as pool mode
 
 ![Beach registration](assets/meet-beach-inscription.png)
 

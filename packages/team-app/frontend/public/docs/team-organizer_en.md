@@ -2,7 +2,7 @@
 
 ## Overview
 
-The organizer manages the full meet cycle: creating the structure, sending invitations, collecting registrations, sending invoices, and finally importing results to close the meet. This role has access to the **Meet**, **Invitation**, and **Registration** tabs.
+The organizer manages the full meet cycle: creating the structure, sending invitations, collecting registrations, sending invoices, and finally importing results to close the meet. This role has access to the **Meet**, **Invitation**, **Individual Entries**, **Relay Entries**, and **SERC** tabs.
 
 ![Meet Lifecycle](assets/meet-lifecycle-en.png)
 
@@ -110,9 +110,26 @@ If your Stripe account is connected:
 
 ---
 
-## Registration Tab
+## Individual Entries & Relay Entries Tabs
 
-The organizer can register athletes from any club and modify entries (same interface as coaches, but not limited to their own club). See the [Coach Guide](team-coach) for details.
+The organizer can register athletes from any club and modify entries (same interface as coaches, but not limited to their own club):
+
+- **Individual Entries** tab — register/unregister athletes for individual events, manage entry times
+- **Relay Entries** tab — manage relay team composition and member assignments
+
+See the [Coach Guide](team-coach) for details on the registration interface.
+
+---
+
+## SERC Tab
+
+The SERC (Simulated Emergency Response Competition) tab is available for organizers and admins. It provides:
+
+- **Setup & Factors** — configure the number of victims, victim types, approach/rescue/control factors, overall and bystander criteria
+- **Scoring** — grid-based score entry with teams in columns and criteria in rows. Supports random draw and final draw ordering.
+- **Results** — ranked totals across all sections
+- **Judge QR Codes** — generate QR codes for mobile judge entry (one per section, no login needed)
+- **Print Sheets** — generate printable bilingual judge sheets
 
 ---
 

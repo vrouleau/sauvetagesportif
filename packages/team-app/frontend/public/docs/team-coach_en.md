@@ -2,7 +2,7 @@
 
 ## Overview
 
-The club coach (team manager) registers athletes for the upcoming competition. This role has access to the **Registration** tab only, limited to their own club's athletes.
+The club coach (team manager) registers athletes for the upcoming competition. This role has access to the **Individual Entries** and **Relay Entries** tabs, limited to their own club's athletes.
 
 **Your role in the meet cycle:** You are notified at step ③ (invitation email with your club PIN). You act during step ④ (register athletes before the closure date). Once the competition ends and the organizer imports results, your PIN is regenerated — you'll need a new invitation for the next meet.
 
@@ -37,9 +37,9 @@ If you haven't received an invitation:
 
 ## Registration
 
-### Athlete List
+### Individual Entries Tab
 
-After login, you see your club's athletes in a cascade tree layout:
+After login, you see your club's athletes in the **Individual Entries** tab:
 - Athletes grouped by **age category** and **gender**
 - Each athlete shows their name, registration status, and number of events registered
 - Use the **search bar** to find a specific athlete
@@ -57,6 +57,8 @@ After login, you see your club's athletes in a cascade tree layout:
 - You can **adjust the entry time** if needed (e.g., expected improvement)
 
 ### Relay Events
+
+Relay entries are managed in the **Relay Entries** tab:
 
 1. Check the relay event to register your club
 2. Click **Assign Members** to set relay positions (1st, 2nd, 3rd, 4th)

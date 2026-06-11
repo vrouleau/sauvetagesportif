@@ -2,7 +2,7 @@
 
 ## Vue d'ensemble
 
-Le responsable d'équipe (coach) inscrit les athlètes de son club pour la compétition à venir. Ce rôle a accès à l'onglet **Inscription** uniquement, limité aux athlètes de son propre club.
+Le responsable d'équipe (coach) inscrit les athlètes de son club pour la compétition à venir. Ce rôle a accès aux onglets **Inscriptions individuelles** et **Inscriptions relais**, limité aux athlètes de son propre club.
 
 **Votre rôle dans le cycle de compétition :** Vous êtes notifié à l'étape ③ (courriel d'invitation avec le NIP de votre club). Vous agissez à l'étape ④ (inscrire les athlètes avant la date limite). Une fois la compétition terminée et les résultats importés par l'organisateur, votre NIP est régénéré — vous aurez besoin d'une nouvelle invitation pour le prochain meet.
 
@@ -37,9 +37,9 @@ Si vous n'avez pas reçu d'invitation :
 
 ## Inscription
 
-### Liste des athlètes
+### Onglet Inscriptions individuelles
 
-Après la connexion, les athlètes de votre club s'affichent dans une arborescence en cascade :
+Après la connexion, les athlètes de votre club s'affichent dans l'onglet **Inscriptions individuelles** :
 - Athlètes regroupés par **catégorie d'âge** et **genre**
 - Chaque athlète affiche son nom, son statut d'inscription et le nombre d'épreuves inscrites
 - Utiliser la **barre de recherche** pour trouver un athlète
@@ -57,6 +57,8 @@ Après la connexion, les athlètes de votre club s'affichent dans une arborescen
 - Vous pouvez **ajuster le temps d'inscription** si nécessaire
 
 ### Épreuves de relais
+
+Les relais sont gérés dans l'onglet **Inscriptions relais** :
 
 1. Cocher l'épreuve de relais pour inscrire votre club
 2. Cliquer **Assigner les membres** pour définir les positions (1er, 2e, 3e, 4e)

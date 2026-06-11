@@ -2,7 +2,7 @@
 
 ## Vue d'ensemble
 
-L'organisateur gère le cycle complet de la compétition : création de la structure, envoi des invitations, collecte des inscriptions, facturation et importation des résultats pour clôturer le meet. Ce rôle a accès aux onglets **Compétition**, **Invitation** et **Inscription**.
+L'organisateur gère le cycle complet de la compétition : création de la structure, envoi des invitations, collecte des inscriptions, facturation et importation des résultats pour clôturer le meet. Ce rôle a accès aux onglets **Compétition**, **Invitation**, **Inscriptions individuelles**, **Inscriptions relais** et **SERC**.
 
 ![Cycle de compétition](assets/meet-lifecycle-fr.png)
 
@@ -110,9 +110,26 @@ Si votre compte Stripe est connecté :
 
 ---
 
-## Onglet Inscription
+## Onglets Inscriptions individuelles et Inscriptions relais
 
-L'organisateur peut inscrire des athlètes de n'importe quel club et modifier les inscriptions (même interface que les responsables, mais sans restriction de club). Voir le [Guide du responsable d'équipe](team-coach) pour les détails.
+L'organisateur peut inscrire des athlètes de n'importe quel club et modifier les inscriptions (même interface que les responsables, mais sans restriction de club) :
+
+- **Inscriptions individuelles** — inscrire/désinscrire les athlètes aux épreuves individuelles, gérer les temps d'inscription
+- **Inscriptions relais** — gérer la composition des équipes de relais et l'assignation des membres
+
+Voir le [Guide du responsable d'équipe](team-coach) pour les détails de l'interface.
+
+---
+
+## Onglet SERC
+
+L'onglet SERC (Simulated Emergency Response Competition) est disponible pour les organisateurs et admins. Il offre :
+
+- **Configuration et facteurs** — configurer le nombre de victimes, les types, les facteurs d'approche/sauvetage/contrôle, les critères globaux et du passant
+- **Pointages** — grille de saisie avec les équipes en colonnes et les critères en lignes. Supporte le tirage aléatoire et le tirage final.
+- **Résultats** — totaux classés pour toutes les sections
+- **Codes QR juges** — générer des codes QR pour la saisie mobile par les juges (un par section, aucune connexion requise)
+- **Feuilles d'impression** — générer des feuilles de juges imprimables bilingues
 
 ---
 

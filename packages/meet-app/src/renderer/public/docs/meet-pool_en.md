@@ -71,16 +71,20 @@ On the right side, the properties panel shows:
 
 ---
 
-## Registration Tab — Athlete Entries
+## Individual Entries & Relay Entries Tabs — Athlete Entries
 
-The **Inscription** tab shows all registered athletes and their event entries:
+The **Individual Entries** tab shows all registered athletes and their individual event entries:
 
 - Athletes grouped by club
 - Check/uncheck events to register or unregister
 - Entry times displayed and editable
-- Relay member assignment
 
-![Registration tab](assets/meet-pool-inscription.png)
+The **Relay Entries** tab manages relay teams:
+
+- Relay team composition and member assignment
+- Check/uncheck relay events per club
+
+![Registration tabs](assets/meet-pool-inscription.png)
 
 ---
 

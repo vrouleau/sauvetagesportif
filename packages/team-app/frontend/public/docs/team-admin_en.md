@@ -2,7 +2,7 @@
 
 ## Overview
 
-The administrator is responsible for full database backup/restore, managing clubs and athletes, and maintaining data between seasons. This role has access to **all tabs** in the application (including the Organizer tabs).
+The administrator is responsible for full database backup/restore, managing clubs and athletes, and maintaining data between seasons. This role has access to **all tabs** in the application: Meet, Invitation, Individual Entries, Relay Entries, SERC, and Admin.
 
 ---
 
@@ -85,28 +85,35 @@ The admin has access to all organizer capabilities:
 - Export registration bundle (.zip)
 - Send invitations
 - Create new pool/beach meet (from the Invitation page: **Create Pool** / **Create Beach** buttons)
+- SERC (Simulated Emergency Response Competition) configuration and scoring
 
 See the [Organizer Guide](team-organizer) for details on these workflows.
 
 ---
 
-## Data Management Tab
+## Historical Meets
 
-### Export Entries (.lxf)
+The **Historical Meets** section lets you import past competition results. These results are used to compute athletes' best times for future meets.
 
-1. Navigate to the **Data Management** tab
-2. Click **Download entries (.lxf)** — use as the seed for the next meet
+### Import Team.mdb (legacy)
 
-### Merge Duplicate Clubs
+1. Click **Import Team.mdb** and select the legacy Access database
+2. All meets, members, and results are imported
 
-1. In the **Merge Clubs** section, select the **source club** (to eliminate) and the **target club** (to keep)
-2. Click **Merge** — all athletes are re-parented to the target club
+### Import results .smb
 
-### Merge Diverging Styles
+1. Click **Import results .smb** and select a SauvetageMeet backup file
+2. The meet name, athletes, and results are imported
 
-1. In the **Merge Styles** section, select the **source UID** (to eliminate) and **target UID** (canonical)
-2. A **preview popup** shows the affected records before executing
-3. Confirm to proceed — best times are consolidated (fastest per pool size is kept)
+### Import results .lxf
+
+1. Click **Import results .lxf** and select a Lenex results file
+2. If a duplicate meet is detected, you can force the import
+
+### Manage Historical Meets
+
+- The historical meets table shows all imported meets with their date, location, and result count
+- Click **✕** to delete a historical meet (irreversible)
 
 ---
 
@@ -119,6 +126,5 @@ See the [Organizer Guide](team-organizer) for details on these workflows.
 | Configure Gemini keys | Before competition | Admin |
 | Create backup | After any major change | Admin |
 | Configure auto-backup | Once (set interval + max copies) | Admin |
-| Export entries (.lxf) | After updating times | Data Management |
-| Merge clubs/styles | After multiple imports | Data Management |
+| Import historical results | After receiving results from a past meet | Admin |
 | *(After meet closes)* Invite next organizer | After organizer imports results | Admin |

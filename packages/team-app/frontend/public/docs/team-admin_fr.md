@@ -2,7 +2,7 @@
 
 ## Vue d'ensemble
 
-L'administrateur est responsable de la sauvegarde/restauration complète de la base de données, de la gestion des clubs et athlètes, et de la maintenance des données entre les saisons. Ce rôle a accès à **tous les onglets** de l'application (incluant les onglets de l'organisateur).
+L'administrateur est responsable de la sauvegarde/restauration complète de la base de données, de la gestion des clubs et athlètes, et de la maintenance des données entre les saisons. Ce rôle a accès à **tous les onglets** de l'application : Compétition, Invitation, Inscriptions individuelles, Inscriptions relais, SERC et Admin.
 
 ---
 
@@ -85,28 +85,35 @@ L'admin a accès à toutes les fonctionnalités de l'organisateur :
 - Exporter le bundle d'inscriptions (.zip)
 - Envoyer les invitations
 - Créer un nouveau meet piscine/plage (depuis la page Invitation : boutons **Créer Piscine** / **Créer Plage**)
+- Configuration et pointage SERC (Simulated Emergency Response Competition)
 
 Voir le [Guide de l'organisateur](team-organizer) pour les détails.
 
 ---
 
-## Onglet Gestion des données
+## Compétitions historiques
 
-### Exporter les inscriptions (.lxf)
+La section **Compétitions historiques** permet d'importer les résultats de compétitions passées. Ces résultats sont utilisés pour calculer les meilleurs temps des athlètes pour les futurs meets.
 
-1. Naviguer vers l'onglet **Gestion des données**
-2. Cliquer **Télécharger les inscriptions (.lxf)** — utiliser comme base pour la prochaine compétition
+### Importer Team.mdb (ancien format)
 
-### Fusionner les clubs en double
+1. Cliquer **Importer Team.mdb** et sélectionner la base Access existante
+2. Toutes les compétitions, membres et résultats sont importés
 
-1. Dans la section **Fusionner les clubs**, sélectionner le **club source** (à éliminer) et le **club cible** (à conserver)
-2. Cliquer **Fusionner** — tous les athlètes sont rattachés au club cible
+### Importer résultats .smb
 
-### Fusionner les styles divergents
+1. Cliquer **Importer résultats .smb** et sélectionner un fichier de sauvegarde SauvetageMeet
+2. Le nom du meet, les athlètes et les résultats sont importés
 
-1. Dans la section **Fusionner les styles**, sélectionner l'**UID source** et l'**UID cible**
-2. Un **popup de prévisualisation** affiche les enregistrements affectés avant l'exécution
-3. Confirmer pour procéder — les meilleurs temps sont consolidés (le plus rapide par bassin est conservé)
+### Importer résultats .lxf
+
+1. Cliquer **Importer résultats .lxf** et sélectionner un fichier Lenex de résultats
+2. Si un meet en double est détecté, vous pouvez forcer l'importation
+
+### Gérer les compétitions historiques
+
+- Le tableau affiche toutes les compétitions importées avec leur date, lieu et nombre de résultats
+- Cliquer **✕** pour supprimer une compétition historique (irréversible)
 
 ---
 
@@ -119,6 +126,5 @@ Voir le [Guide de l'organisateur](team-organizer) pour les détails.
 | Configurer les clés Gemini | Avant la compétition | Admin |
 | Créer une sauvegarde | Après tout changement majeur | Admin |
 | Configurer la sauvegarde auto | Une fois (intervalle + copies max) | Admin |
-| Exporter les inscriptions (.lxf) | Après mise à jour des temps | Gestion des données |
-| Fusionner clubs/styles | Après import multiple | Gestion des données |
+| Importer résultats historiques | Après réception des résultats d'un ancien meet | Admin |
 | *(Après clôture)* Inviter le prochain organisateur | Après import des résultats | Admin |

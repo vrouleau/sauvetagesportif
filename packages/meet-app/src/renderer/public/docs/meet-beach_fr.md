@@ -57,13 +57,13 @@ L'onglet épreuves fonctionne comme en mode piscine, mais les épreuves plage on
 
 ---
 
-## Onglet Inscription
+## Onglets Inscriptions
 
 L'inscription aux épreuves plage est simplifiée :
 
-- **Case à cocher uniquement** — pas de temps d'inscription nécessaire
+- **Inscriptions individuelles** — **case à cocher uniquement** — pas de temps d'inscription nécessaire
 - Pas de meilleurs temps affichés (non applicable pour les épreuves classées)
-- L'assignation des relais fonctionne comme en mode piscine
+- **Inscriptions relais** — l'assignation des relais fonctionne comme en mode piscine
 
 ![Inscription plage](assets/meet-beach-inscription.png)
 
