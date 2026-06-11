@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.3.16] - 2026-06-11
+
+### ✨ Features
+
+- add fr/en i18n support to SERC pages (`3c21042`)
+
+### 🐛 Bug Fixes
+
+- auto-save config when navigating away from setup page (`934df27`)
+- translate overall category labels and fix French apostrophe syntax (`5253590`)
+
+### 📝 Documentation
+
+- update all guides to match current app structure (`dfcd2d8`)
+- Oracle Cloud deployment guide (Podman + systemd + Cloudflare) (`2cacb53`)
+
+### 🔧 Chores
+
+- remove config/historic from source control (`5ea599c`)
+
 ## [0.3.15] - 2026-06-08
 
 ### 🐛 Bug Fixes
