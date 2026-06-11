@@ -146,6 +146,7 @@ export default function Serc() {
   const [config, setConfig] = useState(null)
   const [teams, setTeams] = useState([])
   const [loading, setLoading] = useState(true)
+  const pendingSaveRef = useRef(null)
 
   const loadAll = useCallback(async () => {
     try {
@@ -161,6 +162,14 @@ export default function Serc() {
 
   useEffect(() => { loadAll() }, [loadAll])
 
+  // Auto-save pending config when navigating away from setup
+  function handleSetPage(newPage) {
+    if (page === 'setup' && newPage !== 'setup' && pendingSaveRef.current) {
+      pendingSaveRef.current()
+    }
+    setPage(newPage)
+  }
+
   if (loading) return <div className="p-4 text-xs text-gray-500">{lang === 'fr' ? 'Chargement SERC…' : 'Loading SERC…'}</div>
 
   return (
@@ -172,18 +181,18 @@ export default function Serc() {
           <div className="text-gray-400 font-normal text-[10px] mt-0.5">{teams.length} {lang === 'fr' ? 'équipes' : 'teams'}</div>
         </div>
         <div className="text-gray-500 text-[10px] uppercase px-3 pt-2">{lang === 'fr' ? 'Configuration' : 'Configuration'}</div>
-        <NavItem label={lang === 'fr' ? 'Configuration et facteurs' : 'Setup & Factors'} active={page === 'setup'} onClick={() => setPage('setup')} />
+        <NavItem label={lang === 'fr' ? 'Configuration et facteurs' : 'Setup & Factors'} active={page === 'setup'} onClick={() => handleSetPage('setup')} />
         <div className="text-gray-500 text-[10px] uppercase px-3 pt-3">{lang === 'fr' ? 'Saisie des pointages' : 'Score Entry'}</div>
-        <NavItem label={lang === 'fr' ? 'Pointages' : 'Scoring'} active={page === 'scoring'} onClick={() => setPage('scoring')} />
+        <NavItem label={lang === 'fr' ? 'Pointages' : 'Scoring'} active={page === 'scoring'} onClick={() => handleSetPage('scoring')} />
         <div className="text-gray-500 text-[10px] uppercase px-3 pt-3">{lang === 'fr' ? 'Résultats' : 'Output'}</div>
-        <NavItem label={lang === 'fr' ? 'Résultats' : 'Results'} active={page === 'results'} onClick={() => setPage('results')} />
+        <NavItem label={lang === 'fr' ? 'Résultats' : 'Results'} active={page === 'results'} onClick={() => handleSetPage('results')} />
         <NavItem label={lang === 'fr' ? 'Feuilles d\'impression' : 'Print Sheets'} active={false}
           onClick={() => window.open('/api/serc/print/sheets?lang=bilingual', '_blank')} />
       </div>
 
       {/* Main content */}
       <div className="flex-1 overflow-auto p-4">
-        {page === 'setup' && <SetupPage config={config} onSave={loadAll} lang={lang} />}
+        {page === 'setup' && <SetupPage config={config} onSave={loadAll} lang={lang} registerSave={fn => { pendingSaveRef.current = fn }} />}
         {page === 'scoring' && <ScoringPage teams={teams} config={config} lang={lang} />}
         {page === 'results' && <ResultsPage lang={lang} />}
       </div>
@@ -204,7 +213,7 @@ function NavItem({ label, active, onClick }) {
 
 // ─── Setup Page ───────────────────────────────────────────────────────────────
 
-function SetupPage({ config, onSave, lang }) {
+function SetupPage({ config, onSave, lang, registerSave }) {
   const [form, setForm] = useState({
     num_victims: config?.num_victims || 9,
     num_draws: 1, // always 1 — single scoring grid
@@ -213,6 +222,12 @@ function SetupPage({ config, onSave, lang }) {
     bystander_factors: config?.bystander_factors || { approach: 1, info: 1, directions: 1, monitoring: 1, encouragement: 1 },
     victim_factors: config?.victim_factors || [],
   })
+  const [dirty, setDirty] = useState(false)
+
+  function updateForm(updater) {
+    setForm(updater)
+    setDirty(true)
+  }
 
   async function save() {
     // Auto-compute landing/care from victim type before saving
@@ -221,8 +236,17 @@ function SetupPage({ config, onSave, lang }) {
       return { ...vf, landing: derived.landing, care: derived.care }
     })
     await api.post('/serc/config', { ...form, num_draws: 1, victim_factors: vfs })
+    setDirty(false)
     onSave()
   }
+
+  // Register save function so parent can auto-save when navigating away
+  const saveRef = useRef(save)
+  saveRef.current = save
+  useEffect(() => {
+    if (registerSave) registerSave(() => { if (dirty) saveRef.current() })
+    return () => { if (registerSave) registerSave(null) }
+  }, [registerSave, dirty])
 
   const victimTypes = ['Non Swimmer', 'Weak Swimmer', 'Injured Swimmer', 'Unconscious Non-Breathing']
 
@@ -241,6 +265,7 @@ function SetupPage({ config, onSave, lang }) {
       nv[index].care = derived.care
     }
     setForm(f => ({ ...f, victim_factors: nv }))
+    setDirty(true)
   }
 
   function getApproachLabel(factor) {
@@ -266,12 +291,12 @@ function SetupPage({ config, onSave, lang }) {
           <div>
             <label className="text-[10px] text-gray-500 block mb-0.5">{lang === 'fr' ? 'Nombre de victimes (1–16)' : 'Number of Victims (1–16)'}</label>
             <input type="number" min={1} max={16} className="w-full border border-gray-300 rounded px-2 py-1 text-xs"
-              value={form.num_victims} onChange={e => setForm(f => ({ ...f, num_victims: Math.min(16, Math.max(1, +e.target.value)) }))} />
+              value={form.num_victims} onChange={e => updateForm(f => ({ ...f, num_victims: Math.min(16, Math.max(1, +e.target.value)) }))} />
           </div>
           <div>
             <label className="text-[10px] text-gray-500 block mb-0.5">{lang === 'fr' ? 'Passant' : 'Bystander'}</label>
             <select className="w-full border border-gray-300 rounded px-2 py-1 text-xs" value={form.has_bystander ? '1' : '0'}
-              onChange={e => setForm(f => ({ ...f, has_bystander: e.target.value === '1' }))}>
+              onChange={e => updateForm(f => ({ ...f, has_bystander: e.target.value === '1' }))}>
               <option value="1">{lang === 'fr' ? 'Oui — Passant présent' : 'Yes — Bystander present'}</option>
               <option value="0">{lang === 'fr' ? 'Non — Pas de passant' : 'No — No bystander'}</option>
             </select>
@@ -291,7 +316,7 @@ function SetupPage({ config, onSave, lang }) {
               <label className="text-xs font-medium text-gray-600 w-28">{overallKeyLabels[key] || key}</label>
               <select className="flex-1 border border-gray-300 rounded px-2 py-1 text-xs"
                 value={form.overall_factors[key] || 1}
-                onChange={e => setForm(f => ({ ...f, overall_factors: { ...f.overall_factors, [key]: +e.target.value } }))}>
+                onChange={e => updateForm(f => ({ ...f, overall_factors: { ...f.overall_factors, [key]: +e.target.value } }))}>
                 {options.map(o => <option key={o.factor} value={o.factor}>{o.label}</option>)}
               </select>
             </div>
