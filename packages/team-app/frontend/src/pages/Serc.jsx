@@ -39,9 +39,9 @@ const RESCUE_OPTIONS = {
     { label: 'Accepts aid and swims in / Unconscious', factor: 1.0 },
   ],
   fr: [
-    { label: 'Refuse l'aide et ne nagera pas sans directives claires et concises', factor: 1.5 },
-    { label: 'Accepte l'aide mais ne nagera pas sans directives claires et concises', factor: 1.25 },
-    { label: 'Accepte l'aide et nage / Inconscient', factor: 1.0 },
+    { label: "Refuse l'aide et ne nagera pas sans directives claires et concises", factor: 1.5 },
+    { label: "Accepte l'aide mais ne nagera pas sans directives claires et concises", factor: 1.25 },
+    { label: "Accepte l'aide et nage / Inconscient", factor: 1.0 },
   ],
 }
 
@@ -94,9 +94,9 @@ const OVERALL_OPTIONS = {
       { label: 'Obstacle mineur pour évaluer et identifier les priorités des victimes', factor: 1.0 },
     ],
     control: [
-      { label: 'Limitations importantes rendant difficile le maintien de la sécurité', factor: 1.5 },
-      { label: 'Limitations modérées d'environnement, équipement, conditions pour la sécurité', factor: 1.25 },
-      { label: 'Limitations mineures d'environnement, équipement, conditions pour la sécurité', factor: 1.0 },
+      { label: "Limitations importantes rendant difficile le maintien de la sécurité", factor: 1.5 },
+      { label: "Limitations modérées d'environnement, équipement, conditions pour la sécurité", factor: 1.25 },
+      { label: "Limitations mineures d'environnement, équipement, conditions pour la sécurité", factor: 1.0 },
     ],
     communication: [
       { label: 'Interférence importante à la communication due à la taille/disposition/bruit', factor: 1.5 },
@@ -109,9 +109,9 @@ const OVERALL_OPTIONS = {
       { label: 'Victime minimalement cachée de la vue ou de la recherche', factor: 1.0 },
     ],
     teamwork: [
-      { label: 'Travail d'équipe sans passants/aide des victimes ou passants non coopératifs', factor: 1.5 },
-      { label: 'Travail d'équipe avec passants/aide des victimes réticents', factor: 1.25 },
-      { label: 'Travail d'équipe avec passants/aide des victimes coopératifs', factor: 1.0 },
+      { label: "Travail d'équipe sans passants/aide des victimes ou passants non coopératifs", factor: 1.5 },
+      { label: "Travail d'équipe avec passants/aide des victimes réticents", factor: 1.25 },
+      { label: "Travail d'équipe avec passants/aide des victimes coopératifs", factor: 1.0 },
     ],
   },
 }
@@ -282,16 +282,21 @@ function SetupPage({ config, onSave, lang }) {
       <div className="bg-white border border-gray-300 rounded p-4">
         <h3 className="text-sm font-bold text-gray-700 border-b pb-1 mb-2">{lang === 'fr' ? 'Global (Juge en chef)' : 'Overall (Chief Judge)'}</h3>
         <div className="space-y-2">
-          {Object.entries(overallOptions).map(([key, options]) => (
+          {Object.entries(overallOptions).map(([key, options]) => {
+            const overallKeyLabels = lang === 'fr'
+              ? { assessment: 'Évaluation', control: 'Contrôle', communication: 'Communication', search: 'Recherche', teamwork: "Travail d'équipe" }
+              : { assessment: 'Assessment', control: 'Control', communication: 'Communication', search: 'Search', teamwork: 'Teamwork' }
+            return (
             <div key={key} className="flex items-center gap-2">
-              <label className="text-xs font-medium text-gray-600 w-28 capitalize">{key}</label>
+              <label className="text-xs font-medium text-gray-600 w-28">{overallKeyLabels[key] || key}</label>
               <select className="flex-1 border border-gray-300 rounded px-2 py-1 text-xs"
                 value={form.overall_factors[key] || 1}
                 onChange={e => setForm(f => ({ ...f, overall_factors: { ...f.overall_factors, [key]: +e.target.value } }))}>
                 {options.map(o => <option key={o.factor} value={o.factor}>{o.label}</option>)}
               </select>
             </div>
-          ))}
+            )
+          })}
         </div>
       </div>
 
