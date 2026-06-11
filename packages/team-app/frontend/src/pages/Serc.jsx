@@ -19,51 +19,101 @@ import api from '../api'
 // Descriptive labels from the XLSX "Drop Down Info" sheet.
 // User picks these; the factor value is hidden.
 
-const APPROACH_OPTIONS = [
-  { label: 'Victim far from landing i.e. 15m+', factor: 1.5 },
-  { label: 'Victim near to landing i.e. 6-10m', factor: 1.25 },
-  { label: 'Victim close to landing or on deck i.e. 5m', factor: 1.0 },
-]
+const APPROACH_OPTIONS = {
+  en: [
+    { label: 'Victim far from landing i.e. 15m+', factor: 1.5 },
+    { label: 'Victim near to landing i.e. 6-10m', factor: 1.25 },
+    { label: 'Victim close to landing or on deck i.e. 5m', factor: 1.0 },
+  ],
+  fr: [
+    { label: 'Victime loin du débarquement, c.-à-d. 15m+', factor: 1.5 },
+    { label: 'Victime près du débarquement, c.-à-d. 6-10m', factor: 1.25 },
+    { label: 'Victime proche du débarquement ou sur le bord, c.-à-d. 5m', factor: 1.0 },
+  ],
+}
 
-const RESCUE_OPTIONS = [
-  { label: 'Refuses aid and will not swim in unless clear and concise directions are given', factor: 1.5 },
-  { label: 'Accepts aid but will not swim in unless clear and concise directions are given', factor: 1.25 },
-  { label: 'Accepts aid and swims in / Unconscious', factor: 1.0 },
-]
+const RESCUE_OPTIONS = {
+  en: [
+    { label: 'Refuses aid and will not swim in unless clear and concise directions are given', factor: 1.5 },
+    { label: 'Accepts aid but will not swim in unless clear and concise directions are given', factor: 1.25 },
+    { label: 'Accepts aid and swims in / Unconscious', factor: 1.0 },
+  ],
+  fr: [
+    { label: 'Refuse l'aide et ne nagera pas sans directives claires et concises', factor: 1.5 },
+    { label: 'Accepte l'aide mais ne nagera pas sans directives claires et concises', factor: 1.25 },
+    { label: 'Accepte l'aide et nage / Inconscient', factor: 1.0 },
+  ],
+}
 
-const CONTROL_OPTIONS = [
-  { label: 'Talk or Throw rescue expected', factor: 1.5 },
-  { label: 'Reach or Tow rescue expected', factor: 1.25 },
-  { label: 'Carry rescue expected', factor: 1.0 },
-]
+const CONTROL_OPTIONS = {
+  en: [
+    { label: 'Talk or Throw rescue expected', factor: 1.5 },
+    { label: 'Reach or Tow rescue expected', factor: 1.25 },
+    { label: 'Carry rescue expected', factor: 1.0 },
+  ],
+  fr: [
+    { label: 'Sauvetage verbal ou par lancer attendu', factor: 1.5 },
+    { label: 'Sauvetage par extension ou remorquage attendu', factor: 1.25 },
+    { label: 'Sauvetage par transport attendu', factor: 1.0 },
+  ],
+}
 
 // Overall factor options (descriptive labels from Drop Down Info)
 const OVERALL_OPTIONS = {
-  assessment: [
-    { label: 'Significant barrier to assess and identify victim priorities', factor: 1.5 },
-    { label: 'Moderate barrier to assess and identify victim priorities', factor: 1.25 },
-    { label: 'Minor barrier to assess and identify victim priorities', factor: 1.0 },
-  ],
-  control: [
-    { label: 'Significant limitations that provide difficulty for teams to maintain safety', factor: 1.5 },
-    { label: 'Moderate environment, equipment, condition limitations to maintain safety', factor: 1.25 },
-    { label: 'Minor environment, equipment, condition limitations to maintain safety', factor: 1.0 },
-  ],
-  communication: [
-    { label: 'Significant interference to communication due to size/layout/noise', factor: 1.5 },
-    { label: 'Moderate interference to communication due to size/layout/noise', factor: 1.25 },
-    { label: 'Minor interference to communication due to size/layout/noise', factor: 1.0 },
-  ],
-  search: [
-    { label: 'Victim is significantly hidden from view and searching', factor: 1.5 },
-    { label: 'Victim is moderately hidden from view or searching', factor: 1.25 },
-    { label: 'Victim is minimally hidden from view or searching', factor: 1.0 },
-  ],
-  teamwork: [
-    { label: 'Teamwork without bystanders/victim assistance or uncooperative bystanders', factor: 1.5 },
-    { label: 'Teamwork with reluctant bystanders/victim assistance', factor: 1.25 },
-    { label: 'Teamwork with cooperative bystander/victim assistance', factor: 1.0 },
-  ],
+  en: {
+    assessment: [
+      { label: 'Significant barrier to assess and identify victim priorities', factor: 1.5 },
+      { label: 'Moderate barrier to assess and identify victim priorities', factor: 1.25 },
+      { label: 'Minor barrier to assess and identify victim priorities', factor: 1.0 },
+    ],
+    control: [
+      { label: 'Significant limitations that provide difficulty for teams to maintain safety', factor: 1.5 },
+      { label: 'Moderate environment, equipment, condition limitations to maintain safety', factor: 1.25 },
+      { label: 'Minor environment, equipment, condition limitations to maintain safety', factor: 1.0 },
+    ],
+    communication: [
+      { label: 'Significant interference to communication due to size/layout/noise', factor: 1.5 },
+      { label: 'Moderate interference to communication due to size/layout/noise', factor: 1.25 },
+      { label: 'Minor interference to communication due to size/layout/noise', factor: 1.0 },
+    ],
+    search: [
+      { label: 'Victim is significantly hidden from view and searching', factor: 1.5 },
+      { label: 'Victim is moderately hidden from view or searching', factor: 1.25 },
+      { label: 'Victim is minimally hidden from view or searching', factor: 1.0 },
+    ],
+    teamwork: [
+      { label: 'Teamwork without bystanders/victim assistance or uncooperative bystanders', factor: 1.5 },
+      { label: 'Teamwork with reluctant bystanders/victim assistance', factor: 1.25 },
+      { label: 'Teamwork with cooperative bystander/victim assistance', factor: 1.0 },
+    ],
+  },
+  fr: {
+    assessment: [
+      { label: 'Obstacle important pour évaluer et identifier les priorités des victimes', factor: 1.5 },
+      { label: 'Obstacle modéré pour évaluer et identifier les priorités des victimes', factor: 1.25 },
+      { label: 'Obstacle mineur pour évaluer et identifier les priorités des victimes', factor: 1.0 },
+    ],
+    control: [
+      { label: 'Limitations importantes rendant difficile le maintien de la sécurité', factor: 1.5 },
+      { label: 'Limitations modérées d'environnement, équipement, conditions pour la sécurité', factor: 1.25 },
+      { label: 'Limitations mineures d'environnement, équipement, conditions pour la sécurité', factor: 1.0 },
+    ],
+    communication: [
+      { label: 'Interférence importante à la communication due à la taille/disposition/bruit', factor: 1.5 },
+      { label: 'Interférence modérée à la communication due à la taille/disposition/bruit', factor: 1.25 },
+      { label: 'Interférence mineure à la communication due à la taille/disposition/bruit', factor: 1.0 },
+    ],
+    search: [
+      { label: 'Victime significativement cachée de la vue et de la recherche', factor: 1.5 },
+      { label: 'Victime modérément cachée de la vue ou de la recherche', factor: 1.25 },
+      { label: 'Victime minimalement cachée de la vue ou de la recherche', factor: 1.0 },
+    ],
+    teamwork: [
+      { label: 'Travail d'équipe sans passants/aide des victimes ou passants non coopératifs', factor: 1.5 },
+      { label: 'Travail d'équipe avec passants/aide des victimes réticents', factor: 1.25 },
+      { label: 'Travail d'équipe avec passants/aide des victimes coopératifs', factor: 1.0 },
+    ],
+  },
 }
 
 // Landing/Care auto-derived from victim type
@@ -72,6 +122,22 @@ const LANDING_CARE_MAP = {
   'Weak Swimmer': { landing: 1.5, care: 1.0 },
   'Injured Swimmer': { landing: 1.25, care: 1.25 },
   'Unconscious Non-Breathing': { landing: 1.0, care: 1.5 },
+}
+
+// Victim type labels (stored value is always English key)
+const VICTIM_TYPE_LABELS = {
+  en: {
+    'Non Swimmer': 'Non Swimmer',
+    'Weak Swimmer': 'Weak Swimmer',
+    'Injured Swimmer': 'Injured Swimmer',
+    'Unconscious Non-Breathing': 'Unconscious Non-Breathing',
+  },
+  fr: {
+    'Non Swimmer': 'Non-nageur',
+    'Weak Swimmer': 'Nageur faible',
+    'Injured Swimmer': 'Nageur blessé',
+    'Unconscious Non-Breathing': 'Inconscient sans respiration',
+  },
 }
 
 export default function Serc() {
@@ -95,7 +161,7 @@ export default function Serc() {
 
   useEffect(() => { loadAll() }, [loadAll])
 
-  if (loading) return <div className="p-4 text-xs text-gray-500">Loading SERC…</div>
+  if (loading) return <div className="p-4 text-xs text-gray-500">{lang === 'fr' ? 'Chargement SERC…' : 'Loading SERC…'}</div>
 
   return (
     <div className="flex h-full">
@@ -103,23 +169,23 @@ export default function Serc() {
       <div className="w-44 bg-gray-800 text-white text-xs flex flex-col shrink-0">
         <div className="px-3 py-2 font-bold border-b border-gray-700">
           SERC
-          <div className="text-gray-400 font-normal text-[10px] mt-0.5">{teams.length} teams</div>
+          <div className="text-gray-400 font-normal text-[10px] mt-0.5">{teams.length} {lang === 'fr' ? 'équipes' : 'teams'}</div>
         </div>
-        <div className="text-gray-500 text-[10px] uppercase px-3 pt-2">Configuration</div>
-        <NavItem label="Setup & Factors" active={page === 'setup'} onClick={() => setPage('setup')} />
-        <div className="text-gray-500 text-[10px] uppercase px-3 pt-3">Score Entry</div>
-        <NavItem label="Scoring" active={page === 'scoring'} onClick={() => setPage('scoring')} />
-        <div className="text-gray-500 text-[10px] uppercase px-3 pt-3">Output</div>
-        <NavItem label="Results" active={page === 'results'} onClick={() => setPage('results')} />
-        <NavItem label="Print Sheets" active={false}
+        <div className="text-gray-500 text-[10px] uppercase px-3 pt-2">{lang === 'fr' ? 'Configuration' : 'Configuration'}</div>
+        <NavItem label={lang === 'fr' ? 'Configuration et facteurs' : 'Setup & Factors'} active={page === 'setup'} onClick={() => setPage('setup')} />
+        <div className="text-gray-500 text-[10px] uppercase px-3 pt-3">{lang === 'fr' ? 'Saisie des pointages' : 'Score Entry'}</div>
+        <NavItem label={lang === 'fr' ? 'Pointages' : 'Scoring'} active={page === 'scoring'} onClick={() => setPage('scoring')} />
+        <div className="text-gray-500 text-[10px] uppercase px-3 pt-3">{lang === 'fr' ? 'Résultats' : 'Output'}</div>
+        <NavItem label={lang === 'fr' ? 'Résultats' : 'Results'} active={page === 'results'} onClick={() => setPage('results')} />
+        <NavItem label={lang === 'fr' ? 'Feuilles d\'impression' : 'Print Sheets'} active={false}
           onClick={() => window.open('/api/serc/print/sheets?lang=bilingual', '_blank')} />
       </div>
 
       {/* Main content */}
       <div className="flex-1 overflow-auto p-4">
-        {page === 'setup' && <SetupPage config={config} onSave={loadAll} />}
-        {page === 'scoring' && <ScoringPage teams={teams} config={config} />}
-        {page === 'results' && <ResultsPage />}
+        {page === 'setup' && <SetupPage config={config} onSave={loadAll} lang={lang} />}
+        {page === 'scoring' && <ScoringPage teams={teams} config={config} lang={lang} />}
+        {page === 'results' && <ResultsPage lang={lang} />}
       </div>
     </div>
   )
@@ -138,7 +204,7 @@ function NavItem({ label, active, onClick }) {
 
 // ─── Setup Page ───────────────────────────────────────────────────────────────
 
-function SetupPage({ config, onSave }) {
+function SetupPage({ config, onSave, lang }) {
   const [form, setForm] = useState({
     num_victims: config?.num_victims || 9,
     num_draws: 1, // always 1 — single scoring grid
@@ -178,42 +244,45 @@ function SetupPage({ config, onSave }) {
   }
 
   function getApproachLabel(factor) {
-    return APPROACH_OPTIONS.find(o => o.factor === factor)?.label || APPROACH_OPTIONS[2].label
+    return APPROACH_OPTIONS[lang].find(o => o.factor === factor)?.label || APPROACH_OPTIONS[lang][2].label
   }
   function getRescueLabel(factor) {
-    return RESCUE_OPTIONS.find(o => o.factor === factor)?.label || RESCUE_OPTIONS[2].label
+    return RESCUE_OPTIONS[lang].find(o => o.factor === factor)?.label || RESCUE_OPTIONS[lang][2].label
   }
   function getControlLabel(factor) {
-    return CONTROL_OPTIONS.find(o => o.factor === factor)?.label || CONTROL_OPTIONS[2].label
+    return CONTROL_OPTIONS[lang].find(o => o.factor === factor)?.label || CONTROL_OPTIONS[lang][2].label
   }
+
+  const overallOptions = OVERALL_OPTIONS[lang]
+  const victimTypeLabels = VICTIM_TYPE_LABELS[lang]
 
   return (
     <div className="space-y-4 max-w-6xl">
-      <h2 className="text-lg font-bold text-gray-800">SERC Setup & Factors</h2>
+      <h2 className="text-lg font-bold text-gray-800">{lang === 'fr' ? 'SERC — Configuration et facteurs' : 'SERC Setup & Factors'}</h2>
 
       <div className="bg-white border border-gray-300 rounded p-4 space-y-3">
-        <h3 className="text-sm font-bold text-gray-700 border-b pb-1">Competition Settings</h3>
+        <h3 className="text-sm font-bold text-gray-700 border-b pb-1">{lang === 'fr' ? 'Paramètres de la compétition' : 'Competition Settings'}</h3>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="text-[10px] text-gray-500 block mb-0.5">Number of Victims (1–16)</label>
+            <label className="text-[10px] text-gray-500 block mb-0.5">{lang === 'fr' ? 'Nombre de victimes (1–16)' : 'Number of Victims (1–16)'}</label>
             <input type="number" min={1} max={16} className="w-full border border-gray-300 rounded px-2 py-1 text-xs"
               value={form.num_victims} onChange={e => setForm(f => ({ ...f, num_victims: Math.min(16, Math.max(1, +e.target.value)) }))} />
           </div>
           <div>
-            <label className="text-[10px] text-gray-500 block mb-0.5">Bystander</label>
+            <label className="text-[10px] text-gray-500 block mb-0.5">{lang === 'fr' ? 'Passant' : 'Bystander'}</label>
             <select className="w-full border border-gray-300 rounded px-2 py-1 text-xs" value={form.has_bystander ? '1' : '0'}
               onChange={e => setForm(f => ({ ...f, has_bystander: e.target.value === '1' }))}>
-              <option value="1">Yes — Bystander present</option>
-              <option value="0">No — No bystander</option>
+              <option value="1">{lang === 'fr' ? 'Oui — Passant présent' : 'Yes — Bystander present'}</option>
+              <option value="0">{lang === 'fr' ? 'Non — Pas de passant' : 'No — No bystander'}</option>
             </select>
           </div>
         </div>
       </div>
 
       <div className="bg-white border border-gray-300 rounded p-4">
-        <h3 className="text-sm font-bold text-gray-700 border-b pb-1 mb-2">Overall (Chief Judge)</h3>
+        <h3 className="text-sm font-bold text-gray-700 border-b pb-1 mb-2">{lang === 'fr' ? 'Global (Juge en chef)' : 'Overall (Chief Judge)'}</h3>
         <div className="space-y-2">
-          {Object.entries(OVERALL_OPTIONS).map(([key, options]) => (
+          {Object.entries(overallOptions).map(([key, options]) => (
             <div key={key} className="flex items-center gap-2">
               <label className="text-xs font-medium text-gray-600 w-28 capitalize">{key}</label>
               <select className="flex-1 border border-gray-300 rounded px-2 py-1 text-xs"
@@ -227,18 +296,18 @@ function SetupPage({ config, onSave }) {
       </div>
 
       <div className="bg-white border border-gray-300 rounded p-4">
-        <h3 className="text-sm font-bold text-gray-700 border-b pb-1 mb-2">Victim Configuration</h3>
+        <h3 className="text-sm font-bold text-gray-700 border-b pb-1 mb-2">{lang === 'fr' ? 'Configuration des victimes' : 'Victim Configuration'}</h3>
         <div className="overflow-x-auto">
           <table className="w-full text-xs border-collapse">
             <thead>
               <tr className="bg-gray-800 text-white">
                 <th className="px-2 py-1 text-left w-8">#</th>
-                <th className="px-2 py-1 text-left w-36">Type</th>
-                <th className="px-2 py-1 text-left">Victim Recognition / Approach</th>
-                <th className="px-2 py-1 text-left">Rescue</th>
-                <th className="px-2 py-1 text-left">Control of Victim</th>
-                <th className="px-2 py-1 text-center w-20">Landing</th>
-                <th className="px-2 py-1 text-center w-20">Care</th>
+                <th className="px-2 py-1 text-left w-36">{lang === 'fr' ? 'Type' : 'Type'}</th>
+                <th className="px-2 py-1 text-left">{lang === 'fr' ? 'Reconnaissance / Approche' : 'Victim Recognition / Approach'}</th>
+                <th className="px-2 py-1 text-left">{lang === 'fr' ? 'Sauvetage' : 'Rescue'}</th>
+                <th className="px-2 py-1 text-left">{lang === 'fr' ? 'Contrôle de la victime' : 'Control of Victim'}</th>
+                <th className="px-2 py-1 text-center w-20">{lang === 'fr' ? 'Débarq.' : 'Landing'}</th>
+                <th className="px-2 py-1 text-center w-20">{lang === 'fr' ? 'Soins' : 'Care'}</th>
               </tr>
             </thead>
             <tbody>
@@ -250,25 +319,25 @@ function SetupPage({ config, onSave }) {
                     <td className="px-2 py-1">
                       <select className="border border-gray-300 rounded px-1 py-0.5 text-xs w-full" value={vf.type}
                         onChange={e => updateVictim(i, 'type', e.target.value)}>
-                        {victimTypes.map(t => <option key={t}>{t}</option>)}
+                        {victimTypes.map(t => <option key={t} value={t}>{victimTypeLabels[t]}</option>)}
                       </select>
                     </td>
                     <td className="px-2 py-1">
                       <select className="border border-gray-300 rounded px-1 py-0.5 text-xs w-full" value={vf.approach}
                         onChange={e => updateVictim(i, 'approach', +e.target.value)}>
-                        {APPROACH_OPTIONS.map(o => <option key={o.factor} value={o.factor}>{o.label}</option>)}
+                        {APPROACH_OPTIONS[lang].map(o => <option key={o.factor} value={o.factor}>{o.label}</option>)}
                       </select>
                     </td>
                     <td className="px-2 py-1">
                       <select className="border border-gray-300 rounded px-1 py-0.5 text-xs w-full" value={vf.rescue}
                         onChange={e => updateVictim(i, 'rescue', +e.target.value)}>
-                        {RESCUE_OPTIONS.map(o => <option key={o.factor} value={o.factor}>{o.label}</option>)}
+                        {RESCUE_OPTIONS[lang].map(o => <option key={o.factor} value={o.factor}>{o.label}</option>)}
                       </select>
                     </td>
                     <td className="px-2 py-1">
                       <select className="border border-gray-300 rounded px-1 py-0.5 text-xs w-full" value={vf.control}
                         onChange={e => updateVictim(i, 'control', +e.target.value)}>
-                        {CONTROL_OPTIONS.map(o => <option key={o.factor} value={o.factor}>{o.label}</option>)}
+                        {CONTROL_OPTIONS[lang].map(o => <option key={o.factor} value={o.factor}>{o.label}</option>)}
                       </select>
                     </td>
                     <td className="px-2 py-1 text-center text-gray-500 italic text-[10px]">
@@ -283,11 +352,11 @@ function SetupPage({ config, onSave }) {
             </tbody>
           </table>
         </div>
-        <p className="text-[10px] text-gray-400 mt-1">Landing and Care factors are derived from the victim type.</p>
+        <p className="text-[10px] text-gray-400 mt-1">{lang === 'fr' ? 'Les facteurs Débarquement et Soins sont dérivés du type de victime.' : 'Landing and Care factors are derived from the victim type.'}</p>
       </div>
 
       <button className="px-4 py-2 bg-blue-600 text-white text-xs font-bold rounded hover:bg-blue-700" onClick={save}>
-        Save Configuration
+        {lang === 'fr' ? 'Enregistrer la configuration' : 'Save Configuration'}
       </button>
     </div>
   )
@@ -295,7 +364,7 @@ function SetupPage({ config, onSave }) {
 
 // ─── Scoring Page (Single Grid) ───────────────────────────────────────────────
 
-function ScoringPage({ teams, config }) {
+function ScoringPage({ teams, config, lang }) {
   const [scores, setScores] = useState({})
   const [order, setOrder] = useState([])
   const [drawMode, setDrawMode] = useState('random') // 'random' or 'final'
@@ -390,30 +459,37 @@ function ScoringPage({ teams, config }) {
 
   const criteria = []
   // Overall
-  criteria.push({ header: 'Overall (Chief Judge)' })
+  criteria.push({ header: lang === 'fr' ? 'Global (Juge en chef)' : 'Overall (Chief Judge)' })
+  const overallLabels = lang === 'fr'
+    ? { assessment: 'Évaluation', control: 'Contrôle', communication: 'Communication', search: 'Recherche', teamwork: "Travail d'équipe" }
+    : { assessment: 'Assessment', control: 'Control', communication: 'Communication', search: 'Search', teamwork: 'Teamwork' }
   for (const f of ['assessment', 'control', 'communication', 'search', 'teamwork'])
-    criteria.push({ section: 'overall', field: f, label: f.charAt(0).toUpperCase() + f.slice(1), factor: of[f] || 1 })
-  criteria.push({ section: 'overall', field: 'rough', label: 'Rough Handling', factor: 1, isRough: true })
+    criteria.push({ section: 'overall', field: f, label: overallLabels[f], factor: of[f] || 1 })
+  criteria.push({ section: 'overall', field: 'rough', label: lang === 'fr' ? 'Manipulation brutale' : 'Rough Handling', factor: 1, isRough: true })
   // Bystander
   if (config?.has_bystander) {
-    criteria.push({ header: 'Bystander' })
-    criteria.push({ section: 'bystander', field: 'approach', label: 'Victim Recognition/Approach', factor: bf.approach || 1 })
-    criteria.push({ section: 'bystander', field: 'info', label: 'Assesses relevant information', factor: bf.info || 1 })
-    criteria.push({ section: 'bystander', field: 'directions', label: 'Provides directions and instructions', factor: bf.directions || 1 })
-    criteria.push({ section: 'bystander', field: 'monitoring', label: 'Monitoring bystander actions', factor: bf.monitoring || 1 })
-    criteria.push({ section: 'bystander', field: 'encouragement', label: 'Provides ongoing encouragement', factor: bf.encouragement || 1 })
-    criteria.push({ section: 'bystander', field: 'rough', label: 'Rough Handling', factor: 1, isRough: true })
+    criteria.push({ header: lang === 'fr' ? 'Passant' : 'Bystander' })
+    criteria.push({ section: 'bystander', field: 'approach', label: lang === 'fr' ? 'Reconnaissance / Approche' : 'Victim Recognition/Approach', factor: bf.approach || 1 })
+    criteria.push({ section: 'bystander', field: 'info', label: lang === 'fr' ? 'Évalue les informations pertinentes' : 'Assesses relevant information', factor: bf.info || 1 })
+    criteria.push({ section: 'bystander', field: 'directions', label: lang === 'fr' ? 'Fournit des directives et instructions' : 'Provides directions and instructions', factor: bf.directions || 1 })
+    criteria.push({ section: 'bystander', field: 'monitoring', label: lang === 'fr' ? 'Surveillance des actions du passant' : 'Monitoring bystander actions', factor: bf.monitoring || 1 })
+    criteria.push({ section: 'bystander', field: 'encouragement', label: lang === 'fr' ? 'Encouragement continu' : 'Provides ongoing encouragement', factor: bf.encouragement || 1 })
+    criteria.push({ section: 'bystander', field: 'rough', label: lang === 'fr' ? 'Manipulation brutale' : 'Rough Handling', factor: 1, isRough: true })
   }
   // Victims
+  const victimFieldLabels = lang === 'fr'
+    ? { approach: 'Reconnaissance / Approche', rescue: 'Sauvetage', control: 'Contrôle de la victime', landing: 'Débarquement', care: 'Soins et après-soins' }
+    : { approach: 'Victim recognition/approach', rescue: 'Rescue', control: 'Control of victim', landing: 'Landing', care: 'Care and aftercare' }
+  const victimTypeLabels = VICTIM_TYPE_LABELS[lang]
   for (let i = 0; i < (config?.num_victims || 9); i++) {
     const vf = vfs[i] || {}
-    criteria.push({ header: `Victim ${i + 1} — ${vf.type || '?'}` })
-    criteria.push({ section: `victim_${i}`, field: 'approach', label: 'Victim recognition/approach', factor: vf.approach || 1 })
-    criteria.push({ section: `victim_${i}`, field: 'rescue', label: 'Rescue', factor: vf.rescue || 1 })
-    criteria.push({ section: `victim_${i}`, field: 'control', label: 'Control of victim', factor: vf.control || 1 })
-    criteria.push({ section: `victim_${i}`, field: 'landing', label: 'Landing', factor: vf.landing || 1 })
-    criteria.push({ section: `victim_${i}`, field: 'care', label: 'Care and aftercare', factor: vf.care || 1 })
-    criteria.push({ section: `victim_${i}`, field: 'rough', label: 'Rough Handling', factor: 1, isRough: true })
+    criteria.push({ header: `${lang === 'fr' ? 'Victime' : 'Victim'} ${i + 1} — ${victimTypeLabels[vf.type] || '?'}` })
+    criteria.push({ section: `victim_${i}`, field: 'approach', label: victimFieldLabels.approach, factor: vf.approach || 1 })
+    criteria.push({ section: `victim_${i}`, field: 'rescue', label: victimFieldLabels.rescue, factor: vf.rescue || 1 })
+    criteria.push({ section: `victim_${i}`, field: 'control', label: victimFieldLabels.control, factor: vf.control || 1 })
+    criteria.push({ section: `victim_${i}`, field: 'landing', label: victimFieldLabels.landing, factor: vf.landing || 1 })
+    criteria.push({ section: `victim_${i}`, field: 'care', label: victimFieldLabels.care, factor: vf.care || 1 })
+    criteria.push({ section: `victim_${i}`, field: 'rough', label: lang === 'fr' ? 'Manipulation brutale' : 'Rough Handling', factor: 1, isRough: true })
   }
 
   const orderedTeams = order.map(id => teams.find(t => t.relay_team_id === id)).filter(Boolean)
@@ -428,30 +504,30 @@ function ScoringPage({ teams, config }) {
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-3 flex-wrap">
-        <h2 className="text-lg font-bold text-gray-800">Scoring</h2>
+        <h2 className="text-lg font-bold text-gray-800">{lang === 'fr' ? 'Pointages' : 'Scoring'}</h2>
         <button className={`px-3 py-1 text-xs rounded ${drawMode === 'random' ? 'bg-purple-600 text-white' : 'bg-gray-200 text-gray-700'}`}
-          onClick={randomize}>🎲 Random Draw</button>
+          onClick={randomize}>🎲 {lang === 'fr' ? 'Tirage aléatoire' : 'Random Draw'}</button>
         <button className={`px-3 py-1 text-xs rounded ${drawMode === 'final' ? 'bg-amber-600 text-white' : 'bg-gray-200 text-gray-700'}`}
-          onClick={orderByResults}>🏆 Final Draw</button>
+          onClick={orderByResults}>🏆 {lang === 'fr' ? 'Tirage final' : 'Final Draw'}</button>
         <button className="px-3 py-1 bg-gray-600 text-white text-xs rounded hover:bg-gray-700"
-          onClick={() => window.open('/api/serc/print/sheets?draw=1&lang=fr', '_blank')}>🖨 Print FR</button>
+          onClick={() => window.open('/api/serc/print/sheets?draw=1&lang=fr', '_blank')}>🖨 {lang === 'fr' ? 'Imprimer FR' : 'Print FR'}</button>
         <button className="px-3 py-1 bg-gray-600 text-white text-xs rounded hover:bg-gray-700"
           onClick={() => window.open('/api/serc/print/sheets?draw=1&lang=bilingual', '_blank')}>🖨 FR/EN</button>
-        <span className="text-xs text-gray-500">{orderedTeams.length} teams • {drawMode === 'final' ? 'Final' : 'Random'} order</span>
+        <span className="text-xs text-gray-500">{orderedTeams.length} {lang === 'fr' ? 'équipes' : 'teams'} • {drawMode === 'final' ? (lang === 'fr' ? 'Ordre final' : 'Final') : (lang === 'fr' ? 'Ordre aléatoire' : 'Random')} {lang === 'fr' ? '' : 'order'}</span>
         <button className="px-3 py-1 bg-indigo-600 text-white text-xs rounded hover:bg-indigo-700"
-          onClick={() => setShowQR(true)}>📱 Judge QR Codes</button>
+          onClick={() => setShowQR(true)}>📱 {lang === 'fr' ? 'Codes QR juges' : 'Judge QR Codes'}</button>
       </div>
 
       {/* QR Code Modal */}
-      {showQR && <QRModal config={config} onClose={() => setShowQR(false)} />}
+      {showQR && <QRModal config={config} onClose={() => setShowQR(false)} lang={lang} />}
 
       {/* Scoring Grid */}
       <div className="overflow-auto border border-gray-300 rounded bg-white" ref={gridRef}>
         <table className="text-[10px] border-collapse min-w-max">
           <thead>
             <tr className="bg-gray-800 text-white">
-              <th className="px-2 py-1 text-left sticky left-0 bg-gray-800 z-10 w-40">Criteria</th>
-              <th className="px-1 py-1 text-center w-10">Fact.</th>
+              <th className="px-2 py-1 text-left sticky left-0 bg-gray-800 z-10 w-40">{lang === 'fr' ? 'Critère' : 'Criteria'}</th>
+              <th className="px-1 py-1 text-center w-10">{lang === 'fr' ? 'Fact.' : 'Fact.'}</th>
               {orderedTeams.map((t, i) => (
                 <th key={t.relay_team_id} className="px-1 py-1 text-center min-w-[50px] max-w-[70px] truncate" title={t.name}>
                   {i + 1}. {t.name?.split('/')[0] || t.club}
@@ -518,28 +594,28 @@ function ScoringPage({ teams, config }) {
 
 // ─── Results Page ─────────────────────────────────────────────────────────────
 
-function ResultsPage() {
+function ResultsPage({ lang }) {
   const [results, setResults] = useState(null)
 
   useEffect(() => {
     api.get('/serc/results').then(r => setResults(r.data)).catch(() => {})
   }, [])
 
-  if (!results) return <div className="text-xs text-gray-500">Loading results…</div>
+  if (!results) return <div className="text-xs text-gray-500">{lang === 'fr' ? 'Chargement des résultats…' : 'Loading results…'}</div>
 
   const ranked = results.overall || []
 
   return (
     <div className="max-w-4xl space-y-4">
-      <h2 className="text-lg font-bold text-gray-800">SERC Results</h2>
+      <h2 className="text-lg font-bold text-gray-800">{lang === 'fr' ? 'Résultats SERC' : 'SERC Results'}</h2>
 
       <table className="w-full text-xs border-collapse bg-white border border-gray-300 rounded">
         <thead>
           <tr className="bg-gray-800 text-white">
-            <th className="px-3 py-2 text-left w-12">Rank</th>
-            <th className="px-3 py-2 text-left">Team</th>
-            <th className="px-3 py-2 text-left">Club</th>
-            <th className="px-3 py-2 text-right">Total</th>
+            <th className="px-3 py-2 text-left w-12">{lang === 'fr' ? 'Rang' : 'Rank'}</th>
+            <th className="px-3 py-2 text-left">{lang === 'fr' ? 'Équipe' : 'Team'}</th>
+            <th className="px-3 py-2 text-left">{lang === 'fr' ? 'Club' : 'Club'}</th>
+            <th className="px-3 py-2 text-right">{lang === 'fr' ? 'Total' : 'Total'}</th>
           </tr>
         </thead>
         <tbody>
@@ -564,29 +640,32 @@ function ResultsPage() {
 
 // ─── QR Code Modal ────────────────────────────────────────────────────────────
 
-function QRModal({ config, onClose }) {
+function QRModal({ config, onClose, lang }) {
   const baseUrl = window.location.origin
 
   const sections = [
-    { path: '/serc/judge/overall', label: 'Overall (Chief Judge)' },
+    { path: '/serc/judge/overall', label: lang === 'fr' ? 'Global (Juge en chef)' : 'Overall (Chief Judge)' },
   ]
   if (config?.has_bystander) {
-    sections.push({ path: '/serc/judge/bystander', label: 'Bystander' })
+    sections.push({ path: '/serc/judge/bystander', label: lang === 'fr' ? 'Passant' : 'Bystander' })
   }
+  const victimTypeLabels = VICTIM_TYPE_LABELS[lang]
   for (let i = 0; i < (config?.num_victims || 9); i++) {
     const vf = (config?.victim_factors || [])[i] || {}
-    sections.push({ path: `/serc/judge/victim/${i + 1}`, label: `Victim ${i + 1} — ${vf.type || '?'}` })
+    sections.push({ path: `/serc/judge/victim/${i + 1}`, label: `${lang === 'fr' ? 'Victime' : 'Victim'} ${i + 1} — ${victimTypeLabels[vf.type] || '?'}` })
   }
 
   return (
     <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-auto p-6" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-bold text-gray-800">📱 Judge QR Codes</h2>
+          <h2 className="text-lg font-bold text-gray-800">📱 {lang === 'fr' ? 'Codes QR juges' : 'Judge QR Codes'}</h2>
           <button onClick={onClose} className="text-gray-500 hover:text-gray-800 text-xl">✕</button>
         </div>
         <p className="text-xs text-gray-500 mb-4">
-          Each judge scans the QR code for their assigned section. Opens a mobile-friendly scoring form — no login needed.
+          {lang === 'fr'
+            ? 'Chaque juge scanne le code QR de sa section assignée. Ouvre un formulaire mobile — aucune connexion requise.'
+            : 'Each judge scans the QR code for their assigned section. Opens a mobile-friendly scoring form — no login needed.'}
         </p>
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
           {sections.map(s => (

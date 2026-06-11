@@ -57,15 +57,15 @@ export default function SercJudge() {
   }, [])
 
   if (!loaded) return <Loading />
-  if (!config) return <div className="p-6 text-center text-red-600 text-lg">No SERC configuration found.</div>
+  if (!config) return <div className="p-6 text-center text-red-600 text-lg">{lang === 'fr' ? 'Aucune configuration SERC trouvée.' : 'No SERC configuration found.'}</div>
 
   const orderedTeams = order.map(id => teams.find(t => t.relay_team_id === id)).filter(Boolean)
   const currentTeam = orderedTeams[currentTeamIdx]
-  if (!currentTeam) return <div className="p-6 text-center">No teams available.</div>
+  if (!currentTeam) return <div className="p-6 text-center">{lang === 'fr' ? 'Aucune équipe disponible.' : 'No teams available.'}</div>
 
   // Build criteria for this section
   const criteria = buildCriteria(section, config, lang)
-  const sectionTitle = buildTitle(section, config)
+  const sectionTitle = buildTitle(section, config, lang)
 
   function toggleLang() {
     const next = lang === 'fr' ? 'en' : 'fr'
@@ -110,10 +110,10 @@ export default function SercJudge() {
       <div className="bg-blue-800 px-4 py-3 flex items-center justify-between shrink-0">
         <div>
           <div className="text-lg font-bold">{sectionTitle}</div>
-          <div className="text-xs text-blue-200">SERC Judge Entry</div>
+          <div className="text-xs text-blue-200">{lang === 'fr' ? 'Saisie juge SERC' : 'SERC Judge Entry'}</div>
         </div>
         <div className="flex items-center gap-2">
-          {saving && <div className="text-yellow-300 text-xs animate-pulse">Saving...</div>}
+          {saving && <div className="text-yellow-300 text-xs animate-pulse">{lang === 'fr' ? 'Enregistrement...' : 'Saving...'}</div>}
           <button onClick={toggleLang}
             className="px-2 py-1 rounded text-xs font-bold border border-blue-400 text-blue-200 hover:bg-blue-700">
             {lang === 'fr' ? 'EN' : 'FR'}
@@ -126,7 +126,7 @@ export default function SercJudge() {
         <button onClick={prevTeam} disabled={currentTeamIdx === 0}
           className="px-3 py-2 bg-gray-700 rounded text-lg disabled:opacity-30">◀</button>
         <div className="flex-1 text-center">
-          <div className="text-xs text-gray-400">Team {currentTeamIdx + 1} / {orderedTeams.length}</div>
+          <div className="text-xs text-gray-400">{lang === 'fr' ? 'Équipe' : 'Team'} {currentTeamIdx + 1} / {orderedTeams.length}</div>
           <div className="text-base font-bold">{currentTeam.name || currentTeam.club}</div>
           <div className="text-xs text-gray-400">{currentTeam.club}</div>
         </div>
@@ -152,10 +152,10 @@ export default function SercJudge() {
       {/* Footer nav */}
       <div className="bg-gray-800 px-4 py-3 flex items-center justify-between border-t border-gray-700 shrink-0">
         <button onClick={prevTeam} disabled={currentTeamIdx === 0}
-          className="px-4 py-2 bg-gray-600 rounded font-bold disabled:opacity-30">← Previous</button>
+          className="px-4 py-2 bg-gray-600 rounded font-bold disabled:opacity-30">← {lang === 'fr' ? 'Précédent' : 'Previous'}</button>
         <span className="text-xs text-gray-400">{currentTeamIdx + 1} / {orderedTeams.length}</span>
         <button onClick={nextTeam} disabled={currentTeamIdx === orderedTeams.length - 1}
-          className="px-4 py-2 bg-green-600 rounded font-bold disabled:opacity-30">Next →</button>
+          className="px-4 py-2 bg-green-600 rounded font-bold disabled:opacity-30">{lang === 'fr' ? 'Suivant' : 'Next'} →</button>
       </div>
     </div>
   )
@@ -201,7 +201,7 @@ function CriterionBlock({ label, desc, factor, isRough, value, onChange }) {
       </div>
       {value !== null && value !== undefined && (
         <div className="mt-2 text-right text-sm text-green-400 font-bold">
-          Score: {value} × {factor} = {(value * factor).toFixed(2)}
+          {value} × {factor} = {(value * factor).toFixed(2)}
         </div>
       )}
     </div>
@@ -209,7 +209,7 @@ function CriterionBlock({ label, desc, factor, isRough, value, onChange }) {
 }
 
 function Loading() {
-  return <div className="min-h-screen bg-gray-900 flex items-center justify-center text-white text-lg">Loading...</div>
+  return <div className="min-h-screen bg-gray-900 flex items-center justify-center text-white text-lg">Chargement...</div>
 }
 
 function buildCriteria(section, config, lang) {
@@ -268,10 +268,10 @@ const BYSTANDER_DESCS_FR = { approach: { label: 'Reconnaissance / Approche', des
 const VICTIM_DESCS_EN = { 'Non Swimmer': { approach: "Recognition of non-swimmer (high priority), speed of reaching victim\nSafe approach by rescuer", rescue: "Rescue with extreme caution\n(low marks for contact rescue if not required — max 5 marks)\nMonitor while still in water", control: "Clear effective questioning and reassurance\nReassurance during rescue until returned to safety", landing: "Care of the victim; protection of the head\nAppropriate landing for size and strength of rescuer", care: "Safe position away from the edge; warmth and protection where possible; monitor safety; ongoing reassurance" }, 'Weak Swimmer': { approach: "Recognition that they are a weak swimmer and high priority to mobilize.\nSafe approach by rescuer", rescue: "Encourage return to safety with clear directions; non-contact rescue\n(low marks for contact rescue if not required — max 5 marks)", control: "Effective communication / instruction; use for keeping another victim warm / safe", landing: "Make secure and land\nAppropriate landing for size and strength of rescuer", care: "Safe position away from danger; warmth and protection; ongoing monitoring and care" }, 'Injured Swimmer': { approach: "Recognition that they are an injured swimmer and medium priority to mobilize\nSafe approach by rescuer", rescue: "Encourage to return to the edge with clear directions\nNon-contact rescue\n(low marks for contact rescue if not required — max 5 marks)", control: "Effective communication / instruction\nReassurance throughout rescue", landing: "Careful removal from water with attention to injury\nAppropriate landing for size and strength of rescuer", care: "Safe position away from the edge; warmth and protection; ongoing monitoring and care" }, 'Unconscious Non-Breathing': { approach: "Identification of casualty", rescue: "Speed of rescue (considering priority of rescue)\nSpeed in getting back to safety", control: "Effective and efficient carry", landing: "Careful handling/landing of the casualty", care: "Effective and efficient CPR likely to assist recovery\nSafe position away from danger; ongoing monitoring and care" } }
 const VICTIM_DESCS_FR = { 'Non Swimmer': { approach: "Reconnaissance du non-nageur (priorité élevée), vitesse pour atteindre la victime\nApproche sécuritaire par le sauveteur", rescue: "Sauvetage avec extrême prudence\n(notes basses pour contact si non requis — max 5 points)\nSurveiller dans l'eau", control: "Questionnement clair et efficace et réassurance\nRéassurance jusqu'au retour en sécurité", landing: "Soin de la victime; protection de la tête\nDébarquement approprié selon taille et force du sauveteur", care: "Position sécuritaire loin du bord; chaleur et protection; surveillance; réassurance continue" }, 'Weak Swimmer': { approach: "Reconnaissance qu'il s'agit d'un nageur faible et priorité élevée à mobiliser\nApproche sécuritaire", rescue: "Encourager le retour en sécurité; sauvetage sans contact\n(notes basses pour contact si non requis — max 5 points)", control: "Communication / instruction efficace; utiliser pour garder une autre victime au chaud", landing: "Sécuriser et débarquer\nDébarquement approprié selon taille et force du sauveteur", care: "Position sécuritaire loin du danger; chaleur et protection; soins continus" }, 'Injured Swimmer': { approach: "Reconnaissance qu'il s'agit d'un nageur blessé et priorité moyenne\nApproche sécuritaire", rescue: "Encourager à revenir au bord; sauvetage sans contact\n(notes basses pour contact si non requis — max 5 points)", control: "Communication / instruction efficace\nRéassurance tout au long du sauvetage", landing: "Retrait soigneux avec attention à la blessure\nDébarquement approprié selon taille et force du sauveteur", care: "Position sécuritaire loin du bord; chaleur et protection; soins continus" }, 'Unconscious Non-Breathing': { approach: "Identification de la victime", rescue: "Vitesse du sauvetage (considérant la priorité)\nVitesse de retour en sécurité", control: "Transport efficace et efficient", landing: "Manipulation/débarquement soigneux de la victime", care: "RCR efficace susceptible d'aider à la récupération\nPosition sécuritaire; surveillance; soins continus" } }
 
-function buildTitle(section, config) {
-  if (section === 'overall') return 'Overall (Chief Judge)'
-  if (section === 'bystander') return 'Bystander'
+function buildTitle(section, config, lang) {
+  if (section === 'overall') return lang === 'fr' ? 'Global (Juge en chef)' : 'Overall (Chief Judge)'
+  if (section === 'bystander') return lang === 'fr' ? 'Passant' : 'Bystander'
   const idx = parseInt(section.replace('victim_', ''))
   const vf = (config?.victim_factors || [])[idx] || {}
-  return `Victim ${idx + 1} — ${vf.type || '?'}`
+  return `${lang === 'fr' ? 'Victime' : 'Victim'} ${idx + 1} — ${vf.type || '?'}`
 }
