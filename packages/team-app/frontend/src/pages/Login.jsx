@@ -66,6 +66,13 @@ export default function Login({ onLogin }) {
               </a>
             </div>
           )}
+          {window.__SUPPORT_EMAIL__ && (
+            <div className="mt-3 text-center">
+              <a href={`mailto:${window.__SUPPORT_EMAIL__}`} className="text-xs text-blue-500 hover:underline">
+                {t.footer_get_help}
+              </a>
+            </div>
+          )}
         </form>
       </div>
     </div>

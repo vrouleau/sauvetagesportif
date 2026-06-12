@@ -1184,7 +1184,7 @@ def send_pin(club_id: int, data: dict, db: Session = Depends(get_db)):
     if not club:
         raise HTTPException(404)
     if not club.email:
-        raise HTTPException(400, "No admin email set for this club")
+        raise HTTPException(400, "No email set for this club")
 
     lang = data.get("lang", "fr")
     resend_key = os.environ.get("RESEND_API_KEY")
@@ -1332,10 +1332,8 @@ def send_pin(club_id: int, data: dict, db: Session = Depends(get_db)):
 
 @router.get("/self-invite/clubs")
 def self_invite_clubs(db: Session = Depends(get_db)):
-    """Public: list clubs that have an admin email."""
-    clubs = (db.query(TeamClub)
-             .filter(TeamClub.email != None, TeamClub.email != '')
-             .order_by(TeamClub.name).all())
+    """Public: list all clubs."""
+    clubs = db.query(TeamClub).order_by(TeamClub.name).all()
     return [{"id": c.clubsid, "name": c.name} for c in clubs]
 
 
@@ -1366,17 +1364,23 @@ def self_invite(data: dict, request: Request, db: Session = Depends(get_db)):
         raise HTTPException(400, "email required")
 
     club = db.query(TeamClub).get(club_id)
-    if not club or not club.email:
+    if not club:
         raise HTTPException(404, "Club not found")
 
-    if email != (club.email or "").strip().lower():
-        org_cfg = _get_config(db, "organizer_club_id")
-        org_email = ""
-        if org_cfg:
-            org_club = db.query(TeamClub).get(int(org_cfg))
-            if org_club:
-                org_email = org_club.email or ""
-        raise HTTPException(403, f"email_mismatch|{org_email}")
+    if club.email:
+        # Club has a configured email — validate it matches
+        if email != club.email.strip().lower():
+            org_cfg = _get_config(db, "organizer_club_id")
+            org_email = ""
+            if org_cfg:
+                org_club = db.query(TeamClub).get(int(org_cfg))
+                if org_club:
+                    org_email = org_club.email or ""
+            raise HTTPException(403, f"email_mismatch|{org_email}")
+    else:
+        # Club has no email configured — save the provided one
+        club.email = email
+        db.commit()
 
     return send_pin(club_id, {"lang": lang}, db)
 
