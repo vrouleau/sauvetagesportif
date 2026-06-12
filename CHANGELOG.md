@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.17] - 2026-06-12
+
+### ✨ Features
+
+- self-invite shows all clubs, saves email if none configured, add Get Help link to login (`f8d3001`)
+
 ## [0.3.16] - 2026-06-11
 
 ### ✨ Features
