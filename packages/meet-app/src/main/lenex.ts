@@ -567,9 +567,17 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
         const ea3 = entry.attrs
         const eventId = parseInt(ea3.eventid ?? '0', 10)
         if (!eventId) continue
-        const agegroupid = parseInt(ea3.agegroupid ?? '0', 10) || null
+        let agegroupid = parseInt(ea3.agegroupid ?? '0', 10) || null
         const entrytime = lenexTimeToMs(ea3.entrytime)
         const entrycourse = ea3.entrycourse ? encodeCourse(ea3.entrycourse) : null
+
+        // If no agegroupid in ENTRY, infer from the event's age groups
+        if (!agegroupid) {
+          const ag = db.prepare(
+            `SELECT agegroupid FROM agegroup WHERE swimeventid = ? ORDER BY sortcode LIMIT 1`
+          ).get(eventId) as { agegroupid: number } | undefined
+          if (ag) agegroupid = ag.agegroupid
+        }
 
         // Create relay team record
         const relayId = nextId('relay', 'relayid')
