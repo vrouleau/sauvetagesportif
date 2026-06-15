@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.18] - 2026-06-15
+
+### ✨ Features
+
+- add Add Athlete and Delete buttons to individual entries toolbar (`d8a4cf8`)
+- lastest beach template (`afc2c24`)
+
+### 🐛 Bug Fixes
+
+- update beach template (`b4fa074`)
+
 ## [0.3.17] - 2026-06-12
 
 ### ✨ Features
