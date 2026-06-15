@@ -75,6 +75,9 @@ function RelayEventCard({
       <div className="flex items-center justify-between mb-2">
         <h4 className="text-sm font-medium text-gray-800">
           #{event.eventNumber} — {event.eventName}
+          {event.ageCodes.length > 0 && (
+            <span className="text-gray-500 font-normal"> ({event.ageCodes.join(', ')})</span>
+          )}
         </h4>
         <div className="flex items-center gap-3">
           <span className="text-xs text-gray-500">
