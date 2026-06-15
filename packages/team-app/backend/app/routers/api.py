@@ -388,8 +388,9 @@ async def upload_meet(file: UploadFile = File(...), db: Session = Depends(get_db
         course_map = {"LCM": "1", "SCM": "3", "SCY": "2"}
         _update_meetvalue(db, "COURSE", f"I;{course_map.get(meet.course, '1')}")
 
-    # Reset closure date
+    # Reset closure date (clear both the key and MEETVALUES DEADLINE fallback)
     _set_config(db, "closure_date", "")
+    _update_meetvalue(db, "DEADLINE", "D;")
 
     # Regenerate club PINs
     for club in db.query(TeamClub).all():
