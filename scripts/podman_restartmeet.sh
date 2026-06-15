@@ -3,6 +3,16 @@
 # Exit immediately if a command exits with a non-zero status
 set -e
 
+# Parse flags
+WIPE_DATA=false
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        --wipe|-w) WIPE_DATA=true ;;
+        *) echo "Unknown option: $1"; echo "Usage: $0 [--wipe|-w]"; exit 1 ;;
+    esac
+    shift
+done
+
 echo "=== 1. Pulling latest images from GHCR ==="
 podman pull ghcr.io/vrouleau/sauvetagesportif/team-backend:latest
 podman pull ghcr.io/vrouleau/sauvetagesportif/team-frontend:latest
@@ -14,6 +24,12 @@ podman rm ubuntu_backend_1 ubuntu_frontend_1 2>/dev/null || true
 if podman pod exists sauvetage-pod; then
     echo "Removing existing sauvetage-pod..."
     podman pod rm -f sauvetage-pod
+fi
+
+if [ "$WIPE_DATA" = true ]; then
+    echo "=== 2b. Wiping appdata volume ==="
+    podman volume rm appdata 2>/dev/null || true
+    echo "Volume 'appdata' removed. Starting fresh."
 fi
 
 echo "=== 3. Loading environment variables ==="
