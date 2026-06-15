@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.21] - 2026-06-15
+
+### 🐛 Bug Fixes
+
+- detect meet_type on LXF/SMB upload, check both key names (`de58409`)
+
 ## [0.3.20] - 2026-06-15
 
 ### ✨ Features
