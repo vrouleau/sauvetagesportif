@@ -558,6 +558,9 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
       const teamName = ra.name || null
       const relayGender = encodeGender(ra.gender)
 
+      // Relay positions can be at RELAY level (Lenex spec) or inside ENTRY (team-app export)
+      const relayLevelPositions = child(relay, 'RELAYPOSITIONS')
+
       // Each relay can have entries for multiple events
       const relayEntriesElem = child(relay, 'ENTRIES')
       for (const entry of children(relayEntriesElem ?? relay, 'ENTRY')) {
@@ -572,12 +575,13 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
         const relayId = nextId('relay', 'relayid')
         try {
           db.prepare(
-            `INSERT OR IGNORE INTO relay (relayid, clubid, swimeventid, agegroupid, teamnumber, name, gender, entrytime, entrycourse)
+            `INSERT INTO relay (relayid, clubid, swimeventid, agegroupid, teamnumber, name, gender, entrytime, entrycourse)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
           ).run(relayId, clubId, eventId, agegroupid, teamNumber, teamName, relayGender, entrytime, entrycourse)
 
-          // Import relay positions
-          const positionsElem = child(entry, 'RELAYPOSITIONS')
+          // Import relay positions — check ENTRY first, then fall back to RELAY level
+          const entryPositions = child(entry, 'RELAYPOSITIONS')
+          const positionsElem = entryPositions ?? relayLevelPositions
           for (const pos of children(positionsElem ?? entry, 'RELAYPOSITION')) {
             const pa = pos.attrs
             const posNumber = parseInt(pa.number ?? '0', 10)
