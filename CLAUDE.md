@@ -61,8 +61,8 @@ config/
 packages/
   shared-ui/src/
     pages/EventsPage.tsx    — THE shared component (sessions tree + meet editor)
-    pages/IndividualEntryPage.tsx — Individual event entry (relaycount=1)
-    pages/RelayEntryPage.tsx — Relay team management (team CRUD, member dropdowns)
+    pages/IndividualEntryPage.tsx — Individual event entry (relaycount=1), toolbar with Add/Delete buttons
+    pages/RelayEntryPage.tsx — Relay team management (team CRUD, member dropdowns, age groups in headers)
     context/ApiContext.tsx   — MeetAPI provider (DI for data layer)
     context/LangContext.tsx  — FR/EN language context
     data/api.ts             — MeetAPI interface + shared types
@@ -148,8 +148,8 @@ SERC is a judged technical relay event (swimstyle ID 530). Teams of 4 respond to
 **Judge tablet form:** `/serc/judge/overall`, `/serc/judge/bystander`, `/serc/judge/victim/1` — public URLs, no login needed. QR codes generated from the scoring page.
 
 ### Shared UI Pages
-- `shared-ui/src/pages/RelayEntryPage.tsx` — relay team management (flat event list, team CRUD, member dropdowns)
-- `shared-ui/src/pages/IndividualEntryPage.tsx` — individual entry (extracted from InscriptionPage, shows only events with `relaycount=1`)
+- `shared-ui/src/pages/RelayEntryPage.tsx` — relay team management (flat event list with age groups shown after event name, team CRUD, member dropdowns)
+- `shared-ui/src/pages/IndividualEntryPage.tsx` — individual entry (toolbar with search, "Add Athlete" / "Delete" buttons, shows only events with `relaycount=1`)
 
 ### Navigation Tabs
 Both apps show two entry tabs:
@@ -206,6 +206,7 @@ Beach events are **ranked** (positions 1st, 2nd, 3rd) instead of **timed**. Posi
 ### Meet type flag
 - Stored in `bsglobal` as `MEET_TYPE` (`POOL` or `BEACH`, default `POOL` if missing)
 - Set at meet creation via "Create Pool" / "Create Beach" buttons
+- Auto-detected on LXF import: if any `swimstyleid >= 600` exists → `BEACH`, otherwise `POOL` (only when `MEET_TYPE` not already set)
 - One meet type per database at a time
 
 ### Key differences from pool

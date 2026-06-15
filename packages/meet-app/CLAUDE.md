@@ -110,6 +110,7 @@ src/renderer/src/
 - Remaps `swimstyleid` via `uniqueid` attribute (Splash uses internal auto-increment IDs in MDB but canonical 5xx UIDs in Lenex)
 - Events with `round=11` (MDB encoding for Break/Pause) are marked `internalevent='T'`
 - Extracts MEETVALUES metadata from meet attributes (name, course, agedate, deadline, etc.)
+- Auto-detects `MEET_TYPE` from swim style IDs: if any `swimstyleid >= 600` → `BEACH`, else `POOL` (only when not already set)
 
 **Export (`exportMeetLenex`, `exportResultsLenex`):**
 - Includes pause event names in the output
