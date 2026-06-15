@@ -217,7 +217,7 @@ export default function Organizer() {
         {meetInfo?.filename && (
           <span className="text-xs text-gray-600">
             <strong>{meetInfo.meet_name || meetInfo.filename}</strong>
-            {' '}— {({'LCM':'50m','SCM':'25m'})[meetInfo.course] || '?'} — {meetInfo.events} {t.events}
+            {' '}— {({'LCM':'50m','SCM':'25m'})[meetInfo.course] || (meetInfo.meet_type === 'BEACH' ? (lang === 'fr' ? 'plage' : 'beach') : '?')} — {meetInfo.events} {t.events}
             {meetInfo.meet_type === 'BEACH' && (
               <span className="ml-1 px-1.5 py-0.5 bg-orange-100 text-orange-700 rounded text-[10px] font-semibold">
                 {lang === 'fr' ? 'PLAGE' : 'BEACH'}
