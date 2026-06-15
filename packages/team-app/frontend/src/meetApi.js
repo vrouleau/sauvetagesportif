@@ -132,6 +132,7 @@ export const meetApiHttp = {
         fd.append('file', file)
         try {
           const r = await api.post('/upload/meet', fd)
+          window.dispatchEvent(new Event('meet-changed'))
           resolve({ ok: true, events: r.data.events_loaded })
         } catch (err) {
           resolve({ ok: false, error: err.response?.data?.detail || err.message || 'Error' })
@@ -158,6 +159,7 @@ export const meetApiHttp = {
   async createMeet(meetType) {
     try {
       const r = await api.post('/admin/new-meet', { meet_type: meetType })
+      window.dispatchEvent(new Event('meet-changed'))
       return { ok: true, meetType: r.data.meet_type }
     } catch (err) {
       return { ok: false, error: err.response?.data?.detail || err.message || 'Error' }

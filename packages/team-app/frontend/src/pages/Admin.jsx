@@ -130,6 +130,7 @@ export default function Admin() {
               const d = r.data
               setMsg(`Done: ${d.events_loaded} events, ${d.styles_loaded} styles, ${d.agegroups_loaded} age groups`)
               loadStatus()
+              window.dispatchEvent(new Event('meet-changed'))
             } catch (err) {
               setMsg(err.response?.data?.detail || err.message || 'Error')
             }

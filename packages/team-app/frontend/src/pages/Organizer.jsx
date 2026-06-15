@@ -122,6 +122,7 @@ export default function Organizer() {
     setMsg(`${r.data.events_loaded} ${t.events}`)
     e.target.value = ''
     loadMeetInfo(); loadClubs()
+    window.dispatchEvent(new Event('meet-changed'))
   }
 
   async function sendSelectedInvites() {

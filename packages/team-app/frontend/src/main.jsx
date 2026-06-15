@@ -262,6 +262,15 @@ function AppInner() {
     import('./api').then(m => m.default.get('/meet-info').then(r => setMeetName(r.data.meet_name || '')).catch(() => {}))
   }, [])
 
+  // Refresh title bar meet name when a new meet is loaded anywhere in the app
+  useEffect(() => {
+    function onMeetChanged() {
+      import('./api').then(m => m.default.get('/meet-info').then(r => setMeetName(r.data.meet_name || '')).catch(() => {}))
+    }
+    window.addEventListener('meet-changed', onMeetChanged)
+    return () => window.removeEventListener('meet-changed', onMeetChanged)
+  }, [])
+
   function logout() {
     localStorage.removeItem('pin')
     localStorage.removeItem('role')
