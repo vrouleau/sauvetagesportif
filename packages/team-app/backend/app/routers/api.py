@@ -157,6 +157,11 @@ def _get_config(db: Session, key: str) -> str | None:
     return cfg.data if cfg else None
 
 
+def _get_meet_type(db: Session) -> str:
+    """Get the meet type, checking both team-app key (meet_type) and meet-app key (MEET_TYPE)."""
+    return (_get_config(db, "meet_type") or _get_config(db, "MEET_TYPE") or "POOL").upper()
+
+
 def _set_config(db: Session, key: str, value: str):
     cfg = db.query(BsGlobal).get(key)
     if cfg:
@@ -369,6 +374,10 @@ async def upload_meet(file: UploadFile = File(...), db: Session = Depends(get_db
                      ("meet_fees_json", _json.dumps(meet.meet_fees)),
                      ("age_base_date", meet.age_base_date)]:
         _set_config(db, key, val)
+
+    # Auto-detect meet type from swim style IDs (>= 600 = beach)
+    has_beach = db.query(SwimStyle).filter(SwimStyle.swimstyleid >= 600).first() is not None
+    _set_config(db, "meet_type", "BEACH" if has_beach else "POOL")
 
     # Sync meet identity into MEETVALUES blob for Splash SMB compatibility.
     # Individual bsglobal keys (meet_name, meet_course) are the canonical source;
@@ -853,6 +862,15 @@ async def upload_meet_smb(file: UploadFile = File(...), db: Session = Depends(ge
     # Restore admin PIN from env (since bsglobal was wiped)
     _set_config(db, "admin_pin", _DEFAULT_ADMIN_PIN)
 
+    # Normalize meet_type: the meet-app stores it as MEET_TYPE, team-app reads meet_type
+    mt = _get_config(db, "MEET_TYPE")
+    if mt and not _get_config(db, "meet_type"):
+        _set_config(db, "meet_type", mt.upper())
+    # Auto-detect from swim style IDs if neither key is present
+    if not _get_config(db, "meet_type"):
+        has_beach = db.query(SwimStyle).filter(SwimStyle.swimstyleid >= 600).first() is not None
+        _set_config(db, "meet_type", "BEACH" if has_beach else "POOL")
+
     db.commit()
 
     # Reset sequences after explicit ID inserts (PostgreSQL only)
@@ -1008,7 +1026,7 @@ def meet_info(db: Session = Depends(get_db)):
         "currency": currency or "CAD",
         "meet_fees": meet_fees,
         "event_fees": event_fees,
-        "meet_type": (_get_config(db, "meet_type") or "POOL").upper(),
+        "meet_type": _get_meet_type(db),
     }
 
 
@@ -2063,7 +2081,7 @@ def get_registration(athlete_id: int, db: Session = Depends(get_db)):
             suggested_age_code = "15-18"
 
     meet_course = _get_config(db, "meet_course") or "LCM"
-    meet_type = (_get_config(db, "meet_type") or "POOL").upper()
+    meet_type = _get_meet_type(db)
     closure = _get_closure_date(db)
 
     return {
@@ -2336,7 +2354,7 @@ async def upload_entries(file: UploadFile = File(...), db: Session = Depends(get
         raise HTTPException(413, "File too large (max 10MB)")
     seed_result = seed_from_lxf(db, content)
     # Skip best-time import for beach meets (positions are not times)
-    meet_type = (_get_config(db, "meet_type") or "POOL").upper()
+    meet_type = _get_meet_type(db)
     if meet_type != "BEACH":
         times_result = load_best_times(db, content, source=file.filename or "upload")
     else:
@@ -2395,7 +2413,7 @@ async def upload_results(file: UploadFile = File(...), force: bool = False, db: 
 
     seed_result = seed_from_lxf(db, content)
     # Skip best-time import for beach meets (positions are not times)
-    meet_type = (_get_config(db, "meet_type") or "POOL").upper()
+    meet_type = _get_meet_type(db)
     if meet_type != "BEACH":
         times_result = load_best_times(db, content, source=file.filename or "upload")
     else:
