@@ -1789,24 +1789,24 @@ export async function flushMeet(): Promise<void> {
 
 export function getMeetInfo(): { name: string; city: string; nation: string } {
   const db = getLocalDb()
-  // Primary source: MEETVALUES (same as real Splash Meet Manager)
-  const mv = readMeetValuesFromDb(db)
-  if (mv['NAME']) {
-    return {
-      name: mv['NAME'] ?? '',
-      city: mv['CITY'] ?? '',
-      nation: mv['NATION'] ?? '',
-    }
-  }
-
-  // Fall back to separate bsglobal keys (set by Lenex import when no MEETVALUES exists)
+  // Canonical source: individual bsglobal keys
   const rows = db.prepare(
     `SELECT name, data FROM bsglobal WHERE name IN ('MeetName','MeetCity','MeetNation')`
   ).all() as Array<{ name: string; data: string | null }>
   const m: Record<string, string> = {}
   for (const r of rows) m[r.name] = r.data ?? ''
 
-  return { name: m['MeetName'] ?? '', city: m['MeetCity'] ?? '', nation: m['MeetNation'] ?? '' }
+  if (m['MeetName']) {
+    return { name: m['MeetName'], city: m['MeetCity'] ?? '', nation: m['MeetNation'] ?? '' }
+  }
+
+  // Backward-compat fallback: MEETVALUES blob (legacy databases without individual keys)
+  const mv = readMeetValuesFromDb(db)
+  return {
+    name: mv['NAME'] ?? '',
+    city: mv['CITY'] ?? '',
+    nation: mv['NATION'] ?? '',
+  }
 }
 
 export function getMeetConfig(): Record<string, string> {
@@ -1882,13 +1882,17 @@ export function setMeetValues(updates: Record<string, { type: string; value: str
     `INSERT INTO bsglobal (name, data) VALUES ('MEETVALUES', ?) ON CONFLICT(name) DO UPDATE SET data=excluded.data`
   ).run(data)
 
-  // Sync individual bsglobal keys used by getMeetInfo (set by LENEX import)
+  // Sync individual bsglobal keys (canonical source for first-class LENEX attributes)
   const syncStmt = db.prepare(
     `INSERT INTO bsglobal (name, data) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET data=excluded.data`
   )
   if (updates.NAME) syncStmt.run('MeetName', updates.NAME.value)
   if (updates.CITY) syncStmt.run('MeetCity', updates.CITY.value)
   if (updates.NATION) syncStmt.run('MeetNation', updates.NATION.value)
+  if (updates.COURSE) {
+    const courseMap: Record<string, string> = { '1': '1', '2': '2', '3': '3' }
+    syncStmt.run('MeetCourse', courseMap[updates.COURSE.value] ?? updates.COURSE.value)
+  }
 }
 
 // ── Query: all swimstyles (for event style dropdown) ──────────────────────────

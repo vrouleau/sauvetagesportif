@@ -370,10 +370,9 @@ async def upload_meet(file: UploadFile = File(...), db: Session = Depends(get_db
                      ("age_base_date", meet.age_base_date)]:
         _set_config(db, key, val)
 
-    # TODO: refactor — meet name/course are stored in 3 places (meets.name, bsglobal['meet_name'],
-    # and MEETVALUES blob). EventsPage reads from MEETVALUES; title bar from meet_name key.
-    # Should stop relying on MEETVALUES for first-class LENEX attributes and read from a single source.
-    # Sync meet name and course into MEETVALUES so EventsPage tree picks it up
+    # Sync meet identity into MEETVALUES blob for Splash SMB compatibility.
+    # Individual bsglobal keys (meet_name, meet_course) are the canonical source;
+    # MEETVALUES is kept in sync for interop with the meet-app EventsPage and SMB export.
     if meet.meet_name:
         _update_meetvalue(db, "NAME", f"S;{meet.meet_name}")
     if meet.course:
@@ -1015,7 +1014,11 @@ def meet_info(db: Session = Depends(get_db)):
 
 @router.get("/meet-config", dependencies=[Depends(require_organizer_or_admin)])
 def get_meet_config(db: Session = Depends(get_db)):
-    """Return MEETVALUES-style config as a flat dict {KEY: value}."""
+    """Return MEETVALUES-style config as a flat dict {KEY: value}.
+
+    Individual bsglobal keys (meet_name, meet_course) are canonical and override
+    any stale values in the MEETVALUES blob.
+    """
     cfg = db.query(BsGlobal).get("MEETVALUES")
     result: dict[str, str] = {}
     if cfg and cfg.data:
@@ -1030,14 +1033,14 @@ def get_meet_config(db: Session = Depends(get_db)):
             # Strip type prefix (I;, S;, B;, D;, F;)
             semi = rest.find(";")
             result[key] = rest[semi + 1:] if semi >= 0 else rest
-    # Also include individual bsglobal keys that map to meet info
+    # Individual bsglobal keys are canonical — override MEETVALUES
     name = _get_config(db, "meet_name")
-    if name and "NAME" not in result:
+    if name:
         result["NAME"] = name
     course = _get_config(db, "meet_course")
     if course:
         course_map = {"LCM": "1", "SCM": "3", "SCY": "2"}
-        result.setdefault("COURSE", course_map.get(course, "1"))
+        result["COURSE"] = course_map.get(course, "1")
     return result
 
 
@@ -1060,11 +1063,14 @@ def set_meet_config(entries: dict, db: Session = Depends(get_db)):
         type_code = entry.get("type", "S") if isinstance(entry, dict) else "S"
         value = entry.get("value", "") if isinstance(entry, dict) else str(entry)
         existing[key] = f"{type_code};{value}"
-        # Sync meet_name for /meet-info compatibility
+        # Sync canonical individual keys
         if key == "NAME":
             _set_config(db, "meet_name", value)
+        elif key == "COURSE":
+            course_map = {"1": "LCM", "2": "SCY", "3": "SCM"}
+            _set_config(db, "meet_course", course_map.get(value, "LCM"))
         # Sync DEADLINE → closure_date
-        if key == "DEADLINE" and value:
+        elif key == "DEADLINE" and value:
             # Convert YYYYMMDDHHMMSSMMM → YYYY-MM-DD
             raw = value
             if len(raw) >= 8:

@@ -198,7 +198,7 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
   const meet = child(child(lenex, 'MEETS')!, 'MEET')
   if (!meet) throw new Error('No MEET element found in LENEX file')
 
-  // Store MEET-level attributes in bsglobal (key-value store)
+  // Store MEET-level attributes in individual bsglobal keys (canonical source)
   const meetAttrs = meet.attrs
   const bsglobalStmt = db.prepare(
     `INSERT INTO bsglobal (name, data) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET data=excluded.data`
@@ -213,7 +213,7 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
   if (meetAttrs.organizer) bsglobalStmt.run('MeetOrganizer', meetAttrs.organizer)
   if (meetAttrs.organizer_url) bsglobalStmt.run('MeetOrganizerUrl', meetAttrs.organizer_url)
 
-  // Also write to MEETVALUES (the canonical Splash format)
+  // Also sync into MEETVALUES blob (Splash compatibility for SMB round-trip)
   {
     const mvRow = db.prepare(`SELECT data FROM bsglobal WHERE name='MEETVALUES'`).get() as { data: string | null } | undefined
     const existing: Record<string, string> = {}
@@ -779,7 +779,7 @@ export function exportLenexResults(filePath: string, db: Database.Database): Exp
   const g: Record<string, string> = {}
   for (const row of globals) g[row.name] = row.data ?? ''
 
-  // Parse MEETVALUES (primary source, same as real Splash)
+  // Parse MEETVALUES (backward-compat fallback for legacy databases)
   const mv: Record<string, string> = {}
   if (g['MEETVALUES']) {
     for (const line of g['MEETVALUES'].split(/\r?\n/)) {
@@ -792,10 +792,11 @@ export function exportLenexResults(filePath: string, db: Database.Database): Exp
     }
   }
 
-  const meetName = mv['NAME'] || g['MeetName'] || 'Meet'
-  const meetCity = mv['CITY'] || g['MeetCity'] || ''
-  const meetNation = mv['NATION'] || g['MeetNation'] || ''
-  const meetCourse = decodeCourse(parseInt(mv['COURSE'] || g['MeetCourse'] || '1', 10))
+  // Canonical source: individual bsglobal keys; fall back to MEETVALUES
+  const meetName = g['MeetName'] || mv['NAME'] || 'Meet'
+  const meetCity = g['MeetCity'] || mv['CITY'] || ''
+  const meetNation = g['MeetNation'] || mv['NATION'] || ''
+  const meetCourse = decodeCourse(parseInt(g['MeetCourse'] || mv['COURSE'] || '1', 10))
 
   // ── Sessions ────────────────────────────────────────────────────────────────
   const sessions = db.prepare(
@@ -1097,6 +1098,7 @@ export function exportMeetLenex(filePath: string, db: Database.Database): MeetEx
   const g: Record<string, string> = {}
   for (const row of globals) g[row.name] = row.data ?? ''
 
+  // Parse MEETVALUES (backward-compat fallback for legacy databases)
   const mv: Record<string, string> = {}
   if (g['MEETVALUES']) {
     for (const line of g['MEETVALUES'].split(/\r?\n/)) {
@@ -1109,10 +1111,11 @@ export function exportMeetLenex(filePath: string, db: Database.Database): MeetEx
     }
   }
 
-  const meetName = mv['NAME'] || g['MeetName'] || 'Meet'
-  const meetCity = mv['CITY'] || g['MeetCity'] || ''
-  const meetNation = mv['NATION'] || g['MeetNation'] || ''
-  const meetCourse = decodeCourse(parseInt(mv['COURSE'] || g['MeetCourse'] || '1', 10))
+  // Canonical source: individual bsglobal keys; fall back to MEETVALUES
+  const meetName = g['MeetName'] || mv['NAME'] || 'Meet'
+  const meetCity = g['MeetCity'] || mv['CITY'] || ''
+  const meetNation = g['MeetNation'] || mv['NATION'] || ''
+  const meetCourse = decodeCourse(parseInt(g['MeetCourse'] || mv['COURSE'] || '1', 10))
 
   // Age base date from MEETVALUES or default to Dec 31 of current year
   const ageDateRaw = mv['AGEDATE'] || ''
