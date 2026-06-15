@@ -139,6 +139,35 @@ export default function Admin() {
             className="file:border file:border-gray-300 file:rounded file:px-2 file:py-0.5 file:text-xs file:bg-white file:cursor-pointer text-xs" />
         </Section>
 
+        {/* Download Meet (.smb) */}
+        <Section title={t.export_meet_smb} desc={t.export_meet_smb_desc}>
+          <button onClick={async () => {
+            setMsg(lang === 'fr' ? 'Génération…' : 'Generating...')
+            try {
+              const res = await fetch('/api/export/meet-smb', {
+                headers: { 'X-Club-Pin': localStorage.getItem('pin') || '' }
+              })
+              if (!res.ok) {
+                const err = await res.json().catch(() => ({ detail: res.statusText }))
+                setMsg(err.detail || 'Error')
+                return
+              }
+              const blob = await res.blob()
+              // Extract filename from Content-Disposition header
+              const cd = res.headers.get('Content-Disposition') || ''
+              const fnMatch = cd.match(/filename=([^;]+)/)
+              const filename = fnMatch ? fnMatch[1].trim() : 'meet.smb'
+              const url = URL.createObjectURL(blob)
+              const a = document.createElement('a')
+              a.href = url; a.download = filename; a.click()
+              URL.revokeObjectURL(url)
+              setMsg(lang === 'fr' ? '✓ Téléchargé' : '✓ Downloaded')
+            } catch (err) { setMsg(err.message || 'Error') }
+          }} className="px-3 py-1 bg-teal-600 text-white text-xs rounded hover:bg-teal-700">
+            {t.export_meet_smb}
+          </button>
+        </Section>
+
         {/* Change Admin PIN */}
         <Section title={t.change_admin_pin}>
           <form onSubmit={async e => {

@@ -2914,14 +2914,18 @@ def export_entries_lxf(db: Session = Depends(get_db)):
 
 
 @router.get("/export/meet-smb", dependencies=[Depends(require_admin)])
-def export_meet_smb():
-    smb_storage = Path(os.environ.get("MEET_STORAGE", "/app/data/meet.lxf")).parent / "meet.smb"
-    if not smb_storage.exists():
-        raise HTTPException(404, "No SMB backup available")
+def export_meet_smb(db: Session = Depends(get_db)):
+    """Generate and download an .smb from the current database state."""
+    from ..generate_smb import generate_smb_from_db
+    content = generate_smb_from_db(db)
+    # Derive filename from meet name if available
+    meet_name = _get_config(db, "meet_name") or "meet"
+    safe_name = "".join(c for c in meet_name if c.isalnum() or c in " _-").strip().replace(" ", "_")
+    filename = f"{safe_name or 'meet'}.smb"
     return Response(
-        content=smb_storage.read_bytes(),
+        content=content,
         media_type="application/octet-stream",
-        headers={"Content-Disposition": "attachment; filename=meet.smb"},
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
 
 
