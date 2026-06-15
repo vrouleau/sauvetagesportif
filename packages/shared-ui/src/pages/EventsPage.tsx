@@ -132,6 +132,7 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [meetName, setMeetName] = useState<string>('')
   const [poolSize, setPoolSize] = useState<number>(50)
+  const [configVersion, setConfigVersion] = useState(0)
   const { prompt, promptState, handleConfirm, handleCancel } = usePromptDialog()
 
   // Resizable left panel
@@ -281,7 +282,7 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
     }).catch(() => setLoading(false))
     // Load meet name from config
     api.getMeetConfig().then((cfg) => {
-      if (cfg?.NAME) setMeetName(cfg.NAME)
+      setMeetName(cfg?.NAME ?? '')
       // Derive pool size from COURSE config
       const course = cfg?.COURSE
       if (course === '3' || course === '2') setPoolSize(25)
@@ -715,11 +716,12 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
         setLoading(false)
       }).catch(() => setLoading(false))
       api.getMeetConfig().then((cfg) => {
-        if (cfg?.NAME) setMeetName(cfg.NAME)
+        setMeetName(cfg?.NAME ?? '')
         const course = cfg?.COURSE
         if (course === '3' || course === '2') setPoolSize(25)
         else setPoolSize(50)
       }).catch(() => {})
+      setConfigVersion(v => v + 1)
     } else if (result.error) {
       window.alert(result.error)
     }
@@ -751,9 +753,10 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
       setExpandedEvents(new Set())
       sessionStorage.removeItem('eventsPage_expandedSessions')
       sessionStorage.removeItem('eventsPage_expandedEvents')
-      if (cfg?.NAME) setMeetName(cfg.NAME)
+      setMeetName(cfg?.NAME ?? '')
       const course = cfg?.COURSE
       setPoolSize((course === '3' || course === '2') ? 25 : 50)
+      setConfigVersion(v => v + 1)
     } catch {
       window.alert('Erreur lors de la création du meet')
     } finally {
@@ -1067,7 +1070,7 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
 
         {/* ── Right: properties panel ── */}
         <div className="flex-1 overflow-y-auto bg-white">
-          <PropertiesPanel selected={selected} onUpdateSession={handleUpdateSession} onUpdateEvent={handleUpdateEvent} onMeetNameChange={setMeetName} />
+          <PropertiesPanel selected={selected} onUpdateSession={handleUpdateSession} onUpdateEvent={handleUpdateEvent} onMeetNameChange={setMeetName} configVersion={configVersion} />
         </div>
       </div>
 
@@ -1390,9 +1393,9 @@ function ContextMenu({
 
 // ─── Properties Panel ─────────────────────────────────────────────────────────
 
-function PropertiesPanel({ selected, onUpdateSession, onUpdateEvent, onMeetNameChange }: { selected: SelectedItem; onUpdateSession: (sessionId: number, data: Record<string, unknown>) => void; onUpdateEvent: (eventId: number, sessionId: number, data: Record<string, unknown>) => void; onMeetNameChange: (name: string) => void }) {
+function PropertiesPanel({ selected, onUpdateSession, onUpdateEvent, onMeetNameChange, configVersion }: { selected: SelectedItem; onUpdateSession: (sessionId: number, data: Record<string, unknown>) => void; onUpdateEvent: (eventId: number, sessionId: number, data: Record<string, unknown>) => void; onMeetNameChange: (name: string) => void; configVersion: number }) {
   if (selected.type === 'competition') {
-    return <CompetitionPropertiesPanel onMeetNameChange={onMeetNameChange} />
+    return <CompetitionPropertiesPanel key={configVersion} onMeetNameChange={onMeetNameChange} />
   }
 
   if (selected.type === 'session') {
