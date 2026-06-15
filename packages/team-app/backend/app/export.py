@@ -270,11 +270,30 @@ def generate_lxf(db: Session) -> bytes:
     for relay in relay_rows:
         relays_by_club.setdefault(relay.clubsid, []).append(relay)
 
-    # Build member ID lookup for athleteid references
+    # Load custom team names from relay.name column (fallback to bsglobal for backward compat)
+    custom_names: dict[int, str] = {}
+    for r in relay_rows:
+        if r.name:
+            custom_names[r.relaysid] = r.name
+    missing_name_relays = [r for r in relay_rows if r.relaysid not in custom_names]
+    if missing_name_relays:
+        relay_name_keys = [f"relay_name_{r.relaysid}" for r in missing_name_relays]
+        for cfg in db.query(BsGlobal).filter(BsGlobal.name.in_(relay_name_keys)).all():
+            rid = int(cfg.name.replace("relay_name_", ""))
+            custom_names[rid] = cfg.data
+
+    # Build member lookup for relay positions (ensure all relay members are exported as athletes)
+    all_relay_member_ids = {pos.membersid for pos in relay_pos_rows}
     member_ids_in_export = set()
     for club_data in clubs_map.values():
         for mid in club_data["athletes"]:
             member_ids_in_export.add(mid)
+    # Members who are in relays but not in individual entries — need to be added as ATHLETE elements
+    missing_member_ids = all_relay_member_ids - member_ids_in_export
+    missing_members_by_club: dict[int, list] = {}
+    if missing_member_ids:
+        for m in db.query(Member).filter(Member.membersid.in_(missing_member_ids)).all():
+            missing_members_by_club.setdefault(m.clubsid, []).append(m)
 
     for club_data in clubs_map.values():
         club = club_data["club"]
@@ -289,11 +308,42 @@ def generate_lxf(db: Session) -> bytes:
                 break
         if club_xml is None:
             continue
+
+        # Add relay-only members as ATHLETE elements (so athleteid refs resolve)
+        extra_members = missing_members_by_club.get(club.clubsid, [])
+        if extra_members:
+            athletes_xml = club_xml.find("ATHLETES")
+            if athletes_xml is None:
+                athletes_xml = ET.SubElement(club_xml, "ATHLETES")
+            for m in extra_members:
+                ET.SubElement(athletes_xml, "ATHLETE", {
+                    "athleteid": str(m.membersid),
+                    "firstname": m.firstname or "",
+                    "lastname": m.lastname or "",
+                    "gender": gender_to_str(m.gender),
+                    "birthdate": str(m.birthdate.date()) if m.birthdate else "",
+                    "license": m.license or "",
+                })
+
         relays_xml = ET.SubElement(club_xml, "RELAYS")
         for relay in club_relays:
+            # Build team name: custom name or concatenated last names
+            positions = positions_by_relay.get(relay.relaysid, [])
+            team_name = custom_names.get(relay.relaysid)
+            if not team_name and positions:
+                member_ids = [p.membersid for p in positions]
+                names = []
+                for mid in member_ids:
+                    m = db.query(Member).get(mid)
+                    if m:
+                        names.append(m.lastname or "")
+                team_name = "/".join(names) if names else None
+
             relay_attrs: dict[str, str] = {
                 "number": str(relay.teamnumb or 1),
             }
+            if team_name:
+                relay_attrs["name"] = team_name
             if relay.gender:
                 relay_attrs["gender"] = gender_to_str(relay.gender)
             if relay.minage is not None:
@@ -301,8 +351,7 @@ def generate_lxf(db: Session) -> bytes:
             if relay.maxage is not None:
                 relay_attrs["agemax"] = str(relay.maxage)
             relay_xml = ET.SubElement(relays_xml, "RELAY", relay_attrs)
-            # RELAYPOSITIONS — only filled positions
-            positions = positions_by_relay.get(relay.relaysid, [])
+            # RELAYPOSITIONS at RELAY level (Lenex 3.0 spec)
             if positions:
                 positions_xml = ET.SubElement(relay_xml, "RELAYPOSITIONS")
                 for pos in positions:
@@ -328,7 +377,18 @@ def generate_lxf(db: Session) -> bytes:
                         break
                 if "eventid" in relay_entry_attrs:
                     break
-            ET.SubElement(relay_entries_xml, "ENTRY", relay_entry_attrs)
+            entry_xml = ET.SubElement(relay_entries_xml, "ENTRY", relay_entry_attrs)
+            # Also put RELAYPOSITIONS inside ENTRY (meet-app importer expects them here)
+            if positions:
+                positions_xml2 = ET.SubElement(entry_xml, "RELAYPOSITIONS")
+                for pos in positions:
+                    pos_attrs2: dict[str, str] = {
+                        "number": str(pos.numb),
+                        "athleteid": str(pos.membersid),
+                    }
+                    if pos.entrytime:
+                        pos_attrs2["entrytime"] = _ms_to_lenex(pos.entrytime)
+                    ET.SubElement(positions_xml2, "RELAYPOSITION", pos_attrs2)
 
     # Also handle clubs that have relay data but no individual registrations
     for club_id, club_relays in relays_by_club.items():
@@ -344,13 +404,36 @@ def generate_lxf(db: Session) -> bytes:
             "nation": club.nation or "CAN",
             "clubid": str(club.clubsid),
         })
-        # Empty ATHLETES element (required by Lenex schema)
-        ET.SubElement(club_xml, "ATHLETES")
+        # Add relay members as ATHLETE elements (so athleteid refs resolve)
+        athletes_xml = ET.SubElement(club_xml, "ATHLETES")
+        extra_members = missing_members_by_club.get(club_id, [])
+        for m in extra_members:
+            ET.SubElement(athletes_xml, "ATHLETE", {
+                "athleteid": str(m.membersid),
+                "firstname": m.firstname or "",
+                "lastname": m.lastname or "",
+                "gender": gender_to_str(m.gender),
+                "birthdate": str(m.birthdate.date()) if m.birthdate else "",
+                "license": m.license or "",
+            })
         relays_xml = ET.SubElement(club_xml, "RELAYS")
         for relay in club_relays:
+            positions = positions_by_relay.get(relay.relaysid, [])
+            # Build team name
+            team_name = custom_names.get(relay.relaysid)
+            if not team_name and positions:
+                names = []
+                for p in positions:
+                    m = db.query(Member).get(p.membersid)
+                    if m:
+                        names.append(m.lastname or "")
+                team_name = "/".join(names) if names else None
+
             relay_attrs: dict[str, str] = {
                 "number": str(relay.teamnumb or 1),
             }
+            if team_name:
+                relay_attrs["name"] = team_name
             if relay.gender:
                 relay_attrs["gender"] = gender_to_str(relay.gender)
             if relay.minage is not None:
@@ -358,7 +441,6 @@ def generate_lxf(db: Session) -> bytes:
             if relay.maxage is not None:
                 relay_attrs["agemax"] = str(relay.maxage)
             relay_xml = ET.SubElement(relays_xml, "RELAY", relay_attrs)
-            positions = positions_by_relay.get(relay.relaysid, [])
             if positions:
                 positions_xml = ET.SubElement(relay_xml, "RELAYPOSITIONS")
                 for pos in positions:
@@ -369,7 +451,7 @@ def generate_lxf(db: Session) -> bytes:
                     if pos.entrytime:
                         pos_attrs["entrytime"] = _ms_to_lenex(pos.entrytime)
                     ET.SubElement(positions_xml, "RELAYPOSITION", pos_attrs)
-            # ENTRIES — always include eventid so importers know which event the relay belongs to
+            # ENTRIES — always include eventid
             relay_entries_xml = ET.SubElement(relay_xml, "ENTRIES")
             relay_entry_attrs: dict[str, str] = {
                 "entrycourse": meet_struct.course or "LCM",
@@ -383,7 +465,18 @@ def generate_lxf(db: Session) -> bytes:
                         break
                 if "eventid" in relay_entry_attrs:
                     break
-            ET.SubElement(relay_entries_xml, "ENTRY", relay_entry_attrs)
+            entry_xml = ET.SubElement(relay_entries_xml, "ENTRY", relay_entry_attrs)
+            # Also put RELAYPOSITIONS inside ENTRY (meet-app importer expects them here)
+            if positions:
+                positions_xml2 = ET.SubElement(entry_xml, "RELAYPOSITIONS")
+                for pos in positions:
+                    pos_attrs2: dict[str, str] = {
+                        "number": str(pos.numb),
+                        "athleteid": str(pos.membersid),
+                    }
+                    if pos.entrytime:
+                        pos_attrs2["entrytime"] = _ms_to_lenex(pos.entrytime)
+                    ET.SubElement(positions_xml2, "RELAYPOSITION", pos_attrs2)
 
     xml_bytes = ET.tostring(root, encoding="unicode", xml_declaration=True).encode("utf-8")
 

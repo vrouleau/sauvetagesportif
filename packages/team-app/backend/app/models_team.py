@@ -222,6 +222,7 @@ class Relay(Base):
     eventdate = Column(DateTime)
     clubsid = Column(Integer, ForeignKey("clubs.clubsid"))
     teamnumb = Column(SmallInteger)
+    name = Column(String(100))
     stylesid = Column(Integer, ForeignKey("swimstyle.swimstyleid"))
     totaltime = Column(Integer)
     entrytime = Column(Integer)

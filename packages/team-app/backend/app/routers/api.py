@@ -3709,13 +3709,17 @@ def get_relay_teams(request: Request, club_id: int | None = None, db: Session = 
         for m in members:
             member_names[m.membersid] = f"{m.lastname}, {m.firstname}"
 
-    # Load custom team names from bsglobal
-    relay_name_keys = [f"relay_name_{r.relaysid}" for r in existing_relays]
+    # Load custom team names (from relay.name column, fallback to bsglobal for backward compat)
     custom_names: dict[int, str] = {}
-    if relay_name_keys:
+    for r in existing_relays:
+        if r.name:
+            custom_names[r.relaysid] = r.name
+    # Backward compat: check bsglobal for relays without a name column value
+    missing_name_relays = [r for r in existing_relays if r.relaysid not in custom_names]
+    if missing_name_relays:
+        relay_name_keys = [f"relay_name_{r.relaysid}" for r in missing_name_relays]
         name_configs = db.query(BsGlobal).filter(BsGlobal.name.in_(relay_name_keys)).all()
         for cfg in name_configs:
-            # Extract relay ID from key "relay_name_123"
             rid = int(cfg.name.replace("relay_name_", ""))
             custom_names[rid] = cfg.data
 
@@ -4654,11 +4658,7 @@ def set_relay_team_name(
     data: RelayTeamNameUpdate,
     request: Request, db: Session = Depends(get_db)
 ):
-    """Set or clear a custom team name.
-
-    Note: The current schema does not have a dedicated name column on the relays table.
-    For now we store it in bsglobal as 'relay_name_{relaysid}'.
-    """
+    """Set or clear a custom team name (stored on relay.name column)."""
     from ..models_team import Relay
 
     pin = request.headers.get("X-Club-Pin", "")
@@ -4737,10 +4737,8 @@ def set_relay_team_name(
         db.delete(sr)
         db.flush()
 
-        # Store the custom name
-        config_key = f"relay_name_{relay.relaysid}"
-        if data.name:
-            _set_config(db, config_key, data.name)
+        # Store the custom name on the relay row
+        relay.name = data.name or None
 
         db.commit()
         return {"ok": True, "migratedTeamId": relay.relaysid}
@@ -4753,15 +4751,8 @@ def set_relay_team_name(
     if role == "coach" and relay.clubsid != caller_club:
         raise HTTPException(403, "Cannot modify another club's relay teams")
 
-    # Store name in bsglobal (lightweight approach — no schema change)
-    config_key = f"relay_name_{team_id}"
-    if data.name:
-        _set_config(db, config_key, data.name)
-    else:
-        # Clear the name
-        cfg = db.query(BsGlobal).get(config_key)
-        if cfg:
-            db.delete(cfg)
+    # Store name directly on the relay row
+    relay.name = data.name or None
 
     db.commit()
     return {"ok": True}
