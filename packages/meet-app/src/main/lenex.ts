@@ -442,6 +442,17 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
     }
   }
 
+  // ── Auto-detect meet type from swim style IDs ─────────────────────────────────
+  // If no MEET_TYPE is already set, infer from imported styles: IDs >= 600 are beach events
+  {
+    const existingType = db.prepare(`SELECT data FROM bsglobal WHERE name = 'MEET_TYPE'`).get() as { data: string } | undefined
+    if (!existingType) {
+      const beachStyle = db.prepare(`SELECT 1 FROM swimstyle WHERE swimstyleid >= 600 LIMIT 1`).get()
+      const detectedType = beachStyle ? 'BEACH' : 'POOL'
+      bsglobalStmt.run('MEET_TYPE', detectedType)
+    }
+  }
+
   // ── Clubs → club; Athletes → athlete; Entries/Results → swimresult ────────────
   const clubsElem = child(meet, 'CLUBS')
   let autoClubId = nextId('club', 'clubid')
