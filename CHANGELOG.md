@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.20] - 2026-06-15
+
+### ✨ Features
+
+- generate SMB export from live database in team-app (`491b0e5`)
+
+### 🐛 Bug Fixes
+
+- show 'plage/beach' instead of '?' for BEACH meet type (`aed9ebd`)
+- ensure shell scripts use LF line endings (`512b760`)
+
 ## [0.3.19] - 2026-06-15
 
 ### ✨ Features
