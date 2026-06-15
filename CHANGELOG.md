@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.3.19] - 2026-06-15
+
+### ✨ Features
+
+- add --wipe flag to podman_restartmeet.sh to delete appdata volume (`712d9da`)
+- show age groups next to relay event name in relay page (`b04953a`)
+- auto-detect MEET_TYPE (pool/beach) from swim style IDs on LXF import (`8e332fd`)
+
+### 🐛 Bug Fixes
+
+- infer relay agegroupid from event when ENTRY lacks it (`e3e479f`)
+- report relay import errors instead of silently ignoring (`dab249e`)
+- relay import test must write a ZIP (.lxf), not plain XML (`24ce209`)
+- relay LXF export — add team name, positions inside ENTRY, relay-only athletes (`88ba939`)
+- always emit ENTRY with eventid for relay teams in LXF export (`4fa8b32`)
+- refresh title bar meet name after template/SMB upload (`b1e748d`)
+- sync meet name into MEETVALUES on LXF upload and new meet creation (`d7bee77`)
+- refresh meet name in tree and detail panel after import/new meet (`cf60384`)
+
+### 📝 Documentation
+
+- update CLAUDE.md with toolbar buttons, meet type auto-detection, relay age groups (`e664767`)
+
+### ♻️ Refactoring
+
+- individual bsglobal keys are canonical source for meet identity (`2765acd`)
+
+### 🔧 Chores
+
+- remove duplicate restart_meet.sh (superseded by podman_restartmeet.sh) (`cad3d4f`)
+
+### ✅ Tests
+
+- add relay import tests for meet-app LENEX importer (`37eb6ba`)
+
 ## [0.3.18] - 2026-06-15
 
 ### ✨ Features
