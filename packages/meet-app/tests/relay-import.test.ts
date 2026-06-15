@@ -6,6 +6,30 @@ import { writeFileSync, unlinkSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { randomBytes } from 'crypto'
+import { deflateRawSync } from 'zlib'
+
+/** Create a minimal ZIP file containing a single .lef entry. */
+function createLxfZip(xmlContent: string): Buffer {
+  const data = Buffer.from(xmlContent, 'utf-8')
+  const compressed = deflateRawSync(data)
+  const fileName = Buffer.from('meet.lef', 'utf-8')
+
+  // Local file header
+  const header = Buffer.alloc(30)
+  header.writeUInt32LE(0x04034b50, 0) // signature
+  header.writeUInt16LE(20, 4)         // version needed
+  header.writeUInt16LE(0, 6)          // flags
+  header.writeUInt16LE(8, 8)          // method: deflate
+  header.writeUInt16LE(0, 10)         // mod time
+  header.writeUInt16LE(0, 12)         // mod date
+  header.writeUInt32LE(0, 14)         // crc32 (not validated by readZipEntries)
+  header.writeUInt32LE(compressed.length, 18) // compressed size
+  header.writeUInt32LE(data.length, 22)       // uncompressed size
+  header.writeUInt16LE(fileName.length, 26)   // file name length
+  header.writeUInt16LE(0, 28)                 // extra field length
+
+  return Buffer.concat([header, fileName, compressed])
+}
 
 /**
  * Build a minimal LENEX .lef XML containing relay teams with positions.
@@ -70,9 +94,9 @@ ${positionsInEntry ? positions : ''}
 
 function writeTempLxf(xml: string): string {
   const dir = tmpdir()
-  const filename = `relay-test-${randomBytes(4).toString('hex')}.lef`
+  const filename = `relay-test-${randomBytes(4).toString('hex')}.lxf`
   const path = join(dir, filename)
-  writeFileSync(path, xml, 'utf-8')
+  writeFileSync(path, createLxfZip(xml))
   return path
 }
 
