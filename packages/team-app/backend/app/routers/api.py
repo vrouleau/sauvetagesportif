@@ -370,6 +370,16 @@ async def upload_meet(file: UploadFile = File(...), db: Session = Depends(get_db
                      ("age_base_date", meet.age_base_date)]:
         _set_config(db, key, val)
 
+    # TODO: refactor — meet name/course are stored in 3 places (meets.name, bsglobal['meet_name'],
+    # and MEETVALUES blob). EventsPage reads from MEETVALUES; title bar from meet_name key.
+    # Should stop relying on MEETVALUES for first-class LENEX attributes and read from a single source.
+    # Sync meet name and course into MEETVALUES so EventsPage tree picks it up
+    if meet.meet_name:
+        _update_meetvalue(db, "NAME", f"S;{meet.meet_name}")
+    if meet.course:
+        course_map = {"LCM": "1", "SCM": "3", "SCY": "2"}
+        _update_meetvalue(db, "COURSE", f"I;{course_map.get(meet.course, '1')}")
+
     # Reset closure date
     _set_config(db, "closure_date", "")
 
@@ -945,6 +955,13 @@ def create_new_meet(data: dict = Body(default={}), db: Session = Depends(get_db)
     lines = [l for l in mv_data.split("\r\n") if l and not l.startswith("AGEDATE=")]
     lines.append(f"AGEDATE=D;{year}1231000000000")
     _set_config(db, "MEETVALUES", "\r\n".join(lines))
+
+    # Sync meet name and course into MEETVALUES so EventsPage tree picks it up
+    if meet.meet_name:
+        _update_meetvalue(db, "NAME", f"S;{meet.meet_name}")
+    if meet.course:
+        course_map = {"LCM": "1", "SCM": "3", "SCY": "2"}
+        _update_meetvalue(db, "COURSE", f"I;{course_map.get(meet.course, '1')}")
 
     # Reset closure date
     _set_config(db, "closure_date", "")
