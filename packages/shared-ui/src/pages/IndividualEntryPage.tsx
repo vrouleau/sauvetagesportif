@@ -116,6 +116,7 @@ function useIndividualEntryPage(api: RegistrationAPI, role: string, clubId?: str
 
   const [addDialog, setAddDialog] = useState<AddAthleteDialogState>({ open: false, clubId: 0, clubName: '' })
   const [deleteConfirm, setDeleteConfirm] = useState<DeleteConfirmState>({ open: false, athleteId: 0, athleteName: '' })
+  const [selectedClubId, setSelectedClubId] = useState<number | null>(null)
 
   // Debounced filter
   const [debouncedFilter, setDebouncedFilter] = useState('')
@@ -151,6 +152,13 @@ function useIndividualEntryPage(api: RegistrationAPI, role: string, clubId?: str
   // Handle athlete selection
   const handleSelectAthlete = useCallback(async (athleteId: number) => {
     setState(prev => ({ ...prev, selectedAthleteId: athleteId, registrationData: null }))
+    // Determine the club this athlete belongs to
+    for (const [cId, athletes] of state.athletesByClub) {
+      if (athletes.some(a => a.id === athleteId)) {
+        setSelectedClubId(cId)
+        break
+      }
+    }
     try {
       const data = await api.getRegistration(athleteId)
       setState(prev => ({ ...prev, registrationData: data }))
@@ -160,7 +168,7 @@ function useIndividualEntryPage(api: RegistrationAPI, role: string, clubId?: str
         error: err instanceof Error ? err.message : 'Failed to load registration',
       }))
     }
-  }, [api])
+  }, [api, state.athletesByClub])
 
   // Reload registration data for currently selected athlete
   const reloadRegistration = useCallback(async () => {
@@ -179,6 +187,31 @@ function useIndividualEntryPage(api: RegistrationAPI, role: string, clubId?: str
     const club = state.clubs.find(c => c.id === clubId)
     setAddDialog({ open: true, clubId, clubName: club?.name || '' })
   }, [state.clubs])
+
+  // Add athlete from toolbar (uses selectedClubId)
+  const handleAddAthleteFromToolbar = useCallback(() => {
+    if (!selectedClubId) return
+    const club = state.clubs.find(c => c.id === selectedClubId)
+    setAddDialog({ open: true, clubId: selectedClubId, clubName: club?.name || '' })
+  }, [selectedClubId, state.clubs])
+
+  // Delete athlete from toolbar (uses selected athlete)
+  const handleDeleteAthleteFromToolbar = useCallback(() => {
+    if (!state.selectedAthleteId) return
+    // Find athlete name from the map
+    for (const athletes of state.athletesByClub.values()) {
+      const athlete = athletes.find(a => a.id === state.selectedAthleteId)
+      if (athlete) {
+        setDeleteConfirm({ open: true, athleteId: athlete.id, athleteName: `${athlete.first_name} ${athlete.last_name}` })
+        break
+      }
+    }
+  }, [state.selectedAthleteId, state.athletesByClub])
+
+  // Track club selection from tree
+  const handleSelectClub = useCallback((clubId: number) => {
+    setSelectedClubId(clubId)
+  }, [])
 
   const confirmAddAthlete = useCallback(async (data: { first_name: string; last_name: string; gender: string; birthdate: string | null; license: string; club_id: number }) => {
     try {
@@ -311,9 +344,13 @@ function useIndividualEntryPage(api: RegistrationAPI, role: string, clubId?: str
     filteredAthletesByClub,
     addDialog,
     deleteConfirm,
+    selectedClubId,
     setFilterText,
     handleSelectAthlete,
+    handleSelectClub,
     handleAddAthlete,
+    handleAddAthleteFromToolbar,
+    handleDeleteAthleteFromToolbar,
     confirmAddAthlete,
     cancelAddAthlete,
     handleDeleteAthlete,
@@ -395,9 +432,13 @@ export default function IndividualEntryPage({ role, clubId, refreshKey, onImport
     filteredAthletesByClub,
     addDialog,
     deleteConfirm,
+    selectedClubId,
     setFilterText,
     handleSelectAthlete,
+    handleSelectClub,
     handleAddAthlete,
+    handleAddAthleteFromToolbar,
+    handleDeleteAthleteFromToolbar,
     confirmAddAthlete,
     cancelAddAthlete,
     handleDeleteAthlete,
@@ -441,6 +482,7 @@ export default function IndividualEntryPage({ role, clubId, refreshKey, onImport
               filterText={debouncedFilter}
               defaultExpanded={false}
               onSelectAthlete={handleSelectAthlete}
+              onSelectClub={handleSelectClub}
               onAddAthlete={handleAddAthlete}
               onDeleteAthlete={handleDeleteAthlete}
               role={role}
@@ -489,20 +531,42 @@ export default function IndividualEntryPage({ role, clubId, refreshKey, onImport
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      {/* Toolbar: search + import/export */}
-      <div className="px-3 py-1.5 bg-white border-b border-gray-300 shrink-0 flex items-center gap-2">
+      {/* Toolbar: search + add/delete buttons + import/export */}
+      <div className="flex items-center h-7 bg-gray-100 border-b border-gray-300 px-2 gap-1 shrink-0 text-xs select-none">
         <input
           type="text"
           placeholder={tr.search}
           value={state.filterText}
           onChange={e => setFilterText(e.target.value)}
-          className="border border-gray-300 px-2 py-1 rounded text-xs w-64"
+          className="border border-gray-300 px-2 py-0.5 rounded text-xs w-64"
         />
+        <button
+          disabled={!selectedClubId}
+          onClick={handleAddAthleteFromToolbar}
+          className={`px-2 py-0.5 border rounded text-xs transition-colors ${
+            selectedClubId
+              ? 'border-gray-300 text-gray-700 bg-white hover:bg-gray-50'
+              : 'border-gray-200 text-gray-300 bg-white cursor-not-allowed'
+          }`}
+        >
+          {tr.addAthlete}
+        </button>
+        <button
+          disabled={!state.selectedAthleteId}
+          onClick={handleDeleteAthleteFromToolbar}
+          className={`px-2 py-0.5 border rounded text-xs transition-colors ${
+            state.selectedAthleteId
+              ? 'border-red-300 text-red-600 bg-white hover:bg-red-50'
+              : 'border-gray-200 text-gray-300 bg-white cursor-not-allowed'
+          }`}
+        >
+          {tr.delete}
+        </button>
         <div className="flex-1" />
         {onImportLxf && (
           <button
             onClick={onImportLxf}
-            className="px-3 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700"
+            className="px-3 py-0.5 bg-blue-600 text-white text-xs rounded hover:bg-blue-700"
           >
             {tr.importLxf}
           </button>
@@ -510,7 +574,7 @@ export default function IndividualEntryPage({ role, clubId, refreshKey, onImport
         {onExportLxf && (
           <button
             onClick={onExportLxf}
-            className="px-3 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700"
+            className="px-3 py-0.5 bg-green-600 text-white text-xs rounded hover:bg-green-700"
           >
             {tr.exportLxf}
           </button>
@@ -527,6 +591,7 @@ export default function IndividualEntryPage({ role, clubId, refreshKey, onImport
             filterText={debouncedFilter}
             defaultExpanded={false}
             onSelectAthlete={handleSelectAthlete}
+            onSelectClub={handleSelectClub}
             onAddAthlete={handleAddAthlete}
             onDeleteAthlete={handleDeleteAthlete}
             role={role}

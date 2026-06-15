@@ -9,6 +9,7 @@ export interface CascadeTreeProps {
   filterText: string
   defaultExpanded: boolean
   onSelectAthlete: (athleteId: number) => void
+  onSelectClub?: (clubId: number) => void
   onAddAthlete: (clubId: number) => void
   onDeleteAthlete: (athleteId: number, name: string) => void
   role: string
@@ -29,6 +30,7 @@ export default function CascadeTree({
   filterText,
   defaultExpanded,
   onSelectAthlete,
+  onSelectClub,
   onAddAthlete,
   onDeleteAthlete,
   role: _role,
@@ -79,6 +81,7 @@ export default function CascadeTree({
   }, [contextMenu])
 
   const toggleClub = useCallback((clubId: number) => {
+    onSelectClub?.(clubId)
     setExpandedClubs((prev) => {
       const next = new Set(prev)
       if (next.has(clubId)) {
@@ -92,7 +95,7 @@ export default function CascadeTree({
       }
       return next
     })
-  }, [filterText])
+  }, [filterText, onSelectClub])
 
   function handleClubContextMenu(e: MouseEvent, clubId: number) {
     e.preventDefault()
