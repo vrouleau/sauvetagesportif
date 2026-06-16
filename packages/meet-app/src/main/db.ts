@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3'
 import { app } from 'electron'
 import { join } from 'path'
+import { assignLateBeachNumber } from './beachNumber'
 import { regenerateCombinedEvents } from './combinedEvents'
 import { regeneratePointScores } from './pointScores'
 import { getDb as getActiveDb, isPgConnected, closeDb as closeActiveDb } from './connectionManager'
@@ -277,6 +278,9 @@ export interface LaneEntryRow {
   splitTimes?: Record<number, string>
   status?: 'DNS' | 'DNF' | 'DSQ' | null
   handicapex?: string
+  beachNumber?: string
+  relayMembers?: Array<{ position: number; lastName: string; beachNumber?: string }>
+  relayTeamName?: string
 }
 
 export interface HeatRow {
@@ -380,6 +384,7 @@ export interface AthleteRow {
   licence?: string
   birthPlace?: string
   handicapex?: string
+  beachNumber?: string
   entries: Array<{ eventId: number; eventName: string; category: string; entryTime?: string }>
 }
 
@@ -404,7 +409,7 @@ export async function getHeatListSessions(): Promise<HeatListSessionRow[]> {
   const events = db.prepare(`
     SELECT e.swimeventid, e.swimsessionid, e.eventnumber, e.gender, e.round, e.sortcode, e.daytime, e.internalevent,
            e.roundname, e.comment, e.swimstyleid,
-           ss.distance, ss.stroke, ss.name AS stylename
+           ss.distance, ss.stroke, ss.name AS stylename, ss.relaycount
     FROM swimevent e
     LEFT JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid
     WHERE e.swimsessionid IN (${ph})
@@ -414,6 +419,7 @@ export async function getHeatListSessions(): Promise<HeatListSessionRow[]> {
     round: number | null; sortcode: number | null; daytime: string | number | null
     internalevent: string | null; distance: number | null; stroke: number | null
     stylename: string | null; roundname: string | null; comment: string | null; swimstyleid: number | null
+    relaycount: number | null
   }>
 
   if (events.length === 0) return sessions.map(s => ({
@@ -442,6 +448,7 @@ export async function getHeatListSessions(): Promise<HeatListSessionRow[]> {
     dsqitemid: number | null
     athleteid: number; firstname: string | null; lastname: string | null
     birthdate: string | number | null; nation: string | null; handicapex: string | null
+    beachnumber: string | null
     clubcode: string | null; clubname: string | null; agegroupname: string | null
   }> = []
 
@@ -451,6 +458,7 @@ export async function getHeatListSessions(): Promise<HeatListSessionRow[]> {
       SELECT r.swimresultid, r.heatid, r.lane,
              r.entrytime, r.swimtime, r.reactiontime, r.resultstatus, r.agegroupid, r.dsqitemid,
              a.athleteid, a.firstname, a.lastname, a.birthdate, a.nation, a.handicapex,
+             a.nameprefix AS beachnumber,
              c.code AS clubcode, c.name AS clubname,
              COALESCE(NULLIF(ag.name, ''), CASE WHEN ag.agemin IS NOT NULL THEN CAST(ag.agemin AS TEXT) || '-' || COALESCE(CAST(ag.agemax AS TEXT), '+') END, '???') AS agegroupname
       FROM swimresult r
@@ -511,7 +519,89 @@ export async function getHeatListSessions(): Promise<HeatListSessionRow[]> {
       status,
       handicapex: r.handicapex ?? undefined,
       dsqItemId: r.dsqitemid ?? undefined,
+      beachNumber: r.beachnumber || undefined,
     })
+  }
+
+  // ── Relay member lookup for beach meets ──────────────────────────────────────
+  // For relay events (relaycount > 1), attach relay member data (with beach numbers)
+  if (isBeachMeet) {
+    const relayEventIds = events.filter(e => (e.relaycount ?? 1) > 1).map(e => e.swimeventid)
+    if (relayEventIds.length > 0) {
+      const { clause: rEvPh, params: rEvParams } = inClause(relayEventIds)
+      // Get all relay teams for relay events, including their positions with athlete nameprefix
+      const relayRows = db.prepare(`
+        SELECT r.relayid, r.swimeventid, r.clubid, r.name AS teamname,
+               rp.relaynumber, rp.athleteid AS memberathleteid,
+               a.lastname AS memberlastname, a.nameprefix AS memberbeachnumber
+        FROM relay r
+        JOIN relayposition rp ON r.relayid = rp.relayid
+        LEFT JOIN athlete a ON rp.athleteid = a.athleteid
+        WHERE r.swimeventid IN (${rEvPh})
+        ORDER BY r.relayid, rp.relaynumber
+      `).all(...rEvParams) as Array<{
+        relayid: number; swimeventid: number; clubid: number; teamname: string | null
+        relaynumber: number; memberathleteid: number; memberlastname: string | null; memberbeachnumber: string | null
+      }>
+
+      // Group relay positions by relayid
+      const relayDataMap = new Map<number, {
+        swimeventid: number; clubid: number; teamname: string | null
+        members: Array<{ position: number; lastName: string; beachNumber?: string; athleteId: number }>
+      }>()
+      for (const row of relayRows) {
+        if (!relayDataMap.has(row.relayid)) {
+          relayDataMap.set(row.relayid, {
+            swimeventid: row.swimeventid,
+            clubid: row.clubid,
+            teamname: row.teamname,
+            members: [],
+          })
+        }
+        relayDataMap.get(row.relayid)!.members.push({
+          position: row.relaynumber,
+          lastName: row.memberlastname ?? '',
+          beachNumber: row.memberbeachnumber || undefined,
+          athleteId: row.memberathleteid,
+        })
+      }
+
+      // Build index: athleteId → relay data (for matching swimresult.athleteid to relay team)
+      const athleteToRelay = new Map<string, { members: Array<{ position: number; lastName: string; beachNumber?: string }>; teamname: string | null }>()
+      for (const [, data] of relayDataMap) {
+        for (const m of data.members) {
+          // Key: eventId + athleteId to handle athlete in multiple events
+          const key = `${data.swimeventid}:${m.athleteId}`
+          if (!athleteToRelay.has(key)) {
+            athleteToRelay.set(key, {
+              members: data.members.map(({ position, lastName, beachNumber }) => ({ position, lastName, beachNumber })),
+              teamname: data.teamname,
+            })
+          }
+        }
+      }
+
+      // Attach relay members to entries in relay events
+      for (const ev of events) {
+        if ((ev.relaycount ?? 1) <= 1) continue
+        const eventHeats = heats.filter(h => h.swimeventid === ev.swimeventid)
+        for (const heat of eventHeats) {
+          const heatEntries = entryMap.get(heat.heatid)
+          if (!heatEntries) continue
+          for (const entry of heatEntries) {
+            const key = `${ev.swimeventid}:${entry.athleteId}`
+            const relayData = athleteToRelay.get(key)
+            if (relayData && relayData.members.length > 0) {
+              entry.relayMembers = relayData.members
+              // Store custom team name separately (don't mutate firstName)
+              if (relayData.teamname) {
+                entry.relayTeamName = relayData.teamname
+              }
+            }
+          }
+        }
+      }
+    }
   }
 
   // Build heat map keyed by eventId
@@ -685,7 +775,7 @@ export async function getAthletes(): Promise<AthleteRow[]> {
 
   const athletes = db.prepare(`
     SELECT a.athleteid, a.firstname, a.lastname, a.birthdate, a.gender, a.nation, a.license, a.domicile,
-           a.handicapex, c.code AS clubcode, c.name AS clubname
+           a.handicapex, a.nameprefix, c.code AS clubcode, c.name AS clubname
     FROM athlete a
     LEFT JOIN club c ON a.clubid = c.clubid
     ORDER BY a.lastname, a.firstname
@@ -693,7 +783,7 @@ export async function getAthletes(): Promise<AthleteRow[]> {
     athleteid: number; firstname: string | null; lastname: string | null
     birthdate: string | number | null; gender: number | null; nation: string | null
     license: string | null; domicile: string | null; handicapex: string | null
-    clubcode: string | null; clubname: string | null
+    nameprefix: string | null; clubcode: string | null; clubname: string | null
   }>
 
   if (athletes.length === 0) return []
@@ -740,6 +830,7 @@ export async function getAthletes(): Promise<AthleteRow[]> {
     licence: a.license ?? undefined,
     birthPlace: a.domicile ?? undefined,
     handicapex: a.handicapex ?? undefined,
+    beachNumber: a.nameprefix || undefined,
     entries: entMap.get(a.athleteid) ?? [],
   }))
 }
@@ -947,6 +1038,13 @@ export async function addLateEntry(
     `INSERT INTO swimresult (swimresultid, athleteid, swimeventid, heatid, lane, entrytime, lateentry, usetimetype)
      VALUES (?, ?, ?, ?, ?, ?, 'T', 0)`
   ).run(id, athleteId, eventId, heatId, lane, entryTime)
+
+  // Assign beach number if beach meet
+  const meetTypeRow = db.prepare(`SELECT data FROM bsglobal WHERE name = 'MEET_TYPE'`).get() as { data: string } | undefined
+  if ((meetTypeRow?.data || 'POOL').toUpperCase() === 'BEACH') {
+    assignLateBeachNumber(db, athleteId)
+  }
+
   return id
 }
 
@@ -2750,4 +2848,20 @@ function buildCenterOutLanes(laneMin: number, laneMax: number): number[] {
   }
 
   return lanes
+}
+
+// ── Query: beach number report ────────────────────────────────────────────────
+
+export function getBeachNumberReport(): Array<{
+  clubName: string; beachNumber: string; lastName: string; firstName: string
+}> {
+  const db = getLocalDb()
+  return db.prepare(`
+    SELECT c.name AS clubName, a.nameprefix AS beachNumber,
+           a.lastname AS lastName, a.firstname AS firstName
+    FROM athlete a
+    JOIN club c ON a.clubid = c.clubid
+    WHERE a.nameprefix IS NOT NULL AND a.nameprefix != ''
+    ORDER BY c.name, CAST(SUBSTR(a.nameprefix, 2) AS INTEGER)
+  `).all() as Array<{ clubName: string; beachNumber: string; lastName: string; firstName: string }>
 }

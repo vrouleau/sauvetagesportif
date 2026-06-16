@@ -29,6 +29,7 @@ import {
   getFinalEvents, getFinalCandidates, setQualification, autoQualify,
   clearFinalSeeding, seedFinals,
   getCombinedResults,
+  getBeachNumberReport,
   nextId,
   type SessionUpdate,
   type EventUpdate,
@@ -308,13 +309,13 @@ ipcMain.handle('db:unregister', (_event, athleteId: number, eventId: number) => 
 ipcMain.handle('db:get-relay-members', (_event, relayId: number) => {
   const db = getLocalDb()
   const rows = db.prepare(
-    `SELECT rp.relaynumber, rp.athleteid, a.firstname, a.lastname
+    `SELECT rp.relaynumber, rp.athleteid, a.firstname, a.lastname, a.nameprefix
      FROM relayposition rp
      LEFT JOIN athlete a ON rp.athleteid = a.athleteid
      WHERE rp.relayid = ?
      ORDER BY rp.relaynumber`
-  ).all(relayId) as Array<{ relaynumber: number; athleteid: number; firstname: string | null; lastname: string | null }>
-  return rows.map(r => ({ position: r.relaynumber, athleteId: r.athleteid, name: `${r.lastname}, ${r.firstname}` }))
+  ).all(relayId) as Array<{ relaynumber: number; athleteid: number; firstname: string | null; lastname: string | null; nameprefix: string | null }>
+  return rows.map(r => ({ position: r.relaynumber, athleteId: r.athleteid, name: `${r.lastname}, ${r.firstname}`, beachNumber: r.nameprefix || undefined }))
 })
 
 ipcMain.handle('db:get-relay-members-by-event', (_event, eventId: number, athleteId: number) => {
@@ -1278,6 +1279,8 @@ ipcMain.handle('db:get-meet-info', () => getMeetInfo())
 ipcMain.handle('db:get-combined-results', (_event, selectedEventIds: number[]) =>
   getCombinedResults(selectedEventIds)
 )
+
+ipcMain.handle('db:get-beach-number-report', () => getBeachNumberReport())
 
 interface PdfHeaderInfo { line1: string; line2: string; today: string }
 

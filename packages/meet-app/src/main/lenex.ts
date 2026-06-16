@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { inflateRawSync, deflateRawSync } from 'node:zlib'
 import Database from 'better-sqlite3'
 import { saveGeminiKeys } from './ocrGemini'
+import { generateBeachNumbers } from './beachNumber'
 
 // ── ZIP reader ────────────────────────────────────────────────────────────────
 
@@ -607,6 +608,15 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
           summary.errors.push(`Relay club=${clubId} event=${eventId} team=${teamNumber}: ${e}`)
         }
       }
+    }
+  }
+
+  // ── Beach number generation (after all clubs/athletes/entries processed) ────
+  const meetType = db.prepare(`SELECT data FROM bsglobal WHERE name = 'MEET_TYPE'`).get() as { data: string } | undefined
+  if ((meetType?.data || 'POOL').toUpperCase() === 'BEACH') {
+    const bnResult = generateBeachNumbers(db)
+    if (bnResult.errors.length > 0) {
+      summary.errors.push(...bnResult.errors.map(e => `BeachNumber: ${e}`))
     }
   }
 

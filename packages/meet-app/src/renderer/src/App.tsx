@@ -494,7 +494,7 @@ function AppInner() {
         {page === 'inscription' && <InscriptionPageWrapper refreshKey={refreshKey} />}
         {page === 'finals' && <FinalsPage refreshKey={refreshKey} meetType={meetType} />}
         {page === 'heats' && <HeatsPage refreshKey={refreshKey} meetType={meetType} />}
-        {page === 'report' && <ReportPage refreshKey={refreshKey} />}
+        {page === 'report' && <ReportPage refreshKey={refreshKey} meetType={meetType} />}
         {page === 'scan' && <TimingScanPage />}
         {page === 'process' && <TimingProcessPage />}
       </div>

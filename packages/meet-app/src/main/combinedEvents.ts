@@ -101,6 +101,16 @@ export function loadCombinedEventsConfig(): CombinedEventsConfig {
 // ── Event Query ───────────────────────────────────────────────────────────────
 
 export function queryEventsWithAgeGroups(db: Database.Database): EventWithAgeGroup[] {
+  // Determine meet type: for pool meets, filter out short-distance events (< 25m)
+  // like Line Throw. For beach meets, distance represents max participants per heat,
+  // not meters, so the distance filter must be skipped.
+  const meetTypeRow = db.prepare(
+    `SELECT data FROM bsglobal WHERE name = 'MEET_TYPE'`
+  ).get() as { data: string } | undefined
+  const isBeach = (meetTypeRow?.data || 'POOL').toUpperCase() === 'BEACH'
+
+  const distanceFilter = isBeach ? '' : 'AND ss.distance >= 25'
+
   return db
     .prepare(
       `SELECT e.swimeventid, e.eventnumber, e.gender AS eventgender, e.internalevent,
@@ -110,7 +120,7 @@ export function queryEventsWithAgeGroups(db: Database.Database): EventWithAgeGro
        JOIN agegroup ag ON ag.swimeventid = e.swimeventid
        JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid
        WHERE ss.relaycount = 1
-         AND ss.distance >= 25
+         ${distanceFilter}
          AND (e.internalevent IS NULL OR e.internalevent = 'F')
          AND e.eventnumber IS NOT NULL
          AND (e.preveventid IS NULL OR e.preveventid < 1)

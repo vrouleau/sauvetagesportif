@@ -1340,7 +1340,19 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
                           {lane}
                         </td>
                         <td className="px-2 border-r border-gray-200 font-medium">
-                          {entry.lastName}, {entry.firstName}
+                          {(() => {
+                            if (isBeach && entry.relayMembers && entry.relayMembers.length > 0) {
+                              // Relay event in beach mode (req 8.1–8.5)
+                              const occupiedMembers = entry.relayMembers.filter(m => m.lastName)
+                              // Build team name: custom team name or members' last names joined by "/"
+                              const teamName = entry.relayTeamName || occupiedMembers.map(m => m.lastName).join('/')
+                              // Build combined beach number string: use "??" for members without a number
+                              const beachNumberStr = occupiedMembers.map(m => m.beachNumber || '??').join('/')
+                              return beachNumberStr ? `${teamName} - ${beachNumberStr}` : teamName
+                            }
+                            // Individual event or pool mode
+                            return `${entry.lastName}, ${entry.firstName}${isBeach && entry.beachNumber ? ` - ${entry.beachNumber}` : ''}`
+                          })()}
                         </td>
                         <td className={`px-2 text-center border-r border-gray-200 ${isSelected ? 'text-gray-600' : 'text-gray-500'}`}>
                           {String(entry.birthYear).slice(-2)}

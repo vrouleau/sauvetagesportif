@@ -39,7 +39,7 @@ interface ReportEventSection {
   heats: HeatListEventRow['heats']
 }
 
-type ReportType = 'heatList' | 'startList' | 'combinedResults'
+type ReportType = 'heatList' | 'startList' | 'combinedResults' | 'beachNumbers'
 
 // ── HTML generator ────────────────────────────────────────────────────────────
 
@@ -571,6 +571,65 @@ function buildCombinedResultsPdfHeaderInfo(meetInfo: MeetInfo): PdfHeaderInfo {
   }
 }
 
+// ── Beach Numbers (Identifiants plage) PDF generator ─────────────────────────
+
+interface BeachNumberReportRow {
+  clubName: string
+  beachNumber: string
+  lastName: string
+  firstName: string
+}
+
+function generateBeachNumbersPdfHtml(rows: BeachNumberReportRow[]): string {
+  // Group by club name (already sorted by club name from the query)
+  const clubs = new Map<string, BeachNumberReportRow[]>()
+  for (const row of rows) {
+    const existing = clubs.get(row.clubName)
+    if (existing) {
+      existing.push(row)
+    } else {
+      clubs.set(row.clubName, [row])
+    }
+  }
+
+  let html = ''
+  for (const [clubName, athletes] of clubs) {
+    html += `<div class="ev">
+<h3>${esc(clubName)}</h3>
+<table>
+${athletes.map(a => `<tr><td>${esc(a.beachNumber)}</td><td>${esc(a.lastName)}</td><td>${esc(a.firstName)}</td></tr>`).join('\n')}
+</table>
+</div>\n`
+  }
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+BODY, TABLE, TD { font-family: Arial, Helvetica, sans-serif; font-size: 10pt; color: black; }
+body { margin: 0; padding: 0; }
+.ev { margin-bottom: 14pt; }
+.ev h3 { font-size: 11pt; margin: 0 0 4pt 0; border-bottom: 1px solid black; padding-bottom: 2pt; }
+.ev table { border-collapse: collapse; width: 100%; }
+.ev table td { text-align: left; padding: 1px 6px 1px 0; }
+@page { size: Letter portrait; }
+</style>
+</head>
+<body>
+${html}
+</body>
+</html>`
+}
+
+function buildBeachNumbersPdfHeaderInfo(meetInfo: MeetInfo): PdfHeaderInfo {
+  return {
+    line1: meetInfo.name || 'Compétition',
+    line2: meetInfo.city ? `${meetInfo.city} — Identifiants plage` : 'Identifiants plage',
+    today: new Date().toLocaleDateString('fr-CA'),
+  }
+}
+
 // ── HTML export generator (TOC + hyperlinks, matches reference .htm format) ────
 
 function generateHeatListHtml(
@@ -761,7 +820,7 @@ ${forExport ? '' : '</div>'}
 
 // ── ReportPage ─────────────────────────────────────────────────────────────────
 
-export default function ReportPage({ refreshKey = 0 }: { refreshKey?: number }) {
+export default function ReportPage({ refreshKey = 0, meetType = 'POOL' }: { refreshKey?: number; meetType?: string }) {
   const [heatSessions, setHeatSessions]   = useState<HeatListSessionRow[]>([])
   const [fullSessions, setFullSessions]   = useState<SessionRow[]>([])
   const [meetInfo, setMeetInfo]           = useState<MeetInfo>({ name: '', city: '', nation: '' })
@@ -951,13 +1010,19 @@ export default function ReportPage({ refreshKey = 0 }: { refreshKey?: number }) 
 
   async function handleGenerate() {
     const sections = buildSections()
-    if (sections.length === 0 && reportType !== 'combinedResults') return
+    if (sections.length === 0 && reportType !== 'combinedResults' && reportType !== 'beachNumbers') return
 
     let pdf: string
     let exported: string
     let hdrInfo: PdfHeaderInfo
 
-    if (reportType === 'combinedResults') {
+    if (reportType === 'beachNumbers') {
+      // Fetch beach number report data from main process
+      const rows = await dbApi()?.getBeachNumberReport() as BeachNumberReportRow[] | undefined
+      pdf = generateBeachNumbersPdfHtml(rows ?? [])
+      exported = '' // No HTML export for beachNumbers
+      hdrInfo = buildBeachNumbersPdfHeaderInfo(meetInfo)
+    } else if (reportType === 'combinedResults') {
       // Fetch combined results from main process
       const eventIds = [...selectedEventIds]
       if (eventIds.length === 0) return
@@ -1046,10 +1111,13 @@ export default function ReportPage({ refreshKey = 0 }: { refreshKey?: number }) 
           <option value="heatList">Liste des Séries</option>
           <option value="startList">Fiche de Départs</option>
           <option value="combinedResults">Résultat Combiné</option>
+          {meetType === 'BEACH' && (
+            <option value="beachNumbers">Identifiants plage</option>
+          )}
         </select>
         <button
           onClick={handleGenerate}
-          disabled={selectedEventIds.size === 0 || loading || generating}
+          disabled={(selectedEventIds.size === 0 && reportType !== 'beachNumbers') || loading || generating}
           className="px-3 py-0.5 h-6 text-xs bg-blue-600 text-white border border-blue-700 hover:bg-blue-700 disabled:opacity-40"
         >
           {generating ? 'Génération…' : 'Générer'}
@@ -1137,7 +1205,7 @@ export default function ReportPage({ refreshKey = 0 }: { refreshKey?: number }) 
             </button>
             <button
               onClick={handleSaveHtml}
-              disabled={!exportHtml || generating || reportType === 'startList' || reportType === 'combinedResults'}
+              disabled={!exportHtml || generating || reportType === 'startList' || reportType === 'combinedResults' || reportType === 'beachNumbers'}
               className="px-3 py-0.5 text-xs border border-gray-400 bg-white hover:bg-gray-100 disabled:opacity-40"
             >
               HTML

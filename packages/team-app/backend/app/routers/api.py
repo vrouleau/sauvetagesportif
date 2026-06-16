@@ -357,10 +357,8 @@ async def upload_meet(file: UploadFile = File(...), db: Session = Depends(get_db
     from ..events import _load_from_parsed
     count = _load_from_parsed(db, meet)
 
-    # Regenerate combined events XML after loading event structure
-    from ..combined_events import regenerate_combined_events
+    # Regenerate point scores after loading event structure
     from ..point_scores import regenerate_point_scores
-    regenerate_combined_events(db)
     regenerate_point_scores(db)
 
     # Track metadata
@@ -849,10 +847,8 @@ async def upload_meet_smb(file: UploadFile = File(...), db: Session = Depends(ge
     db.query(Relay).filter(Relay.meetsid.is_(None)).update({"meetsid": next_meet_id}, synchronize_session=False)
     db.flush()
 
-    # Regenerate combined events + point scores
-    from ..combined_events import regenerate_combined_events
+    # Regenerate point scores
     from ..point_scores import regenerate_point_scores
-    regenerate_combined_events(db)
     regenerate_point_scores(db)
 
     # Store the uploaded SMB for later download
@@ -939,10 +935,8 @@ def create_new_meet(data: dict = Body(default={}), db: Session = Depends(get_db)
     from ..events import _load_from_parsed
     count = _load_from_parsed(db, meet)
 
-    # Regenerate combined events XML after loading event structure
-    from ..combined_events import regenerate_combined_events
+    # Regenerate point scores after loading event structure
     from ..point_scores import regenerate_point_scores
-    regenerate_combined_events(db)
     regenerate_point_scores(db)
 
     # Store the template as the current meet file

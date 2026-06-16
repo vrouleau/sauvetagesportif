@@ -8,6 +8,7 @@ function dbApi() {
       db?: {
         getAthletes: () => Promise<Athlete[]>
         saveAthlete: (athlete: unknown) => Promise<{ ok: boolean }>
+        getMeetType: () => Promise<string>
       }
     }
   }).api?.db ?? null
@@ -21,6 +22,7 @@ export default function AthletesPage({ refreshKey = 0 }: { refreshKey?: number }
   const [editingAthlete, setEditingAthlete] = useState<Athlete | null>(null)
   const [sortKey, setSortKey] = useState<keyof Athlete>('lastName')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
+  const [isBeach, setIsBeach] = useState(false)
 
   useEffect(() => {
     setLoading(true)
@@ -30,6 +32,7 @@ export default function AthletesPage({ refreshKey = 0 }: { refreshKey?: number }
       setAthletes(rows)
       setLoading(false)
     }).catch(() => setLoading(false))
+    api.getMeetType().then((t) => setIsBeach((t || 'POOL').toUpperCase() === 'BEACH')).catch(() => {})
   }, [refreshKey])
 
   const filtered = useMemo(() => {
@@ -248,6 +251,7 @@ export default function AthletesPage({ refreshKey = 0 }: { refreshKey?: number }
         <AthleteEditDialog
           athlete={editingAthlete}
           calcAge={calcAge}
+          isBeach={isBeach}
           onSave={saveAthlete}
           onClose={() => setEditingAthlete(null)}
         />
@@ -261,11 +265,13 @@ export default function AthletesPage({ refreshKey = 0 }: { refreshKey?: number }
 function AthleteEditDialog({
   athlete,
   calcAge,
+  isBeach,
   onSave,
   onClose,
 }: {
   athlete: Athlete
   calcAge: (d: string) => number
+  isBeach: boolean
   onSave: (a: Athlete) => void
   onClose: () => void
 }) {
@@ -352,6 +358,12 @@ function AthleteEditDialog({
                 value={form.licence ?? ''}
                 onChange={(v) => set('licence', v)}
               />
+              {isBeach && form.beachNumber && (
+                <div className="flex items-center gap-2">
+                  <label className="w-28 text-gray-600 shrink-0">N° plage</label>
+                  <span className="font-mono font-bold text-lg">{form.beachNumber}</span>
+                </div>
+              )}
               <div className="mt-3">
                 <div className="text-gray-500 font-semibold mb-2 pb-1 border-b border-gray-200">
                   {t.athletes.dialog.club}

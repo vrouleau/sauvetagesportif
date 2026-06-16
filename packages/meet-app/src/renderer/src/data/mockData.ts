@@ -76,6 +76,9 @@ export interface LaneEntry {
   dsqReason?: string
   dsqItemId?: number
   handicapex?: string
+  beachNumber?: string
+  relayMembers?: Array<{ position: number; lastName: string; beachNumber?: string }>
+  relayTeamName?: string
 }
 
 export interface Heat {
@@ -121,6 +124,7 @@ export interface Athlete {
   clubName: string
   licence?: string
   birthPlace?: string
+  beachNumber?: string
   entries: Array<{ eventId: number; eventName: string; category: string; entryTime?: string }>
 }
 

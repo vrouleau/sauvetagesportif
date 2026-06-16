@@ -62,6 +62,13 @@ function loadConfig(): CombinedEventsConfig {
 }
 
 function queryEventsWithAgeGroups(db: Database.Database): EventWithAgeGroup[] {
+  // Check meet type: for beach meets, skip distance filter (distance = max participants, not meters)
+  const meetTypeRow = db.prepare(
+    `SELECT data FROM bsglobal WHERE name = 'MEET_TYPE'`
+  ).get() as { data: string } | undefined
+  const isBeach = (meetTypeRow?.data || 'POOL').toUpperCase() === 'BEACH'
+  const distanceFilter = isBeach ? '' : 'AND ss.distance >= 25'
+
   return db.prepare(`
     SELECT e.swimeventid, e.eventnumber, e.gender AS eventgender, e.internalevent,
            ag.agemin, ag.agemax, ag.gender,
@@ -70,7 +77,7 @@ function queryEventsWithAgeGroups(db: Database.Database): EventWithAgeGroup[] {
     JOIN agegroup ag ON ag.swimeventid = e.swimeventid
     JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid
     WHERE ss.relaycount = 1
-      AND ss.distance >= 25
+      ${distanceFilter}
       AND (e.internalevent IS NULL OR e.internalevent = 'F')
       AND e.eventnumber IS NOT NULL
       AND (e.preveventid IS NULL OR e.preveventid < 1)

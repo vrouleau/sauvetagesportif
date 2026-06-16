@@ -163,6 +163,8 @@ const api = {
       ipcRenderer.invoke('db:get-meet-info'),
     getCombinedResults: (selectedEventIds: number[]) =>
       ipcRenderer.invoke('db:get-combined-results', selectedEventIds),
+    getBeachNumberReport: () =>
+      ipcRenderer.invoke('db:get-beach-number-report'),
     // Finals
     getFinalEvents: () =>
       ipcRenderer.invoke('db:get-final-events'),
