@@ -31,6 +31,7 @@ import {
   getCombinedResults,
   getBeachNumberReport,
   nextId,
+  duplicateEvent,
   type SessionUpdate,
   type EventUpdate,
   type AgeGroupUpdate,
@@ -191,6 +192,10 @@ ipcMain.handle('db:create-event', (
 
 ipcMain.handle('db:delete-event', (_event, eventId: number) =>
   deleteEvent(eventId).then(() => ({ ok: true }))
+)
+
+ipcMain.handle('db:duplicate-event', (_event, sourceEventId: number, targetSessionId: number) =>
+  duplicateEvent(sourceEventId, targetSessionId).then(id => ({ id }))
 )
 
 ipcMain.handle('db:update-event', (_event, eventId: number, data: EventUpdate) =>

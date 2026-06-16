@@ -120,6 +120,7 @@ export interface MeetAPI {
   createEvent(sessionId: number, number: number, gender: string, distance: number, phase: string, styleName: string): Promise<{ id: number }>
   createBreak(sessionId: number, number: number, name: string): Promise<{ id: number }>
   deleteEvent(eventId: number): Promise<void>
+  duplicateEvent?(sourceEventId: number, targetSessionId: number): Promise<{ id: number }>
   updateEvent(eventId: number, data: Record<string, unknown>): Promise<void>
   reorderEvents(updates: Array<{ eventId: number; sessionId: number; sortcode: number }>): Promise<void>
 

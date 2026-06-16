@@ -1240,6 +1240,79 @@ export async function deleteEvent(eventId: number): Promise<void> {
   regeneratePointScores(db)
 }
 
+export async function duplicateEvent(sourceEventId: number, targetSessionId: number): Promise<number> {
+  const db = getLocalDb()
+
+  // Read the source event
+  const src = db.prepare(`SELECT * FROM swimevent WHERE swimeventid = ?`).get(sourceEventId) as Record<string, unknown> | undefined
+  if (!src) throw new Error(`Event ${sourceEventId} not found`)
+
+  // Assign new ID, number, and sortcode
+  const newId = nextId('swimevent', 'swimeventid')
+  const allNums = (db.prepare(`SELECT eventnumber FROM swimevent`).all() as Array<{ eventnumber: number }>)
+    .map(r => r.eventnumber ?? 0)
+  const newNum = Math.max(...allNums, 0) + 1
+  const sortRow = db.prepare(
+    `SELECT MAX(sortcode) AS maxsort FROM swimevent WHERE swimsessionid=?`
+  ).get(targetSessionId) as { maxsort: number | null }
+  const sortcode = (sortRow.maxsort ?? 0) + 1
+
+  // Insert the duplicated event
+  db.prepare(
+    `INSERT INTO swimevent
+       (swimeventid, swimsessionid, eventnumber, gender, round, swimstyleid, sortcode,
+        internalevent, splashmecanedit, masters, pfineignore, seedbonuslast,
+        seedexhlast, seedlateentrylast, seedingglobal, twoperlane, combineagegroups,
+        comment, daytime, duration, entrytimeconversion, entrytimepercent,
+        externalid, fee, finalorder, lanemax, maxentries, singleheats, sponsor)
+     VALUES (?, ?, ?, ?, ?, ?, ?,
+             ?, ?, ?, ?, ?,
+             ?, ?, ?, ?, ?,
+             ?, ?, ?, ?, ?,
+             ?, ?, ?, ?, ?, ?)`
+  ).run(
+    newId, targetSessionId, newNum, src.gender, src.round, src.swimstyleid, sortcode,
+    src.internalevent ?? 'F', src.splashmecanedit ?? 'F', src.masters ?? 'F',
+    src.pfineignore ?? 'F', src.seedbonuslast ?? 'F',
+    src.seedexhlast ?? 'F', src.seedlateentrylast ?? 'F', src.seedingglobal ?? 'F',
+    src.twoperlane ?? 'F', src.combineagegroups ?? 'F',
+    src.comment, src.daytime, src.duration, src.entrytimeconversion, src.entrytimepercent,
+    src.externalid, src.fee, src.finalorder, src.lanemax, src.maxentries, src.singleheats, src.sponsor,
+  )
+
+  // Duplicate age groups
+  const ageGroups = db.prepare(`SELECT * FROM agegroup WHERE swimeventid = ? ORDER BY sortcode`).all(sourceEventId) as Array<Record<string, unknown>>
+  for (const ag of ageGroups) {
+    const newAgId = nextId('agegroup', 'agegroupid')
+    db.prepare(
+      `INSERT INTO agegroup
+         (agegroupid, swimeventid, name, code, agemin, agemax, agemin2, agemax2,
+          agebytotal, gender, heatcount, fastheatcount, resultcount, sortcode,
+          externalid, useformedals, useforscoring, allofficial, forceprelim,
+          seedwithtsonly, athletestatuses, clubids, handicaps, heatqualipriority,
+          levelmax, levelmin, nationality, nationregions, scoretype, swimlevels,
+          winnertitle, foreigncount, finalseedtype)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?,
+               ?, ?, ?, ?, ?, ?,
+               ?, ?, ?, ?, ?,
+               ?, ?, ?, ?, ?,
+               ?, ?, ?, ?, ?, ?,
+               ?, ?, ?)`
+    ).run(
+      newAgId, newId, ag.name, ag.code, ag.agemin, ag.agemax, ag.agemin2, ag.agemax2,
+      ag.agebytotal ?? 'F', ag.gender, ag.heatcount, ag.fastheatcount, ag.resultcount, ag.sortcode,
+      ag.externalid, ag.useformedals ?? 'T', ag.useforscoring ?? 'T', ag.allofficial ?? 'T',
+      ag.forceprelim ?? 'F', ag.seedwithtsonly ?? 'F', ag.athletestatuses, ag.clubids,
+      ag.handicaps, ag.heatqualipriority, ag.levelmax, ag.levelmin, ag.nationality,
+      ag.nationregions, ag.scoretype, ag.swimlevels, ag.winnertitle, ag.foreigncount, ag.finalseedtype,
+    )
+  }
+
+  regenerateCombinedEvents(db)
+  regeneratePointScores(db)
+  return newId
+}
+
 export async function createAgeGroup(
   eventId: number,
   name: string,

@@ -34,6 +34,9 @@ export const meetApiElectron: MeetAPI = {
   async deleteEvent(eventId) {
     await ipc()?.deleteEvent(eventId)
   },
+  async duplicateEvent(sourceEventId, targetSessionId) {
+    return (await ipc()?.duplicateEvent(sourceEventId, targetSessionId)) as { id: number }
+  },
   async updateEvent(eventId, data) {
     await ipc()?.updateEvent(eventId, data)
   },

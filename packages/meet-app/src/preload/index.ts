@@ -86,6 +86,8 @@ const api = {
       ipcRenderer.invoke('db:create-break', sessionId, number, name),
     deleteEvent: (eventId: number) =>
       ipcRenderer.invoke('db:delete-event', eventId),
+    duplicateEvent: (sourceEventId: number, targetSessionId: number) =>
+      ipcRenderer.invoke('db:duplicate-event', sourceEventId, targetSessionId),
     updateEvent: (eventId: number, data: unknown) =>
       ipcRenderer.invoke('db:update-event', eventId, data),
     createAgeGroup: (

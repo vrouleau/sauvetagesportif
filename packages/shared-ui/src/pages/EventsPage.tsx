@@ -433,17 +433,31 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
         ? selected.session
         : null
     if (!targetSession) return
-    const allNums = localSessions.flatMap((s) => s.events.map((e) => e.number))
-    const newNum = Math.max(...allNums, 0) + 1
+
     let realId: number
-    try {
-      // Pass distance=0 and styleName='' to signal "pick for me" to the backend
-      const result = await api.createEvent(targetSession.id, newNum, 'X', 0, phase, '')
-      realId = result.id
-    } catch {
-      window.alert("Erreur lors de la création de l'épreuve")
-      return
+
+    // If an event is selected, duplicate it (including age groups)
+    if (selected.type === 'event' && api.duplicateEvent) {
+      try {
+        const result = await api.duplicateEvent(selected.event.id, targetSession.id)
+        realId = result.id
+      } catch {
+        window.alert("Erreur lors de la duplication de l'épreuve")
+        return
+      }
+    } else {
+      // No event selected (session selected) — create a blank event
+      const allNums = localSessions.flatMap((s) => s.events.map((e) => e.number))
+      const newNum = Math.max(...allNums, 0) + 1
+      try {
+        const result = await api.createEvent(targetSession.id, newNum, 'X', 0, phase, '')
+        realId = result.id
+      } catch {
+        window.alert("Erreur lors de la création de l'épreuve")
+        return
+      }
     }
+
     // Reload sessions to get the full event data (name from swimstyle)
     const updatedSessions = await api.getSessions()
     setLocalSessions(updatedSessions)
