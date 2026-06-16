@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.22] - 2026-06-16
+
+### ✨ Features
+
+- duplicate event with age groups on Add Event when event selected (`1913080`)
+- wire up dsqitem seeding, language-aware names, options filtering, and remove dummy panel (`906f76f`)
+- add beach athlete number generation and display (`6520363`)
+
+### 🐛 Bug Fixes
+
+- duplicateEvent INSERT placeholder count (28→29) (`541789f`)
+- clear MEETVALUES DEADLINE on meet re-import (`bd82e62`)
+
 ## [0.3.21] - 2026-06-15
 
 ### 🐛 Bug Fixes
