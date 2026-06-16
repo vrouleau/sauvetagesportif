@@ -1269,7 +1269,7 @@ export async function duplicateEvent(sourceEventId: number, targetSessionId: num
              ?, ?, ?, ?, ?,
              ?, ?, ?, ?, ?,
              ?, ?, ?, ?, ?,
-             ?, ?, ?, ?, ?, ?)`
+             ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     newId, targetSessionId, newNum, src.gender, src.round, src.swimstyleid, sortcode,
     src.internalevent ?? 'F', src.splashmecanedit ?? 'F', src.masters ?? 'F',
