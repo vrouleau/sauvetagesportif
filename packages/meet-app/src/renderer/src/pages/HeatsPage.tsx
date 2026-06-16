@@ -21,15 +21,21 @@ const dbApi = () => (window as any).api?.db
 
 // ── DSQ Searchable Dropdown ───────────────────────────────────────────────────
 
-function DsqSearchDropdown({ items, value, onChange, disabled }: {
-  items: Array<{ dsqitemid: number; code: string; name: string; name_en: string }>
+function DsqSearchDropdown({ items, value, onChange, disabled, eventType }: {
+  items: Array<{ dsqitemid: number; code: string; name: string; options?: string }>
   value: number | null
   onChange: (id: number | null) => void
   disabled: boolean
+  eventType?: 'INDIVIDUAL' | 'RELAY'
 }) {
   if (disabled || !items || items.length === 0) {
     return <select className="flex-1 border border-gray-300 px-1 py-0.5 bg-gray-100 text-xs rounded h-6" disabled />
   }
+
+  // Filter items by event type (INDIVIDUAL or RELAY) based on the options field
+  const filteredItems = eventType
+    ? items.filter(d => !d.options || d.options.includes(eventType))
+    : items
 
   return (
     <select
@@ -38,7 +44,7 @@ function DsqSearchDropdown({ items, value, onChange, disabled }: {
       onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
     >
       <option value="">— Sélectionner un code DQ —</option>
-      {items.map(d => (
+      {filteredItems.map(d => (
         <option key={d.dsqitemid} value={d.dsqitemid}>
           {d.code} — {d.name.length > 80 ? d.name.slice(0, 80) + '…' : d.name}
         </option>
@@ -67,7 +73,7 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
   const [selectedLane, setSelectedLane] = useState<number | null>(null)
   const [dsqCode, setDsqCode] = useState('')
   const [dsqReason, setDsqReason] = useState('')
-  const [dsqItems, setDsqItems] = useState<Array<{ dsqitemid: number; code: string; name: string; name_en: string }>>([])
+  const [dsqItems, setDsqItems] = useState<Array<{ dsqitemid: number; code: string; name: string; options?: string }>>([])
   const [dsqOverrideId, setDsqOverrideId] = useState<number | null>(null)
   const [dsqOverrideLane, setDsqOverrideLane] = useState<number | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -1477,6 +1483,7 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
                         setDsqReason(item?.name || '')
                       }}
                       disabled={selectedEntry?.status !== 'DSQ'}
+                      eventType={(selectedEvent?.relaycount ?? 1) > 1 ? 'RELAY' : 'INDIVIDUAL'}
                     />
                   </div>
                   {(() => {
@@ -1487,18 +1494,6 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
                       </div>
                     ) : null
                   })()}
-                </div>
-              </div>
-
-              {/* Right: extra timing info */}
-              <div className="border-l border-gray-300 p-2 w-44 text-xs text-gray-500">
-                <div className="mb-1">{t.heats.extra.dsqNumber}</div>
-                <div className="mb-1">{t.heats.extra.manualPoints}</div>
-                <div>
-                  {t.heats.extra.lapping}
-                  <div className="ml-2">1: <span className="font-mono">—</span></div>
-                  <div className="ml-2">2: <span className="font-mono">—</span></div>
-                  <div className="ml-2">3: <span className="font-mono">—</span></div>
                 </div>
               </div>
             </div>

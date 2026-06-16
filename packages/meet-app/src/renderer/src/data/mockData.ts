@@ -100,6 +100,7 @@ export interface HeatListEvent {
   timingConnected?: boolean
   scheduledTime?: string
   isAdmin?: boolean
+  relaycount?: number
   heats: Heat[]
 }
 

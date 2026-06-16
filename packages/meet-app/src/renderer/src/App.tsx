@@ -42,12 +42,12 @@ function fileApi() {
     api?: {
       file?: {
         openLxfDialog: () => Promise<string | null>
-        importLenex: (path: string) => Promise<{ ok: boolean; summary?: ImportSummary; error?: string }>
+        importLenex: (path: string, lang?: string) => Promise<{ ok: boolean; summary?: ImportSummary; error?: string }>
         exportMeetLenex: () => Promise<{ ok: boolean; canceled?: boolean; summary?: MeetExportSummary; error?: string }>
         exportLenexResults: () => Promise<{ ok: boolean; canceled?: boolean; summary?: ExportSummary; error?: string }>
         saveSMB: () => Promise<{ ok: boolean; canceled?: boolean; tables?: number; rows?: number; error?: string }>
         restoreSMB: () => Promise<{ ok: boolean; canceled?: boolean; tables?: number; rows?: number; error?: string }>
-        newMeet: (meetType?: string) => Promise<{ ok: boolean; summary?: ImportSummary; meetType?: string; error?: string }>
+        newMeet: (meetType?: string, lang?: string) => Promise<{ ok: boolean; summary?: ImportSummary; meetType?: string; error?: string }>
       }
     }
   }).api?.file ?? null
@@ -245,6 +245,11 @@ function AppInner() {
   const pgStatus = usePgStatus()
   const [livePushStatus, setLivePushStatus] = useState<{ status: string; queueSize: number }>({ status: 'disconnected', queueSize: 0 })
 
+  // Sync lang to document element so non-React code (meetApiElectron) can read it
+  useEffect(() => {
+    document.documentElement.lang = lang
+  }, [lang])
+
   // Load meet type and name on mount and after refresh
   useEffect(() => {
     dbApi()?.getMeetType().then((t) => setMeetType(t || 'POOL'))
@@ -313,7 +318,7 @@ function AppInner() {
     const path = await f.openLxfDialog()
     if (!path) return
     setImportState({ status: 'running' })
-    const result = await f.importLenex(path)
+    const result = await f.importLenex(path, lang)
     if (result.ok && result.summary) {
       setImportState({ status: 'done', summary: result.summary })
     } else {

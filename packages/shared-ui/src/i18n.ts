@@ -230,11 +230,6 @@ const fr = {
     generateHeats: 'Générer les séries',
     generateHeatsConfirm: 'Ceci supprimera toutes les séries existantes et les régénérera. Continuer?',
     generateHeatsSuccess: (heats: number, entries: number) => `${heats} série${heats !== 1 ? 's' : ''} créée${heats !== 1 ? 's' : ''}, ${entries} inscription${entries !== 1 ? 's' : ''} assignée${entries !== 1 ? 's' : ''}`,
-    extra: {
-      dsqNumber: 'Numéro disq. [N]:',
-      manualPoints: 'Points manuels:',
-      lapping: 'Tps doublage',
-    },
   },
   athletes: {
     search: 'Rechercher:',
@@ -559,11 +554,6 @@ const en = {
     generateHeats: 'Generate Heats',
     generateHeatsConfirm: 'This will delete all existing heats and regenerate them. Continue?',
     generateHeatsSuccess: (heats: number, entries: number) => `${heats} heat${heats !== 1 ? 's' : ''} created, ${entries} entr${entries !== 1 ? 'ies' : 'y'} assigned`,
-    extra: {
-      dsqNumber: 'DSQ number [N]:',
-      manualPoints: 'Manual points:',
-      lapping: 'Lapping time',
-    },
   },
   athletes: {
     search: 'Search:',

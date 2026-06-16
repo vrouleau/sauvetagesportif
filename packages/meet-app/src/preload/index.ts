@@ -246,8 +246,8 @@ const api = {
   file: {
     openLxfDialog: () =>
       ipcRenderer.invoke('file:open-lenex-dialog'),
-    importLenex: (path: string) =>
-      ipcRenderer.invoke('file:import-lenex', path),
+    importLenex: (path: string, lang?: string) =>
+      ipcRenderer.invoke('file:import-lenex', path, lang),
     exportMeetLenex: () =>
       ipcRenderer.invoke('file:export-meet-lenex'),
     exportLenexResults: () =>
@@ -256,8 +256,8 @@ const api = {
       ipcRenderer.invoke('file:save-smb'),
     restoreSMB: () =>
       ipcRenderer.invoke('file:restore-smb'),
-    newMeet: (meetType?: string) =>
-      ipcRenderer.invoke('file:new-meet', meetType),
+    newMeet: (meetType?: string, lang?: string) =>
+      ipcRenderer.invoke('file:new-meet', meetType, lang),
   },
   live: {
     getStatus: () =>

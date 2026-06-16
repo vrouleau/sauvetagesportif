@@ -69,11 +69,12 @@ export const meetApiElectron: MeetAPI = {
     return result ?? { heatsCreated: 0, entriesAssigned: 0 }
   },
   async importMeet() {
-    const fileApi = (window as unknown as { api?: { file?: { openLxfDialog: () => Promise<string | null>; importLenex: (path: string) => Promise<{ ok: boolean; summary?: { events: number }; error?: string }> } } }).api?.file
+    const fileApi = (window as unknown as { api?: { file?: { openLxfDialog: () => Promise<string | null>; importLenex: (path: string, lang?: string) => Promise<{ ok: boolean; summary?: { events: number }; error?: string }> } } }).api?.file
     if (!fileApi) return { ok: false, error: 'File API not available' }
     const path = await fileApi.openLxfDialog()
     if (!path) return { ok: false }
-    const result = await fileApi.importLenex(path)
+    const lang = document.documentElement.lang || 'fr'
+    const result = await fileApi.importLenex(path, lang)
     if (result.ok) return { ok: true, events: result.summary?.events }
     return { ok: false, error: result.error }
   },
@@ -86,9 +87,10 @@ export const meetApiElectron: MeetAPI = {
     return { ok: false, error: result.error }
   },
   async createMeet(meetType) {
-    const fileApi = (window as unknown as { api?: { file?: { newMeet: (type: string) => Promise<{ ok: boolean; meetType?: string; error?: string }> } } }).api?.file
+    const fileApi = (window as unknown as { api?: { file?: { newMeet: (type: string, lang?: string) => Promise<{ ok: boolean; meetType?: string; error?: string }> } } }).api?.file
     if (!fileApi) return { ok: false, error: 'File API not available' }
-    const result = await fileApi.newMeet(meetType)
+    const lang = document.documentElement.lang || 'fr'
+    const result = await fileApi.newMeet(meetType, lang)
     return { ok: result.ok, meetType: result.meetType, error: result.error }
   },
 }

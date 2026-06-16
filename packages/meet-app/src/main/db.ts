@@ -301,6 +301,7 @@ export interface HeatListEventRow {
   phase: 'Finale' | 'Eliminatoire' | 'Finale directe'
   isAdmin?: boolean
   scheduledTime?: string
+  relaycount?: number
   heats: HeatRow[]
 }
 
@@ -633,6 +634,7 @@ export async function getHeatListSessions(): Promise<HeatListSessionRow[]> {
       phase: decodePhase(e.round),
       isAdmin: isAdm,
       scheduledTime: formatDaytime(e.daytime),
+      relaycount: e.relaycount ?? 1,
       heats: heatMap.get(e.swimeventid) ?? [],
     })
   }

@@ -59,11 +59,21 @@ let quantum: QuantumBridge | null = null
 
 // ── DSQ code seeding ──────────────────────────────────────────────────────────
 
-function seedDsqCodes(db: ReturnType<typeof getLocalDb>, meetType: string): void {
+function getDsqConfigPath(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, 'dsq-codes.json')
+    : join(__dirname, '../../../../config/dsq-codes.json')
+}
+
+/**
+ * Seed dsqitem table from config/dsq-codes.json.
+ * @param db - database handle (SQLite or PG-like)
+ * @param meetType - 'pool' or 'beach'
+ * @param lang - app language ('fr' or 'en'); determines which translation goes into the `name` column
+ */
+function seedDsqCodes(db: ReturnType<typeof getLocalDb>, meetType: string, lang: string = 'fr'): void {
   try {
-    const configPath = app.isPackaged
-      ? join(process.resourcesPath, 'dsq-codes.json')
-      : join(__dirname, '../../../../config/dsq-codes.json')
+    const configPath = getDsqConfigPath()
 
     const { readFileSync, existsSync } = require('fs')
     if (!existsSync(configPath)) {
@@ -72,7 +82,7 @@ function seedDsqCodes(db: ReturnType<typeof getLocalDb>, meetType: string): void
     }
 
     const config = JSON.parse(readFileSync(configPath, 'utf8'))
-    const codes: Array<{ code: string; name_fr: string; name_en?: string }> =
+    const codes: Array<{ code: string; name_fr: string; name_en?: string; options?: string }> =
       meetType === 'beach' ? (config.beach || []) : (config.pool || [])
 
     if (codes.length === 0) return
@@ -81,16 +91,18 @@ function seedDsqCodes(db: ReturnType<typeof getLocalDb>, meetType: string): void
     const baseId = meetType === 'beach' ? 4101 : 4001
 
     const stmt = db.prepare(
-      `INSERT OR REPLACE INTO dsqitem (dsqitemid, code, lenexcode, name, name_en, sortcode)
+      `INSERT OR REPLACE INTO dsqitem (dsqitemid, code, lenexcode, name, options, sortcode)
        VALUES (?, ?, ?, ?, ?, ?)`
     )
 
     for (let i = 0; i < codes.length; i++) {
       const c = codes[i]
-      stmt.run(baseId + i, c.code, c.code, c.name_fr, c.name_en || '', i + 1)
+      // Use the language-appropriate name based on the current app toggle
+      const name = (lang === 'en' && c.name_en) ? c.name_en : c.name_fr
+      stmt.run(baseId + i, c.code, c.code, name, c.options || 'INDIVIDUAL,RELAY', i + 1)
     }
 
-    console.log(`[DSQ] Seeded ${codes.length} ${meetType} DSQ codes`)
+    console.log(`[DSQ] Seeded ${codes.length} ${meetType} DSQ codes (lang=${lang})`)
   } catch (e) {
     console.error('[DSQ] Error seeding codes:', e)
   }
@@ -235,12 +247,7 @@ ipcMain.handle('db:get-meet-type', () => {
 ipcMain.handle('db:get-dsq-items', () => {
   const db = getLocalDb()
   try {
-    // Try with name_en first (our schema), fall back without it (Splash schema)
-    try {
-      return db.prepare(`SELECT dsqitemid, code, name, name_en, sortcode FROM dsqitem WHERE code IS NOT NULL AND code != '' ORDER BY sortcode`).all()
-    } catch {
-      return db.prepare(`SELECT dsqitemid, code, name, '' as name_en, sortcode FROM dsqitem WHERE code IS NOT NULL AND code != '' ORDER BY sortcode`).all()
-    }
+    return db.prepare(`SELECT dsqitemid, code, name, options, sortcode FROM dsqitem WHERE code IS NOT NULL AND code != '' ORDER BY sortcode`).all()
   } catch {
     return []
   }
@@ -1136,10 +1143,20 @@ ipcMain.handle('file:open-lenex-dialog', async (event) => {
   return result.canceled ? null : result.filePaths[0]
 })
 
-ipcMain.handle('file:import-lenex', async (_event, filePath: string) => {
+ipcMain.handle('file:import-lenex', async (_event, filePath: string, lang?: string) => {
   try {
-    const summary = importLenex(filePath, getLocalDb())
-    livePush.reload(getLocalDb())
+    const db = getLocalDb()
+    const summary = importLenex(filePath, db)
+
+    // Seed DSQ codes if the dsqitem table is empty after import
+    const dsqCount = db.prepare(`SELECT COUNT(*) AS c FROM dsqitem`).get() as { c: number }
+    if (dsqCount.c === 0) {
+      const meetTypeRow = db.prepare(`SELECT data FROM bsglobal WHERE name = 'MEET_TYPE'`).get() as { data: string } | undefined
+      const meetType = (meetTypeRow?.data || 'pool').toLowerCase()
+      seedDsqCodes(db, meetType, lang || 'fr')
+    }
+
+    livePush.reload(db)
     return { ok: true, summary }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
@@ -1232,7 +1249,7 @@ ipcMain.handle('file:restore-smb', async (event) => {
   }
 })
 
-ipcMain.handle('file:new-meet', async (_event, meetType?: string) => {
+ipcMain.handle('file:new-meet', async (_event, meetType?: string, lang?: string) => {
   try {
     const type = (meetType || 'pool').toLowerCase()
     const db = getLocalDb()
@@ -1264,7 +1281,7 @@ ipcMain.handle('file:new-meet', async (_event, meetType?: string) => {
     ).run(type.toUpperCase())
 
     // Seed DSQ codes from config/dsq-codes.json
-    seedDsqCodes(db, type)
+    seedDsqCodes(db, type, lang || 'fr')
 
     return { ok: true, summary, meetType: type.toUpperCase() }
   } catch (e) {
