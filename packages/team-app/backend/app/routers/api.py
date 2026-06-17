@@ -3129,7 +3129,9 @@ def list_backups():
     if not BACKUP_DIR.exists():
         return []
     backups = []
-    for f in sorted(BACKUP_DIR.glob("*.sql"), key=lambda p: p.stat().st_mtime, reverse=True):
+    # Include both .sql (pg_dump) and .db (SQLite copy) backup files
+    backup_files = list(BACKUP_DIR.glob("*.sql")) + list(BACKUP_DIR.glob("*.db"))
+    for f in sorted(backup_files, key=lambda p: p.stat().st_mtime, reverse=True):
         stat = f.stat()
         backups.append({
             "filename": f.name,
@@ -3143,9 +3145,11 @@ def list_backups():
 @router.post("/admin/backups/create", dependencies=[Depends(require_admin)])
 def create_backup_now():
     """Create a manual backup and store it."""
+    from ..database import is_sqlite
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y-%m-%d-%H%M%S")
-    filename = f"manual-{timestamp}.sql"
+    ext = "db" if is_sqlite() else "sql"
+    filename = f"manual-{timestamp}.{ext}"
     sql = _run_pg_dump_bytes()
     (BACKUP_DIR / filename).write_bytes(sql)
     return {"filename": filename, "size_bytes": len(sql)}

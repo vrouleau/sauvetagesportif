@@ -84,7 +84,7 @@ app.include_router(serc_print_router)
 
 
 @app.on_event("startup")
-def startup():
+async def startup():
     # Refuse to start with the default insecure SECRET_KEY
     if os.environ.get("SECRET_KEY", "change-me-to-a-random-string") == "change-me-to-a-random-string":
         raise RuntimeError("SECRET_KEY must be changed from the default value")
@@ -119,7 +119,7 @@ def startup():
 
     # Start auto-backup scheduler
     import asyncio
-    asyncio.ensure_future(_auto_backup_loop())
+    asyncio.create_task(_auto_backup_loop())
 
 
 async def _auto_backup_loop():
@@ -127,6 +127,7 @@ async def _auto_backup_loop():
     import asyncio
     import shutil
     import subprocess
+    import traceback
     from urllib.parse import urlparse
     from .models import BsGlobal
     from .database import is_sqlite, DATABASE_URL
@@ -134,6 +135,7 @@ async def _auto_backup_loop():
     BACKUP_DIR = Path(os.environ.get("DATA_DIR", "/app/data")) / "backups"
 
     # Wait 60s before first check (let app fully start)
+    print("Auto-backup scheduler started, waiting 60s before first check...")
     await asyncio.sleep(60)
 
     while True:
@@ -160,6 +162,11 @@ async def _auto_backup_loop():
                 last_time = datetime.fromtimestamp(existing[-1].stat().st_mtime)
                 if datetime.now() - last_time < timedelta(days=interval_days):
                     needs_backup = False
+                    print(f"Auto-backup: not needed yet (last: {existing[-1].name}, interval: {interval_days}d)")
+                else:
+                    print(f"Auto-backup: backup needed (last: {existing[-1].name} is older than {interval_days}d)")
+            else:
+                print("Auto-backup: no existing backups found, creating first one...")
 
             if needs_backup:
                 from datetime import datetime
@@ -173,6 +180,8 @@ async def _auto_backup_loop():
                         shutil.copy2(db_path, BACKUP_DIR / filename)
                         size = (BACKUP_DIR / filename).stat().st_size
                         print(f"Auto-backup created: {filename} ({size} bytes)")
+                    else:
+                        print(f"Auto-backup ERROR: SQLite DB not found at {db_path}")
                 else:
                     # PostgreSQL: pg_dump
                     db_url = os.environ.get("DATABASE_URL", "")
@@ -203,6 +212,7 @@ async def _auto_backup_loop():
 
         except Exception as e:
             print(f"Auto-backup error: {e}")
+            traceback.print_exc()
 
-        # Check every hour (the actual backup decision is based on file timestamps)
-        await asyncio.sleep(3600)
+        # Check every 6 hours (the actual backup decision is based on file timestamps)
+        await asyncio.sleep(6 * 3600)

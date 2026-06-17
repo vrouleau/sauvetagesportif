@@ -4,7 +4,8 @@ import { writeFileSync, unlinkSync } from 'fs'
 import { tmpdir } from 'os'
 
 // Set app name early so userData path is consistent in dev and production
-app.setName('SauvetageMeet')
+// Use a separate name in dev to isolate appdata from the installed app
+app.setName(app.isPackaged ? 'SauvetageMeet' : 'SauvetageMeet-Dev')
 
 import { QuantumBridge, type ActiveHeat, type ScheduleEvent } from './quantum'
 import {
