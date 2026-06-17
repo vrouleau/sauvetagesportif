@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.3.25] - 2026-06-17
+
+### ✨ Features
+
+- searchable DSQ dropdown, draggable splitters, remove splits panel (`3373ebe`)
+- require YAML input and add ALL option to DSQ items (`670964c`)
+
+### 🐛 Bug Fixes
+
+- auto-assign beach numbers when generating heats (`86a9041`)
+
+### Other
+
+- Add generate_dsq_xml.py script for Splash DSQ import (`ad94e53`)
+
 ## [0.3.24] - 2026-06-17
 
 ### 🐛 Bug Fixes
