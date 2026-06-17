@@ -104,7 +104,7 @@ function seedDsqCodes(db: ReturnType<typeof getLocalDb>, meetType: string, lang:
       stmt.run(baseId + i, c.code, c.code, name, c.options || 'INDIVIDUAL,RELAY', i + 1)
     }
 
-    console.log(`[DSQ] Seeded ${codes.length} ${meetType} DSQ codes (lang=${lang})`)
+
   } catch (e) {
     console.error('[DSQ] Error seeding codes:', e)
   }

@@ -28,28 +28,147 @@ function DsqSearchDropdown({ items, value, onChange, disabled, eventType }: {
   disabled: boolean
   eventType?: 'INDIVIDUAL' | 'RELAY'
 }) {
-  if (disabled || !items || items.length === 0) {
-    return <select className="flex-1 border border-gray-300 px-1 py-0.5 bg-gray-100 text-xs rounded h-6" disabled />
-  }
+  const [search, setSearch] = useState('')
+  const [isOpen, setIsOpen] = useState(false)
+  const [highlightIndex, setHighlightIndex] = useState(0)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const dsqInputRef = useRef<HTMLInputElement>(null)
+  const listRef = useRef<HTMLUListElement>(null)
+
+  const isDisabled = disabled || !items || items.length === 0
 
   // Filter items by event type (INDIVIDUAL or RELAY) based on the options field
-  const filteredItems = eventType
+  const typeFiltered = !isDisabled && eventType
     ? items.filter(d => !d.options || d.options.includes(eventType))
-    : items
+    : (items || [])
+
+  // Further filter by keyboard search
+  const filteredItems = search.trim()
+    ? typeFiltered.filter(d => {
+        const q = search.toLowerCase()
+        return d.code.toLowerCase().includes(q) || d.name.toLowerCase().includes(q)
+      })
+    : typeFiltered
+
+  const selectedItem = items?.find(d => d.dsqitemid === value)
+  const displayValue = selectedItem ? `${selectedItem.code} — ${selectedItem.name}` : ''
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    if (isDisabled) return
+    function handleClickOutside(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setIsOpen(false)
+        setSearch('')
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [isDisabled])
+
+  // Scroll highlighted item into view
+  useEffect(() => {
+    if (isOpen && listRef.current) {
+      const el = listRef.current.children[highlightIndex] as HTMLElement | undefined
+      el?.scrollIntoView({ block: 'nearest' })
+    }
+  }, [highlightIndex, isOpen])
+
+  if (isDisabled) {
+    return <input className="flex-1 border border-gray-300 px-1 py-0.5 bg-gray-100 text-xs rounded h-6" disabled />
+  }
+
+  function handleSelect(id: number | null) {
+    onChange(id)
+    setIsOpen(false)
+    setSearch('')
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent) {
+    if (!isOpen) {
+      if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault()
+        setIsOpen(true)
+        setHighlightIndex(0)
+      }
+      return
+    }
+
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault()
+        setHighlightIndex(i => Math.min(i + 1, filteredItems.length - 1))
+        break
+      case 'ArrowUp':
+        e.preventDefault()
+        setHighlightIndex(i => Math.max(i - 1, 0))
+        break
+      case 'Enter':
+        e.preventDefault()
+        if (filteredItems[highlightIndex]) {
+          handleSelect(filteredItems[highlightIndex].dsqitemid)
+        }
+        break
+      case 'Escape':
+        e.preventDefault()
+        setIsOpen(false)
+        setSearch('')
+        break
+    }
+  }
 
   return (
-    <select
-      className="flex-1 border border-gray-300 px-1 py-0.5 bg-white text-xs rounded h-6"
-      value={value ?? ''}
-      onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
-    >
-      <option value="">— Sélectionner un code DQ —</option>
-      {filteredItems.map(d => (
-        <option key={d.dsqitemid} value={d.dsqitemid}>
-          {d.code} — {d.name.length > 80 ? d.name.slice(0, 80) + '…' : d.name}
-        </option>
-      ))}
-    </select>
+    <div ref={containerRef} className="flex-1 relative">
+      <input
+        ref={dsqInputRef}
+        type="text"
+        className="w-full border border-gray-300 px-1 py-0.5 bg-white text-xs rounded h-6"
+        placeholder={displayValue || '— Sélectionner un code DQ —'}
+        value={isOpen ? search : displayValue}
+        onFocus={() => { setIsOpen(true); setSearch(''); setHighlightIndex(0) }}
+        onChange={(e) => { setSearch(e.target.value); setHighlightIndex(0) }}
+        onKeyDown={handleKeyDown}
+        aria-expanded={isOpen}
+        aria-haspopup="listbox"
+        aria-autocomplete="list"
+        role="combobox"
+      />
+      {value && !isOpen && (
+        <button
+          className="absolute right-1 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs leading-none"
+          onClick={(e) => { e.stopPropagation(); handleSelect(null) }}
+          aria-label="Clear selection"
+        >
+          ✕
+        </button>
+      )}
+      {isOpen && (
+        <ul
+          ref={listRef}
+          role="listbox"
+          className="absolute z-50 left-0 right-0 top-full mt-0.5 max-h-48 overflow-y-auto bg-white border border-gray-300 rounded shadow-lg text-xs"
+        >
+          {filteredItems.length === 0 ? (
+            <li className="px-2 py-1 text-gray-400 italic">Aucun résultat</li>
+          ) : (
+            filteredItems.map((d, i) => (
+              <li
+                key={d.dsqitemid}
+                role="option"
+                aria-selected={d.dsqitemid === value}
+                className={`px-2 py-1 cursor-pointer truncate ${
+                  i === highlightIndex ? 'bg-blue-100 text-blue-900' : ''
+                } ${d.dsqitemid === value ? 'font-semibold' : ''}`}
+                onMouseEnter={() => setHighlightIndex(i)}
+                onClick={() => handleSelect(d.dsqitemid)}
+              >
+                {d.code} — {d.name.length > 80 ? d.name.slice(0, 80) + '…' : d.name}
+              </li>
+            ))
+          )}
+        </ul>
+      )}
+    </div>
   )
 }
 
@@ -97,6 +216,59 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
   const [dragSource, setDragSource] = useState<{ heatId: number; lane: number; entry: LaneEntry } | null>(null)
   const [dragOverLane, setDragOverLane] = useState<number | null>(null)
   const dragHoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Resizable splitter state
+  const [topPanelHeight, setTopPanelHeight] = useState<number | null>(null) // px, null = use default 38%
+  const [bottomPanelHeight, setBottomPanelHeight] = useState<number | null>(null) // px, null = use default 80px
+  const mainContainerRef = useRef<HTMLDivElement>(null)
+  const heatSectionRef = useRef<HTMLDivElement>(null)
+  const splitterDrag = useRef<{ type: 'top' | 'bottom'; startY: number; startSize: number } | null>(null)
+
+  useEffect(() => {
+    function onMouseMove(e: MouseEvent) {
+      if (!splitterDrag.current) return
+      const delta = e.clientY - splitterDrag.current.startY
+      if (splitterDrag.current.type === 'top') {
+        const newHeight = Math.max(80, splitterDrag.current.startSize + delta)
+        setTopPanelHeight(newHeight)
+      } else {
+        // bottom splitter: dragging up increases bottom panel height
+        const newHeight = Math.max(60, splitterDrag.current.startSize - delta)
+        setBottomPanelHeight(newHeight)
+      }
+    }
+    function onMouseUp() {
+      if (splitterDrag.current) {
+        splitterDrag.current = null
+        document.body.style.cursor = ''
+        document.body.style.userSelect = ''
+      }
+    }
+    document.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseup', onMouseUp)
+    return () => {
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
+    }
+  }, [])
+
+  function startTopSplitterDrag(e: React.MouseEvent) {
+    e.preventDefault()
+    const el = mainContainerRef.current?.querySelector('[data-panel="top"]') as HTMLElement | null
+    if (!el) return
+    splitterDrag.current = { type: 'top', startY: e.clientY, startSize: el.getBoundingClientRect().height }
+    document.body.style.cursor = 'row-resize'
+    document.body.style.userSelect = 'none'
+  }
+
+  function startBottomSplitterDrag(e: React.MouseEvent) {
+    e.preventDefault()
+    const el = mainContainerRef.current?.querySelector('[data-panel="bottom"]') as HTMLElement | null
+    if (!el) return
+    splitterDrag.current = { type: 'bottom', startY: e.clientY, startSize: el.getBoundingClientRect().height }
+    document.body.style.cursor = 'row-resize'
+    document.body.style.userSelect = 'none'
+  }
 
   // Derived flat list of all events (for Quantum schedule)
   const heatListEvents: HeatListEvent[] = sessions.flatMap(s => s.events)
@@ -929,7 +1101,7 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex flex-col h-full text-xs">
+    <div ref={mainContainerRef} className="flex flex-col h-full text-xs">
       {/* ── Top toolbar ── */}
       <div className="flex items-center h-8 bg-gray-100 border-b border-gray-300 px-2 gap-3 shrink-0">
         <label className="flex items-center gap-1 text-gray-600">
@@ -1081,7 +1253,7 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
       </div>
 
       {/* ── Session + Event + heat list (top ~40%) ── */}
-      <div className="overflow-y-auto border-b border-gray-400 bg-white" style={{ flex: '0 0 38%' }}>
+      <div data-panel="top" className="overflow-y-auto bg-white" style={{ height: topPanelHeight ?? '38%', flexShrink: 0 }}>
         {loading ? (
           <div className="flex items-center justify-center h-full text-gray-400 py-8">Loading…</div>
         ) : (
@@ -1241,8 +1413,16 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
         )}
       </div>
 
+      {/* ── Draggable splitter between event tree and heat detail ── */}
+      <div
+        className="h-1.5 bg-gray-300 hover:bg-blue-400 cursor-row-resize shrink-0 flex items-center justify-center"
+        onMouseDown={startTopSplitterDrag}
+      >
+        <div className="w-8 h-0.5 bg-gray-500 rounded" />
+      </div>
+
       {/* ── Heat detail (bottom ~60%) ── */}
-      <div className="flex flex-col" style={{ flex: '1 1 0', minHeight: 0 }}>
+      <div ref={heatSectionRef} className="flex flex-col" style={{ flex: '1 1 0', minHeight: 0 }}>
         {selectedPair ? (
           <>
             {/* Heat header */}
@@ -1440,61 +1620,41 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
               </table>
             </div>
 
-            {/* ── Bottom bar: splits + DSQ ── */}
-            <div className="flex border-t border-gray-400 bg-gray-50 shrink-0" style={{ minHeight: 80 }}>
-              {/* Splits */}
-              <div className="border-r border-gray-300 p-2 w-52">
-                <table className="text-xs w-full border-collapse">
-                  <thead>
-                    <tr className="bg-gray-100">
-                      <th className="px-1 text-left font-medium text-gray-500 w-12">{t.heats.splitCols.distance}</th>
-                      <th className="px-1 text-center font-medium text-gray-500 w-20">{t.heats.splitCols.time}</th>
-                      <th className="px-1 text-center font-medium text-gray-500 w-16">{t.heats.splitCols.delta}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {[50, 100].map((d) => {
-                      const splitTime = selectedEntry?.splitTimes?.[d]
-                      return (
-                        <tr key={d} className="border-b border-gray-100">
-                          <td className="px-1 py-0.5 text-gray-500">{d}m</td>
-                          <td className="px-1 py-0.5 text-center font-mono">{splitTime ?? '—'}</td>
-                          <td className="px-1 py-0.5 text-center font-mono text-gray-400">—</td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
+            {/* ── Draggable splitter between heat grid and DSQ panel ── */}
+            <div
+              className="h-1.5 bg-gray-300 hover:bg-blue-400 cursor-row-resize shrink-0 flex items-center justify-center"
+              onMouseDown={startBottomSplitterDrag}
+            >
+              <div className="w-8 h-0.5 bg-gray-500 rounded" />
+            </div>
 
-              {/* DSQ panel */}
-              <div className="flex-1 p-2">
-                <div className="grid grid-cols-1 gap-y-1">
-                  <div className="flex items-center gap-2">
-                    <label className="text-gray-600 w-24 shrink-0">{t.heats.dsq.reason}:</label>
-                    <DsqSearchDropdown
-                      items={dsqItems}
-                      value={selectedDsqItemId}
-                      onChange={(id) => {
-                        setDsqOverrideId(id)
-                        setDsqOverrideLane(selectedLane)
-                        const item = dsqItems.find(d => d.dsqitemid === id)
-                        setDsqCode(item?.code || '')
-                        setDsqReason(item?.name || '')
-                      }}
-                      disabled={selectedEntry?.status !== 'DSQ'}
-                      eventType={(selectedEvent?.relaycount ?? 1) > 1 ? 'RELAY' : 'INDIVIDUAL'}
-                    />
-                  </div>
-                  {(() => {
-                    const reason = dsqItems.find(d => d.dsqitemid === selectedDsqItemId)?.name || dsqReason
-                    return reason ? (
-                      <div className="ml-26 pl-24 text-xs text-gray-600 leading-tight max-h-12 overflow-y-auto">
-                        {reason}
-                      </div>
-                    ) : null
-                  })()}
+            {/* ── Bottom bar: DSQ ── */}
+            <div data-panel="bottom" className="bg-gray-50 shrink-0 p-2" style={{ height: bottomPanelHeight ?? 80 }}>
+              <div className="grid grid-cols-1 gap-y-1">
+                <div className="flex items-center gap-2">
+                  <label className="text-gray-600 w-24 shrink-0">{t.heats.dsq.reason}:</label>
+                  <DsqSearchDropdown
+                    items={dsqItems}
+                    value={selectedDsqItemId}
+                    onChange={(id) => {
+                      setDsqOverrideId(id)
+                      setDsqOverrideLane(selectedLane)
+                      const item = dsqItems.find(d => d.dsqitemid === id)
+                      setDsqCode(item?.code || '')
+                      setDsqReason(item?.name || '')
+                    }}
+                    disabled={selectedEntry?.status !== 'DSQ'}
+                    eventType={(selectedEvent?.relaycount ?? 1) > 1 ? 'RELAY' : 'INDIVIDUAL'}
+                  />
                 </div>
+                {(() => {
+                  const reason = dsqItems.find(d => d.dsqitemid === selectedDsqItemId)?.name || dsqReason
+                  return reason ? (
+                    <div className="ml-26 pl-24 text-xs text-gray-600 leading-tight max-h-12 overflow-y-auto">
+                      {reason}
+                    </div>
+                  ) : null
+                })()}
               </div>
             </div>
           </>
