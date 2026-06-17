@@ -1151,6 +1151,18 @@ ipcMain.handle('file:open-lenex-dialog', async (event) => {
 ipcMain.handle('file:import-lenex', async (_event, filePath: string, lang?: string) => {
   try {
     const db = getLocalDb()
+
+    // Clear existing meet structure before importing (preserve clubs and athletes)
+    db.exec(`DELETE FROM split`)
+    db.exec(`DELETE FROM swimresult`)
+    db.exec(`DELETE FROM heat`)
+    db.exec(`DELETE FROM agegroup`)
+    db.exec(`DELETE FROM swimevent`)
+    db.exec(`DELETE FROM swimsession`)
+    db.exec(`DELETE FROM swimstyle`)
+    db.exec(`DELETE FROM dsqitem`)
+    db.exec(`DELETE FROM bsglobal`)
+
     const summary = importLenex(filePath, db)
 
     // Seed DSQ codes if the dsqitem table is empty after import
