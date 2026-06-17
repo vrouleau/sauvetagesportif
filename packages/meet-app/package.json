@@ -42,6 +42,14 @@
       {
         "from": "../../config/template_pool.lxf",
         "to": "template_pool.lxf"
+      },
+      {
+        "from": "../../config/template_beach.lxf",
+        "to": "template_beach.lxf"
+      },
+      {
+        "from": "../../config/point-scores-config.json",
+        "to": "point-scores-config.json"
       }
     ],
     "win": {

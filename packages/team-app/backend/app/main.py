@@ -105,14 +105,15 @@ def startup():
 
     Base.metadata.create_all(bind=engine)
 
-    # Load events from stored meet .lxf if available and events table is empty
-    meet_path = Path(os.environ.get("MEET_STORAGE", "/app/data/meet.lxf"))
-    if meet_path.exists():
+    # Load events from pool template if events table is empty
+    template_path = Path(os.environ.get("MEET_TEMPLATE_POOL",
+                         str(Path(__file__).resolve().parent.parent.parent.parent / "config" / "template_pool.lxf")))
+    if template_path.exists():
         db = SessionLocal()
         try:
-            count = load_events(db, meet_path)
+            count = load_events(db, template_path)
             if count:
-                print(f"Loaded {count} events from {meet_path}")
+                print(f"Loaded {count} events from {template_path}")
         finally:
             db.close()
 
@@ -130,7 +131,7 @@ async def _auto_backup_loop():
     from .models import BsGlobal
     from .database import is_sqlite, DATABASE_URL
 
-    BACKUP_DIR = Path(os.environ.get("MEET_STORAGE", "/app/data/meet.lxf")).parent / "backups"
+    BACKUP_DIR = Path(os.environ.get("DATA_DIR", "/app/data")) / "backups"
 
     # Wait 60s before first check (let app fully start)
     await asyncio.sleep(60)

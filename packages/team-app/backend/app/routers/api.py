@@ -40,6 +40,12 @@ _DEFAULT_ADMIN_PIN = os.environ.get("ADMIN_PIN", "000000")
 _BEST_TIME_MAX_AGE_MONTHS = int(os.environ.get("BEST_TIME_MAX_AGE_MONTHS", "18"))
 
 
+def _get_pool_template_path() -> Path:
+    """Resolve the pool template path from env or fallback to config/."""
+    fallback = str(Path(__file__).resolve().parent.parent.parent.parent.parent / "config" / "template_pool.lxf")
+    return Path(os.environ.get("MEET_TEMPLATE_POOL", fallback))
+
+
 # ---------------------------------------------------------------------------
 # Pydantic request models
 # ---------------------------------------------------------------------------
@@ -852,7 +858,7 @@ async def upload_meet_smb(file: UploadFile = File(...), db: Session = Depends(ge
     regenerate_point_scores(db)
 
     # Store the uploaded SMB for later download
-    smb_storage = Path(os.environ.get("MEET_STORAGE", "/app/data/meet.lxf")).parent / "meet.smb"
+    smb_storage = MEET_STORAGE.parent / "meet.smb"
     smb_storage.parent.mkdir(parents=True, exist_ok=True)
     smb_storage.write_bytes(content)
 
@@ -908,7 +914,7 @@ def create_new_meet(data: dict = Body(default={}), db: Session = Depends(get_db)
         env_var = "MEET_TEMPLATE_POOL"
         fallback = str(Path(__file__).resolve().parent.parent.parent.parent.parent / "config" / "template_pool.lxf")
 
-    template_path = Path(os.environ.get(env_var, os.environ.get("MEET_DEFAULT_TEMPLATE", fallback)))
+    template_path = Path(os.environ.get(env_var, fallback))
     if not template_path.exists():
         raise HTTPException(404, f"Meet template not found: {template_path}")
 
@@ -2500,7 +2506,7 @@ def status(db: Session = Depends(get_db)):
 
 @router.delete("/registrations", dependencies=[Depends(require_admin)])
 def flush_meet(db: Session = Depends(get_db)):
-    """Flush meet: delete registrations, events, meet config."""
+    """Flush meet: delete registrations, events, meet config. Reloads pool template."""
     reg_count = db.query(SwimResult).delete()
     db.query(Heat).delete()
     db.query(AgeGroup).delete()
@@ -2511,6 +2517,7 @@ def flush_meet(db: Session = Depends(get_db)):
     db.query(TeamEvent).delete()
     db.query(TeamSession).delete()
     db.query(TeamMeet).delete()
+    db.query(SwimStyle).delete()
     for key in ("meet_filename", "meet_uploaded_at", "meet_name", "meet_course",
                 "meet_masters", "meet_currency", "meet_fees_json", "closure_date",
                 "organizer_club_id", "COMBINEDEVENTS", "current_meetsid",
@@ -2531,8 +2538,23 @@ def flush_meet(db: Session = Depends(get_db)):
     smb_path = MEET_STORAGE.parent / "meet.smb"
     if smb_path.exists():
         smb_path.unlink()
+    # Reload pool template event structure (empty meet with swimevents)
+    _reload_pool_template(db)
     db.commit()
     return {"deleted": reg_count}
+
+
+def _reload_pool_template(db: Session) -> None:
+    """Reload event structure from pool template into an empty meet."""
+    template_path = _get_pool_template_path()
+    if not template_path.exists():
+        print(f"[WARN] Pool template not found at {template_path}, skipping event reload")
+        return
+    from ..meet_parser import parse_meet_lxf
+    from ..events import _load_from_parsed
+    meet = parse_meet_lxf(template_path)
+    count = _load_from_parsed(db, meet)
+    print(f"Reloaded {count} events from pool template")
 
 
 def _reset_for_next_meet(db: Session) -> None:
@@ -2554,12 +2576,13 @@ def _reset_for_next_meet(db: Session) -> None:
         db.query(TeamMeet).filter(TeamMeet.meetsid.in_(current_ids)).delete(synchronize_session=False)
     db.flush()
 
-    # Clear Meet Manager schema (registrations + event structure, keep swimstyle)
+    # Clear Meet Manager schema (registrations + event structure + swimstyle)
     db.query(SwimResult).delete()
     db.query(Heat).delete()
     db.query(AgeGroup).delete()
     db.query(SwimEvent).delete()
     db.query(SwimSession).delete()
+    db.query(SwimStyle).delete()
 
     # Clear bsglobal meet config.
     # Intentionally preserved: admin_pin, GEMINI_KEY_FREE, GEMINI_KEY_PAID, bt_* best-time keys.
@@ -2589,6 +2612,9 @@ def _reset_for_next_meet(db: Session) -> None:
     smb_path = MEET_STORAGE.parent / "meet.smb"
     if smb_path.exists():
         smb_path.unlink()
+
+    # Reload pool template event structure (empty meet with swimevents)
+    _reload_pool_template(db)
 
 
 @router.post("/clubs/regenerate-pins", dependencies=[Depends(require_admin)])
@@ -3048,7 +3074,7 @@ async def restore_db(file: UploadFile = File(...)):
 # Auto-backup: config + list + download + delete
 # ---------------------------------------------------------------------------
 
-BACKUP_DIR = Path(os.environ.get("MEET_STORAGE", "/app/data/meet.lxf")).parent / "backups"
+BACKUP_DIR = Path(os.environ.get("DATA_DIR", "/app/data")) / "backups"
 
 
 def _run_pg_dump_bytes() -> bytes:

@@ -21,9 +21,11 @@ An event matches a category when its age group has:
 
 | File | Type | swimstyleid range |
 |---|---|---|
-| `template_pool.lxf` | Pool (winter) | 501-540 |
-| `template_beach.lxf` | Beach (summer) | 601-605 |
+| `template_pool.lxf` | Pool (winter) | 500-531 |
+| `template_beach.lxf` | Beach (summer) | 601-624 |
 
-Templates are loaded at meet creation:
+Templates are the single source of truth for event structure. They are loaded at meet creation
+and reloaded (empty meet, no registrations) after a meet reset or result import:
 - **meet-app**: File → Nouveau meet
 - **team-app**: Admin → New Meet (pool/beach button), env vars `MEET_TEMPLATE_POOL` / `MEET_TEMPLATE_BEACH`
+- **team-app reset**: After result import or admin flush, pool template is reloaded automatically
