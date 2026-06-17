@@ -1,3 +1,21 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Vincent Rouleau <https://github.com/vrouleau/sauvetagesportif>
+#
+# This file is part of Sauvetage Sportif.
+#
+# Sauvetage Sportif is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# Sauvetage Sportif is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with Sauvetage Sportif. If not, see <https://www.gnu.org/licenses/>.
+
 """Unit tests for SMB/gbin encoding and decoding.
 
 Uses synthetic data — no external files or Docker stack required.
@@ -555,4 +573,4 @@ class TestOleDateConversion:
         assert ole_to_time(-36522.270833333336) == "6:30"
         assert ole_to_time(None) == None
         assert ole_to_time(-36522.0) == None  # null sentinel, no time
-        assert ole_to_time(0.0) == None  # zero, no fractional time
+        assert ole_to_time(0.0) == None  # zero, no fractional time

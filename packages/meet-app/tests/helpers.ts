@@ -1,3 +1,21 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vincent Rouleau <https://github.com/vrouleau/sauvetagesportif>
+//
+// This file is part of Sauvetage Sportif.
+//
+// Sauvetage Sportif is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// Sauvetage Sportif is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with Sauvetage Sportif. If not, see <https://www.gnu.org/licenses/>.
+
 import Database from 'better-sqlite3'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -181,4 +199,4 @@ export function seedMeet(db: Database.Database) {
   db.exec(`INSERT INTO agegroup (agegroupid, swimeventid, name, agemin, agemax, gender, sortcode) VALUES (2, 1, 'Junior', 12, 17, 1, 2)`)
   db.exec(`INSERT INTO club (clubid, code, name, nation) VALUES (1, 'TST', 'Test Club', 'CAN')`)
   db.exec(`INSERT INTO athlete (athleteid, clubid, firstname, lastname, gender, birthdate, nation) VALUES (1, 1, 'John', 'Doe', 1, '2000-01-15', 'CAN')`)
-}
+}
