@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""Generate a Splash Meet Manager disqualification XML file from dsq-codes.json.
+"""Generate a Splash Meet Manager disqualification XML file from a YAML config.
 
 Usage:
-    python generate_dsq_xml.py [--lang fr|en] [--type pool|beach] [--output FILE]
+    python generate_dsq_xml.py <yaml_file> [--lang fr|en] [--type pool|beach] [--output FILE]
+
+Arguments:
+    yaml_file   Path to the YAML file containing DSQ codes
 
 Options:
     --lang      Language for DSQ names (default: fr)
@@ -11,26 +14,30 @@ Options:
 """
 
 import argparse
-import json
 import sys
 from datetime import datetime
 from pathlib import Path
 from xml.sax.saxutils import escape
 
+try:
+    import yaml
+except ImportError:
+    print("Error: PyYAML is required. Install it with: pip install pyyaml", file=sys.stderr)
+    sys.exit(1)
+
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 CONFIG_DIR = SCRIPT_DIR.parent / "config"
-DSQ_CODES_FILE = CONFIG_DIR / "dsq-codes.json"
 
 SPLASH_APP = "Meet Manager 11"
 SPLASH_VERSION = "11.84087"
 ENCODING = "Windows-1252"
 
 
-def load_dsq_codes(meet_type: str) -> list[dict]:
-    """Load DSQ codes from JSON for the given meet type."""
-    with open(DSQ_CODES_FILE, "r", encoding="utf-8") as f:
-        data = json.load(f)
+def load_dsq_codes(yaml_path: Path, meet_type: str) -> list[dict]:
+    """Load DSQ codes from a YAML file for the given meet type."""
+    with open(yaml_path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f)
 
     if meet_type not in data:
         raise ValueError(
@@ -43,6 +50,14 @@ def load_dsq_codes(meet_type: str) -> list[dict]:
 def escape_xml_attr(value: str) -> str:
     """Escape a string for use in an XML attribute value."""
     return escape(value, entities={"'": "&apos;", '"': "&quot;"})
+
+
+def ensure_all_option(options: str) -> str:
+    """Ensure 'ALL' is included in the options string."""
+    parts = [p.strip() for p in options.split(",") if p.strip()]
+    if "ALL" not in parts:
+        parts.append("ALL")
+    return ",".join(parts)
 
 
 def generate_dsq_xml(codes: list[dict], lang: str) -> str:
@@ -62,7 +77,7 @@ def generate_dsq_xml(codes: list[dict], lang: str) -> str:
         code = escape_xml_attr(entry["code"])
         lenexcode = escape_xml_attr(entry["code"])
         name = escape_xml_attr(entry[name_key])
-        options = escape_xml_attr(entry["options"])
+        options = escape_xml_attr(ensure_all_option(entry["options"]))
 
         lines.append(
             f'    <DSQITEM code="{code}" lenexcode="{lenexcode}" '
@@ -78,7 +93,12 @@ def generate_dsq_xml(codes: list[dict], lang: str) -> str:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Generate Splash Meet Manager DSQ XML from dsq-codes.json"
+        description="Generate Splash Meet Manager DSQ XML from a YAML config file"
+    )
+    parser.add_argument(
+        "yaml_file",
+        type=Path,
+        help="Path to the YAML file containing DSQ codes",
     )
     parser.add_argument(
         "--lang",
@@ -101,9 +121,14 @@ def main():
     )
     args = parser.parse_args()
 
+    yaml_path = args.yaml_file.resolve()
+    if not yaml_path.exists():
+        print(f"Error: YAML file not found: {yaml_path}", file=sys.stderr)
+        sys.exit(1)
+
     output_path = args.output or CONFIG_DIR / "dsq.xml"
 
-    codes = load_dsq_codes(args.meet_type)
+    codes = load_dsq_codes(yaml_path, args.meet_type)
     xml_content = generate_dsq_xml(codes, args.lang)
 
     # Encode to Windows-1252 for Splash compatibility

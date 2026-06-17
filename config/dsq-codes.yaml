@@ -1,0 +1,384 @@
+pool:
+- code: '1'
+  name_fr: Ne complète pas l'épreuve conformément à la description générale de cette
+    dernière ou aux règles générales
+  name_en: Not completing the event in accordance with its general description or
+    the general rules
+  options: INDIVIDUAL,RELAY
+- code: '2'
+  name_fr: 'Un athlète ou une équipe peut être disqualifié si l''on estime qu''un
+    athlète ou une équipe a compétitionné contrairement aux règles établies. Voici
+    quelques exemples: • Commettre une infraction de dopage ou liée au dopage; Voir
+    manuel de règlements'
+  name_en: 'An athlete or team may be disqualified if deemed to have competed contrary
+    to the established rules. Examples include: committing a doping infraction; see
+    rule book'
+  options: INDIVIDUAL,RELAY
+- code: '3'
+  name_fr: Les athlètes peuvent ne pas être autorisés à prendre le départ d'une épreuve
+    s'ils se présentent en retard à l'aire de rassemblement. Cela peut être noté comme
+    « did not start » (DNS) sur les feuilles de résultats.
+  name_en: Athletes may not be permitted to start an event if they report late to
+    the marshalling area. This may be recorded as DNS on the result sheets.
+  options: INDIVIDUAL,RELAY
+- code: '4'
+  name_fr: Un athlète ou une équipe absente au départ d'une épreuve sera disqualifiée,
+    sauf pour la finale A ou B. Cette absence peut être notée comme « did not start
+    » (DNS) sur les feuilles de résultats.
+  name_en: An athlete or team absent at the start of an event shall be disqualified,
+    except for the A or B final. This absence may be recorded as DNS on the result
+    sheets.
+  options: INDIVIDUAL,RELAY
+- code: '5'
+  name_fr: Les activités qui endommagent délibérément les sites, les lieux d'hébergement
+    ou les biens d'autrui entraîneront la disqualification des personnes impliquées
+    dans la compétition.
+  name_en: Activities that deliberately damage venues, accommodation, or others' property
+    will result in disqualification of those involved from the competition.
+  options: INDIVIDUAL,RELAY
+- code: '6'
+  name_fr: Un mauvais traitement des officiels peut entraîner la disqualification
+    de la compétition.
+  name_en: Mistreatment of officials may result in disqualification from the competition.
+  options: INDIVIDUAL,RELAY
+- code: '7'
+  name_fr: Utiliser des substances collantes ou adhésives (liquides, solides ou en
+    aérosol) sur les mains ou les pieds, ou sur le mannequin ou la bouée tube pour
+    améliorer l'adhérence ou la poussée au fond de la piscine.
+  name_en: Using sticky or adhesive substances (liquid, solid, or spray) on hands
+    or feet, or on the manikin or rescue tube to improve grip or push off the pool
+    floor.
+  options: INDIVIDUAL,RELAY
+- code: '8'
+  name_fr: '. S''aider du fond de la piscine, sauf lorsque cela est spécifiquement
+    autorisé (ex : nage avec obstacles, relais portage de mannequin 4 x 25 m).'
+  name_en: Using the pool floor for assistance, except where specifically permitted
+    (e.g. obstacle swim, 4 x 25 m manikin carry relay).
+  options: INDIVIDUAL,RELAY
+- code: '9'
+  name_fr: Sortir de l'eau après une épreuve avant que l'officiel ne l'autorise.
+  name_en: Leaving the water after an event before the official gives permission.
+  options: INDIVIDUAL,RELAY
+- code: '10'
+  name_fr: Entamer un mouvement de départ avant que le signal de départ n'ait été
+    donné.
+  name_en: Initiating a starting movement before the starting signal has been given.
+  options: INDIVIDUAL,RELAY
+- code: '11'
+  name_fr: Passer au-dessus d'un obstacle sans revenir immédiatement au-dessus ou
+    en dessous de cet obstacle et passer ensuite en dessous.
+  name_en: Passing over an obstacle without immediately returning above or below that
+    obstacle and then passing under it.
+  options: INDIVIDUAL
+- code: '12'
+  name_fr: Ne pas remonter à la surface après le plongeon ou après un virage avant
+    de passer sous un obstacle.
+  name_en: Not surfacing after the dive or after a turn before passing under an obstacle.
+  options: INDIVIDUAL
+- code: '13'
+  name_fr: Ne pas toucher le mur/bord pendant le virage.
+  name_en: Not touching the wall/edge during the turn.
+  options: INDIVIDUAL,RELAY
+- code: '14'
+  name_fr: Ne pas toucher le mur/bord d'arrivée.
+  name_en: Not touching the finish wall/edge.
+  options: INDIVIDUAL,RELAY
+- code: '15'
+  name_fr: Ne pas remonter à la surface avant de plonger vers le mannequin
+  name_en: Not surfacing before diving toward the manikin.
+  options: INDIVIDUAL,RELAY
+- code: '16'
+  name_fr: 'Ne pas remonter à la surface après l''entrée dans l''eau et avant d''avoir
+    touché le mur/bord de virage 50m,  Note: pour les épreuves de relais, cela ne
+    s''applique qu''au premier athlète.'
+  name_en: 'Not surfacing after entering the water and before touching the 50 m turn
+    wall/edge. Note: for relay events, this applies only to the first athlete.'
+  options: INDIVIDUAL,RELAY
+- code: '17'
+  name_fr: 'S''aider d''un accessoire de piscine (ex. : câble de couloir marches,
+    etc.) pour remonter à la surface avec le mannequin (selon l''épreuve) — à l''exception
+    du fond de la piscine, lorsque cela est spécifié.'
+  name_en: Using a pool fitting (e.g. lane rope, steps, etc.) to surface with the
+    manikin (depending on event) — except the pool floor, where specified.
+  options: INDIVIDUAL,RELAY
+- code: '18'
+  name_fr: Ne pas avoir le mannequin dans une position de portage correcte avant que
+    le haut de la tête du mannequin dépasse la ligne des 5 m (pour les portages sans
+    palmes).
+  name_en: Not having the manikin in a correct carry position before the top of the
+    manikin's head passes the 5 m line (for carries without fins).
+  options: INDIVIDUAL,RELAY
+- code: '19'
+  name_fr: Utiliser une technique de portage du mannequin incorrecte (telle que décrite
+    dans S3-3).
+  name_en: Using an incorrect manikin carry technique (as described in S3-3).
+  options: INDIVIDUAL,RELAY
+- code: '20'
+  name_fr: Remorquer le mannequin avec la tête sous la surface de l'eau.
+  name_en: Towing the manikin with its head below the water surface.
+  options: INDIVIDUAL,RELAY
+- code: '21'
+  name_fr: Relâcher le mannequin avant de toucher le mur/bord d'arrivée ou le mur/bord
+    de virage.
+  name_en: Releasing the manikin before touching the finish wall/edge or the turn
+    wall/edge.
+  options: INDIVIDUAL,RELAY
+- code: '22'
+  name_fr: Faire surface après le virage et avant de soulever le mannequin. (sauvetage
+    combiné)
+  name_en: Surfacing after the turn and before lifting the manikin (super lifesaver
+    / combined rescue).
+  options: INDIVIDUAL
+- code: '23'
+  name_fr: Ne pas avoir le mannequin dans la position de portage correcte avant que
+    le haut de la tête du mannequin dépasse la ligne des 10 m. (portage avec palme)
+  name_en: Not having the manikin in the correct carry position before the top of
+    the manikin's head passes the 10 m line (carry with fins).
+  options: INDIVIDUAL,RELAY
+- code: '24'
+  name_fr: S'aider d'un accessoire de piscine (câble de marches, etc.) lorsque l'athlète
+    atache la bouée tube autour du mannequin même si la profondeur minimale de la
+    piscine permet à l'athlète de se tenir debout lorsqu'il atache la bouée tube autour
+    du mannequ
+  name_en: Using a pool fitting (steps, etc.) when the athlete clips the rescue tube
+    around the manikin, even if the minimum pool depth allows the athlete to stand
+    when attaching the tube around the manikin.
+  options: INDIVIDUAL,RELAY
+- code: '25'
+  name_fr: À 50 m/150 m (distances valides seulement en piscine de 50m), l'athlète
+    ne touche pas le mur/bord de la piscine avant de toucher intentionnellement le
+    mannequin.
+  name_en: At 50 m/150 m (distances valid only in a 50 m pool), the athlete does not
+    touch the pool wall/edge before intentionally touching the manikin.
+  options: INDIVIDUAL,RELAY
+- code: '26'
+  name_fr: Le coéquipier lâche le mannequin avant que l'athlète touche le mur/bord
+    de virage.
+  name_en: The teammate releases the manikin before the athlete touches the turn wall/edge.
+  options: RELAY
+- code: '27'
+  name_fr: Le coéquipier entre intentionnellement dans l'eau pendant l'épreuve ou
+    entre dans l'eau et interfère avec la performance d'un autre athlète ou interfère
+    avec le jugement de l'épreuve.
+  name_en: The teammate intentionally enters the water during the event, or enters
+    the water and interferes with another athlete's performance or the judging of
+    the event.
+  options: RELAY
+- code: '28'
+  name_fr: L'athlète atache la bouée tube au joint torique avant de toucher le mur/bord
+    de virage.
+  name_en: The athlete clips the rescue tube to the O-ring before touching the turn
+    wall/edge.
+  options: INDIVIDUAL,RELAY
+- code: '29'
+  name_fr: La bouée tube est mal atachée autour du mannequin (pas autour du corps
+    et sous les deux bras et pas atachée à un joint torique).
+  name_en: The rescue tube is incorrectly secured around the manikin (not around the
+    body and under both arms, and not clipped to an O-ring).
+  options: INDIVIDUAL,RELAY
+- code: '30'
+  name_fr: Ne pas atacher la bouée tube autour du mannequin à 'intérieur de la zone
+    de récupération de 10 m (jugée par le dessus de la tête du mannequin).
+  name_en: Not securing the rescue tube around the manikin within the 10 m pick-up
+    zone (judged by the top of the manikin's head).
+  options: INDIVIDUAL,RELAY
+- code: '31'
+  name_fr: Pousser ou porter le mannequin au lieu de le remorquer.
+  name_en: Pushing or carrying the manikin instead of towing it.
+  options: INDIVIDUAL,RELAY
+- code: '32'
+  name_fr: La corde et/ou la sangle de la bouée tube est raccourcie intentionnellement
+    par un athlète avant le début de l'épreuve dans le but de remorquer le mannequin.
+  name_en: The rescue tube rope and/or strap is intentionally shortened by an athlete
+    before the start of the event in order to tow the manikin.
+  options: INDIVIDUAL,RELAY
+- code: '33'
+  name_fr: Le mannequin se détache de la bouée tube (à l'exeption d'un défaut technique
+    de la bouée) après avoir dépassé la zone de transition de 10m et avant que l'athlète
+    ne touche le bord/mur d'arrivée.
+  name_en: The manikin detaches from the rescue tube (except due to a technical defect
+    of the tube) after passing the 10 m transition zone and before the athlete touches
+    the finish wall/edge.
+  options: INDIVIDUAL,RELAY
+- code: '34'
+  name_fr: Toucher le mur/bord d'arrivée, sans la bouée tube et le mannequin en place.
+  name_en: Touching the finish wall/edge without the rescue tube and manikin in place.
+  options: INDIVIDUAL,RELAY
+- code: '35'
+  name_fr: Aide d'un troisième athlète pendant l'échange entre l'athlète qui arrive
+    et l'athlète qui repart.
+  name_en: Assistance from a third athlete during the exchange between the incoming
+    and outgoing athlete.
+  options: RELAY
+- code: '36'
+  name_fr: Un athlète répète deux étapes ou plus d'une épreuve.
+  name_en: An athlete repeats two or more legs of an event.
+  options: RELAY
+- code: '37'
+  name_fr: Quiter le bloc de départ/relâcher tout contact avec le mur/bord de virage/bloc
+    de départ avant que l'athlète précédent n'ait touché le mur/bord de virage.
+  name_en: Leaving the starting block / releasing all contact with the turn wall/edge
+    or starting block before the previous athlete has touched the turn wall/edge.
+  options: RELAY
+- code: '38'
+  name_fr: Le mannequin change de main avant ou au-delà de la zone de transition désignée.
+  name_en: The manikin changes hands before or beyond the designated transition zone.
+  options: RELAY
+- code: '39'
+  name_fr: Lâcher le mannequin avant que l'athlète suivant ne le saisisse (c'est-à-dire
+    qu'une main de chaque athlète doit être en contact avec le mannequin).
+  name_en: Releasing the manikin before the next athlete grasps it (i.e. one hand
+    from each athlete must be in contact with the manikin).
+  options: RELAY
+- code: '40'
+  name_fr: L'athlète attache la bouée tube dans l'anneau (relais sauvetage combiné)
+  name_en: The athlete clips the rescue tube into the ring (combined rescue relay).
+  options: RELAY
+- code: '41'
+  name_fr: Le coéquipier tient la bouée tube par la sangle.
+  name_en: The teammate holds the rescue tube by the strap.
+  options: RELAY
+- code: '42'
+  name_fr: Le coéquipier aide avec des mouvements de bras, ou ne tient pas la bouée
+    tube et/ou le mousqueton avec les deux mains.
+  name_en: The teammate assists with arm movements, or does not hold the rescue tube
+    and/or carabiner with both hands.
+  options: RELAY
+- code: '43'
+  name_fr: Le coéquipier ne tient pas ou perd la bouée tube après avoir dépassé la
+    ligne des 10 m.
+  name_en: The teammate does not hold or loses the rescue tube after passing the 10
+    m line.
+  options: RELAY
+- code: '44'
+  name_fr: Un athlète rentre dans l'eau après avoir terminé sa partie du relais. (relais
+    obstacle et sauvetage combiné)
+  name_en: An athlete re-enters the water after completing their relay leg (obstacle
+    relay and combined rescue relay).
+  options: RELAY
+- code: '45'
+  name_fr: Le coéquipier ne saisit pas la barre transversale avec sa main lorsqu'il
+    utilise une partie de son corps pour récupérer ou saisir la corde pour le remorquage
+    jusqu'au mur/bord d'arrivée.
+  name_en: The teammate does not grasp the crossbar with their hand when using a body
+    part to retrieve or grab the rope for towing to the finish wall/edge.
+  options: RELAY
+- code: '46'
+  name_fr: Le lanceur qui, après le signal de départ et avant que son coéquipier ne
+    touche le mur/bord d'arrivée, quitte la zone de lancer qui lui est attribuée.
+  name_en: The thrower who, after the starting signal and before their teammate touches
+    the finish wall/edge, leaves their assigned throwing zone.
+  options: RELAY
+- code: '47'
+  name_fr: Le lanceur ne tire pas à l'aide de ses bras, mais marche ou court avec
+    la corde dans ses mains maintenue autour d'une partie quelconque de son corps.
+    Il ne peut pas tirer au-delà de la marque de 2m derrière la ligne pour ramener
+    le receveur vers le m
+  name_en: The thrower does not pull using their arms but walks or runs with the rope
+    held around any part of their body. They may not pull beyond the 2 m mark behind
+    the line to bring the receiver to the wall.
+  options: RELAY
+- code: '48'
+  name_fr: Le coéquipier saisit la corde en dehors de son couloir.
+  name_en: The teammate grabs the rope outside their lane.
+  options: RELAY
+- code: '49'
+  name_fr: Le coéquipier n'est pas sur son ventre lorsqu'il est tiré vers le mur/bord
+    d'arrivée.
+  name_en: The teammate is not on their stomach when being pulled toward the finish
+    wall/edge.
+  options: RELAY
+- code: '50'
+  name_fr: Le coéquipier ne tient pas la corde avec ses deux mains lorsqu'il est tiré
+    vers le mur/bord d'arrivée (le coéquipier peut lâcher la corde d'une main dans
+    le seul but de toucher le mur/bord).
+  name_en: The teammate does not hold the rope with both hands when being pulled toward
+    the finish wall/edge (the teammate may release the rope with one hand solely to
+    touch the wall/edge).
+  options: RELAY
+- code: '51'
+  name_fr: Le coéquipier « grimpe » la corde d'une main à l'autre.
+  name_en: The teammate "climbs" the rope hand over hand.
+  options: RELAY
+- code: '52'
+  name_fr: Le lanceur effectue des lancers d'entrainement.
+  name_en: The thrower performs practice throws.
+  options: RELAY
+beach:
+- code: DQ1
+  name_fr: Ne complète pas l'épreuve conformément aux règles générales ou à la description
+    de l'épreuve
+  name_en: Not completing the event in accordance with the general rules or event
+    description
+  options: INDIVIDUAL,RELAY
+- code: DQ2
+  name_fr: Compétitionner de manière déloyale (Code de fair-play)
+  name_en: Competing unfairly (as described in the Code of Fair Play)
+  options: INDIVIDUAL,RELAY
+- code: STR
+  name_fr: 'Infraction de départ : mouvement avant le signal de départ'
+  name_en: 'Starting infringement: moving before the starting signal'
+  options: INDIVIDUAL,RELAY
+- code: STI
+  name_fr: Non-respect des instructions du starter
+  name_en: Failing to comply with the starter's instructions
+  options: INDIVIDUAL,RELAY
+- code: OBS
+  name_fr: Gêner délibérément un autre compétiteur
+  name_en: Deliberately impeding another competitor
+  options: INDIVIDUAL,RELAY
+- code: CRS
+  name_fr: Courir en dehors du parcours ou couloir désigné / ne pas contourner les
+    bouées correctement
+  name_en: Running outside the designated course/lane or not rounding buoys correctly
+  options: INDIVIDUAL,RELAY
+- code: BAT
+  name_fr: Bâton non récupéré correctement à l'arrivée
+  name_en: Baton not correctly retrieved at the finish
+  options: RELAY
+- code: CHG
+  name_fr: Échange hors de la zone désignée ou départ avant l'arrivée du coéquipier
+  name_en: Exchange not made within the designated zone or leaving before incoming
+    competitor
+  options: RELAY
+- code: LNV
+  name_fr: Courir en dehors du couloir attribué
+  name_en: Running outside the allocated lane or course markers
+  options: INDIVIDUAL,RELAY
+- code: ZNV
+  name_fr: Entrer ou sortir de l'eau en dehors des zones désignées
+  name_en: Entering or exiting the water outside the designated zones
+  options: INDIVIDUAL,RELAY
+- code: EQP
+  name_fr: Ne pas porter ou utiliser l'équipement correctement (bouée tube, planche,
+    etc.)
+  name_en: Not wearing or using equipment correctly (rescue tube, board, etc.)
+  options: INDIVIDUAL,RELAY
+- code: CRF
+  name_fr: Violation des règles de contrôle de l'embarcation (planche, ski)
+  name_en: Craft control violation (board, ski)
+  options: INDIVIDUAL,RELAY
+- code: VIC
+  name_fr: Relâcher la victime avant d'avoir complété le sauvetage
+  name_en: Releasing the victim before completing the rescue
+  options: INDIVIDUAL,RELAY
+- code: VPK
+  name_fr: Victime non récupérée correctement ou échappée
+  name_en: Victim not picked up correctly or dropped
+  options: INDIVIDUAL,RELAY
+- code: TEM
+  name_fr: Équipe avec un nombre incorrect de membres
+  name_en: Team competing with incorrect number of members
+  options: RELAY
+- code: TRN
+  name_fr: Transition non complétée correctement
+  name_en: Not completing a transition correctly
+  options: RELAY
+- code: FIN
+  name_fr: Procédure d'arrivée non complétée correctement
+  name_en: Not completing the finish procedure correctly
+  options: INDIVIDUAL,RELAY
+- code: DNF
+  name_fr: Ne pas compléter le parcours dans le temps imparti
+  name_en: Failing to complete the course within the time limit
+  options: INDIVIDUAL,RELAY
