@@ -16,7 +16,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with Sauvetage Sportif. If not, see <https://www.gnu.org/licenses/>.
 
-﻿"""Integration tests for meetmanager-app.
+"""Integration tests for meetmanager-app.
 
 Exercises the full HTTP API against the running stack with synthetic data —
 no SPLASH involved. Run: `pytest tests/ -v` from repo root.
