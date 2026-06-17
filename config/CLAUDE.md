@@ -17,6 +17,16 @@ An event matches a category when its age group has:
 - Same `agemax` (with -1 meaning no upper limit)
 - Same gender (or event gender=0/3 for mixed categories)
 
+## DSQ Codes (`dsq-codes.json` → `dsq.xml`)
+
+`dsq-codes.json` is the single source of truth for disqualification codes, organized by meet type (`pool`, `beach`). Each entry has a code, French/English names, and applicable options (`INDIVIDUAL`, `RELAY`).
+
+`dsq.xml` is the generated Splash Meet Manager import file (Windows-1252, `<DSQITEMS>` format). Regenerate it with:
+
+```bash
+python scripts/generate_dsq_xml.py [--lang fr|en] [--type pool|beach] [--output FILE]
+```
+
 ## Meet templates
 
 | File | Type | swimstyleid range |

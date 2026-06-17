@@ -81,6 +81,9 @@ packages/
     tests/                  — pytest integration tests + unit tests
 
 scripts/
+  generate_dsq_xml.py     — Generates Splash DSQ XML from config/dsq-codes.json.
+                             Usage: python scripts/generate_dsq_xml.py [--lang fr|en] [--type pool|beach] [--output FILE]
+                             Default: French, pool → config/dsq.xml (Windows-1252 encoding)
   normalize_lxf.py         — Standalone tool: normalizes historic .lxf files against a current
                              template (remaps swimstyle IDs, fuzzy-matches clubs/athletes, copies
                              HANDICAP exception codes). Usage:

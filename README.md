@@ -72,6 +72,25 @@ cd packages/meet-app
 npm run clean   # wipes out/, rebuilds native modules for Electron, runs full Vite build
 ```
 
+### DSQ codes XML (Splash import)
+
+Generate the disqualification codes XML file for Splash Meet Manager from the shared `config/dsq-codes.json`:
+
+```bash
+# Default: French, pool → config/dsq.xml
+python scripts/generate_dsq_xml.py
+
+# English, beach, custom output
+python scripts/generate_dsq_xml.py --lang en --type beach --output config/dsq_beach.xml
+```
+
+Options:
+- `--lang fr|en` — Language for DSQ code names (default: `fr`)
+- `--type pool|beach` — Meet type (default: `pool`)
+- `--output FILE` — Output path (default: `config/dsq.xml`)
+
+The output is Windows-1252 encoded XML matching Splash's `<DSQITEMS>` import format.
+
 ### Fixture data (meet-app)
 
 Generate sample `.smb` files for testing or documentation screenshots:
