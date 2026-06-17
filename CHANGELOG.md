@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.24] - 2026-06-17
+
+### 🐛 Bug Fixes
+
+- auto-backup loop not running + isolate dev appdata (`4ccfc9a`)
+
 ## [0.3.23] - 2026-06-17
 
 ### 🐛 Bug Fixes
