@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.23] - 2026-06-17
+
+### 🐛 Bug Fixes
+
+- clear existing meet before LXF import (`ec1c8bd`)
+- add missing extraResources and remove obsolete meet.lxf (`b0c6859`)
+
 ## [0.3.22] - 2026-06-16
 
 ### ✨ Features
