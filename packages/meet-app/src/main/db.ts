@@ -1593,6 +1593,19 @@ function generateHeatsBeach(
   let totalHeats = 0
   let totalAssigned = 0
 
+  // Assign beach numbers to any athletes with entries but no beach number yet
+  const athletesMissingNumber = db.prepare(`
+    SELECT DISTINCT a.athleteid
+    FROM athlete a
+    JOIN swimresult r ON r.athleteid = a.athleteid
+    WHERE r.swimeventid IN (${eventIds.map(() => '?').join(',')})
+      AND (a.nameprefix IS NULL OR a.nameprefix = '')
+  `).all(...eventIds) as Array<{ athleteid: number }>
+
+  for (const row of athletesMissingNumber) {
+    assignLateBeachNumber(db, row.athleteid)
+  }
+
   for (const evId of eventIds) {
     // Skip events that have any validated heats
     const validatedCount = (db.prepare(
@@ -1635,7 +1648,7 @@ function generateHeatsBeach(
     let idx = 0
     for (let h = 0; h < numHeats; h++) {
       const heatSize = baseSize + (h < remainder ? 1 : 0)
-      const heatId = nextId('heat', 'heatid')
+      const heatId = (db.prepare(`SELECT COALESCE(MAX(heatid), 0) + 1 AS next FROM heat`).get() as { next: number }).next
       const heatNumber = h + 1
 
       db.prepare(

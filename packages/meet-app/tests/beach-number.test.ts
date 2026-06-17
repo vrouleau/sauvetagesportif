@@ -671,3 +671,98 @@ describe('Club letter assignment edge cases', () => {
     expect(getPrefix(1)).toBe('B01')
   })
 })
+
+// ── Unit Tests: generateHeatsBeach auto-assigns beach numbers ─────────────────
+
+import { generateHeats } from '../src/main/db'
+
+describe('Beach heat generation assigns missing beach numbers', () => {
+  let db: Database.Database
+  let cleanup: () => void
+
+  beforeEach(() => {
+    const t = createTestDb()
+    db = t.db
+    cleanup = t.cleanup
+    // Set up as a beach meet
+    db.exec(`INSERT INTO bsglobal (name, data) VALUES ('MEET_TYPE', 'BEACH')`)
+    // Swim style with distance=8 (max per heat)
+    db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount, stroke, sortcode) VALUES (1, 8, 'Beach Sprint', 1, 1, 1)`)
+    // Session and event
+    db.exec(`INSERT INTO swimsession (swimsessionid, sessionnumber, name, lanemin, lanemax) VALUES (1, 1, 'Session 1', 1, 8)`)
+    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode, internalevent) VALUES (1, 1, 1, 1, 1, 5, 1, 'F')`)
+    // Club
+    db.exec(`INSERT INTO club (clubid, code, name, nation) VALUES (1, 'ABC', 'Alpha Club', 'CAN')`)
+  })
+
+  afterEach(() => cleanup())
+
+  function getPrefix(athleteId: number): string | null {
+    const row = db.prepare(`SELECT nameprefix FROM athlete WHERE athleteid = ?`).get(athleteId) as { nameprefix: string | null } | undefined
+    return row?.nameprefix ?? null
+  }
+
+  it('assigns beach number to athlete without one when generating heats', async () => {
+    // Athlete with no beach number
+    db.exec(`INSERT INTO athlete (athleteid, clubid, firstname, lastname, gender, birthdate, nation) VALUES (1, 1, 'Jean', 'Dupont', 1, '2000-01-01', 'CAN')`)
+    // Entry for the athlete
+    db.exec(`INSERT INTO swimresult (swimresultid, athleteid, swimeventid, entrytime) VALUES (1, 1, 1, 60000)`)
+
+    expect(getPrefix(1)).toBeNull()
+
+    const result = await generateHeats(1, undefined, db)
+
+    expect(result.heatsCreated).toBeGreaterThanOrEqual(1)
+    expect(result.entriesAssigned).toBe(1)
+    // Beach number should now be assigned
+    expect(getPrefix(1)).toBe('A01')
+  })
+
+  it('does not overwrite existing beach number when generating heats', async () => {
+    // Athlete already has a beach number
+    db.exec(`INSERT INTO athlete (athleteid, clubid, firstname, lastname, gender, birthdate, nation, nameprefix) VALUES (1, 1, 'Jean', 'Dupont', 1, '2000-01-01', 'CAN', 'A01')`)
+    db.exec(`INSERT INTO swimresult (swimresultid, athleteid, swimeventid, entrytime) VALUES (1, 1, 1, 60000)`)
+
+    const result = await generateHeats(1, undefined, db)
+
+    expect(result.heatsCreated).toBeGreaterThanOrEqual(1)
+    // Beach number should remain unchanged
+    expect(getPrefix(1)).toBe('A01')
+  })
+
+  it('assigns beach numbers to multiple athletes from different clubs', async () => {
+    db.exec(`INSERT INTO club (clubid, code, name, nation) VALUES (2, 'DEF', 'Delta Club', 'CAN')`)
+    // Athletes without beach numbers
+    db.exec(`INSERT INTO athlete (athleteid, clubid, firstname, lastname, gender, birthdate, nation) VALUES (1, 1, 'Jean', 'Dupont', 1, '2000-01-01', 'CAN')`)
+    db.exec(`INSERT INTO athlete (athleteid, clubid, firstname, lastname, gender, birthdate, nation) VALUES (2, 2, 'Marie', 'Tremblay', 2, '2001-05-15', 'CAN')`)
+    // Entries
+    db.exec(`INSERT INTO swimresult (swimresultid, athleteid, swimeventid, entrytime) VALUES (1, 1, 1, 60000)`)
+    db.exec(`INSERT INTO swimresult (swimresultid, athleteid, swimeventid, entrytime) VALUES (2, 2, 1, 61000)`)
+
+    expect(getPrefix(1)).toBeNull()
+    expect(getPrefix(2)).toBeNull()
+
+    await generateHeats(1, undefined, db)
+
+    // Both should now have beach numbers with different club letters
+    expect(getPrefix(1)).toBe('A01')
+    expect(getPrefix(2)).toBe('D01')
+  })
+
+  it('assigns beach number using next sequence when club already has numbered athletes', async () => {
+    // Athlete 1 already has a beach number
+    db.exec(`INSERT INTO athlete (athleteid, clubid, firstname, lastname, gender, birthdate, nation, nameprefix) VALUES (1, 1, 'Jean', 'Dupont', 1, '2000-01-01', 'CAN', 'A01')`)
+    db.exec(`INSERT INTO swimresult (swimresultid, athleteid, swimeventid, entrytime) VALUES (1, 1, 1, 60000)`)
+    // Athlete 2 from same club, no beach number
+    db.exec(`INSERT INTO athlete (athleteid, clubid, firstname, lastname, gender, birthdate, nation) VALUES (2, 1, 'Pierre', 'Martin', 1, '1999-03-20', 'CAN')`)
+    db.exec(`INSERT INTO swimresult (swimresultid, athleteid, swimeventid, entrytime) VALUES (2, 2, 1, 62000)`)
+
+    expect(getPrefix(2)).toBeNull()
+
+    await generateHeats(1, undefined, db)
+
+    // Athlete 1 stays A01, athlete 2 gets A02
+    expect(getPrefix(1)).toBe('A01')
+    expect(getPrefix(2)).toBe('A02')
+  })
+})
