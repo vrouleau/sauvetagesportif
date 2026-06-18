@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.27] - 2026-06-18
+
+### 🐛 Bug Fixes
+
+- session properties panel section collapse arrows now work correctly (`9505e90`)
+- move Field component to module level to prevent focus loss on keystroke (`0743140`)
+
 ## [0.3.26] - 2026-06-18
 
 ### 🐛 Bug Fixes
