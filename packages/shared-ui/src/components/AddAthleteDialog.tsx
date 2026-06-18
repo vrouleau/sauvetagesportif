@@ -35,6 +35,43 @@ export interface AddAthleteDialogProps {
   onCancel: () => void
 }
 
+function Field({
+  label,
+  value,
+  onChange,
+  error,
+  type = 'text',
+  required = false,
+}: {
+  label: string
+  value: string
+  onChange: (v: string) => void
+  error?: string
+  type?: string
+  required?: boolean
+}) {
+  return (
+    <div className="flex items-center gap-3 mb-2">
+      <label className="w-28 text-right text-gray-600 text-xs shrink-0">
+        {label}{required && <span className="text-red-500 ml-0.5">*</span>}
+      </label>
+      <div className="flex-1">
+        <input
+          type={type}
+          className={`w-full border px-2 py-1 text-xs bg-white ${
+            error ? 'border-red-400' : 'border-gray-300'
+          }`}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+        />
+        {error && (
+          <span className="text-red-500 text-[10px]">{error}</span>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function AddAthleteDialog({
   clubId,
   clubName,
@@ -73,41 +110,6 @@ export default function AddAthleteDialog({
       club_id: clubId,
     })
   }
-
-  const Field = ({
-    label,
-    value,
-    onChange,
-    error,
-    type = 'text',
-    required = false,
-  }: {
-    label: string
-    value: string
-    onChange: (v: string) => void
-    error?: string
-    type?: string
-    required?: boolean
-  }) => (
-    <div className="flex items-center gap-3 mb-2">
-      <label className="w-28 text-right text-gray-600 text-xs shrink-0">
-        {label}{required && <span className="text-red-500 ml-0.5">*</span>}
-      </label>
-      <div className="flex-1">
-        <input
-          type={type}
-          className={`w-full border px-2 py-1 text-xs bg-white ${
-            error ? 'border-red-400' : 'border-gray-300'
-          }`}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-        />
-        {error && (
-          <span className="text-red-500 text-[10px]">{error}</span>
-        )}
-      </div>
-    </div>
-  )
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
@@ -192,4 +194,4 @@ export default function AddAthleteDialog({
       </div>
     </div>
   )
-}
+}
