@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.3.26] - 2026-06-18
+
+### 🐛 Bug Fixes
+
+- remove stray BOM character from test_integration.py (`22650d5`)
+
+### ⚡ Performance
+
+- bulk athletes endpoint + client cache to fix slow page nav (`29053f2`)
+
+### 🔧 Chores
+
+- remove dead code and consolidate best_times module (`aef61b6`)
+
+### Other
+
+- Add AGPL-3.0 license and source file headers (`d418a69`)
+
 ## [0.3.25] - 2026-06-17
 
 ### ✨ Features
