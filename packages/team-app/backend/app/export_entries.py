@@ -26,7 +26,7 @@ from xml.etree import ElementTree as ET
 from sqlalchemy.orm import Session, joinedload
 from .models import SwimEvent, SwimStyle, BsGlobal, gender_to_str
 from .models_team import TeamClub, Member
-from .best_times import get_best_times
+from .best_times import get_best_times_for_member
 
 
 def _ms_to_lenex(ms: int | None) -> str:
@@ -50,7 +50,7 @@ def generate_entries_lxf(db: Session) -> bytes:
     athlete_bts: dict[int, dict] = {}
     for club in clubs:
         for member in club.members:
-            bt_data = get_best_times(db, member.membersid)
+            bt_data = get_best_times_for_member(db, member.membersid)
             if bt_data:
                 athlete_bts[member.membersid] = bt_data
                 for uid_key in bt_data:
@@ -148,4 +148,4 @@ def generate_entries_lxf(db: Session) -> bytes:
             if gemini_paid and gemini_paid.data:
                 keys["gemini_paid"] = gemini_paid.data
             z.writestr(".keys", _json.dumps(keys))
-    return buf.getvalue()
+    return buf.getvalue()

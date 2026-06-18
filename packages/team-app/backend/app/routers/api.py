@@ -43,8 +43,7 @@ from ..models import (
 from ..models_team import TeamClub, Member
 from ..seed import seed_from_lxf
 from ..best_times import (
-    load_best_times, get_best_times, delete_best_times, expire_old_best_times,
-    get_best_time_date,
+    get_best_times_for_member, get_best_time_date,
 )
 from ..export import generate_lxf
 from ..export_entries import generate_entries_lxf
@@ -1201,9 +1200,6 @@ def delete_club(club_id: int, db: Session = Depends(get_db)):
     athlete_ids = [aid for (aid,) in db.query(Member.membersid).filter(Member.clubsid == club_id).all()]
     if athlete_ids:
         db.query(SwimResult).filter(SwimResult.athleteid.in_(athlete_ids)).delete(synchronize_session=False)
-        # Delete best times from bsglobal
-        for aid in athlete_ids:
-            delete_best_times(db, aid)
     db.query(Member).filter(Member.clubsid == club_id).delete(synchronize_session=False)
     db.query(SecretLink).filter(SecretLink.club_id == club_id).delete(synchronize_session=False)
     db.query(TeamClub).filter(TeamClub.clubsid == club_id).delete(synchronize_session=False)
@@ -1530,7 +1526,6 @@ def delete_athlete(athlete_id: int, request: Request, db: Session = Depends(get_
     if caller_club is not None and member.clubsid != caller_club:
         raise HTTPException(403, "Cannot delete athletes from another club")
     db.query(SwimResult).filter(SwimResult.athleteid == athlete_id).delete()
-    delete_best_times(db, athlete_id)
     db.delete(member)
     db.commit()
     return {"deleted": True}
@@ -1962,24 +1957,8 @@ def get_registration(athlete_id: int, db: Session = Depends(get_db)):
     best_map_lcm: dict[int, int] = {}
     best_map_scm: dict[int, int] = {}
 
-    # Try to find matching member in Team Manager schema (by license)
-    from ..best_times_v2 import get_best_times_for_member
     if member.membersid:
-        # Use computed best times from historical results
         bt_data = get_best_times_for_member(db, member.membersid, _BEST_TIME_MAX_AGE_MONTHS)
-        for uid_key, style_data in bt_data.items():
-            uid = int(uid_key)
-            if "LCM" in style_data:
-                best_map_lcm[uid] = style_data["LCM"]["time_ms"]
-            if "SCM" in style_data:
-                best_map_scm[uid] = style_data["SCM"]["time_ms"]
-
-    # Also check old JSON blob system (transition: results may not be in Team schema yet)
-    if not best_map_lcm and not best_map_scm:
-        expired = expire_old_best_times(db, athlete_id, _BEST_TIME_MAX_AGE_MONTHS)
-        if expired:
-            db.commit()
-        bt_data = get_best_times(db, athlete_id)
         for uid_key, style_data in bt_data.items():
             uid = int(uid_key)
             if "LCM" in style_data:
@@ -2372,12 +2351,6 @@ async def upload_entries(file: UploadFile = File(...), db: Session = Depends(get
     if len(content) > 10 * 1024 * 1024:
         raise HTTPException(413, "File too large (max 10MB)")
     seed_result = seed_from_lxf(db, content)
-    # Skip best-time import for beach meets (positions are not times)
-    meet_type = _get_meet_type(db)
-    if meet_type != "BEACH":
-        times_result = load_best_times(db, content, source=file.filename or "upload")
-    else:
-        times_result = {"times_updated": 0, "athletes_skipped": 0, "athletes_created": 0}
     events_loaded = 0
     if not db.query(SwimEvent).first():
         from ..meet_parser import parse_meet_lxf
@@ -2392,7 +2365,7 @@ async def upload_entries(file: UploadFile = File(...), db: Session = Depends(get
     # Import relay teams from LXF
     relays_imported = _import_relays_from_lxf(db, content)
 
-    return {**seed_result, **times_result, "events_loaded": events_loaded, "relays_imported": relays_imported}
+    return {**seed_result, "events_loaded": events_loaded, "relays_imported": relays_imported}
 
 
 @router.post("/upload/results", dependencies=[Depends(require_admin)])
@@ -2431,13 +2404,16 @@ async def upload_results(file: UploadFile = File(...), force: bool = False, db: 
             # If we can't parse, just continue with the import
 
     seed_result = seed_from_lxf(db, content)
-    # Skip best-time import for beach meets (positions are not times)
-    meet_type = _get_meet_type(db)
-    if meet_type != "BEACH":
-        times_result = load_best_times(db, content, source=file.filename or "upload")
-    else:
-        times_result = {"times_updated": 0, "athletes_skipped": 0, "athletes_created": 0}
-    return {**seed_result, **times_result}
+
+    # Store results in the historical Result table so best times can be computed
+    from ..historical_import import import_historical_meet
+    try:
+        import_result = import_historical_meet(db, content, force=True)
+        seed_result["results_imported"] = import_result.get("results_imported", 0)
+    except Exception:
+        seed_result["results_imported"] = 0
+
+    return seed_result
 
 
 @router.post("/admin/import-historical", dependencies=[Depends(require_admin)])
@@ -2502,17 +2478,18 @@ def delete_historical_meet(meet_id: int, db: Session = Depends(get_db)):
 
 @router.get("/status")
 def status(db: Session = Depends(get_db)):
-    import json as _json
-    # Count total best time entries (each athlete can have multiple style/course pairs)
-    bt_count = 0
-    bt_entries = db.query(BsGlobal).filter(BsGlobal.name.like("bt_%")).all()
-    for entry in bt_entries:
-        try:
-            data = _json.loads(entry.data)
-            for style_data in data.values():
-                bt_count += len(style_data)  # count each course entry
-        except (ValueError, TypeError):
-            pass
+    from ..models_team import Result
+    # Count distinct (member, style, course) combinations with valid results
+    bt_count = (
+        db.query(Result.membersid, Result.stylesid, Result.course)
+        .filter(
+            Result.totaltime.isnot(None),
+            Result.totaltime > 0,
+            Result.resulttyp == 0,
+        )
+        .distinct()
+        .count()
+    )
     return {
         "clubs": db.query(TeamClub).count(),
         "athletes": db.query(Member).count(),
@@ -3358,7 +3335,6 @@ def delete_historical_meet(meet_id: int, db: Session = Depends(get_db)):
 @router.get("/admin/historical-best-times/{member_id}", dependencies=[Depends(require_admin)])
 def get_historical_best_times(member_id: int, db: Session = Depends(get_db)):
     """Get best times for a member computed from historical results."""
-    from ..best_times_v2 import get_best_times_for_member
     bt = get_best_times_for_member(db, member_id)
     return {"member_id": member_id, "best_times": bt}
 
@@ -3383,7 +3359,6 @@ async def import_results_lxf(request: Request, file: UploadFile = File(...), db:
         raise HTTPException(413, "File too large (max 50MB)")
 
     from ..lxf_to_team import import_lxf_as_meet
-    from ..best_times import load_best_times
     from ..models_live import LiveResult, LiveSplit, LiveStartlist, LiveEvent
 
     # LXF import is authoritative — clear any live results if present
@@ -3402,11 +3377,6 @@ async def import_results_lxf(request: Request, file: UploadFile = File(...), db:
         counts = import_lxf_as_meet(db, content)
     except Exception as e:
         raise HTTPException(400, f"LXF import failed: {e}")
-
-    try:
-        load_best_times(db, content, source=file.filename or "import")
-    except Exception:
-        pass  # best-times update is best-effort
 
     pin = request.headers.get("X-Club-Pin", "")
     role, _ = _resolve_role(pin, db)
@@ -4820,4 +4790,4 @@ def set_relay_team_name(
     relay.name = data.name or None
 
     db.commit()
-    return {"ok": True}
+    return {"ok": True}

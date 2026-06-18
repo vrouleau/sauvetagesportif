@@ -34,7 +34,7 @@ from sqlalchemy.orm import Session
 
 from .models import BsGlobal, SwimStyle
 from .models_team import Meet, Event, Result, MemberMeet, TeamClub, Member
-from .best_times import _lenex_time_to_ms, _find_or_create_athlete, _upsert_best_time
+from .best_times import _lenex_time_to_ms, _find_or_create_athlete
 
 
 def _parse_meet_metadata(root) -> dict:
@@ -323,15 +323,6 @@ def import_historical_meet(db: Session, file_bytes: bytes, force: bool = False) 
                 next_result_id += 1
                 results_imported += 1
 
-                # Update best times
-                if swimtime_ms and swimtime_ms > 0:
-                    _upsert_best_time(
-                        db, member.membersid, style_uid,
-                        swimtime_ms, meta["course"],
-                        source=meta["name"],
-                        recorded_on=meta["startdate"],
-                    )
-
     db.commit()
 
     return {
@@ -346,4 +337,4 @@ def import_historical_meet(db: Session, file_bytes: bytes, force: bool = False) 
         "clubs_matched": clubs_matched,
         "clubs_created": clubs_created,
         "reimported": existing_meet is not None,
-    }
+    }

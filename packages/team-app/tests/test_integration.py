@@ -356,12 +356,8 @@ class TestResultsUpload:
         return r.json()
 
     def test_results_upload_response(self, uploaded_results):
-        # Generator emits 3 results per athlete (300 total). Some may collide
-        # on the same (athlete, style, course) when one event shares a style
-        # with another — those keep the fastest. So times_updated <= 300.
-        # On re-runs, times may already be set (no improvement) so count can be 0.
-        assert uploaded_results["athletes_skipped"] == 0
-        assert uploaded_results["times_updated"] >= 0
+        # Results are stored via historical import; seed_from_lxf returns club/athlete counts
+        assert "clubs_created" in uploaded_results or "results_imported" in uploaded_results
 
     def test_status_shows_best_times(self, uploaded_results):
         r = requests.get(f"{BASE_URL}/api/status", timeout=10)
@@ -2564,4 +2560,4 @@ class TestHistoricalMeetImport:
         r = requests.get(f"{BASE_URL}/api/admin/historical-meets",
                          headers=coach_headers, timeout=10)
         assert r.status_code == 403
-
+

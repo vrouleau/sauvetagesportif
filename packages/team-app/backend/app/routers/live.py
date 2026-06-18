@@ -646,13 +646,6 @@ async def finalize_meet(db: Session = Depends(get_db)):
 
     db.flush()
 
-    # 3. Recompute best times
-    try:
-        from ..best_times_v2 import recompute_all_best_times
-        recompute_all_best_times(db)
-    except ImportError:
-        pass  # best_times_v2 may not exist yet — skip gracefully
-
     # 4. Call _reset_for_next_meet
     from .api import _reset_for_next_meet
     _reset_for_next_meet(db)
@@ -695,4 +688,4 @@ async def websocket_endpoint(ws: WebSocket):
     except WebSocketDisconnect:
         manager.disconnect(ws)
     except Exception:
-        manager.disconnect(ws)
+        manager.disconnect(ws)

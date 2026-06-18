@@ -44,7 +44,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "backend"))
 
 from app.models import Base, SwimStyle
 from app.models_team import Meet, Result, TeamClub, Member
-from app.best_times_v2 import get_best_times_for_member
+from app.best_times import get_best_times_for_member
 
 
 # ── Strategies ────────────────────────────────────────────────────────────────
@@ -225,4 +225,4 @@ class TestBestTimesComputation:
 
         finally:
             db.close()
-            engine.dispose()
+            engine.dispose()

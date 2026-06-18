@@ -16,64 +16,15 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with Sauvetage Sportif. If not, see <https://www.gnu.org/licenses/>.
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-// These match the row shapes returned by src/main/db.ts.
-// All data is loaded from the real Splash Meet Manager PostgreSQL database.
+// ─── Re-exported types from shared-ui ─────────────────────────────────────────
+// Session, CompetitionEvent, AgeGroup, and Athlete are defined in @shared/data/api.
+// Re-export them here so existing consumers don't need to change their imports.
 
-export interface AgeGroup {
-  id: number
-  number: number
-  name: string
-  minAge: number
-  maxAge: number | null
-  gender: string
-  numHeats: number
-  ranking: string
-  countForMedalStats: boolean
-  usedForCombined: boolean
-  alwaysSwimPrelims: boolean
-  advanceByTime: boolean
-  laneOrderInFinals: string
-}
+export type { Session, CompetitionEvent, AgeGroup, Athlete } from '@shared/data/api'
 
-export interface CompetitionEvent {
-  id: number
-  sessionId: number
-  number: number
-  nameFr: string
-  nameEn: string
-  gender: 'M' | 'F' | 'X'
-  distance: number
-  phase: 'Finale' | 'Eliminatoire' | 'Finale directe'
-  isAdmin?: boolean
-  scheduledTime?: string
-  swimstyleId?: number | null
-  ageGroups: AgeGroup[]
-}
-
-export interface Session {
-  id: number
-  number: number
-  name: string
-  date?: string
-  time?: string
-  endTime?: string
-  poolSize: number
-  laneMin?: number
-  laneMax?: number
-  warmupFrom?: string
-  warmupUntil?: string
-  officialMeeting?: string
-  remarks?: string
-  remarksJury?: string
-  maxEntriesAthlete?: number
-  maxEntriesRelay?: number
-  feeAthlete?: number
-  timing?: number
-  touchpadMode?: number
-  roundToTenths?: boolean
-  events: CompetitionEvent[]
-}
+// ─── Heat-specific types (unique to meet-app renderer) ────────────────────────
+// These describe the heat/lane structures returned by the main process IPC
+// and are not part of the shared MeetAPI interface.
 
 export interface LaneEntry {
   swimresultId: number   // DB primary key — used for writing results back
@@ -131,41 +82,3 @@ export interface HeatListSession {
   laneMax: number
   events: HeatListEvent[]
 }
-
-export interface Athlete {
-  id: number
-  lastName: string
-  firstName: string
-  birthDate: string
-  gender: 'M' | 'F'
-  nation: string
-  clubCode: string
-  clubName: string
-  licence?: string
-  birthPlace?: string
-  beachNumber?: string
-  entries: Array<{ eventId: number; eventName: string; category: string; entryTime?: string }>
-}
-
-// ─── Static competition info ──────────────────────────────────────────────────
-// Competition-level metadata (name, city, dates) is not stored in the shared
-// PostgreSQL database — it lives in Splash's local .mdb file.
-// Set these values to match the meet you are running.
-
-export const competition = {
-  nameFr: 'Compétition',
-  nameEn: 'Competition',
-  city: '',
-  nation: 'CAN',
-  poolSize: 50,
-}
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-export function formatTime(t: string | undefined): string {
-  return t ?? ''
-}
-
-export function calcAge(birthYear: number): number {
-  return new Date().getFullYear() - birthYear
-}

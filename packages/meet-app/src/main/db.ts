@@ -788,7 +788,7 @@ export async function getSessions(): Promise<SessionRow[]> {
   }))
 }
 
-// ── Query: athletes for AthletesPage ──────────────────────────────────────────
+// ── Query: athletes ───────────────────────────────────────────────────────────
 
 export async function getAthletes(): Promise<AthleteRow[]> {
   const db = getLocalDb()
@@ -1399,17 +1399,8 @@ export async function saveAthlete(a: {
 
 // ── Local SQLite schema — imported from schema.ts to avoid circular dependency ──
 
-import { SCHEMA_DDL, runSchemaInit } from './schema'
+import { runSchemaInit } from './schema'
 export { runSchemaInit }
-
-function initLocalSchema(): void {
-  const db = getLocalDb()
-  // Only run DDL in SQLite mode — PG schema is managed by Splash Meet Manager
-  if (isPgConnected()) return
-  for (const ddl of SCHEMA_DDL) {
-    db.exec(ddl)
-  }
-}
 
 // ── Heat generation ───────────────────────────────────────────────────────────
 
@@ -2013,34 +2004,6 @@ export function getMeetInfo(): { name: string; city: string; nation: string } {
   }
 }
 
-export function getMeetConfig(): Record<string, string> {
-  const db = getLocalDb()
-  const rows = db.prepare(`SELECT name, data FROM bsglobal`).all() as Array<{ name: string; data: string | null }>
-  const result: Record<string, string> = {}
-  for (const r of rows) {
-    result[r.name] = r.data ?? ''
-  }
-  return result
-}
-
-export function setMeetConfig(key: string, value: string | null): void {
-  const db = getLocalDb()
-  db.prepare(
-    `INSERT INTO bsglobal (name, data) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET data=excluded.data`
-  ).run(key, value)
-}
-
-export function setMeetConfigBatch(entries: Record<string, string | null>): void {
-  const db = getLocalDb()
-  const stmt = db.prepare(
-    `INSERT INTO bsglobal (name, data) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET data=excluded.data`
-  )
-  const tx = db.transaction((items: [string, string | null][]) => {
-    for (const [k, v] of items) stmt.run(k, v)
-  })
-  tx(Object.entries(entries))
-}
-
 // ── MEETVALUES parser/writer (Splash format: KEY=TYPE;VALUE\r\n) ──────────────
 
 export interface MeetValues {
@@ -2124,11 +2087,6 @@ export function getSwimStyles(): SwimStyleRow[] {
 }
 
 // ── Write: reorder events within/between sessions ────────────────────────────
-
-export async function reorderEvent(eventId: number, targetSessionId: number, newSortcode: number): Promise<void> {
-  const db = getLocalDb()
-  db.prepare(`UPDATE swimevent SET swimsessionid=?, sortcode=? WHERE swimeventid=?`).run(targetSessionId, newSortcode, eventId)
-}
 
 export async function reorderEvents(updates: Array<{ eventId: number; sessionId: number; sortcode: number }>): Promise<void> {
   const db = getLocalDb()
@@ -2970,4 +2928,4 @@ export function getBeachNumberReport(): Array<{
     WHERE a.nameprefix IS NOT NULL AND a.nameprefix != ''
     ORDER BY c.name, CAST(SUBSTR(a.nameprefix, 2) AS INTEGER)
   `).all() as Array<{ clubName: string; beachNumber: string; lastName: string; firstName: string }>
-}
+}
