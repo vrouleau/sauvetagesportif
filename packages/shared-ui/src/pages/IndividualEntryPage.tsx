@@ -85,17 +85,31 @@ async function loadInscriptionData(
   if (role === 'coach' && clubId) {
     // Coach mode: only load their club
     const visibleClubs = clubs.filter(c => String(c.id) === String(clubId))
-    for (const club of visibleClubs) {
-      const athletes = await api.getAthletesByClub(String(club.id))
-      athletesByClub.set(club.id, athletes)
+    if (api.getAllAthletesGrouped) {
+      const grouped = await api.getAllAthletesGrouped()
+      for (const club of visibleClubs) {
+        athletesByClub.set(club.id, grouped[String(club.id)] || [])
+      }
+    } else {
+      for (const club of visibleClubs) {
+        const athletes = await api.getAthletesByClub(String(club.id))
+        athletesByClub.set(club.id, athletes)
+      }
     }
     return { clubs: visibleClubs, athletesByClub }
   }
 
-  // Admin mode: load all clubs and their athletes
-  for (const club of clubs) {
-    const athletes = await api.getAthletesByClub(String(club.id))
-    athletesByClub.set(club.id, athletes)
+  // Admin/organizer mode: load all clubs and their athletes in one request
+  if (api.getAllAthletesGrouped) {
+    const grouped = await api.getAllAthletesGrouped()
+    for (const club of clubs) {
+      athletesByClub.set(club.id, grouped[String(club.id)] || [])
+    }
+  } else {
+    for (const club of clubs) {
+      const athletes = await api.getAthletesByClub(String(club.id))
+      athletesByClub.set(club.id, athletes)
+    }
   }
 
   return { clubs, athletesByClub }
@@ -693,4 +707,4 @@ export default function IndividualEntryPage({ role, clubId, refreshKey, onImport
       )}
     </div>
   )
-}
+}

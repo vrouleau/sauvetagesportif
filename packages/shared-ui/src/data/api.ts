@@ -277,6 +277,8 @@ export interface RegistrationAPI {
   getClubs(): Promise<Club[]>
   getAthletesByClub(clubId: string): Promise<AthleteListItem[]>
   getAllAthletes(): Promise<AthleteListItem[]>
+  /** Bulk fetch: returns all athletes keyed by club ID. Avoids N+1 requests. */
+  getAllAthletesGrouped?(): Promise<Record<string, AthleteListItem[]>>
   addAthlete(data: { first_name: string; last_name: string; gender: string; birthdate: string | null; license: string; club_id: number }): Promise<void>
   deleteAthlete(id: number): Promise<void>
   getRegistration(athleteId: number): Promise<RegistrationData>
@@ -292,4 +294,4 @@ export interface RegistrationAPI {
   deleteRelayTeam(teamId: number): Promise<void>
   setRelayTeamMember(teamId: number, position: number, athleteId: number | null): Promise<void>
   setRelayTeamName(teamId: number, name: string | null): Promise<void>
-}
+}

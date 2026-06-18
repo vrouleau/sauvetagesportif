@@ -1473,6 +1473,31 @@ def reveal_secret(token: str, db: Session = Depends(get_db)):
 # Athletes
 # ---------------------------------------------------------------------------
 
+@router.get("/athletes/all-grouped")
+def list_athletes_grouped(request: Request, db: Session = Depends(get_db)):
+    """Return all athletes grouped by club in a single response (avoids N+1 requests)."""
+    pin = request.headers.get("X-Club-Pin", "")
+    role, caller_club = _resolve_role(pin, db)
+    if role == "none":
+        raise HTTPException(401, "Authentication required")
+
+    q = db.query(Member).options(joinedload(Member.club)).order_by(Member.lastname, Member.firstname)
+    if role == "coach":
+        q = q.filter(Member.clubsid == caller_club)
+
+    athletes = q.all()
+    grouped: dict[int, list] = defaultdict(list)
+    for a in athletes:
+        grouped[a.clubsid].append({
+            "id": a.membersid, "first_name": a.firstname, "last_name": a.lastname,
+            "gender": gender_to_str(a.gender),
+            "birthdate": str(a.birthdate.date()) if a.birthdate else None,
+            "license": a.license, "club": a.club.name if a.club else "",
+            "club_id": a.clubsid,
+        })
+    return grouped
+
+
 @router.get("/athletes")
 def list_athletes(request: Request, club_id: int = None, db: Session = Depends(get_db)):
     pin = request.headers.get("X-Club-Pin", "")

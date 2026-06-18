@@ -23,6 +23,28 @@
 import api from './api'
 
 /**
+ * Simple in-memory cache with TTL to avoid redundant fetches on tab navigation.
+ * Entries expire after 30 seconds — mutations call invalidateCache().
+ */
+const _cache = new Map()
+const CACHE_TTL = 30_000 // 30 seconds
+
+function cacheGet(key) {
+  const entry = _cache.get(key)
+  if (!entry) return undefined
+  if (Date.now() - entry.ts > CACHE_TTL) { _cache.delete(key); return undefined }
+  return entry.data
+}
+
+function cacheSet(key, data) {
+  _cache.set(key, { data, ts: Date.now() })
+}
+
+function invalidateCache() {
+  _cache.clear()
+}
+
+/**
  * Helper for relay mutation requests that need to surface error detail messages
  * from 409 Conflict, 403 Forbidden, and 400 Bad Request responses.
  */
@@ -46,26 +68,46 @@ async function relayRequest(method, path, body) {
 
 export const registrationApiHttp = {
   async getClubs() {
+    const cached = cacheGet('clubs')
+    if (cached) return cached
     const r = await api.get('/clubs')
+    cacheSet('clubs', r.data)
     return r.data
   },
 
   async getAthletesByClub(clubId) {
+    const key = `athletes-club-${clubId}`
+    const cached = cacheGet(key)
+    if (cached) return cached
     const r = await api.get(`/athletes?club_id=${clubId}`)
+    cacheSet(key, r.data)
     return r.data
   },
 
   async getAllAthletes() {
+    const cached = cacheGet('athletes-all')
+    if (cached) return cached
     const r = await api.get('/athletes')
+    cacheSet('athletes-all', r.data)
+    return r.data
+  },
+
+  async getAllAthletesGrouped() {
+    const cached = cacheGet('athletes-grouped')
+    if (cached) return cached
+    const r = await api.get('/athletes/all-grouped')
+    cacheSet('athletes-grouped', r.data)
     return r.data
   },
 
   async addAthlete(data) {
     await api.post('/athletes', data)
+    invalidateCache()
   },
 
   async deleteAthlete(id) {
     await api.delete(`/athletes/${id}`)
+    invalidateCache()
   },
 
   async getRegistration(athleteId) {
@@ -117,4 +159,4 @@ export const registrationApiHttp = {
   async setRelayTeamName(teamId, name) {
     await relayRequest('PUT', `/relay-teams/${teamId}/name`, { name })
   },
-}
+}
