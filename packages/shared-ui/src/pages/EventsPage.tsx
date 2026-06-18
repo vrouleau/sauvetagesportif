@@ -2399,7 +2399,6 @@ function SessionPropertiesPanel({
   }
 
   function TextRow({ label, value, field }: { label: string; value: string; field: string }) {
-    if (collapsed.has(currentSection)) return null
     return (
       <tr className="border-b border-gray-100 hover:bg-gray-50">
         <td className="px-4 py-0.5 text-gray-600 w-64">{label}</td>
@@ -2419,7 +2418,6 @@ function SessionPropertiesPanel({
   }
 
   function NumberRow({ label, value, field }: { label: string; value: number | undefined; field: string }) {
-    if (collapsed.has(currentSection)) return null
     return (
       <tr className="border-b border-gray-100 hover:bg-gray-50">
         <td className="px-4 py-0.5 text-gray-600 w-64">{label}</td>
@@ -2440,7 +2438,6 @@ function SessionPropertiesPanel({
   }
 
   function TimeRow({ label, value, field }: { label: string; value: string | undefined; field: string }) {
-    if (collapsed.has(currentSection)) return null
     // Pad time to HH:MM format for <input type="time">
     const padded = value ? value.replace(/^(\d):/, '0$1:') : ''
     return (
@@ -2461,7 +2458,6 @@ function SessionPropertiesPanel({
   }
 
   function CheckRow({ label, value, field }: { label: string; value: boolean; field: string }) {
-    if (collapsed.has(currentSection)) return null
     return (
       <tr className="border-b border-gray-100 hover:bg-gray-50">
         <td className="px-4 py-0.5 text-gray-600 w-64">{label}</td>
@@ -2478,7 +2474,6 @@ function SessionPropertiesPanel({
   }
 
   function SelectRow({ label, value, field, options }: { label: string; value: string | number | undefined; field: string; options: { value: string | number; label: string }[] }) {
-    if (collapsed.has(currentSection)) return null
     return (
       <tr className="border-b border-gray-100 hover:bg-gray-50">
         <td className="px-4 py-0.5 text-gray-600 w-64">{label}</td>
@@ -2501,7 +2496,6 @@ function SessionPropertiesPanel({
   }
 
   function ReadOnlyRow({ label, value }: { label: string; value: string | number | undefined }) {
-    if (collapsed.has(currentSection)) return null
     return (
       <tr className="border-b border-gray-100 hover:bg-gray-50">
         <td className="px-4 py-0.5 text-gray-600 w-64">{label}</td>
@@ -2509,8 +2503,6 @@ function SessionPropertiesPanel({
       </tr>
     )
   }
-
-  let currentSection = ''
 
   const poolOptions = [
     { value: 1, label: 'Bassin 50m' },
@@ -2551,58 +2543,73 @@ function SessionPropertiesPanel({
       <table className="w-full border-collapse">
         <tbody>
           {/* Général */}
-          {(() => { currentSection = 'Général'; return null })()}
           <SectionHeader title="Général" />
-          <NumberRow label="Numéro" value={session.number} field="sessionnumber" />
-          <tr className="border-b border-gray-100 hover:bg-gray-50">
-            <td className="px-4 py-0.5 text-gray-600 w-64">Date</td>
-            <td className="px-2 py-0.5">
-              <input
-                type="date"
-                className="w-full border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
-                defaultValue={session.date ?? ''}
-                onBlur={(e) => {
-                  if (e.target.value !== (session.date ?? '')) onUpdate({ startdate: e.target.value || null })
-                }}
-                onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-              />
-            </td>
-          </tr>
-          <TextRow label="Nom" value={session.name} field="name" />
+          {!collapsed.has('Général') && (
+            <>
+              <NumberRow label="Numéro" value={session.number} field="sessionnumber" />
+              <tr className="border-b border-gray-100 hover:bg-gray-50">
+                <td className="px-4 py-0.5 text-gray-600 w-64">Date</td>
+                <td className="px-2 py-0.5">
+                  <input
+                    type="date"
+                    className="w-full border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
+                    defaultValue={session.date ?? ''}
+                    onBlur={(e) => {
+                      if (e.target.value !== (session.date ?? '')) onUpdate({ startdate: e.target.value || null })
+                    }}
+                    onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                  />
+                </td>
+              </tr>
+              <TextRow label="Nom" value={session.name} field="name" />
+            </>
+          )}
 
           {/* Horaire */}
-          {(() => { currentSection = 'Horaire (heure de début)'; return null })()}
           <SectionHeader title="Horaire (heure de début)" />
-          <TimeRow label="Heure de départ première épreuve" value={session.time} field="daytime" />
-          <TimeRow label="Temps de fin de la dernière épreuve" value={session.endTime} field="endtime" />
-          <TimeRow label="Séance des chefs d'équipes" value={session.officialMeeting} field="officialmeeting" />
-          <TimeRow label="Début de l'échauffement" value={session.warmupFrom} field="warmupfrom" />
-          <TimeRow label="Fin de l'échauffement" value={session.warmupUntil} field="warmupuntil" />
-          <TextRow label="Remarque" value={session.remarks ?? ''} field="remarks" />
+          {!collapsed.has('Horaire (heure de début)') && (
+            <>
+              <TimeRow label="Heure de départ première épreuve" value={session.time} field="daytime" />
+              <TimeRow label="Temps de fin de la dernière épreuve" value={session.endTime} field="endtime" />
+              <TimeRow label="Séance des chefs d'équipes" value={session.officialMeeting} field="officialmeeting" />
+              <TimeRow label="Début de l'échauffement" value={session.warmupFrom} field="warmupfrom" />
+              <TimeRow label="Fin de l'échauffement" value={session.warmupUntil} field="warmupuntil" />
+              <TextRow label="Remarque" value={session.remarks ?? ''} field="remarks" />
+            </>
+          )}
 
           {/* Piscine et chronométrage */}
-          {(() => { currentSection = 'Piscine et chronométrage'; return null })()}
           <SectionHeader title="Piscine et chronométrage" />
-          <SelectRow label="Longueur du bassin" value={courseValue} field="course" options={poolOptions} />
-          <NumberRow label="N° de la première ligne" value={session.laneMin} field="lanemin" />
-          <NumberRow label="N° de la dernière ligne" value={session.laneMax} field="lanemax" />
-          <SelectRow label="Installation de chronométrage" value={session.timing} field="timing" options={timingOptions} />
-          <SelectRow label="Plaques de touches" value={session.touchpadMode} field="touchpadmode" options={touchpadOptions} />
-          <CheckRow label="Résultats au dixième de secondes" value={session.roundToTenths ?? false} field="roundtotenths" />
+          {!collapsed.has('Piscine et chronométrage') && (
+            <>
+              <SelectRow label="Longueur du bassin" value={courseValue} field="course" options={poolOptions} />
+              <NumberRow label="N° de la première ligne" value={session.laneMin} field="lanemin" />
+              <NumberRow label="N° de la dernière ligne" value={session.laneMax} field="lanemax" />
+              <SelectRow label="Installation de chronométrage" value={session.timing} field="timing" options={timingOptions} />
+              <SelectRow label="Plaques de touches" value={session.touchpadMode} field="touchpadmode" options={touchpadOptions} />
+              <CheckRow label="Résultats au dixième de secondes" value={session.roundToTenths ?? false} field="roundtotenths" />
+            </>
+          )}
 
           {/* Jury */}
-          {(() => { currentSection = 'Jury'; return null })()}
           <SectionHeader title="Jury" />
-          <TextRow label="Remarque" value={session.remarksJury ?? ''} field="remarksjury" />
+          {!collapsed.has('Jury') && (
+            <>
+              <TextRow label="Remarque" value={session.remarksJury ?? ''} field="remarksjury" />
+            </>
+          )}
 
           {/* Autres */}
-          {(() => { currentSection = 'Autres'; return null })()}
           <SectionHeader title="Autres" />
-          <NumberRow label="Nbre max. d'inscriptions par athlète" value={session.maxEntriesAthlete} field="maxentriesathlete" />
-          <NumberRow label="Nbre max. d'inscriptions de relais par..." value={session.maxEntriesRelay} field="maxentriesrelay" />
-          <NumberRow label="Frais d'inscription par session: par at..." value={session.feeAthlete} field="feeathlete" />
+          {!collapsed.has('Autres') && (
+            <>
+              <NumberRow label="Nbre max. d'inscriptions par athlète" value={session.maxEntriesAthlete} field="maxentriesathlete" />
+              <NumberRow label="Nbre max. d'inscriptions de relais par..." value={session.maxEntriesRelay} field="maxentriesrelay" />
+              <NumberRow label="Frais d'inscription par session: par at..." value={session.feeAthlete} field="feeathlete" />
+            </>
+          )}
         </tbody>
       </table>
     </div>
   )
-}
+}
