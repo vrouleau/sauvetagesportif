@@ -185,6 +185,10 @@ const api = {
       ipcRenderer.invoke('db:get-combined-results', selectedEventIds),
     getBeachNumberReport: () =>
       ipcRenderer.invoke('db:get-beach-number-report'),
+    getEntriesByEvent: (selectedEventIds: number[]) =>
+      ipcRenderer.invoke('db:get-entries-by-event', selectedEventIds),
+    getPointStandings: (selectedEventIds: number[]) =>
+      ipcRenderer.invoke('db:get-point-standings', selectedEventIds),
     // Finals
     getFinalEvents: () =>
       ipcRenderer.invoke('db:get-final-events'),
@@ -301,4 +305,4 @@ if (process.contextIsolated) {
   window.electron = electronAPI
   // @ts-ignore
   window.api = api
-}
+}

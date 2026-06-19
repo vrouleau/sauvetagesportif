@@ -49,6 +49,8 @@ import {
   clearFinalSeeding, seedFinals,
   getCombinedResults,
   getBeachNumberReport,
+  getEntriesByEvent,
+  getPointStandings,
   nextId,
   duplicateEvent,
   type SessionUpdate,
@@ -1335,6 +1337,14 @@ ipcMain.handle('db:get-combined-results', (_event, selectedEventIds: number[]) =
 
 ipcMain.handle('db:get-beach-number-report', () => getBeachNumberReport())
 
+ipcMain.handle('db:get-entries-by-event', (_event, selectedEventIds: number[]) =>
+  getEntriesByEvent(selectedEventIds)
+)
+
+ipcMain.handle('db:get-point-standings', (_event, selectedEventIds: number[]) =>
+  getPointStandings(selectedEventIds)
+)
+
 interface PdfHeaderInfo { line1: string; line2: string; today: string }
 
 function escHtml(s: string): string {
@@ -2117,4 +2127,4 @@ app.on('window-all-closed', () => {
     activeOcrEngine = null
   }
   if (process.platform !== 'darwin') app.quit()
-})
+})

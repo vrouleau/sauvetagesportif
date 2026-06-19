@@ -2929,3 +2929,174 @@ export function getBeachNumberReport(): Array<{
     ORDER BY c.name, CAST(SUBSTR(a.nameprefix, 2) AS INTEGER)
   `).all() as Array<{ clubName: string; beachNumber: string; lastName: string; firstName: string }>
 }
+
+// ── Query: entries by event report ────────────────────────────────────────────
+
+export interface EntryByEventRow {
+  eventId: number
+  eventNumber: number
+  eventName: string
+  gender: number
+  ageMin: number
+  ageMax: number
+  lastName: string
+  firstName: string
+  birthdate: string | number | null
+  clubName: string
+  clubCode: string
+  entryTime: number | null
+  beachNumber: string | null
+  ageGroupName: string
+}
+
+export function getEntriesByEvent(selectedEventIds: number[]): EntryByEventRow[] {
+  if (selectedEventIds.length === 0) return []
+  const db = getLocalDb()
+  const { clause, params } = inClause(selectedEventIds)
+  return db.prepare(`
+    SELECT e.swimeventid AS eventId,
+           e.eventnumber AS eventNumber,
+           ss.name AS eventName,
+           e.gender,
+           ag.agemin AS ageMin,
+           ag.agemax AS ageMax,
+           a.lastname AS lastName,
+           a.firstname AS firstName,
+           a.birthdate,
+           COALESCE(c.name, c.code, '') AS clubName,
+           COALESCE(c.code, '') AS clubCode,
+           r.entrytime AS entryTime,
+           a.nameprefix AS beachNumber,
+           COALESCE(NULLIF(ag2.name, ''), CASE WHEN ag2.agemin IS NOT NULL THEN CAST(ag2.agemin AS TEXT) || '-' || COALESCE(CAST(ag2.agemax AS TEXT), '+') END, '') AS ageGroupName
+    FROM swimresult r
+    JOIN athlete a ON r.athleteid = a.athleteid
+    JOIN swimevent e ON r.swimeventid = e.swimeventid
+    LEFT JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid
+    LEFT JOIN club c ON a.clubid = c.clubid
+    LEFT JOIN agegroup ag ON ag.swimeventid = e.swimeventid AND ag.agegroupid = (
+      SELECT MIN(ag3.agegroupid) FROM agegroup ag3 WHERE ag3.swimeventid = e.swimeventid
+    )
+    LEFT JOIN agegroup ag2 ON r.agegroupid = ag2.agegroupid
+    WHERE r.swimeventid IN (${clause})
+    ORDER BY e.sortcode, e.swimeventid, a.lastname COLLATE NOCASE, a.firstname COLLATE NOCASE
+  `).all(...params) as EntryByEventRow[]
+}
+
+// ── Query: point standings report ─────────────────────────────────────────────
+
+export interface PointStandingsClub {
+  clubName: string
+  clubCode: string
+  totalPoints: number
+  categories: Array<{
+    categoryName: string
+    points: number
+  }>
+}
+
+export function getPointStandings(selectedEventIds: number[]): {
+  clubs: PointStandingsClub[]
+  categories: string[]
+} {
+  if (selectedEventIds.length === 0) return { clubs: [], categories: [] }
+  const db = getLocalDb()
+
+  // Use the same combined events logic to compute points per club
+  const row = db.prepare(`SELECT data FROM bsglobal WHERE name = 'COMBINEDEVENTS'`).get() as { data: string } | undefined
+  if (!row || !row.data) return { clubs: [], categories: [] }
+
+  const xml = row.data
+  const categoryNames: string[] = []
+  const clubPoints = new Map<string, { clubName: string; clubCode: string; totalPoints: number; catPoints: Map<string, number> }>()
+
+  const ceRegex = /<COMBINEDEVENT\s([^>]*?)(?:\/>|>([\s\S]*?)<\/COMBINEDEVENT>)/g
+  let ceMatch: RegExpExecArray | null
+
+  while ((ceMatch = ceRegex.exec(xml)) !== null) {
+    const attrs = ceMatch[1]
+    const body = ceMatch[2] ?? ''
+
+    const nameMatch = attrs.match(/name="([^"]*)"/)
+    const pointsMatch = attrs.match(/pointsforplaces="([^"]*)"/)
+
+    if (!nameMatch || !pointsMatch) continue
+
+    const categoryName = nameMatch[1]
+      .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+    const pointsScale = pointsMatch[1].split(',').map(Number)
+
+    // Extract event IDs from child EVENT elements
+    const eventIds: number[] = []
+    const evRegex = /eventid="(\d+)"/g
+    let evMatch: RegExpExecArray | null
+    while ((evMatch = evRegex.exec(body)) !== null) {
+      eventIds.push(Number(evMatch[1]))
+    }
+
+    const filteredEventIds = eventIds.filter(id => selectedEventIds.includes(id))
+    if (filteredEventIds.length === 0) continue
+
+    categoryNames.push(categoryName)
+
+    // For each event, compute places and award points to clubs
+    for (const eventId of filteredEventIds) {
+      const results = db.prepare(`
+        SELECT r.athleteid, r.swimtime, r.resultstatus,
+               COALESCE(c.name, c.code, '') AS clubname,
+               COALESCE(c.code, '') AS clubcode
+        FROM swimresult r
+        JOIN athlete a ON r.athleteid = a.athleteid
+        LEFT JOIN club c ON a.clubid = c.clubid
+        WHERE r.swimeventid = ?
+          AND r.swimtime IS NOT NULL
+          AND r.swimtime > 0
+          AND (r.resultstatus IS NULL OR r.resultstatus = 0)
+        ORDER BY r.swimtime ASC
+      `).all(eventId) as Array<{
+        athleteid: number; swimtime: number; resultstatus: number | null
+        clubname: string; clubcode: string
+      }>
+
+      let place = 0
+      let lastTime: number | null = null
+
+      for (let i = 0; i < results.length; i++) {
+        const r = results[i]
+        if (r.swimtime !== lastTime) {
+          place = i + 1
+          lastTime = r.swimtime
+        }
+
+        const pts = (place - 1 < pointsScale.length) ? pointsScale[place - 1] : 0
+        if (pts <= 0) continue
+
+        const key = r.clubcode || r.clubname
+        if (!clubPoints.has(key)) {
+          clubPoints.set(key, { clubName: r.clubname, clubCode: r.clubcode, totalPoints: 0, catPoints: new Map() })
+        }
+        const club = clubPoints.get(key)!
+        club.totalPoints += pts
+        club.catPoints.set(categoryName, (club.catPoints.get(categoryName) ?? 0) + pts)
+      }
+    }
+  }
+
+  // Build sorted result
+  const clubs: PointStandingsClub[] = []
+  for (const [, data] of clubPoints) {
+    clubs.push({
+      clubName: data.clubName,
+      clubCode: data.clubCode,
+      totalPoints: data.totalPoints,
+      categories: categoryNames.map(cat => ({
+        categoryName: cat,
+        points: data.catPoints.get(cat) ?? 0,
+      })),
+    })
+  }
+
+  clubs.sort((a, b) => b.totalPoints - a.totalPoints || a.clubName.localeCompare(b.clubName))
+
+  return { clubs, categories: categoryNames }
+}

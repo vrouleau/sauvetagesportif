@@ -57,7 +57,7 @@ interface ReportEventSection {
   heats: HeatListEventRow['heats']
 }
 
-type ReportType = 'heatList' | 'startList' | 'combinedResults' | 'beachNumbers'
+type ReportType = 'heatList' | 'startList' | 'combinedResults' | 'beachNumbers' | 'entriesByEvent' | 'pointStandings'
 
 // ── HTML generator ────────────────────────────────────────────────────────────
 
@@ -648,6 +648,252 @@ function buildBeachNumbersPdfHeaderInfo(meetInfo: MeetInfo): PdfHeaderInfo {
   }
 }
 
+// ── Entries by Event (Liste des inscriptions par épreuves) PDF generator ──────
+
+interface EntryByEventReportRow {
+  eventId: number
+  eventNumber: number
+  eventName: string
+  gender: number
+  ageMin: number
+  ageMax: number
+  lastName: string
+  firstName: string
+  birthdate: string | number | null
+  clubName: string
+  clubCode: string
+  entryTime: number | null
+  beachNumber: string | null
+  ageGroupName: string
+}
+
+function msToDisplay(ms: number | null): string {
+  if (ms == null || ms <= 0) return 'NT'
+  const totalSecs = ms / 1000
+  const mins = Math.floor(totalSecs / 60)
+  const secs = totalSecs - mins * 60
+  if (mins > 0) {
+    return `${mins}:${secs < 10 ? '0' : ''}${secs.toFixed(2)}`
+  }
+  return secs.toFixed(2)
+}
+
+function decodeGenderNum(g: number): 'M' | 'F' | 'X' {
+  if (g === 1) return 'M'
+  if (g === 2) return 'F'
+  return 'X'
+}
+
+function generateEntriesByEventPdfHtml(rows: EntryByEventReportRow[], isBeach: boolean): string {
+  // Group rows by event
+  const events = new Map<number, { eventNumber: number; eventName: string; gender: number; ageMin: number; ageMax: number; entries: EntryByEventReportRow[] }>()
+
+  for (const row of rows) {
+    if (!events.has(row.eventId)) {
+      events.set(row.eventId, {
+        eventNumber: row.eventNumber,
+        eventName: row.eventName,
+        gender: row.gender,
+        ageMin: row.ageMin,
+        ageMax: row.ageMax,
+        entries: [],
+      })
+    }
+    events.get(row.eventId)!.entries.push(row)
+  }
+
+  const meetYear = new Date().getFullYear()
+
+  let html = ''
+  for (const [, ev] of events) {
+    const gender = decodeGenderNum(ev.gender)
+    const prefix = genderPrefix(gender, ev.ageMin)
+    const centerName = gender === 'X'
+      ? esc(ev.eventName ?? '')
+      : `${esc(prefix)}, ${esc(ev.eventName ?? '')}`
+    const ageRange = esc(formatAgeRange(ev.ageMin, ev.ageMax))
+    const entryCount = ev.entries.length
+
+    html += `<div class="ev">
+<table width="100%" cellspacing="0" cellpadding="0" border="0">
+<tr valign="top">
+  <td width="15%"><b>&Eacute;preuve ${ev.eventNumber}</b></td>
+  <td width="55%" align="center"><b>${centerName}</b></td>
+  <td width="30%" align="right"><em class="f8">${ageRange}</em></td>
+</tr>
+</table>
+<hr class="ev-rule">
+<table width="100%" cellspacing="0" cellpadding="1" border="0" class="entry-table">
+<tr class="entry-hdr">
+  <td width="3%" align="right"><em class="f8">#</em></td>
+  ${isBeach ? '<td width="8%"><em class="f8">No.</em></td>' : ''}
+  <td width="${isBeach ? '29' : '37'}%"><em class="f8">Nom</em></td>
+  <td width="5%"><em class="f8">Age</em></td>
+  <td width="10%"><em class="f8">Cat.</em></td>
+  <td width="25%"><em class="f8">Club</em></td>
+  ${!isBeach ? '<td width="15%" align="right"><em class="f8">Temps inscr.</em></td>' : ''}
+</tr>
+`
+
+    for (let i = 0; i < ev.entries.length; i++) {
+      const e = ev.entries[i]
+      const birthYear = parseBirthYearEntry(e.birthdate)
+      const age = birthYear > 0 ? meetYear - birthYear : '?'
+      const entryTimeStr = isBeach ? '' : msToDisplay(e.entryTime)
+      const beachNum = isBeach && e.beachNumber ? esc(e.beachNumber) : ''
+
+      html += `<tr>
+  <td align="right">${i + 1}.</td>
+  ${isBeach ? `<td>${beachNum}</td>` : ''}
+  <td><b>${esc(e.lastName + ', ' + e.firstName)}</b></td>
+  <td>${age}</td>
+  <td>${esc(e.ageGroupName ?? '')}</td>
+  <td>${esc(e.clubName)}</td>
+  ${!isBeach ? `<td align="right">${esc(entryTimeStr)}</td>` : ''}
+</tr>\n`
+    }
+
+    html += `</table>
+<div class="entry-count">${entryCount} inscription${entryCount !== 1 ? 's' : ''}</div>
+</div>\n`
+  }
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+BODY, TABLE, TD { font-family: Arial, Helvetica, sans-serif; font-size: 10pt; color: black; }
+.f8 { font-size: 8pt; }
+body { margin: 0; padding: 0; }
+.ev { margin-bottom: 14pt; break-inside: avoid; page-break-inside: avoid; }
+hr.ev-rule { border: none; border-top: 1px solid black; margin: 2px 0 4px 0; }
+.entry-table { border-collapse: collapse; }
+.entry-table td { padding: 1px 3px; }
+.entry-hdr td { border-bottom: 2px solid #333; padding: 1px 3px; }
+.entry-count { font-size: 8pt; color: #555; text-align: right; margin-top: 2pt; }
+@page { size: Letter portrait; }
+</style>
+</head>
+<body>
+${html}
+</body>
+</html>`
+}
+
+function parseBirthYearEntry(bd: string | number | null): number {
+  if (bd == null) return 0
+  if (typeof bd === 'number') return new Date(bd).getFullYear()
+  const m = String(bd).match(/(\d{4})/)
+  return m ? Number(m[1]) : 0
+}
+
+function buildEntriesByEventPdfHeaderInfo(meetInfo: MeetInfo): PdfHeaderInfo {
+  return {
+    line1: meetInfo.name || 'Compétition',
+    line2: meetInfo.city ? `${meetInfo.city} — Liste des inscriptions par épreuves` : 'Liste des inscriptions par épreuves',
+    today: new Date().toLocaleDateString('fr-CA'),
+  }
+}
+
+// ── Point Standings (Classement au points) PDF generator ─────────────────────
+
+interface PointStandingsData {
+  clubs: Array<{
+    clubName: string
+    clubCode: string
+    totalPoints: number
+    categories: Array<{ categoryName: string; points: number }>
+  }>
+  categories: string[]
+}
+
+function generatePointStandingsPdfHtml(data: PointStandingsData): string {
+  if (data.clubs.length === 0) {
+    return `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body><p>Aucun résultat disponible.</p></body></html>`
+  }
+
+  // Truncate long category names for column headers
+  function shortCat(name: string): string {
+    // Try to extract a shorter version (e.g., "10 et - G" from "Cumulatif 10 ans et moins - garçons")
+    const m = name.match(/(\d+[\s-]+\d+|\d+\s+et\s+[\w-]+).*?([GMFgmf])/i)
+    if (m) return `${m[1]} ${m[2].toUpperCase()}`
+    if (name.length > 15) return name.slice(0, 14) + '…'
+    return name
+  }
+
+  const catHeaders = data.categories.map(c => `<td align="right"><em class="f8">${esc(shortCat(c))}</em></td>`).join('\n  ')
+
+  let html = `<div class="ps-report">
+<table width="100%" cellspacing="0" cellpadding="2" border="0" class="ps-table">
+<tr class="ps-hdr">
+  <td width="4%" align="right"><em class="f8">Rang</em></td>
+  <td width="30%"><em class="f8">Club</em></td>
+  ${catHeaders}
+  <td width="8%" align="right"><b><em class="f8">Total</em></b></td>
+</tr>
+`
+
+  let rank = 1
+  let lastPoints: number | null = null
+  let sameCount = 0
+
+  for (let i = 0; i < data.clubs.length; i++) {
+    const club = data.clubs[i]
+
+    if (club.totalPoints !== lastPoints) {
+      rank = i + 1
+      sameCount = 1
+      lastPoints = club.totalPoints
+    } else {
+      sameCount++
+    }
+
+    const rankStr = sameCount === 1 ? `${rank}.` : ''
+    const catCells = club.categories.map(c =>
+      `<td align="right">${c.points > 0 ? c.points : ''}</td>`
+    ).join('\n  ')
+
+    html += `<tr>
+  <td align="right">${rankStr}</td>
+  <td><b>${esc(club.clubName)}</b></td>
+  ${catCells}
+  <td align="right"><b>${club.totalPoints}</b></td>
+</tr>\n`
+  }
+
+  html += `</table>
+</div>`
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+BODY, TABLE, TD { font-family: Arial, Helvetica, sans-serif; font-size: 10pt; color: black; }
+.f8 { font-size: 8pt; }
+body { margin: 0; padding: 0; }
+.ps-report { margin-bottom: 14pt; }
+.ps-table { border-collapse: collapse; }
+.ps-table td { padding: 2px 4px; border-bottom: 1px solid #ddd; }
+.ps-hdr td { border-bottom: 2px solid #333; padding: 2px 4px; }
+@page { size: Letter landscape; }
+</style>
+</head>
+<body>
+${html}
+</body>
+</html>`
+}
+
+function buildPointStandingsPdfHeaderInfo(meetInfo: MeetInfo): PdfHeaderInfo {
+  return {
+    line1: meetInfo.name || 'Compétition',
+    line2: meetInfo.city ? `${meetInfo.city} — Classement au points` : 'Classement au points',
+    today: new Date().toLocaleDateString('fr-CA'),
+  }
+}
+
 // ── HTML export generator (TOC + hyperlinks, matches reference .htm format) ────
 
 function generateHeatListHtml(
@@ -1028,7 +1274,7 @@ export default function ReportPage({ refreshKey = 0, meetType = 'POOL' }: { refr
 
   async function handleGenerate() {
     const sections = buildSections()
-    if (sections.length === 0 && reportType !== 'combinedResults' && reportType !== 'beachNumbers') return
+    if (sections.length === 0 && reportType !== 'combinedResults' && reportType !== 'beachNumbers' && reportType !== 'entriesByEvent' && reportType !== 'pointStandings') return
 
     let pdf: string
     let exported: string
@@ -1040,6 +1286,24 @@ export default function ReportPage({ refreshKey = 0, meetType = 'POOL' }: { refr
       pdf = generateBeachNumbersPdfHtml(rows ?? [])
       exported = '' // No HTML export for beachNumbers
       hdrInfo = buildBeachNumbersPdfHeaderInfo(meetInfo)
+    } else if (reportType === 'entriesByEvent') {
+      // Fetch entries by event from main process
+      const eventIds = [...selectedEventIds]
+      if (eventIds.length === 0) return
+      const rows = await dbApi()?.getEntriesByEvent(eventIds) as EntryByEventReportRow[] | undefined
+      const isBeach = meetType === 'BEACH'
+      pdf = generateEntriesByEventPdfHtml(rows ?? [], isBeach)
+      exported = '' // No HTML export
+      hdrInfo = buildEntriesByEventPdfHeaderInfo(meetInfo)
+    } else if (reportType === 'pointStandings') {
+      // Fetch point standings from main process
+      const eventIds = [...selectedEventIds]
+      if (eventIds.length === 0) return
+      const data = await dbApi()?.getPointStandings(eventIds) as PointStandingsData | undefined
+      if (!data || data.clubs.length === 0) return
+      pdf = generatePointStandingsPdfHtml(data)
+      exported = '' // No HTML export
+      hdrInfo = buildPointStandingsPdfHeaderInfo(meetInfo)
     } else if (reportType === 'combinedResults') {
       // Fetch combined results from main process
       const eventIds = [...selectedEventIds]
@@ -1128,7 +1392,9 @@ export default function ReportPage({ refreshKey = 0, meetType = 'POOL' }: { refr
         >
           <option value="heatList">Liste des Séries</option>
           <option value="startList">Fiche de Départs</option>
+          <option value="entriesByEvent">Liste des inscriptions par épreuves</option>
           <option value="combinedResults">Résultat Combiné</option>
+          <option value="pointStandings">Classement au points</option>
           {meetType === 'BEACH' && (
             <option value="beachNumbers">Identifiants plage</option>
           )}
@@ -1223,7 +1489,7 @@ export default function ReportPage({ refreshKey = 0, meetType = 'POOL' }: { refr
             </button>
             <button
               onClick={handleSaveHtml}
-              disabled={!exportHtml || generating || reportType === 'startList' || reportType === 'combinedResults' || reportType === 'beachNumbers'}
+              disabled={!exportHtml || generating || reportType === 'startList' || reportType === 'combinedResults' || reportType === 'beachNumbers' || reportType === 'entriesByEvent' || reportType === 'pointStandings'}
               className="px-3 py-0.5 text-xs border border-gray-400 bg-white hover:bg-gray-100 disabled:opacity-40"
             >
               HTML
@@ -1255,4 +1521,4 @@ export default function ReportPage({ refreshKey = 0, meetType = 'POOL' }: { refr
       </div>
     </div>
   )
-}
+}
