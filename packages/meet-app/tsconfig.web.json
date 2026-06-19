@@ -3,9 +3,10 @@
   "include": ["src/renderer/src/**/*", "../shared-ui/src/**/*"],
   "compilerOptions": {
     "composite": true,
-    "baseUrl": ".",
+    "moduleResolution": "bundler",
+    "module": "ESNext",
     "paths": {
-      "@renderer/*": ["src/renderer/src/*"],
+      "@renderer/*": ["./src/renderer/src/*"],
       "@shared/*": ["../shared-ui/src/*"]
     }
   }
