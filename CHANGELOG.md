@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.31] - 2026-06-19
+
+### Other
+
+- Fix historical import: use actual gender from LXF instead of hardcoded male (`991f63e`)
+- Remove redundant category subtitle from Resultat Combine report (`b44c5b8`)
+
 ## [0.3.30] - 2026-06-19
 
 ### 🐛 Bug Fixes
