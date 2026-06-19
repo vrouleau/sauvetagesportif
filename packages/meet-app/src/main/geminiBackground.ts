@@ -24,7 +24,7 @@
  * Can be enabled/disabled via IPC.
  */
 
-import { getScansByStatus, getScanById, updateScanOcrResult, type ScanStatus } from './timingScanDb'
+import { getScansByStatus, updateScanOcrResult } from './timingScanDb'
 import { GeminiOcrEngine, loadGeminiApiKey } from './ocrGemini'
 
 let enabled = true
@@ -120,4 +120,4 @@ async function processLoop(): Promise<void> {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms))
-}
+}

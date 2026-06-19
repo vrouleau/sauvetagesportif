@@ -858,7 +858,7 @@ describe('RelayEntryPage - Property 11: Age Group Majority Filtering', () => {
     fc.assert(
       fc.property(
         ageGroupArb,
-        ageGroupArb.filter(g => true), // second group (may be same or different)
+        ageGroupArb.filter(() => true), // second group (may be same or different)
         (groupA, groupB) => {
           // Scenario: 3 positions filled with 2×groupA + 1×groupB
           // The 4th position with groupB would create 2-2 → should be blocked
@@ -924,7 +924,7 @@ describe('RelayEntryPage - Property 11: Age Group Majority Filtering', () => {
     fc.assert(
       fc.property(
         ageGroupArb,
-        ageGroupArb.filter(g => true),
+        ageGroupArb.filter(() => true),
         (groupA, groupB) => {
           if (groupA === groupB) return // same group → 2-0, valid
           // For 2-person relay, required majority = 2
@@ -968,4 +968,4 @@ describe('RelayEntryPage - Property 11: Age Group Majority Filtering', () => {
       { numRuns: 100 }
     )
   })
-})
+})

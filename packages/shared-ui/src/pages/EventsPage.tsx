@@ -860,8 +860,6 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
 
       // If swimstyle changed, reload to get the new event name from the DB
       if ('swimstyleid' in data) {
-        // Find the style name from the loaded session data or swim styles
-        const styleId = data.swimstyleid as number
         // Update the local event with the new swimstyle info
         const updatedSessions = await api.getSessions()
         setLocalSessions(updatedSessions)
@@ -1148,7 +1146,7 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
 function DroppableSessionRow({
   session,
   isSelected,
-  expanded,
+  expanded: _expanded,
   onClick,
   onContextMenu,
   children,
@@ -1177,7 +1175,7 @@ function DroppableSessionRow({
 // ─── Sortable Event Item ──────────────────────────────────────────────────────
 
 function SortableEventItem({
-  event, session, isSelected, isExpanded, selected, multiSelectedGroups, onSelect, onToggle, onContextMenu,
+  event, session: _session, isSelected, isExpanded, selected, multiSelectedGroups, onSelect, onToggle, onContextMenu,
   onSelectGroup, onContextMenuGroup, t,
 }: {
   event: CompetitionEvent
@@ -1765,7 +1763,7 @@ function EventPropertiesPanel({ event, onUpdate }: { event: CompetitionEvent; on
   const api = useApi()
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const [evNumber, setEvNumber] = useState(event.number)
-  const [roundName, setRoundName] = useState(event.nameFr)
+  const [, setRoundName] = useState(event.nameFr)
   const [evGender, setEvGender] = useState(event.gender)
   const [masters, setMasters] = useState(false)
   const [scheduledTime, setScheduledTime] = useState(event.scheduledTime ?? '')
@@ -2491,15 +2489,6 @@ function SessionPropertiesPanel({
             ))}
           </select>
         </td>
-      </tr>
-    )
-  }
-
-  function ReadOnlyRow({ label, value }: { label: string; value: string | number | undefined }) {
-    return (
-      <tr className="border-b border-gray-100 hover:bg-gray-50">
-        <td className="px-4 py-0.5 text-gray-600 w-64">{label}</td>
-        <td className="px-2 py-0.5 text-gray-500">{value ?? '—'}</td>
       </tr>
     )
   }

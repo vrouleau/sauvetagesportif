@@ -16,9 +16,6 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with Sauvetage Sportif. If not, see <https://www.gnu.org/licenses/>.
 
-import Database from 'better-sqlite3'
-import { app } from 'electron'
-import { join } from 'path'
 import { assignLateBeachNumber } from './beachNumber'
 import { regenerateCombinedEvents } from './combinedEvents'
 import { regeneratePointScores } from './pointScores'
@@ -42,13 +39,6 @@ function inClause(ids: number[]): { clause: string; params: number[] } {
   return { clause: ids.map(() => '?').join(','), params: ids }
 }
 
-
-let localDb: Database.Database | null = null
-
-function getLocalDbPath(): string {
-  const userDataPath = app.getPath('userData')
-  return join(userDataPath, 'meet.db')
-}
 
 /**
  * Get the active database.

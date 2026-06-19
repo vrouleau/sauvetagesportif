@@ -17,7 +17,7 @@
 // along with Sauvetage Sportif. If not, see <https://www.gnu.org/licenses/>.
 
 import { describe, it, expect } from 'vitest'
-import type { RelayPageData, RelayTeam, RelayTeamMember, RelayAgeCategory, RelayEventGroup } from '../data/api'
+import type { RelayTeam, RelayAgeCategory, RelayEventGroup } from '../data/api'
 
 // ─── Replicate core logic from RelayEntryPage.tsx (not exported) ──────────────
 
@@ -310,4 +310,4 @@ describe('RelayEntryPage - Delete team confirmation dialog', () => {
     const team = makeRelayTeam({ members: [] })
     expect(requiresDeleteConfirmation(team)).toBe(false)
   })
-})
+})

@@ -31,8 +31,8 @@ function timingApi() {
 export function GeminiKeyDialog({ onClose }: { onClose: () => void }) {
   const [freeKey, setFreeKey] = useState('')
   const [paidKey, setPaidKey] = useState('')
-  const [hasFreeKey, setHasFreeKey] = useState(false)
-  const [hasPaidKey, setHasPaidKey] = useState(false)
+  const [, setHasFreeKey] = useState(false)
+  const [, setHasPaidKey] = useState(false)
   const [saved, setSaved] = useState(false)
 
   useEffect(() => {
@@ -125,4 +125,4 @@ export function GeminiKeyDialog({ onClose }: { onClose: () => void }) {
       </div>
     </div>
   )
-}
+}

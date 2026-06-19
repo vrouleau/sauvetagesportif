@@ -17,7 +17,7 @@
 // along with Sauvetage Sportif. If not, see <https://www.gnu.org/licenses/>.
 
 import { describe, it, expect } from 'vitest'
-import type { RegistrationData, RegistrationStyle, RegistrationAPI } from '../data/api'
+import type { RegistrationData, RegistrationStyle } from '../data/api'
 
 // ─── Replicate core logic from IndividualEntryPage.tsx (not exported) ──────────
 
@@ -268,4 +268,4 @@ describe('IndividualEntryPage - closure date role-based access', () => {
   it('organizer is not blocked by closure date (not coach role)', () => {
     expect(isPageClosedForRole('organizer', '2020-01-01')).toBe(false)
   })
-})
+})

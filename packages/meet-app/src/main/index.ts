@@ -60,9 +60,9 @@ import {
 import { importLenex, exportLenexResults, exportMeetLenex } from './lenex'
 import { saveSMB, restoreSMB } from './smb'
 import {
-  getScanDb, closeScanDb, insertScan, getUnprocessedScans,
+  closeScanDb, insertScan, getUnprocessedScans,
   getScansForHeat, getScanById, findExistingScan,
-  updateScanOcrResult, validateScan, markScanError,
+  updateScanOcrResult, validateScan,
   getScanSummary, getValidatedScansForHeat, getScansByStatus,
   clearAllScans, deleteScan,
   type ScanStatus,
@@ -409,22 +409,6 @@ ipcMain.handle('db:set-relay-member', (_event, eventId: number, athleteId: numbe
 // ── Relay Team Management (new team-centric handlers) ─────────────────────────
 
 /**
- * Parse AGEDATE from MEETVALUES. Format after getMeetValues() strips type prefix: "YYYYMMDD..."
- * Returns a Date object for age calculation or null.
- */
-function parseAgeDate(raw: string | undefined): Date {
-  if (raw && raw.length >= 8) {
-    const y = parseInt(raw.slice(0, 4), 10)
-    const m = parseInt(raw.slice(4, 6), 10) - 1
-    const d = parseInt(raw.slice(6, 8), 10)
-    const dt = new Date(y, m, d)
-    if (!isNaN(dt.getTime())) return dt
-  }
-  // Default: Dec 31 of current year
-  return new Date(new Date().getFullYear(), 11, 31)
-}
-
-/**
  * Parse DEADLINE from MEETVALUES. Returns ISO date string (YYYY-MM-DD) or null.
  */
 function parseDeadline(raw: string | undefined): string | null {
@@ -440,19 +424,6 @@ function parseDeadline(raw: string | undefined): string | null {
  */
 function teamNumberToLetter(n: number): string {
   return String.fromCharCode(64 + n) // 65='A'
-}
-
-/**
- * Compute age as of a given base date.
- */
-function computeAge(birthdate: string | number | null, baseDate: Date): number | null {
-  if (!birthdate) return null
-  const bd = typeof birthdate === 'string' ? new Date(birthdate) : new Date(birthdate)
-  if (isNaN(bd.getTime())) return null
-  let age = baseDate.getFullYear() - bd.getFullYear()
-  const m = baseDate.getMonth() - bd.getMonth()
-  if (m < 0 || (m === 0 && baseDate.getDate() < bd.getDate())) age--
-  return age
 }
 
 /**
@@ -490,7 +461,6 @@ ipcMain.handle('db:get-clubs', () => {
 ipcMain.handle('db:get-relay-page-data', (_event, clubId?: number) => {
   const db = getLocalDb()
   const meetValues = getMeetValues()
-  const ageBaseDate = parseAgeDate(meetValues['AGEDATE'])
   const closureDate = parseDeadline(meetValues['DEADLINE'])
   const isClosed = closureDate ? new Date() > new Date(closureDate + 'T23:59:59') : false
 
@@ -1795,21 +1765,6 @@ function scanToDto(scan: ReturnType<typeof getScanById> & {}) {
     ocrEngine: scan.ocrEngine,
     ocrConfidence: scan.ocrConfidence,
     notes: scan.notes,
-  }
-}
-
-/** Get or create the Gemini OCR engine instance */
-async function getOcrEngine(name: string): Promise<OcrEngine | null> {
-  if (activeOcrEngine) return activeOcrEngine
-
-  try {
-    const engine = new GeminiOcrEngine()
-    await engine.initialize()
-    activeOcrEngine = engine as unknown as OcrEngine
-    return activeOcrEngine
-  } catch (e) {
-    console.error('Failed to load Gemini OCR engine:', e)
-    return null
   }
 }
 

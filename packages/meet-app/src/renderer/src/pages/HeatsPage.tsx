@@ -16,7 +16,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with Sauvetage Sportif. If not, see <https://www.gnu.org/licenses/>.
 
-import React, { useState, useRef, useEffect, useCallback } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
 import { type HeatListEvent, type HeatListSession, type Heat, type LaneEntry } from '../data/mockData'
 import { useLang } from '@shared/context/LangContext'
 
@@ -208,7 +208,7 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
   const [editingLane, setEditingLane] = useState<number | null>(null)
   const [editValue, setEditValue] = useState('')
   const [selectedLane, setSelectedLane] = useState<number | null>(null)
-  const [dsqCode, setDsqCode] = useState('')
+  const [, setDsqCode] = useState('')
   const [dsqReason, setDsqReason] = useState('')
   const [dsqItems, setDsqItems] = useState<Array<{ dsqitemid: number; code: string; name: string; options?: string }>>([])
   const [dsqOverrideId, setDsqOverrideId] = useState<number | null>(null)
@@ -316,19 +316,6 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
   useEffect(() => { selectedHeatIdRef.current = selectedHeatId }, [selectedHeatId])
 
   // ── Quantum events ─────────────────────────────────────────────────────────
-
-  const persistResult = useCallback((heatId: number, lane: number, entry: LaneEntry) => {
-    if (!entry.swimresultId) return
-    const api = dbApi()
-    if (!api) return
-    api.saveResult(
-      entry.swimresultId,
-      entry.finalTime,
-      null,
-      entry.status ?? null,
-      entry.splitTimes,
-    ).catch(console.error)
-  }, [])
 
   useEffect(() => {
     const api = quantumApi()
@@ -585,8 +572,6 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
     // Beach validation: swap on duplicate, no gaps in final sequence
     if (isBeach && parsed) {
       const pos = parseInt(parsed, 10)
-      const currentEntry = entries.find(e => e.lane === lane)
-      const hadPosition = currentEntry?.finalTime && !currentEntry?.status
       const otherEntries = entries.filter(e => e.lane !== lane && e.finalTime && !e.status)
       const otherPositions = otherEntries.map(e => ({ lane: e.lane, pos: parseInt(e.finalTime!, 10) })).filter(p => !isNaN(p.pos))
 
@@ -1762,4 +1747,4 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
       )}
     </div>
   )
-}
+}
