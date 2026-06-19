@@ -104,11 +104,11 @@ export function generateBeachNumbers(db: Database.Database): BeachNumberResult {
 
     let seq = 1
     for (const athlete of athletes) {
-      if (seq > 99) {
-        errors.push(`Club "${club.name}" (${letter}): more than 99 athletes, cannot assign beach numbers beyond position 99`)
+      if (seq > 999) {
+        errors.push(`Club "${club.name}" (${letter}): more than 999 athletes, cannot assign beach numbers beyond position 999`)
         break
       }
-      const beachNumber = `${letter}${String(seq).padStart(2, '0')}`
+      const beachNumber = `${letter}${String(seq).padStart(3, '0')}`
       updateStmt.run(beachNumber, athlete.athleteid)
       assigned++
       seq++
@@ -124,7 +124,7 @@ export function generateBeachNumbers(db: Database.Database): BeachNumberResult {
 /**
  * Assign a beach number to a single late-arrival athlete.
  * Reads existing assignments to determine the club letter and next sequence.
- * Returns the assigned beach number (e.g., "C13") or throws on capacity error.
+ * Returns the assigned beach number (e.g., "C013") or throws on capacity error.
  */
 export function assignLateBeachNumber(db: Database.Database, athleteId: number): string {
   // Step 1: Check if athlete already has a beach number assigned
@@ -220,14 +220,14 @@ export function assignLateBeachNumber(db: Database.Database, athleteId: number):
   const nextSeq = maxSeq + 1
 
   // Step 6: Check capacity
-  if (nextSeq > 99) {
-    throw new Error(`Club letter "${letter}" has reached maximum capacity (99 athletes)`)
+  if (nextSeq > 999) {
+    throw new Error(`Club letter "${letter}" has reached maximum capacity (999 athletes)`)
   }
 
   // Step 7: Assign the beach number
-  const beachNumber = `${letter}${String(nextSeq).padStart(2, '0')}`
+  const beachNumber = `${letter}${String(nextSeq).padStart(3, '0')}`
   db.prepare(`UPDATE athlete SET nameprefix = ? WHERE athleteid = ?`).run(beachNumber, athleteId)
 
   // Step 8: Return the beach number
   return beachNumber
-}
+}

@@ -267,8 +267,8 @@ describe('Beach number generation - Late arrival stability property test', () =>
             }
 
             // Step 7: Verify the new athlete got a valid beach number
-            // Format check: one uppercase letter + two digits
-            expect(newBeachNumber).toMatch(/^[A-Z]\d{2}$/)
+            // Format check: one uppercase letter + three digits
+            expect(newBeachNumber).toMatch(/^[A-Z]\d{3}$/)
 
             // Verify it doesn't conflict with any existing numbers
             const existingNumbers = beforeNumbers.map(b => b.nameprefix)
@@ -311,17 +311,17 @@ describe('Sequence numbering (generateBeachNumbers)', () => {
 
       expect(result.errors).toEqual([])
       expect(result.assigned).toBe(4)
-      // Alphabetical order: Alpha Bob (A01), Alpha Charlie (A02), mango Diane (A03), Zeta Anna (A04)
-      expect(getNameprefix(db, 3)).toBe('A01') // Alpha, Bob
-      expect(getNameprefix(db, 2)).toBe('A02') // Alpha, Charlie
-      expect(getNameprefix(db, 4)).toBe('A03') // mango, Diane
-      expect(getNameprefix(db, 1)).toBe('A04') // Zeta, Anna
+      // Alphabetical order: Alpha Bob (A001), Alpha Charlie (A002), mango Diane (A003), Zeta Anna (A004)
+      expect(getNameprefix(db, 3)).toBe('A001') // Alpha, Bob
+      expect(getNameprefix(db, 2)).toBe('A002') // Alpha, Charlie
+      expect(getNameprefix(db, 4)).toBe('A003') // mango, Diane
+      expect(getNameprefix(db, 1)).toBe('A004') // Zeta, Anna
     } finally {
       cleanup()
     }
   })
 
-  it('produces zero-padded sequences (01, 02, ..., 99)', () => {
+  it('produces zero-padded sequences (001, 002, ..., 999)', () => {
     const { db, cleanup } = createTestDb()
     try {
       insertClub(db, 1, 'T', 'Test Club')
@@ -336,37 +336,37 @@ describe('Sequence numbering (generateBeachNumbers)', () => {
 
       expect(result.errors).toEqual([])
       expect(result.assigned).toBe(10)
-      // First athlete (Name01) gets T01, last (Name10) gets T10
-      expect(getNameprefix(db, 1)).toBe('T01')
-      expect(getNameprefix(db, 2)).toBe('T02')
-      expect(getNameprefix(db, 9)).toBe('T09')
-      expect(getNameprefix(db, 10)).toBe('T10')
+      // First athlete (Name01) gets T001, last (Name10) gets T010
+      expect(getNameprefix(db, 1)).toBe('T001')
+      expect(getNameprefix(db, 2)).toBe('T002')
+      expect(getNameprefix(db, 9)).toBe('T009')
+      expect(getNameprefix(db, 10)).toBe('T010')
     } finally {
       cleanup()
     }
   })
 
-  it('reports error when >99 athletes in a single club', () => {
+  it('reports error when >999 athletes in a single club', () => {
     const { db, cleanup } = createTestDb()
     try {
       insertClub(db, 1, 'X', 'Big Club')
-      // Insert 101 athletes
-      for (let i = 1; i <= 101; i++) {
-        const lastname = `Athlete${String(i).padStart(3, '0')}`
+      // Insert 1001 athletes
+      for (let i = 1; i <= 1001; i++) {
+        const lastname = `Athlete${String(i).padStart(4, '0')}`
         insertAthlete(db, i, 1, lastname, 'First')
         insertSwimresult(db, i, i)
       }
 
       const result = generateBeachNumbers(db)
 
-      // Should have assigned exactly 99 and reported an error
-      expect(result.assigned).toBe(99)
+      // Should have assigned exactly 999 and reported an error
+      expect(result.assigned).toBe(999)
       expect(result.errors.length).toBe(1)
-      expect(result.errors[0]).toContain('more than 99 athletes')
+      expect(result.errors[0]).toContain('more than 999 athletes')
       expect(result.errors[0]).toContain('Big Club')
-      // Athletes beyond 99 should NOT have beach numbers
-      expect(getNameprefix(db, 100)).toBeNull()
-      expect(getNameprefix(db, 101)).toBeNull()
+      // Athletes beyond 999 should NOT have beach numbers
+      expect(getNameprefix(db, 1000)).toBeNull()
+      expect(getNameprefix(db, 1001)).toBeNull()
     } finally {
       cleanup()
     }
@@ -408,7 +408,7 @@ describe('Late arrival (assignLateBeachNumber)', () => {
       insertSwimresult(db, 2, 2)
       insertSwimresult(db, 3, 3)
 
-      // Generate initial numbers: Alpha->C01, Beta->C02, Gamma->C03
+      // Generate initial numbers: Alpha->C001, Beta->C002, Gamma->C003
       generateBeachNumbers(db)
 
       // Add a late arrival athlete
@@ -416,8 +416,8 @@ describe('Late arrival (assignLateBeachNumber)', () => {
 
       const beachNumber = assignLateBeachNumber(db, 4)
 
-      expect(beachNumber).toBe('C04')
-      expect(getNameprefix(db, 4)).toBe('C04')
+      expect(beachNumber).toBe('C004')
+      expect(getNameprefix(db, 4)).toBe('C004')
     } finally {
       cleanup()
     }
@@ -439,8 +439,8 @@ describe('Late arrival (assignLateBeachNumber)', () => {
       const beachNumber = assignLateBeachNumber(db, 2)
 
       // Should get letter 'D' (first char of 'DEF' not already used)
-      expect(beachNumber).toBe('D01')
-      expect(getNameprefix(db, 2)).toBe('D01')
+      expect(beachNumber).toBe('D001')
+      expect(getNameprefix(db, 2)).toBe('D001')
     } finally {
       cleanup()
     }
@@ -455,33 +455,33 @@ describe('Late arrival (assignLateBeachNumber)', () => {
       generateBeachNumbers(db)
 
       const existingNumber = getNameprefix(db, 1)
-      expect(existingNumber).toBe('M01')
+      expect(existingNumber).toBe('M001')
 
       // Call assignLateBeachNumber again for same athlete (e.g., added to another event)
       const beachNumber = assignLateBeachNumber(db, 1)
 
-      expect(beachNumber).toBe('M01')
-      expect(getNameprefix(db, 1)).toBe('M01')
+      expect(beachNumber).toBe('M001')
+      expect(getNameprefix(db, 1)).toBe('M001')
     } finally {
       cleanup()
     }
   })
 
-  it('throws when club reaches 99 athletes capacity', () => {
+  it('throws when club reaches 999 athletes capacity', () => {
     const { db, cleanup } = createTestDb()
     try {
       insertClub(db, 1, 'F', 'Full Club')
-      // Insert 99 athletes with swimresults
-      for (let i = 1; i <= 99; i++) {
-        insertAthlete(db, i, 1, `Athlete${String(i).padStart(2, '0')}`, 'First')
+      // Insert 999 athletes with swimresults
+      for (let i = 1; i <= 999; i++) {
+        insertAthlete(db, i, 1, `Athlete${String(i).padStart(3, '0')}`, 'First')
         insertSwimresult(db, i, i)
       }
       generateBeachNumbers(db)
 
-      // Add athlete #100 as a late arrival
-      insertAthlete(db, 100, 1, 'Overflow', 'Athlete')
+      // Add athlete #1000 as a late arrival
+      insertAthlete(db, 1000, 1, 'Overflow', 'Athlete')
 
-      expect(() => assignLateBeachNumber(db, 100)).toThrow(/maximum capacity/)
+      expect(() => assignLateBeachNumber(db, 1000)).toThrow(/maximum capacity/)
     } finally {
       cleanup()
     }
@@ -507,7 +507,7 @@ describe('Late arrival (assignLateBeachNumber)', () => {
       // Existing numbers unchanged
       expect(getNameprefix(db, 1)).toBe(before1)
       expect(getNameprefix(db, 2)).toBe(before2)
-      expect(getNameprefix(db, 3)).toBe('P03')
+      expect(getNameprefix(db, 3)).toBe('P003')
     } finally {
       cleanup()
     }
@@ -569,7 +569,7 @@ describe('Club letter assignment edge cases', () => {
 
     expect(result.assigned).toBe(1)
     expect(result.errors).toHaveLength(0)
-    expect(getPrefix(1)).toBe('A01')
+    expect(getPrefix(1)).toBe('A001')
   })
 
   it('club code chars already taken uses next available from code, then fallback', () => {
@@ -581,8 +581,8 @@ describe('Club letter assignment edge cases', () => {
 
     expect(result.assigned).toBe(2)
     expect(result.errors).toHaveLength(0)
-    expect(getPrefix(1)).toBe('A01')
-    expect(getPrefix(2)).toBe('C01')
+    expect(getPrefix(1)).toBe('A001')
+    expect(getPrefix(2)).toBe('C001')
   })
 
   it('all code chars taken falls back to first available A-Z letter', () => {
@@ -600,13 +600,13 @@ describe('Club letter assignment edge cases', () => {
     expect(result.errors).toHaveLength(0)
     // Sorted: A1, AAA, AB, AC
     // "A1" → 'A'
-    expect(getPrefix(1)).toBe('A01')
+    expect(getPrefix(1)).toBe('A001')
     // "AAA" → tries 'A' (taken) × 3 → fallback picks 'B' (first free)
-    expect(getPrefix(4)).toBe('B01')
+    expect(getPrefix(4)).toBe('B001')
     // "AB" → tries 'A' (taken), 'B' (taken) → fallback picks 'C'
-    expect(getPrefix(2)).toBe('C01')
+    expect(getPrefix(2)).toBe('C001')
     // "AC" → tries 'A' (taken), 'C' (taken) → fallback picks 'D'
-    expect(getPrefix(3)).toBe('D01')
+    expect(getPrefix(3)).toBe('D001')
   })
 
   it('>26 clubs produces error, excess clubs have no beach numbers', () => {
@@ -637,7 +637,7 @@ describe('Club letter assignment edge cases', () => {
     expect(result.assigned).toBe(1)
     expect(result.errors).toHaveLength(0)
     // 'a' in code maps to letter 'A'
-    expect(getPrefix(1)).toBe('A01')
+    expect(getPrefix(1)).toBe('A001')
   })
 
   it('mixed case code chars are treated case-insensitively for collision', () => {
@@ -651,8 +651,8 @@ describe('Club letter assignment edge cases', () => {
     expect(result.errors).toHaveLength(0)
     // Same UPPER(code), first processed gets 'A', second tries 'A' (taken) gets 'B'
     const prefixes = [getPrefix(1), getPrefix(2)]
-    expect(prefixes).toContain('A01')
-    expect(prefixes).toContain('B01')
+    expect(prefixes).toContain('A001')
+    expect(prefixes).toContain('B001')
   })
 
   it('deterministic ordering by UPPER(code)', () => {
@@ -667,11 +667,11 @@ describe('Club letter assignment edge cases', () => {
     expect(result.errors).toHaveLength(0)
     // ORDER BY UPPER(code): AAA, MMM, ZZZ
     // "AAA" (athleteid 2) → 'A'
-    expect(getPrefix(2)).toBe('A01')
+    expect(getPrefix(2)).toBe('A001')
     // "MMM" (athleteid 3) → 'M'
-    expect(getPrefix(3)).toBe('M01')
+    expect(getPrefix(3)).toBe('M001')
     // "ZZZ" (athleteid 1) → 'Z'
-    expect(getPrefix(1)).toBe('Z01')
+    expect(getPrefix(1)).toBe('Z001')
   })
 
   it('deterministic ordering ignores case of code', () => {
@@ -684,9 +684,9 @@ describe('Club letter assignment edge cases', () => {
     expect(result.assigned).toBe(2)
     expect(result.errors).toHaveLength(0)
     // "AAA" processed first → gets 'A'
-    expect(getPrefix(2)).toBe('A01')
+    expect(getPrefix(2)).toBe('A001')
     // "bbb" (BBB) processed second → gets 'B'
-    expect(getPrefix(1)).toBe('B01')
+    expect(getPrefix(1)).toBe('B001')
   })
 })
 
@@ -733,19 +733,19 @@ describe('Beach heat generation assigns missing beach numbers', () => {
     expect(result.heatsCreated).toBeGreaterThanOrEqual(1)
     expect(result.entriesAssigned).toBe(1)
     // Beach number should now be assigned
-    expect(getPrefix(1)).toBe('A01')
+    expect(getPrefix(1)).toBe('A001')
   })
 
   it('does not overwrite existing beach number when generating heats', async () => {
     // Athlete already has a beach number
-    db.exec(`INSERT INTO athlete (athleteid, clubid, firstname, lastname, gender, birthdate, nation, nameprefix) VALUES (1, 1, 'Jean', 'Dupont', 1, '2000-01-01', 'CAN', 'A01')`)
+    db.exec(`INSERT INTO athlete (athleteid, clubid, firstname, lastname, gender, birthdate, nation, nameprefix) VALUES (1, 1, 'Jean', 'Dupont', 1, '2000-01-01', 'CAN', 'A001')`)
     db.exec(`INSERT INTO swimresult (swimresultid, athleteid, swimeventid, entrytime) VALUES (1, 1, 1, 60000)`)
 
     const result = await generateHeats(1, undefined, db)
 
     expect(result.heatsCreated).toBeGreaterThanOrEqual(1)
     // Beach number should remain unchanged
-    expect(getPrefix(1)).toBe('A01')
+    expect(getPrefix(1)).toBe('A001')
   })
 
   it('assigns beach numbers to multiple athletes from different clubs', async () => {
@@ -763,13 +763,13 @@ describe('Beach heat generation assigns missing beach numbers', () => {
     await generateHeats(1, undefined, db)
 
     // Both should now have beach numbers with different club letters
-    expect(getPrefix(1)).toBe('A01')
-    expect(getPrefix(2)).toBe('D01')
+    expect(getPrefix(1)).toBe('A001')
+    expect(getPrefix(2)).toBe('D001')
   })
 
   it('assigns beach number using next sequence when club already has numbered athletes', async () => {
     // Athlete 1 already has a beach number
-    db.exec(`INSERT INTO athlete (athleteid, clubid, firstname, lastname, gender, birthdate, nation, nameprefix) VALUES (1, 1, 'Jean', 'Dupont', 1, '2000-01-01', 'CAN', 'A01')`)
+    db.exec(`INSERT INTO athlete (athleteid, clubid, firstname, lastname, gender, birthdate, nation, nameprefix) VALUES (1, 1, 'Jean', 'Dupont', 1, '2000-01-01', 'CAN', 'A001')`)
     db.exec(`INSERT INTO swimresult (swimresultid, athleteid, swimeventid, entrytime) VALUES (1, 1, 1, 60000)`)
     // Athlete 2 from same club, no beach number
     db.exec(`INSERT INTO athlete (athleteid, clubid, firstname, lastname, gender, birthdate, nation) VALUES (2, 1, 'Pierre', 'Martin', 1, '1999-03-20', 'CAN')`)
@@ -779,8 +779,8 @@ describe('Beach heat generation assigns missing beach numbers', () => {
 
     await generateHeats(1, undefined, db)
 
-    // Athlete 1 stays A01, athlete 2 gets A02
-    expect(getPrefix(1)).toBe('A01')
-    expect(getPrefix(2)).toBe('A02')
+    // Athlete 1 stays A001, athlete 2 gets A002
+    expect(getPrefix(1)).toBe('A001')
+    expect(getPrefix(2)).toBe('A002')
   })
-})
+})
