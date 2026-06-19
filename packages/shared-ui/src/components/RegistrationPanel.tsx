@@ -16,7 +16,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with Sauvetage Sportif. If not, see <https://www.gnu.org/licenses/>.
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useLang } from '../context/LangContext'
 import type { RegistrationData, RegistrationStyle } from '../data/api'
 
@@ -180,6 +180,20 @@ export default function RegistrationPanel({
     setSaving(false)
   }
 
+  // "Select all" header checkbox state — only considers events available in active category
+  const selectableIndividual = visibleIndividual.filter(style =>
+    style.categories.some(c => c.age_code === activeCategory)
+  )
+  const allIndividualChecked = selectableIndividual.length > 0 && selectableIndividual.every(style => style.categories.some(c => c.registered))
+  const someIndividualChecked = selectableIndividual.some(style => style.categories.some(c => c.registered))
+
+  const selectAllRef = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = someIndividualChecked && !allIndividualChecked
+    }
+  }, [someIndividualChecked, allIndividualChecked])
+
   return (
     <div className="flex flex-col h-full">
       {/* Category bar */}
@@ -206,7 +220,31 @@ export default function RegistrationPanel({
           <table className="w-full text-xs border-collapse border border-gray-300">
             <thead>
               <tr className="bg-gray-100">
-                <th className="border border-gray-300 px-2 py-1 w-6 text-center">✓</th>
+                <th className="border border-gray-300 px-2 py-1 w-6 text-center">
+                  <input
+                    type="checkbox"
+                    className="w-3.5 h-3.5"
+                    checked={allIndividualChecked}
+                    ref={selectAllRef}
+                    disabled={saving || selectableIndividual.length === 0}
+                    onChange={() => {
+                      if (allIndividualChecked) {
+                        for (const style of selectableIndividual) {
+                          const reg = style.categories.find(c => c.registered)
+                          if (reg) onUnregister(reg.registration_id!)
+                        }
+                      } else {
+                        for (const style of selectableIndividual) {
+                          const reg = style.categories.find(c => c.registered)
+                          if (!reg) {
+                            const cat = style.categories.find(c => c.age_code === activeCategory)
+                            if (cat) onRegister(cat.event_id, isBeach ? null : style[bestKey], cat.age_code)
+                          }
+                        }
+                      }
+                    }}
+                  />
+                </th>
                 <th className="border border-gray-300 px-2 py-1 text-left">{tr.event}</th>
                 {!isBeach && <th className="border border-gray-300 px-2 py-1 text-right w-20">{tr.bt50}</th>}
                 {!isBeach && <th className="border border-gray-300 px-2 py-1 text-right w-20">{tr.bt25}</th>}
@@ -363,4 +401,4 @@ export default function RegistrationPanel({
       </div>
     </div>
   )
-}
+}
