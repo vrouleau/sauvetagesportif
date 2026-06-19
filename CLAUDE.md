@@ -206,6 +206,30 @@ Both apps handle `relay`, `relayposition`, and `relaysplit` tables in SMB backup
 
 Beach events are **ranked** (positions 1st, 2nd, 3rd) instead of **timed**. Positions stored as integer milliseconds (position 1 = 1000ms, position 2 = 2000ms).
 
+### Beach Numbers
+
+Athletes in beach meets get a unique jersey/bib number stored in `athlete.nameprefix`. Format: `Letter + 3 digits` (e.g., `C201`).
+
+**Encoding:**
+- Letter (A-Z) = club identifier (from club code characters, fallback to first unused letter)
+- Hundreds digit (1-9) = category (age group + gender), assigned dynamically per club
+- Tens + units (01-99) = athlete sequence within category, alphabetical by lastname/firstname
+
+**Generation triggers:**
+- `importLenex` → calls `generateBeachNumbers(db)` when `MEET_TYPE='BEACH'`
+- `registerForEvent` (late entry) → calls `assignLateBeachNumber(db, athleteId)`
+- `generateHeats` → calls `assignLateBeachNumber` for any athletes missing a number
+
+**Key source:** `packages/meet-app/src/main/beachNumber.ts`
+- `generateBeachNumbers(db)` — full idempotent regeneration (clears all, recomputes)
+- `assignLateBeachNumber(db, athleteId)` — assigns next available number for one athlete
+
+**Constraints:** 26 clubs max, 9 categories per club, 99 athletes per category.
+
+**Properties:** deterministic, unique, idempotent, stable (late arrivals don't change existing numbers).
+
+**Display:** HeatsPage, AthletesPage (read-only), "Identifiants plage" PDF report.
+
 ### Meet type flag
 - Stored in `bsglobal` as `MEET_TYPE` (`POOL` or `BEACH`, default `POOL` if missing)
 - Set at meet creation via "Create Pool" / "Create Beach" buttons

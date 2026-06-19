@@ -218,6 +218,41 @@ Custom: `swimsession.lanesbyplace` (comma-separated lane numbers).
 - Max participants per heat = `swimevent.maxentries` → `swimstyle.distance` → 16 (fallback)
 - Athletes shuffled randomly and distributed evenly across heats
 - No lane assignment (sequential numbers as placeholders)
+- Auto-assigns beach numbers to athletes missing one before generating heats
+
+## Beach Numbers
+
+Athletes in beach meets get a unique jersey/bib identifier stored in `athlete.nameprefix`.
+
+### Format: `Letter + 3 digits` (e.g., `C201`)
+- **Letter (A-Z):** Club letter (from club code chars, fallback first unused A-Z)
+- **Hundreds (1-9):** Category (age group + gender), dynamically assigned per club
+- **Units (01-99):** Alphabetical sequence within category
+
+### Source: `src/main/beachNumber.ts`
+| Function | Purpose |
+|----------|---------|
+| `generateBeachNumbers(db)` | Full idempotent regen — clears all, recomputes from scratch |
+| `assignLateBeachNumber(db, athleteId)` | Late arrival — assigns next available in club/category |
+
+### Triggers
+- **LXF import** (`importLenex`): calls `generateBeachNumbers` when `MEET_TYPE='BEACH'`
+- **Late entry** (`registerForEvent`): calls `assignLateBeachNumber` for the new athlete
+- **Heat generation** (`generateHeats`): calls `assignLateBeachNumber` for any athletes with entries but no beach number
+
+### Constraints & properties
+- Max 26 clubs, 9 categories per club, 99 athletes per category
+- Deterministic, unique, idempotent, stable (late arrivals don't shift existing)
+- Club letter assignment: tries each char of `club.code`, fallback first available A-Z
+
+### Display
+- HeatsPage: shown next to athlete name
+- AthletesPage: read-only column
+- "Identifiants plage" PDF report
+
+### Tests: `tests/beach-number.test.ts`
+- Property-based tests (fast-check): uniqueness, determinism, format validity
+- Unit tests: sequence numbering, late arrival, capacity errors
 
 ## Timing Sheet OCR Scanning
 

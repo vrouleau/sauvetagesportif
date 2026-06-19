@@ -289,6 +289,30 @@ Meet type is stored in `bsglobal` as `MEET_TYPE` (`POOL` or `BEACH`). Templates:
 - `config/template_pool.lxf` — swimstyleids 501-540
 - `config/template_beach.lxf` — swimstyleids 601-605
 
+### Beach numbers (athlete identifiers)
+
+In beach competitions, athletes wear numbered jerseys/bibs instead of being identified by lane. The meet-app generates deterministic beach numbers stored in `athlete.nameprefix`.
+
+**Format:** `Letter + 3 digits` (e.g., `C201`)
+- **Letter (A-Z):** Club identifier, derived from the first available character in the club code (fallback: first unused letter A-Z)
+- **Hundreds digit (1-9):** Category (age group + gender), assigned dynamically per club based on which categories are present
+- **Tens + units (01-99):** Sequential athlete number within the category, sorted alphabetically by last name then first name
+
+**When generated:**
+| Trigger | Behavior |
+|---------|----------|
+| LXF import (beach meet) | Full regeneration for all registered athletes |
+| Late entry registration | Assigns next available number in the athlete's club/category |
+| Heat generation | Auto-assigns to any athlete with entries but no beach number |
+
+**Constraints:** Max 26 clubs (one letter each), 9 categories per club, 99 athletes per category.
+
+**Properties:** Deterministic (same input → same output), unique, idempotent (re-running produces identical results), stable (late arrivals don't change existing numbers).
+
+**Display:** Shown on HeatsPage, AthletesPage (read-only column), and in the "Identifiants plage" PDF report.
+
+**Implementation:** `packages/meet-app/src/main/beachNumber.ts` (`generateBeachNumbers`, `assignLateBeachNumber`)
+
 ### Configuration
 
 `config/combined-events-config.json` — single source of truth shared by both apps. Defines:
