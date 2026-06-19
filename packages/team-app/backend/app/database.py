@@ -54,4 +54,13 @@ def get_db():
 
 def is_sqlite() -> bool:
     """Return True if the current database is SQLite."""
-    return DATABASE_URL.startswith("sqlite")
+    return DATABASE_URL.startswith("sqlite")
+
+
+def reset_engine():
+    """Dispose all pooled connections and force reconnection.
+
+    Call this after replacing the SQLite database file on disk so that
+    SQLAlchemy picks up the new file instead of using stale connections.
+    """
+    engine.dispose()

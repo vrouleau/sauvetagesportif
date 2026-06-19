@@ -664,8 +664,8 @@ function BackupSection() {
             {lang === 'fr' ? 'Créer une sauvegarde' : 'Create Backup'}
           </button>
           <label className="px-3 py-1 bg-orange-600 text-white text-xs rounded hover:bg-orange-700 cursor-pointer">
-            {lang === 'fr' ? 'Restaurer (.sql)' : 'Restore (.sql)'}
-            <input type="file" accept=".sql" className="hidden" onChange={restoreBackup} />
+            {lang === 'fr' ? 'Restaurer (.db/.sql)' : 'Restore (.db/.sql)'}
+            <input type="file" accept=".sql,.db" className="hidden" onChange={restoreBackup} />
           </label>
           {msg && <span className="text-xs text-green-700">{msg}</span>}
         </div>
@@ -724,4 +724,4 @@ function BackupSection() {
       </div>
     </div>
   )
-}
+}

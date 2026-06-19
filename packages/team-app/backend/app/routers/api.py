@@ -3060,11 +3060,46 @@ def backup_db():
 
 @router.post("/admin/restore-db", dependencies=[Depends(require_admin)])
 async def restore_db(file: UploadFile = File(...)):
-    """Restore database from a pg_dump SQL file. Wipes all existing data."""
-    import subprocess
+    """Restore database from a backup file (.db for SQLite, .sql for Postgres)."""
+    from ..database import is_sqlite, DATABASE_URL
     content = await file.read()
     if len(content) > 50 * 1024 * 1024:
         raise HTTPException(413, "File too large (max 50MB)")
+
+    if is_sqlite():
+        # SQLite restore: use the backup API to safely replace the contents
+        # of the live database without file-level replacement
+        import sqlite3 as _sqlite3
+        import tempfile
+
+        # Validate that the uploaded file is a valid SQLite database
+        if not content[:16].startswith(b"SQLite format 3"):
+            raise HTTPException(400, "Invalid SQLite database file")
+
+        # Write uploaded file to a temp path
+        tmp_path = Path(tempfile.mktemp(suffix=".db"))
+        tmp_path.write_bytes(content)
+
+        try:
+            # Open the source (uploaded backup) using raw sqlite3
+            src_conn = _sqlite3.connect(str(tmp_path))
+
+            # Get a raw connection to the LIVE database through SQLAlchemy's pool
+            from ..database import engine
+            raw_conn = engine.raw_connection()
+            dst_conn = raw_conn.connection  # underlying sqlite3 connection
+
+            # Use SQLite backup API: copies source into destination (overwrites all data)
+            src_conn.backup(dst_conn)
+            src_conn.close()
+            raw_conn.close()
+        finally:
+            if tmp_path.exists():
+                tmp_path.unlink()
+
+        return {"ok": True, "filename": file.filename}
+
+    import subprocess
     db_url = os.environ.get("DATABASE_URL", "")
     from urllib.parse import urlparse
     parsed = urlparse(db_url)
