@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.32] - 2026-06-19
+
+### Other
+
+- Fix SQLite backup/restore: use backup API for live DB replacement (`1bd75e7`)
+
 ## [0.3.31] - 2026-06-19
 
 ### Other
