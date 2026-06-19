@@ -286,6 +286,7 @@ export interface LaneEntryRow {
   splitTimes?: Record<number, string>
   status?: 'DNS' | 'DNF' | 'DSQ' | null
   handicapex?: string
+  dsqItemId?: number
   beachNumber?: string
   relayMembers?: Array<{ position: number; lastName: string; beachNumber?: string }>
   relayTeamName?: string
@@ -354,6 +355,7 @@ export interface CompetitionEventRow {
   duration?: string
   swimstyleId?: number | null
   finalOrder?: number | null
+  maxEntries?: number | null
   ageGroups: AgeGroupRow[]
 }
 

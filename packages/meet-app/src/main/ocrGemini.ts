@@ -28,7 +28,16 @@
 import { app } from 'electron'
 import { join } from 'path'
 import { existsSync, readFileSync, writeFileSync } from 'fs'
-import type { OcrEngine, OcrResult, CroppedDigit, TimeOcrResult } from './ocrEngine'
+import type { OcrEngine } from './ocrEngine'
+
+/** Single digit OCR result */
+interface OcrResult { text: string; confidence: number }
+
+/** Cropped digit image data */
+interface CroppedDigit { imageBuffer: Buffer; position: number }
+
+/** Full time OCR result */
+interface TimeOcrResult { timeString: string; digitResults: OcrResult[]; overallConfidence: number }
 
 const GEMINI_MODELS = [
   'gemini-2.5-flash-lite',
@@ -289,4 +298,4 @@ function parseGeminiResponse(text: string): { time1: string; time2: string; conf
 
   const confidence = (time1 && time1 !== 'unclear' && time2 && time2 !== 'unclear') ? 0.95 : 0.3
   return { time1, time2, confidence }
-}
+}

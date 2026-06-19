@@ -565,6 +565,7 @@ ipcMain.handle('db:get-relay-page-data', (_event, clubId?: number) => {
   // 4. Load existing relay teams
   const teamsByEvent: Record<string, Array<{
     id: number; teamNumber: string; teamName: string | null
+    ageGroup?: string
     members: Array<{ position: number; athleteId: number | null; athleteName: string | null }>
     clubId?: number; clubName?: string
   }>> = {}

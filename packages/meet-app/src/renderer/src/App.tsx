@@ -77,6 +77,7 @@ function dbApi() {
       db?: {
         flushMeet: () => Promise<{ ok: boolean; error?: string }>
         getMeetType: () => Promise<string>
+        getMeetInfo: () => Promise<{ name: string }>
       }
     }
   }).api?.db ?? null
@@ -585,4 +586,4 @@ export default function App() {
       <AppInner />
     </LangProvider>
   )
-}
+}
