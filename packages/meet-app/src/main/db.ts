@@ -1638,7 +1638,7 @@ function generateHeatsBeach(
       ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
     }
 
-    // Distribute into heats
+    // Distribute into heats — balanced evenly across heats
     const numHeats = Math.ceil(shuffled.length / maxPerHeat)
     // Distribute evenly: each heat gets roughly the same number
     const baseSize = Math.floor(shuffled.length / numHeats)

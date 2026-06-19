@@ -374,8 +374,10 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
   const entries = selectedHeatId !== null ? (heatData[selectedHeatId] ?? []) : []
 
   // Build full lane list (laneMin to laneMax) with entries or empty slots
-  const laneMin = selectedSession?.laneMin ?? 1
-  const laneMax = selectedSession?.laneMax ?? 8
+  const laneMin = isBeach ? 1 : (selectedSession?.laneMin ?? 1)
+  const laneMax = isBeach
+    ? (selectedEvent?.distance || 16)
+    : (selectedSession?.laneMax ?? 8)
   const allLanes: Array<{ lane: number; entry: LaneEntry | null }> = []
   for (let l = laneMin; l <= laneMax; l++) {
     const entry = entries.find((e) => e.lane === l) ?? null

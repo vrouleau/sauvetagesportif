@@ -784,3 +784,180 @@ describe('Beach heat generation assigns missing beach numbers', () => {
     expect(getPrefix(2)).toBe('A102')
   })
 })
+
+// ── Unit Tests: Beach heat generation respects swimstyle.distance as max per heat ──
+
+describe('Beach heat generation respects swimstyle.distance as max per heat', () => {
+  let db: Database.Database
+  let cleanup: () => void
+
+  beforeEach(() => {
+    const t = createTestDb()
+    db = t.db
+    cleanup = t.cleanup
+    db.exec(`INSERT INTO bsglobal (name, data) VALUES ('MEET_TYPE', 'BEACH')`)
+    db.exec(`INSERT INTO club (clubid, code, name, nation) VALUES (1, 'ABC', 'Alpha Club', 'CAN')`)
+    db.exec(`INSERT INTO swimsession (swimsessionid, sessionnumber, name, lanemin, lanemax) VALUES (1, 1, 'Session 1', 1, 8)`)
+  })
+
+  afterEach(() => cleanup())
+
+  function insertAthletes(count: number) {
+    for (let i = 1; i <= count; i++) {
+      db.exec(`INSERT INTO athlete (athleteid, clubid, firstname, lastname, gender, birthdate, nation, nameprefix) VALUES (${i}, 1, 'Athlete', '${i}', 1, '2000-01-01', 'CAN', 'A${100 + i}')`)
+    }
+  }
+
+  function insertEntries(eventId: number, count: number) {
+    for (let i = 1; i <= count; i++) {
+      db.exec(`INSERT INTO swimresult (swimresultid, athleteid, swimeventid, entrytime) VALUES (${eventId * 1000 + i}, ${i}, ${eventId}, NULL)`)
+    }
+  }
+
+  function getHeats(eventId: number): Array<{ heatid: number; heatnumber: number; athlete_count: number }> {
+    return db.prepare(`
+      SELECT h.heatid, h.heatnumber, COUNT(r.swimresultid) as athlete_count
+      FROM heat h
+      LEFT JOIN swimresult r ON r.heatid = h.heatid
+      WHERE h.swimeventid = ?
+      GROUP BY h.heatid
+      ORDER BY h.heatnumber
+    `).all(eventId) as Array<{ heatid: number; heatnumber: number; athlete_count: number }>
+  }
+
+  it('creates one heat when entries fit within distance capacity', async () => {
+    // distance=16 means max 16 per heat; 10 entries should fit in 1 heat
+    db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount, stroke, sortcode) VALUES (601, 16, 'Drapeau Sur Plage', 1, 1, 1)`)
+    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode, internalevent) VALUES (1, 1, 601, 1, 1, 5, 1, 'F')`)
+    insertAthletes(10)
+    insertEntries(1, 10)
+
+    const result = await generateHeats(1, undefined, db)
+
+    expect(result.heatsCreated).toBe(1)
+    expect(result.entriesAssigned).toBe(10)
+    const heats = getHeats(1)
+    expect(heats).toHaveLength(1)
+    expect(heats[0].athlete_count).toBe(10)
+  })
+
+  it('splits into multiple heats when entries exceed distance capacity', async () => {
+    // distance=10 means max 10 per heat; 17 entries → 2 heats (9+8, balanced)
+    db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount, stroke, sortcode) VALUES (602, 10, 'Sprint Sur Plage 90m', 1, 1, 1)`)
+    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode, internalevent) VALUES (2, 1, 602, 2, 1, 5, 2, 'F')`)
+    insertAthletes(17)
+    insertEntries(2, 17)
+
+    const result = await generateHeats(2, undefined, db)
+
+    expect(result.heatsCreated).toBe(2)
+    expect(result.entriesAssigned).toBe(17)
+    const heats = getHeats(2)
+    expect(heats).toHaveLength(2)
+    // Balanced: 9+8
+    expect(heats[0].athlete_count).toBe(9)
+    expect(heats[1].athlete_count).toBe(8)
+    // Neither heat exceeds max per heat
+    expect(heats[0].athlete_count).toBeLessThanOrEqual(10)
+    expect(heats[1].athlete_count).toBeLessThanOrEqual(10)
+  })
+
+  it('respects distance=32 for course-nage-course events', async () => {
+    // distance=32; 28 entries should fit in 1 heat
+    db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount, stroke, sortcode) VALUES (612, 32, 'Course-nage-course', 1, 1, 1)`)
+    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode, internalevent) VALUES (3, 1, 612, 3, 1, 5, 3, 'F')`)
+    insertAthletes(28)
+    insertEntries(3, 28)
+
+    const result = await generateHeats(3, undefined, db)
+
+    expect(result.heatsCreated).toBe(1)
+    expect(result.entriesAssigned).toBe(28)
+    const heats = getHeats(3)
+    expect(heats).toHaveLength(1)
+    expect(heats[0].athlete_count).toBe(28)
+  })
+
+  it('splits into heats when entries exceed distance=32', async () => {
+    // distance=32; 40 entries → 2 heats (20+20, balanced)
+    db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount, stroke, sortcode) VALUES (612, 32, 'Course-nage-course', 1, 1, 1)`)
+    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode, internalevent) VALUES (3, 1, 612, 3, 1, 5, 3, 'F')`)
+    insertAthletes(40)
+    insertEntries(3, 40)
+
+    const result = await generateHeats(3, undefined, db)
+
+    expect(result.heatsCreated).toBe(2)
+    expect(result.entriesAssigned).toBe(40)
+    const heats = getHeats(3)
+    expect(heats).toHaveLength(2)
+    // Neither heat exceeds 32
+    expect(heats[0].athlete_count).toBeLessThanOrEqual(32)
+    expect(heats[1].athlete_count).toBeLessThanOrEqual(32)
+    // Balanced distribution
+    expect(heats[0].athlete_count).toBe(20)
+    expect(heats[1].athlete_count).toBe(20)
+  })
+
+  it('uses different maxPerHeat for different events based on their swimstyle', async () => {
+    // Two events: Sprint (distance=10) and Drapeau (distance=16)
+    db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount, stroke, sortcode) VALUES (601, 16, 'Drapeau', 1, 1, 1)`)
+    db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount, stroke, sortcode) VALUES (602, 10, 'Sprint', 1, 1, 2)`)
+    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode, internalevent) VALUES (1, 1, 601, 1, 1, 5, 1, 'F')`)
+    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode, internalevent) VALUES (2, 1, 602, 2, 1, 5, 2, 'F')`)
+    insertAthletes(15)
+    insertEntries(1, 15)
+    insertEntries(2, 15)
+
+    await generateHeats(undefined, 1, db)
+
+    // Drapeau (distance=16): 15 entries → 1 heat of 15
+    const heatsDrapeau = getHeats(1)
+    expect(heatsDrapeau).toHaveLength(1)
+    expect(heatsDrapeau[0].athlete_count).toBe(15)
+
+    // Sprint (distance=10): 15 entries → 2 heats (8+7, balanced)
+    const heatsSprint = getHeats(2)
+    expect(heatsSprint).toHaveLength(2)
+    expect(heatsSprint[0].athlete_count).toBeLessThanOrEqual(10)
+    expect(heatsSprint[1].athlete_count).toBeLessThanOrEqual(10)
+    expect(heatsSprint[0].athlete_count + heatsSprint[1].athlete_count).toBe(15)
+  })
+
+  it('uses maxentries override when set on the event', async () => {
+    // swimstyle.distance=16 but event.maxentries=6 overrides
+    db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount, stroke, sortcode) VALUES (601, 16, 'Drapeau', 1, 1, 1)`)
+    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode, internalevent, maxentries) VALUES (1, 1, 601, 1, 1, 5, 1, 'F', 6)`)
+    insertAthletes(12)
+    insertEntries(1, 12)
+
+    const result = await generateHeats(1, undefined, db)
+
+    expect(result.heatsCreated).toBe(2)
+    const heats = getHeats(1)
+    expect(heats).toHaveLength(2)
+    // Each heat ≤ 6 (the maxentries override)
+    expect(heats[0].athlete_count).toBeLessThanOrEqual(6)
+    expect(heats[1].athlete_count).toBeLessThanOrEqual(6)
+    expect(heats[0].athlete_count + heats[1].athlete_count).toBe(12)
+  })
+
+  it('no heat ever exceeds swimstyle.distance', async () => {
+    // distance=10; 28 entries → 3 heats, none exceeding 10
+    db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount, stroke, sortcode) VALUES (602, 10, 'Sprint', 1, 1, 1)`)
+    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode, internalevent) VALUES (1, 1, 602, 1, 1, 5, 1, 'F')`)
+    insertAthletes(28)
+    insertEntries(1, 28)
+
+    await generateHeats(1, undefined, db)
+
+    const heats = getHeats(1)
+    expect(heats).toHaveLength(3) // ceil(28/10) = 3
+    for (const heat of heats) {
+      expect(heat.athlete_count).toBeLessThanOrEqual(10)
+      expect(heat.athlete_count).toBeGreaterThan(0)
+    }
+    const total = heats.reduce((sum, h) => sum + h.athlete_count, 0)
+    expect(total).toBe(28)
+  })
+})
