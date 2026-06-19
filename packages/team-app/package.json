@@ -1,6 +1,6 @@
 {
   "name": "@meetmgr/team-app",
-  "version": "0.3.28",
+  "version": "0.3.29",
   "private": true,
   "description": "Web app for team registration, entries, and invoices",
   "scripts": {

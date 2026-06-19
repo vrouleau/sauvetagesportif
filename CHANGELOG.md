@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.29] - 2026-06-19
+
+### 🐛 Bug Fixes
+
+- remove distance prefix from event names in beach meets (`89a763b`)
+- use swimstyle.distance for heat capacity in HeatsPage (`099bd28`)
+
+### 📝 Documentation
+
+- add beach number feature to README and CLAUDE.md (`b03e88e`)
+
 ## [0.3.28] - 2026-06-19
 
 ### ✨ Features
