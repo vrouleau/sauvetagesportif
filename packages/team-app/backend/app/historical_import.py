@@ -33,7 +33,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .models import BsGlobal, SwimStyle
-from .models_team import Meet, Event, Result, MemberMeet, TeamClub, Member
+from .models_team import Meet, Event, Result, MemberMeet, TeamClub, Member, gender_from_str
 from .best_times import _lenex_time_to_ms, _find_or_create_athlete
 
 
@@ -260,7 +260,7 @@ def import_historical_meet(db: Session, file_bytes: bytes, force: bool = False) 
                     Member.firstname == first, Member.lastname == last
                 ).first()
 
-            member = _find_or_create_athlete(db, first, last, license_val, club)
+            member = _find_or_create_athlete(db, first, last, license_val, club, gender=gender_from_str(gender_str))
             if not member:
                 continue
 
@@ -273,8 +273,7 @@ def import_historical_meet(db: Session, file_bytes: bytes, force: bool = False) 
                     member.birthdate = _date.fromisoformat(bd_str)
                 except ValueError:
                     pass
-            if not member.gender:
-                from .models import gender_from_str
+            if not member.gender or member.gender == 0:
                 member.gender = gender_from_str(gender_str)
             if exception_code and not member.handicapex:
                 member.handicapex = exception_code

@@ -204,7 +204,7 @@ def _lenex_time_to_ms(t: str) -> int | None:
     return None
 
 
-def _find_or_create_athlete(db: Session, first: str, last: str, license: str, club=None) -> Member | None:
+def _find_or_create_athlete(db: Session, first: str, last: str, license: str, club=None, gender: int = 1) -> Member | None:
     """Match athlete by license first, then name. Create if not found and club provided."""
     if license:
         member = db.query(Member).filter(Member.license == license).first()
@@ -217,7 +217,7 @@ def _find_or_create_athlete(db: Session, first: str, last: str, license: str, cl
         return member
     if not club:
         return None
-    member = Member(firstname=first, lastname=last, gender=1, clubsid=club.clubsid, license=license)
+    member = Member(firstname=first, lastname=last, gender=gender, clubsid=club.clubsid, license=license)
     db.add(member)
     db.flush()
     return member
