@@ -25,12 +25,44 @@ export interface BeachNumberResult {
   errors: string[]
 }
 
+// ── Category Hundreds ─────────────────────────────────────────────────────────
+
+/**
+ * The "hundreds" digit encodes the athlete's category (age group + gender).
+ * Categories are assigned dynamically per club based on which categories are
+ * actually present in the registrations, starting at 100, then 200, 300, etc.
+ *
+ * Within each category, athletes get a sequential number from 01-99.
+ * Full format: Letter + 3 digits, e.g., "C101" = club C, category 1 (100-block), athlete #01.
+ *
+ * Maximum: 9 categories per club (100-900), 99 athletes per category.
+ * The "000" block (e.g., C001-C099) is reserved for overflow/uncategorized if needed.
+ */
+
+const CATEGORY_HUNDREDS = [100, 200, 300, 400, 500, 600, 700, 800, 900] as const
+
+/**
+ * Build a deterministic category key from an age group row.
+ * Used to group athletes into their category for beach number assignment.
+ */
+function buildCategoryKey(agemin: number | null, agemax: number | null, gender: number | null): string {
+  const g = gender ?? 0
+  const min = agemin ?? 0
+  const max = agemax ?? -1
+  return `${min}-${max}-${g}`
+}
+
 // ── Core Generation ───────────────────────────────────────────────────────────
 
 /**
  * Generate beach numbers for ALL athletes in the current meet.
  * Called after LXF import when MEET_TYPE='BEACH'.
  * Clears all existing nameprefix values, then recomputes deterministically.
+ *
+ * Beach number format: Letter + 3 digits (e.g., "C201")
+ *   - Letter: club identifier (A-Z)
+ *   - Hundreds digit: category (age group + gender), assigned dynamically per club
+ *   - Tens + units: athlete sequence within category (01-99)
  */
 export function generateBeachNumbers(db: Database.Database): BeachNumberResult {
   const errors: string[] = []
@@ -86,32 +118,77 @@ export function generateBeachNumbers(db: Database.Database): BeachNumberResult {
     }
   }
 
-  // Step 4: Assign sequence numbers per club
+  // Step 4: Assign category-based beach numbers per club
   const updateStmt = db.prepare(`UPDATE athlete SET nameprefix = ? WHERE athleteid = ?`)
 
   for (const club of clubs) {
     const letter = clubLetterMap.get(club.clubid)
     if (!letter) continue // skipped due to letter exhaustion
 
-    // Query distinct athletes for this club, sorted by lastname then firstname (case-insensitive)
+    // Query distinct athletes with their category info for this club
     const athletes = db.prepare(`
-      SELECT DISTINCT a.athleteid, a.lastname, a.firstname
+      SELECT DISTINCT a.athleteid, a.lastname, a.firstname,
+             ag.agemin, ag.agemax, ag.gender AS ag_gender
       FROM athlete a
       JOIN swimresult r ON r.athleteid = a.athleteid
+      LEFT JOIN agegroup ag ON r.agegroupid = ag.agegroupid
       WHERE a.clubid = ?
-      ORDER BY a.lastname COLLATE NOCASE, a.firstname COLLATE NOCASE
-    `).all(club.clubid) as Array<{ athleteid: number; lastname: string; firstname: string }>
+      ORDER BY ag.agemin, ag.agemax, ag.gender, a.lastname COLLATE NOCASE, a.firstname COLLATE NOCASE
+    `).all(club.clubid) as Array<{
+      athleteid: number; lastname: string; firstname: string
+      agemin: number | null; agemax: number | null; ag_gender: number | null
+    }>
 
-    let seq = 1
-    for (const athlete of athletes) {
-      if (seq > 999) {
-        errors.push(`Club "${club.name}" (${letter}): more than 999 athletes, cannot assign beach numbers beyond position 999`)
-        break
+    // Deduplicate athletes (an athlete may appear in multiple events/age groups)
+    // Use the FIRST age group encountered (sorted deterministically above)
+    const seen = new Set<number>()
+    const athletesByCategory = new Map<string, Array<{ athleteid: number; lastname: string; firstname: string }>>()
+
+    for (const row of athletes) {
+      if (seen.has(row.athleteid)) continue
+      seen.add(row.athleteid)
+
+      const catKey = buildCategoryKey(row.agemin, row.agemax, row.ag_gender)
+      if (!athletesByCategory.has(catKey)) {
+        athletesByCategory.set(catKey, [])
       }
-      const beachNumber = `${letter}${String(seq).padStart(3, '0')}`
-      updateStmt.run(beachNumber, athlete.athleteid)
-      assigned++
-      seq++
+      athletesByCategory.get(catKey)!.push({
+        athleteid: row.athleteid,
+        lastname: row.lastname,
+        firstname: row.firstname,
+      })
+    }
+
+    // Assign each category a hundred (100, 200, 300, ...)
+    const categories = [...athletesByCategory.keys()]
+    // categories are already in deterministic order (sorted by agemin, agemax, gender from the query)
+
+    if (categories.length > CATEGORY_HUNDREDS.length) {
+      errors.push(`Club "${club.name}" (${letter}): more than ${CATEGORY_HUNDREDS.length} categories, some athletes will not get beach numbers`)
+    }
+
+    for (let catIdx = 0; catIdx < categories.length && catIdx < CATEGORY_HUNDREDS.length; catIdx++) {
+      const catKey = categories[catIdx]
+      const catAthletes = athletesByCategory.get(catKey)!
+      const hundred = CATEGORY_HUNDREDS[catIdx]
+
+      // Sort athletes within category alphabetically
+      catAthletes.sort((a, b) =>
+        a.lastname.localeCompare(b.lastname, undefined, { sensitivity: 'base' }) ||
+        a.firstname.localeCompare(b.firstname, undefined, { sensitivity: 'base' })
+      )
+
+      let seq = 1
+      for (const athlete of catAthletes) {
+        if (seq > 99) {
+          errors.push(`Club "${club.name}" (${letter}), category ${hundred}: more than 99 athletes, cannot assign beach numbers beyond position 99`)
+          break
+        }
+        const beachNumber = `${letter}${String(hundred + seq).padStart(3, '0')}`
+        updateStmt.run(beachNumber, athlete.athleteid)
+        assigned++
+        seq++
+      }
     }
   }
 
@@ -123,8 +200,9 @@ export function generateBeachNumbers(db: Database.Database): BeachNumberResult {
 
 /**
  * Assign a beach number to a single late-arrival athlete.
- * Reads existing assignments to determine the club letter and next sequence.
- * Returns the assigned beach number (e.g., "C013") or throws on capacity error.
+ * Reads existing assignments to determine the club letter and the athlete's category,
+ * then assigns the next sequence within that category.
+ * Returns the assigned beach number (e.g., "C201") or throws on capacity error.
  */
 export function assignLateBeachNumber(db: Database.Database, athleteId: number): string {
   // Step 1: Check if athlete already has a beach number assigned
@@ -169,7 +247,6 @@ export function assignLateBeachNumber(db: Database.Database, athleteId: number):
     letter = existingLetter.letter
   } else {
     // Step 4: No existing letter — apply letter selection algorithm
-    // Get all currently used letters across all clubs
     const usedLettersRows = db.prepare(`
       SELECT DISTINCT SUBSTR(nameprefix, 1, 1) AS letter
       FROM athlete
@@ -209,25 +286,83 @@ export function assignLateBeachNumber(db: Database.Database, athleteId: number):
     }
   }
 
-  // Step 5: Get max existing sequence for this letter
-  const maxSeqRow = db.prepare(`
-    SELECT MAX(CAST(SUBSTR(nameprefix, 2) AS INTEGER)) AS maxSeq
-    FROM athlete
-    WHERE SUBSTR(nameprefix, 1, 1) = ?
-  `).get(letter) as { maxSeq: number | null } | undefined
+  // Step 5: Determine the athlete's category
+  // Look at their swimresult entries to find their age group
+  const agRow = db.prepare(`
+    SELECT ag.agemin, ag.agemax, ag.gender
+    FROM swimresult r
+    JOIN agegroup ag ON r.agegroupid = ag.agegroupid
+    WHERE r.athleteid = ?
+    LIMIT 1
+  `).get(athleteId) as { agemin: number | null; agemax: number | null; gender: number | null } | undefined
 
-  const maxSeq = maxSeqRow?.maxSeq ?? 0
-  const nextSeq = maxSeq + 1
+  const catKey = agRow
+    ? buildCategoryKey(agRow.agemin, agRow.agemax, agRow.gender)
+    : buildCategoryKey(null, null, null)
 
-  // Step 6: Check capacity
-  if (nextSeq > 999) {
-    throw new Error(`Club letter "${letter}" has reached maximum capacity (999 athletes)`)
+  // Step 6: Find which hundred is assigned to this category for this club letter
+  // Look at existing beach numbers for this letter to determine category mapping
+  const existingNumbers = db.prepare(`
+    SELECT DISTINCT CAST(SUBSTR(nameprefix, 2, 1) AS INTEGER) AS hundredDigit,
+           ag.agemin, ag.agemax, ag.gender
+    FROM athlete a
+    JOIN swimresult r ON r.athleteid = a.athleteid
+    LEFT JOIN agegroup ag ON r.agegroupid = ag.agegroupid
+    WHERE SUBSTR(a.nameprefix, 1, 1) = ?
+      AND a.nameprefix IS NOT NULL AND a.nameprefix != ''
+    GROUP BY CAST(SUBSTR(nameprefix, 2, 1) AS INTEGER), ag.agemin, ag.agemax, ag.gender
+  `).all(letter) as Array<{ hundredDigit: number; agemin: number | null; agemax: number | null; gender: number | null }>
+
+  // Build mapping: categoryKey → hundred
+  const catToHundred = new Map<string, number>()
+  for (const row of existingNumbers) {
+    const key = buildCategoryKey(row.agemin, row.agemax, row.gender)
+    const hundred = row.hundredDigit * 100
+    if (hundred > 0 && !catToHundred.has(key)) {
+      catToHundred.set(key, hundred)
+    }
   }
 
-  // Step 7: Assign the beach number
-  const beachNumber = `${letter}${String(nextSeq).padStart(3, '0')}`
+  let hundred: number
+
+  if (catToHundred.has(catKey)) {
+    // Category already exists for this club
+    hundred = catToHundred.get(catKey)!
+  } else {
+    // New category — find the next available hundred
+    const usedHundreds = new Set([...catToHundred.values()])
+    hundred = 0
+    for (const h of CATEGORY_HUNDREDS) {
+      if (!usedHundreds.has(h)) {
+        hundred = h
+        break
+      }
+    }
+    if (hundred === 0) {
+      throw new Error(`Club letter "${letter}" has exhausted all 9 category slots`)
+    }
+  }
+
+  // Step 7: Find the next sequence within this hundred for this letter
+  const maxSeqRow = db.prepare(`
+    SELECT MAX(CAST(SUBSTR(nameprefix, 2) AS INTEGER)) AS maxNum
+    FROM athlete
+    WHERE SUBSTR(nameprefix, 1, 1) = ?
+      AND CAST(SUBSTR(nameprefix, 2) AS INTEGER) >= ?
+      AND CAST(SUBSTR(nameprefix, 2) AS INTEGER) < ?
+  `).get(letter, hundred, hundred + 100) as { maxNum: number | null } | undefined
+
+  const maxNum = maxSeqRow?.maxNum ?? (hundred)
+  const nextNum = maxNum + 1
+
+  // Check capacity: only 99 slots per category (hundred+01 to hundred+99)
+  if (nextNum >= hundred + 100) {
+    throw new Error(`Club letter "${letter}", category ${hundred}: has reached maximum capacity (99 athletes)`)
+  }
+
+  // Step 8: Assign the beach number
+  const beachNumber = `${letter}${String(nextNum).padStart(3, '0')}`
   db.prepare(`UPDATE athlete SET nameprefix = ? WHERE athleteid = ?`).run(beachNumber, athleteId)
 
-  // Step 8: Return the beach number
   return beachNumber
 }
