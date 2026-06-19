@@ -2718,6 +2718,9 @@ export function getCombinedResults(selectedEventIds: number[]): CombinedResultCa
   const db = getLocalDb()
   const meetYear = new Date().getFullYear()
 
+  // Ensure combined event definitions are up-to-date before querying
+  regenerateCombinedEvents(db)
+
   // Read COMBINEDEVENTS XML from bsglobal
   const row = db.prepare(`SELECT data FROM bsglobal WHERE name = 'COMBINEDEVENTS'`).get() as { data: string } | undefined
   if (!row || !row.data) return []
@@ -2998,6 +3001,10 @@ export function getPointStandings(selectedEventIds: number[]): {
 } {
   if (selectedEventIds.length === 0) return { clubs: [], categories: [] }
   const db = getLocalDb()
+
+  // Ensure combined event definitions are up-to-date before querying
+  regenerateCombinedEvents(db)
+  regeneratePointScores(db)
 
   // Use the same combined events logic to compute points per club
   const row = db.prepare(`SELECT data FROM bsglobal WHERE name = 'COMBINEDEVENTS'`).get() as { data: string } | undefined

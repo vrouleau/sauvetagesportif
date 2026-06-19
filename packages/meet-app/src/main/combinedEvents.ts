@@ -167,7 +167,7 @@ export function findMatchingEvents(
       const ageMinMatch = event.agemin === range.ageMin
       const ageMaxMatch =
         range.ageMax === -1
-          ? event.agemax === -1 || event.agemax === 99
+          ? event.agemax === -1 || event.agemax === 99 || event.agemax === null
           : event.agemax === range.ageMax
 
       if (ageMinMatch && ageMaxMatch) {
@@ -321,4 +321,4 @@ export function regenerateCombinedEvents(db: Database.Database): void {
     `INSERT INTO bsglobal (name, data) VALUES ('COMBINEDEVENTS', ?)
      ON CONFLICT(name) DO UPDATE SET data = excluded.data`
   ).run(xml)
-}
+}

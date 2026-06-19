@@ -59,6 +59,8 @@ import {
 } from './db'
 import { importLenex, exportLenexResults, exportMeetLenex } from './lenex'
 import { saveSMB, restoreSMB } from './smb'
+import { regenerateCombinedEvents } from './combinedEvents'
+import { regeneratePointScores } from './pointScores'
 import {
   closeScanDb, insertScan, getUnprocessedScans,
   getScansForHeat, getScanById, findExistingScan,
@@ -1164,6 +1166,10 @@ ipcMain.handle('file:import-lenex', async (_event, filePath: string, lang?: stri
       seedDsqCodes(db, meetType, lang || 'fr')
     }
 
+    // Generate combined events & point scores definitions for imported meet
+    regenerateCombinedEvents(db)
+    regeneratePointScores(db)
+
     livePush.reload(db)
     return { ok: true, summary }
   } catch (e) {
@@ -1251,6 +1257,9 @@ ipcMain.handle('file:restore-smb', async (event) => {
   if (result.canceled || result.filePaths.length === 0) return { ok: false, canceled: true }
   try {
     const summary = restoreSMB(result.filePaths[0], getLocalDb())
+    // Regenerate combined events & point scores after restore
+    regenerateCombinedEvents(getLocalDb())
+    regeneratePointScores(getLocalDb())
     return { ok: true, ...summary }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
@@ -1290,6 +1299,10 @@ ipcMain.handle('file:new-meet', async (_event, meetType?: string, lang?: string)
 
     // Seed DSQ codes from config/dsq-codes.json
     seedDsqCodes(db, type, lang || 'fr')
+
+    // Generate combined events & point scores definitions for new meet
+    regenerateCombinedEvents(db)
+    regeneratePointScores(db)
 
     return { ok: true, summary, meetType: type.toUpperCase() }
   } catch (e) {

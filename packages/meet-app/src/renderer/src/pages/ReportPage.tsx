@@ -1300,7 +1300,10 @@ export default function ReportPage({ refreshKey = 0, meetType = 'POOL' }: { refr
       const eventIds = [...selectedEventIds]
       if (eventIds.length === 0) return
       const data = await dbApi()?.getPointStandings(eventIds) as PointStandingsData | undefined
-      if (!data || data.clubs.length === 0) return
+      if (!data || data.clubs.length === 0) {
+        alert('Aucune donnée de classement aux points disponible. Vérifiez que des résultats existent pour les épreuves sélectionnées.')
+        return
+      }
       pdf = generatePointStandingsPdfHtml(data)
       exported = '' // No HTML export
       hdrInfo = buildPointStandingsPdfHeaderInfo(meetInfo)
@@ -1309,7 +1312,10 @@ export default function ReportPage({ refreshKey = 0, meetType = 'POOL' }: { refr
       const eventIds = [...selectedEventIds]
       if (eventIds.length === 0) return
       const categories = await dbApi()?.getCombinedResults(eventIds) as CombinedResultCategory[] | undefined
-      if (!categories || categories.length === 0) return
+      if (!categories || categories.length === 0) {
+        alert('Aucun résultat combiné disponible. Vérifiez que des résultats existent pour les épreuves sélectionnées.')
+        return
+      }
       pdf = generateCombinedResultsPdfHtml(categories)
       exported = '' // No HTML export for combinedResults
       hdrInfo = buildCombinedResultsPdfHeaderInfo(meetInfo)
