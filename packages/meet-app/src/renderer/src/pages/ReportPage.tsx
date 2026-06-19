@@ -511,9 +511,7 @@ function generateCombinedResultsPdfHtml(categories: CombinedResultCategory[]): s
     let html = `<div class="cr-category">
 <div class="cr-title">${esc(cat.name)}</div>\n`
 
-    if (cat.subtitle) {
-      html += `<div class="cr-subtitle">${esc(cat.subtitle)}</div>\n`
-    }
+
 
     if (cat.athletes.length === 0) {
       html += `</div>\n`
