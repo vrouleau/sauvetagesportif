@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.3.30] - 2026-06-19
+
+### 🐛 Bug Fixes
+
+- resolve all TS2305, TS2307, TS2339, TS2353 compilation errors (`e6aac9e`)
+- combined results & point standings reports not generating (`d720287`)
+
+### 🔧 Chores
+
+- upgrade Vite 5 → 7 + electron-vite 5 + plugin-react 5.2 (`ab4de6f`)
+- upgrade Electron 33 → 42 + electron-toolkit packages (`48bcdab`)
+- bump safe dependencies (`5b90794`)
+- migrate to TypeScript 6.0 (`59222a5`)
+
 ## [0.3.29] - 2026-06-19
 
 ### 🐛 Bug Fixes
