@@ -818,11 +818,15 @@ export async function getAthletes(): Promise<AthleteRow[]> {
   }>
 
   const entMap = new Map<number, AthleteRow['entries']>()
+  const meetTypeRow3 = db.prepare(`SELECT data FROM bsglobal WHERE name = 'MEET_TYPE'`).get() as { data: string } | undefined
+  const isBeachMeet3 = (meetTypeRow3?.data || 'POOL').toUpperCase() === 'BEACH'
   for (const e of entries) {
     if (!entMap.has(e.athleteid)) entMap.set(e.athleteid, [])
     entMap.get(e.athleteid)!.push({
       eventId: e.swimeventid,
-      eventName: `${e.distance ?? '?'}m ${eventName(e.stylename, e.stroke)}`.trim(),
+      eventName: isBeachMeet3
+        ? (e.stylename || eventName(e.stylename, e.stroke))
+        : `${e.distance ?? '?'}m ${eventName(e.stylename, e.stroke)}`.trim(),
       category: e.agegroupname ?? '',
       entryTime: msToDisplay(e.entrytime),
     })
@@ -2308,10 +2312,14 @@ export function getFinalEvents(): FinalEventRow[] {
     }
 
     const laneCount = (r.lanemax ?? 8) - (r.lanemin ?? 1) + 1
+    const meetTypeRowF = db.prepare(`SELECT data FROM bsglobal WHERE name = 'MEET_TYPE'`).get() as { data: string } | undefined
+    const isBeachF = (meetTypeRowF?.data || 'POOL').toUpperCase() === 'BEACH'
     return {
       eventId: r.swimeventid,
       eventNumber: r.eventnumber ?? 0,
-      eventName: `${r.distance ?? '?'}m ${eventName(r.stylename, r.stroke)}`.trim(),
+      eventName: isBeachF
+        ? (r.stylename || eventName(r.stylename, r.stroke))
+        : `${r.distance ?? '?'}m ${eventName(r.stylename, r.stroke)}`.trim(),
       gender: decodeGender(r.gender),
       sessionId: r.swimsessionid,
       sessionNumber: r.sessionnumber ?? 0,

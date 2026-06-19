@@ -1345,7 +1345,7 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
                                 <span>
                                   <span className="font-medium">{ev.number}.</span>{' '}
                                   {t.heats.genderLabel(ev.gender ?? '')},{' '}
-                                  {ev.distance}m {ev.nameFr}/{ev.nameEn}
+                                  {isBeach ? ev.nameFr : `${ev.distance}m ${ev.nameFr}/${ev.nameEn}`}
                                 </span>
                               )}
                             </td>
@@ -1435,7 +1435,7 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
               <div>
                 <span className="font-semibold text-gray-800">
                   {selectedEvent!.number}. {t.heats.genderLabel(selectedEvent!.gender ?? '')},{' '}
-                  {selectedEvent!.distance}m {selectedEvent!.nameFr}/{selectedEvent!.nameEn},{' '}
+                  {isBeach ? selectedEvent!.nameFr : `${selectedEvent!.distance}m ${selectedEvent!.nameFr}/${selectedEvent!.nameEn}`},{' '}
                   {selectedEvent!.phase}
                 </span>
                 <span className="ml-3 text-gray-500">

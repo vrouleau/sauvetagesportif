@@ -1711,7 +1711,9 @@ ipcMain.handle('timing:generate-sheets', async (_event, sessionId: number) => {
 
       const laneNumbers = lanes.map((l) => l.lane)
       if (laneNumbers.length === 0) continue // skip heats with no seeded lanes
-      const eventName = `${heat.distance}m ${heat.stylename}`
+      const meetTypeTS = db.prepare(`SELECT data FROM bsglobal WHERE name = 'MEET_TYPE'`).get() as { data: string } | undefined
+      const isBeachTS = (meetTypeTS?.data || 'POOL').toUpperCase() === 'BEACH'
+      const eventName = isBeachTS ? heat.stylename : `${heat.distance}m ${heat.stylename}`
 
       // Get athlete names and club codes for each lane
       const entries = db.prepare(`
