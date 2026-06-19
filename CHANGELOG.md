@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.3.28] - 2026-06-19
+
+### ✨ Features
+
+- add select-all checkbox to individual events header (`26c0c96`)
+- add 'Liste des inscriptions par épreuves' and 'Classement au points' reports (`e66771f`)
+- expand beach athlete number from 3 to 4 characters (L-DDD) (`8bb0f12`)
+
+### 🐛 Bug Fixes
+
+- beach numbers use category-based hundreds (100=cat1, 200=cat2, etc.) (`b3da198`)
+
+### 🔧 Chores
+
+- fix all TS6133/TS6196 unused variable and import errors (`852f112`)
+
 ## [0.3.27] - 2026-06-18
 
 ### 🐛 Bug Fixes
