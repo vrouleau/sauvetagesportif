@@ -112,6 +112,9 @@ export const meetApiElectron: MeetAPI = {
     if (!fileApi) return { ok: false, error: 'File API not available' }
     const lang = document.documentElement.lang || 'fr'
     const result = await fileApi.newMeet(meetType, lang)
+    if (result.ok && result.meetType) {
+      window.dispatchEvent(new CustomEvent('sauvetage:meettype-changed', { detail: result.meetType }))
+    }
     return { ok: result.ok, meetType: result.meetType, error: result.error }
   },
 }

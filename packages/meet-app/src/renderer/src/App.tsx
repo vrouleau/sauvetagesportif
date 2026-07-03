@@ -60,12 +60,13 @@ function fileApi() {
     api?: {
       file?: {
         openLxfDialog: () => Promise<string | null>
-        importLenex: (path: string, lang?: string) => Promise<{ ok: boolean; summary?: ImportSummary; error?: string }>
+        importLenex: (path: string, lang?: string) => Promise<{ ok: boolean; summary?: ImportSummary; meetType?: string; error?: string }>
         exportMeetLenex: () => Promise<{ ok: boolean; canceled?: boolean; summary?: MeetExportSummary; error?: string }>
         exportLenexResults: () => Promise<{ ok: boolean; canceled?: boolean; summary?: ExportSummary; error?: string }>
         saveSMB: () => Promise<{ ok: boolean; canceled?: boolean; tables?: number; rows?: number; error?: string }>
         restoreSMB: () => Promise<{ ok: boolean; canceled?: boolean; tables?: number; rows?: number; error?: string }>
         newMeet: (meetType?: string, lang?: string) => Promise<{ ok: boolean; summary?: ImportSummary; meetType?: string; error?: string }>
+        onMeetTypeChanged: (cb: (meetType: string) => void) => () => void
       }
     }
   }).api?.file ?? null
@@ -275,6 +276,13 @@ function AppInner() {
     dbApi()?.getMeetInfo().then((info: { name: string }) => setMeetName(info?.name || ''))
   }, [refreshKey])
 
+  // Sync meetType immediately when createMeet completes (no full refresh needed)
+  useEffect(() => {
+    const handler = (e: Event) => setMeetType((e as CustomEvent<string>).detail || 'POOL')
+    window.addEventListener('sauvetage:meettype-changed', handler)
+    return () => window.removeEventListener('sauvetage:meettype-changed', handler)
+  }, [])
+
   // Poll live push status every 5s
   useEffect(() => {
     const liveApi = (window as any).api?.live
@@ -304,12 +312,13 @@ function AppInner() {
     return () => clearInterval(interval)
   }, [pgStatus.info.type])
 
-  // Listen for native menu events
+  // Listen for native menu events and main-process push notifications
   useEffect(() => {
     const apis = menuApi()
     if (!apis) return
     const m = apis.menu
     const pg = apis.pg
+    const f = fileApi()
     if (!m) return
     const cleanups = [
       m.onConfigureGemini(() => setShowGeminiConfig(true)),
@@ -319,6 +328,8 @@ function AppInner() {
       m.onExportLenexResults(() => handleExportLenexResults()),
       m.onSaveSMB(() => handleSaveSMB()),
       m.onRestoreSMB(() => handleRestoreSMB()),
+      // Main process pushes the detected meetType after import completes
+      ...(f ? [f.onMeetTypeChanged((type) => setMeetType(type || 'POOL'))] : []),
       ...(pg ? [
         pg.onConnectPg(() => setShowPgConnect(true)),
         pg.onDisconnectPg(async () => {
@@ -343,6 +354,7 @@ function AppInner() {
     } else {
       setImportState({ status: 'error', error: result.error ?? 'Unknown error' })
     }
+    handleRefresh()
   }
 
   async function handleExportMeetLenex() {

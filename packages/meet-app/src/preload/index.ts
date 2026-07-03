@@ -282,6 +282,11 @@ const api = {
       ipcRenderer.invoke('file:restore-smb'),
     newMeet: (meetType?: string, lang?: string) =>
       ipcRenderer.invoke('file:new-meet', meetType, lang),
+    onMeetTypeChanged: (cb: (meetType: string) => void) => {
+      const handler = (_e: unknown, meetType: string) => cb(meetType)
+      ipcRenderer.on('file:meet-type-changed', handler)
+      return () => { ipcRenderer.removeListener('file:meet-type-changed', handler) }
+    },
   },
   live: {
     getStatus: () =>

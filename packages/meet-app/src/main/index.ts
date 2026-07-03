@@ -1142,11 +1142,14 @@ ipcMain.handle('file:open-lenex-dialog', async (event) => {
   return result.canceled ? null : result.filePaths[0]
 })
 
-ipcMain.handle('file:import-lenex', async (_event, filePath: string, lang?: string) => {
+ipcMain.handle('file:import-lenex', async (event, filePath: string, lang?: string) => {
   try {
     const db = getLocalDb()
 
-    // Clear existing meet structure before importing (preserve clubs and athletes)
+    // Wipe all meet data (clubs, athletes, and event structure)
+    db.exec(`DELETE FROM relaysplit`)
+    db.exec(`DELETE FROM relayposition`)
+    db.exec(`DELETE FROM relay`)
     db.exec(`DELETE FROM split`)
     db.exec(`DELETE FROM swimresult`)
     db.exec(`DELETE FROM heat`)
@@ -1154,6 +1157,8 @@ ipcMain.handle('file:import-lenex', async (_event, filePath: string, lang?: stri
     db.exec(`DELETE FROM swimevent`)
     db.exec(`DELETE FROM swimsession`)
     db.exec(`DELETE FROM swimstyle`)
+    db.exec(`DELETE FROM athlete`)
+    db.exec(`DELETE FROM club`)
     db.exec(`DELETE FROM dsqitem`)
     db.exec(`DELETE FROM bsglobal`)
 
@@ -1172,7 +1177,10 @@ ipcMain.handle('file:import-lenex', async (_event, filePath: string, lang?: stri
     regeneratePointScores(db)
 
     livePush.reload(db)
-    return { ok: true, summary }
+    const meetTypeRow2 = db.prepare(`SELECT data FROM bsglobal WHERE name = 'MEET_TYPE'`).get() as { data: string } | undefined
+    const detectedMeetType = (meetTypeRow2?.data || 'POOL').toUpperCase()
+    event.sender.send('file:meet-type-changed', detectedMeetType)
+    return { ok: true, summary, meetType: detectedMeetType }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
   }
@@ -1272,7 +1280,10 @@ ipcMain.handle('file:new-meet', async (_event, meetType?: string, lang?: string)
     const type = (meetType || 'pool').toLowerCase()
     const db = getLocalDb()
 
-    // Wipe event structure only (preserve clubs and athletes)
+    // Wipe all meet data (clubs, athletes, and event structure)
+    db.exec(`DELETE FROM relaysplit`)
+    db.exec(`DELETE FROM relayposition`)
+    db.exec(`DELETE FROM relay`)
     db.exec(`DELETE FROM split`)
     db.exec(`DELETE FROM swimresult`)
     db.exec(`DELETE FROM heat`)
@@ -1280,6 +1291,8 @@ ipcMain.handle('file:new-meet', async (_event, meetType?: string, lang?: string)
     db.exec(`DELETE FROM swimevent`)
     db.exec(`DELETE FROM swimsession`)
     db.exec(`DELETE FROM swimstyle`)
+    db.exec(`DELETE FROM athlete`)
+    db.exec(`DELETE FROM club`)
     db.exec(`DELETE FROM dsqitem`)
     db.exec(`DELETE FROM bsglobal`)
 
