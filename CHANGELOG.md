@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.33] - 2026-07-03
+
+### Other
+
+- Fix meet-app: wipe clubs/athletes on new meet/import, sync MEET_TYPE to UI after LXF import (`7816c96`)
+
+# Changelog
+
 ## [0.3.32] - 2026-06-19
 
 ### Other
