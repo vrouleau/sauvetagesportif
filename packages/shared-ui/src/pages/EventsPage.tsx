@@ -16,7 +16,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with Sauvetage Sportif. If not, see <https://www.gnu.org/licenses/>.
 
-import { useState, useEffect, useCallback, useRef, type ReactNode, type CSSProperties, type MouseEvent } from 'react'
+import { useState, useEffect, useCallback, useRef, useContext, createContext, type ReactNode, type CSSProperties, type MouseEvent } from 'react'
 import {
   DndContext,
   closestCenter,
@@ -2012,6 +2012,153 @@ function EventPropertiesPanel({ event, onUpdate }: { event: CompetitionEvent; on
 }
 
 // ─── Competition Properties Panel (editable, Splash-style) ───────────────────
+//
+// Field row components below are defined at module scope (not nested inside
+// CompetitionPropertiesPanel) so their component identity stays stable across
+// re-renders. A component defined inside another component's render body is a
+// *new* function reference every render; if the parent re-renders for any
+// reason while a field is mid-edit, React treats the nested component as a
+// different type and remounts it, wiping whatever the user was typing.
+
+const MeetConfigContext = createContext<{
+  meetValues: Record<string, string>
+  saveField: (key: string, value: string, type?: string) => void
+}>({ meetValues: {}, saveField: () => {} })
+
+function TextFieldRow({ label, fieldKey }: { label: string; fieldKey: string }) {
+  const { meetValues, saveField } = useContext(MeetConfigContext)
+  const [val, setVal] = useState(meetValues[fieldKey] ?? '')
+  useEffect(() => { setVal(meetValues[fieldKey] ?? '') }, [meetValues[fieldKey]])
+  return (
+    <tr className="border-b border-gray-100 hover:bg-gray-50">
+      <td className="px-4 py-0.5 text-gray-600 w-64">{label}</td>
+      <td className="px-2 py-0.5">
+        <input
+          type="text"
+          className="w-full border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
+          value={val}
+          onChange={(e) => setVal(e.target.value)}
+          onBlur={() => saveField(fieldKey, val)}
+          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+        />
+      </td>
+    </tr>
+  )
+}
+
+function NumberFieldRow({ label, fieldKey }: { label: string; fieldKey: string }) {
+  const { meetValues, saveField } = useContext(MeetConfigContext)
+  const [val, setVal] = useState(meetValues[fieldKey] ?? '')
+  useEffect(() => { setVal(meetValues[fieldKey] ?? '') }, [meetValues[fieldKey]])
+  return (
+    <tr className="border-b border-gray-100 hover:bg-gray-50">
+      <td className="px-4 py-0.5 text-gray-600 w-64">{label}</td>
+      <td className="px-2 py-0.5">
+        <input
+          type="number"
+          className="w-20 border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
+          value={val}
+          onChange={(e) => setVal(e.target.value)}
+          onBlur={() => saveField(fieldKey, val, 'I')}
+          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+        />
+      </td>
+    </tr>
+  )
+}
+
+function FeeFieldRow({ label, fieldKey }: { label: string; fieldKey: string }) {
+  const { meetValues, saveField } = useContext(MeetConfigContext)
+  const [val, setVal] = useState(meetValues[fieldKey] ?? '')
+  useEffect(() => { setVal(meetValues[fieldKey] ?? '') }, [meetValues[fieldKey]])
+  return (
+    <tr className="border-b border-gray-100 hover:bg-gray-50">
+      <td className="px-4 py-0.5 text-gray-600 w-64">{label}</td>
+      <td className="px-2 py-0.5">
+        <input
+          type="number"
+          step="0.01"
+          min={0}
+          className="w-20 border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
+          value={val}
+          onChange={(e) => setVal(e.target.value)}
+          onBlur={() => saveField(fieldKey, val, 'F')}
+          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+          placeholder="0.00"
+        />
+      </td>
+    </tr>
+  )
+}
+
+function DateFieldRow({ label, fieldKey }: { label: string; fieldKey: string }) {
+  const { meetValues, saveField } = useContext(MeetConfigContext)
+  // Splash date format: YYYYMMDDHHMMSSMMM → display as YYYY-MM-DD
+  const raw = meetValues[fieldKey] ?? ''
+  const toIso = (v: string): string => {
+    if (/^\d{4}-\d{2}-\d{2}/.test(v)) return v.slice(0, 10)
+    if (/^\d{8,}/.test(v)) return `${v.slice(0, 4)}-${v.slice(4, 6)}-${v.slice(6, 8)}`
+    return v
+  }
+  const toSplash = (iso: string): string => {
+    // YYYY-MM-DD → YYYYMMDD000000000
+    return iso.replace(/-/g, '') + '000000000'
+  }
+  const [val, setVal] = useState(toIso(raw))
+  useEffect(() => { setVal(toIso(meetValues[fieldKey] ?? '')) }, [meetValues[fieldKey]])
+  return (
+    <tr className="border-b border-gray-100 hover:bg-gray-50">
+      <td className="px-4 py-0.5 text-gray-600 w-64">{label}</td>
+      <td className="px-2 py-0.5">
+        <input
+          type="date"
+          className="w-40 border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
+          value={val}
+          onChange={(e) => setVal(e.target.value)}
+          onBlur={() => saveField(fieldKey, toSplash(val), 'D')}
+        />
+      </td>
+    </tr>
+  )
+}
+
+function CheckFieldRow({ label, fieldKey }: { label: string; fieldKey: string }) {
+  const { meetValues, saveField } = useContext(MeetConfigContext)
+  const checked = meetValues[fieldKey] === 'T' || meetValues[fieldKey] === '1'
+  return (
+    <tr className="border-b border-gray-100 hover:bg-gray-50">
+      <td className="px-4 py-0.5 text-gray-600 w-64">{label}</td>
+      <td className="px-2 py-0.5">
+        <input
+          type="checkbox"
+          className="w-4 h-4"
+          checked={checked}
+          onChange={(e) => saveField(fieldKey, e.target.checked ? 'T' : 'F', 'B')}
+        />
+      </td>
+    </tr>
+  )
+}
+
+function SelectFieldRow({ label, fieldKey, options, type }: { label: string; fieldKey: string; options: { value: string; label: string }[]; type?: string }) {
+  const { meetValues, saveField } = useContext(MeetConfigContext)
+  return (
+    <tr className="border-b border-gray-100 hover:bg-gray-50">
+      <td className="px-4 py-0.5 text-gray-600 w-64">{label}</td>
+      <td className="px-2 py-0.5">
+        <select
+          className="border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
+          value={meetValues[fieldKey] ?? ''}
+          onChange={(e) => saveField(fieldKey, e.target.value, type ?? 'I')}
+        >
+          {options.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </select>
+      </td>
+    </tr>
+  )
+}
 
 function CompetitionPropertiesPanel({ onMeetNameChange }: { onMeetNameChange: (name: string) => void }) {
   const { t } = useLang()
@@ -2035,11 +2182,11 @@ function CompetitionPropertiesPanel({ onMeetNameChange }: { onMeetNameChange: (n
     })
   }
 
-  function saveField(key: string, value: string, type: string = 'S') {
+  const saveField = useCallback((key: string, value: string, type: string = 'S') => {
     api.setMeetConfig({ [key]: { type, value } })
     setMeetValues((prev) => ({ ...prev, [key]: value }))
     if (key === 'NAME') onMeetNameChange(value)
-  }
+  }, [api, onMeetNameChange])
 
   function SectionHeader({ title }: { title: string }) {
     const isCollapsed = collapsed.has(title)
@@ -2048,135 +2195,6 @@ function CompetitionPropertiesPanel({ onMeetNameChange }: { onMeetNameChange: (n
         <td colSpan={2} className="bg-gray-100 border-b border-gray-200 font-semibold text-xs px-2 py-1">
           <span className="mr-1 text-gray-500">{isCollapsed ? '▶' : '▼'}</span>
           {title}
-        </td>
-      </tr>
-    )
-  }
-
-  function TextFieldRow({ label, fieldKey }: { label: string; fieldKey: string }) {
-    const [val, setVal] = useState(meetValues[fieldKey] ?? '')
-    useEffect(() => { setVal(meetValues[fieldKey] ?? '') }, [meetValues[fieldKey]])
-    return (
-      <tr className="border-b border-gray-100 hover:bg-gray-50">
-        <td className="px-4 py-0.5 text-gray-600 w-64">{label}</td>
-        <td className="px-2 py-0.5">
-          <input
-            type="text"
-            className="w-full border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
-            value={val}
-            onChange={(e) => setVal(e.target.value)}
-            onBlur={() => saveField(fieldKey, val)}
-            onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-          />
-        </td>
-      </tr>
-    )
-  }
-
-  function NumberFieldRow({ label, fieldKey }: { label: string; fieldKey: string }) {
-    const [val, setVal] = useState(meetValues[fieldKey] ?? '')
-    useEffect(() => { setVal(meetValues[fieldKey] ?? '') }, [meetValues[fieldKey]])
-    return (
-      <tr className="border-b border-gray-100 hover:bg-gray-50">
-        <td className="px-4 py-0.5 text-gray-600 w-64">{label}</td>
-        <td className="px-2 py-0.5">
-          <input
-            type="number"
-            className="w-20 border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
-            value={val}
-            onChange={(e) => setVal(e.target.value)}
-            onBlur={() => saveField(fieldKey, val, 'I')}
-            onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-          />
-        </td>
-      </tr>
-    )
-  }
-
-  function FeeFieldRow({ label, fieldKey }: { label: string; fieldKey: string }) {
-    const [val, setVal] = useState(meetValues[fieldKey] ?? '')
-    useEffect(() => { setVal(meetValues[fieldKey] ?? '') }, [meetValues[fieldKey]])
-    return (
-      <tr className="border-b border-gray-100 hover:bg-gray-50">
-        <td className="px-4 py-0.5 text-gray-600 w-64">{label}</td>
-        <td className="px-2 py-0.5">
-          <input
-            type="number"
-            step="0.01"
-            min={0}
-            className="w-20 border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
-            value={val}
-            onChange={(e) => setVal(e.target.value)}
-            onBlur={() => saveField(fieldKey, val, 'F')}
-            onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-            placeholder="0.00"
-          />
-        </td>
-      </tr>
-    )
-  }
-
-  function DateFieldRow({ label, fieldKey }: { label: string; fieldKey: string }) {
-    // Splash date format: YYYYMMDDHHMMSSMMM → display as YYYY-MM-DD
-    const raw = meetValues[fieldKey] ?? ''
-    const toIso = (v: string): string => {
-      if (/^\d{4}-\d{2}-\d{2}/.test(v)) return v.slice(0, 10)
-      if (/^\d{8,}/.test(v)) return `${v.slice(0, 4)}-${v.slice(4, 6)}-${v.slice(6, 8)}`
-      return v
-    }
-    const toSplash = (iso: string): string => {
-      // YYYY-MM-DD → YYYYMMDD000000000
-      return iso.replace(/-/g, '') + '000000000'
-    }
-    const [val, setVal] = useState(toIso(raw))
-    useEffect(() => { setVal(toIso(meetValues[fieldKey] ?? '')) }, [meetValues[fieldKey]])
-    return (
-      <tr className="border-b border-gray-100 hover:bg-gray-50">
-        <td className="px-4 py-0.5 text-gray-600 w-64">{label}</td>
-        <td className="px-2 py-0.5">
-          <input
-            type="date"
-            className="w-40 border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
-            value={val}
-            onChange={(e) => setVal(e.target.value)}
-            onBlur={() => saveField(fieldKey, toSplash(val), 'D')}
-          />
-        </td>
-      </tr>
-    )
-  }
-
-  function CheckFieldRow({ label, fieldKey }: { label: string; fieldKey: string }) {
-    const checked = meetValues[fieldKey] === 'T' || meetValues[fieldKey] === '1'
-    return (
-      <tr className="border-b border-gray-100 hover:bg-gray-50">
-        <td className="px-4 py-0.5 text-gray-600 w-64">{label}</td>
-        <td className="px-2 py-0.5">
-          <input
-            type="checkbox"
-            className="w-4 h-4"
-            checked={checked}
-            onChange={(e) => saveField(fieldKey, e.target.checked ? 'T' : 'F', 'B')}
-          />
-        </td>
-      </tr>
-    )
-  }
-
-  function SelectFieldRow({ label, fieldKey, options, type }: { label: string; fieldKey: string; options: { value: string; label: string }[]; type?: string }) {
-    return (
-      <tr className="border-b border-gray-100 hover:bg-gray-50">
-        <td className="px-4 py-0.5 text-gray-600 w-64">{label}</td>
-        <td className="px-2 py-0.5">
-          <select
-            className="border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
-            value={meetValues[fieldKey] ?? ''}
-            onChange={(e) => saveField(fieldKey, e.target.value, type ?? 'I')}
-          >
-            {options.map((o) => (
-              <option key={o.value} value={o.value}>{o.label}</option>
-            ))}
-          </select>
         </td>
       </tr>
     )
@@ -2207,6 +2225,7 @@ function CompetitionPropertiesPanel({ onMeetNameChange }: { onMeetNameChange: (n
   ]
 
   return (
+    <MeetConfigContext.Provider value={{ meetValues, saveField }}>
     <div className="text-xs">
       <div className="flex items-center h-7 bg-gray-50 border-b border-gray-200 px-3 font-semibold text-gray-700 sticky top-0 z-10">
         <svg className="w-4 h-4 mr-2 text-blue-400" fill="currentColor" viewBox="0 0 20 20">
@@ -2364,8 +2383,116 @@ function CompetitionPropertiesPanel({ onMeetNameChange }: { onMeetNameChange: (n
         </tbody>
       </table>
     </div>
+    </MeetConfigContext.Provider>
   )
 }
+
+// Field row components are module-scoped (see the note above CompetitionPropertiesPanel's
+// field rows) so in-progress edits survive re-renders of SessionPropertiesPanel — e.g. when
+// `session` prop object gets replaced by a fresh fetch while the user is still typing.
+const SessionUpdateContext = createContext<(data: Record<string, unknown>) => void>(() => {})
+
+function TextRow({ label, value, field }: { label: string; value: string; field: string }) {
+  const onUpdate = useContext(SessionUpdateContext)
+  return (
+    <tr className="border-b border-gray-100 hover:bg-gray-50">
+      <td className="px-4 py-0.5 text-gray-600 w-64">{label}</td>
+      <td className="px-2 py-0.5">
+        <input
+          type="text"
+          className="w-full border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
+          defaultValue={value}
+          onBlur={(e) => {
+            if (e.target.value !== value) onUpdate({ [field]: e.target.value || null })
+          }}
+          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+        />
+      </td>
+    </tr>
+  )
+}
+
+function NumberRow({ label, value, field }: { label: string; value: number | undefined; field: string }) {
+  const onUpdate = useContext(SessionUpdateContext)
+  return (
+    <tr className="border-b border-gray-100 hover:bg-gray-50">
+      <td className="px-4 py-0.5 text-gray-600 w-64">{label}</td>
+      <td className="px-2 py-0.5">
+        <input
+          type="number"
+          className="w-24 border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
+          defaultValue={value ?? ''}
+          onBlur={(e) => {
+            const v = e.target.value ? Number(e.target.value) : null
+            onUpdate({ [field]: v })
+          }}
+          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+        />
+      </td>
+    </tr>
+  )
+}
+
+function TimeRow({ label, value, field }: { label: string; value: string | undefined; field: string }) {
+  const onUpdate = useContext(SessionUpdateContext)
+  // Pad time to HH:MM format for <input type="time">
+  const padded = value ? value.replace(/^(\d):/, '0$1:') : ''
+  return (
+    <tr className="border-b border-gray-100 hover:bg-gray-50">
+      <td className="px-4 py-0.5 text-gray-600 w-64">{label}</td>
+      <td className="px-2 py-0.5">
+        <input
+          type="time"
+          className="w-28 border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
+          defaultValue={padded}
+          onBlur={(e) => {
+            onUpdate({ [field]: e.target.value || null })
+          }}
+        />
+      </td>
+    </tr>
+  )
+}
+
+function CheckRow({ label, value, field }: { label: string; value: boolean; field: string }) {
+  const onUpdate = useContext(SessionUpdateContext)
+  return (
+    <tr className="border-b border-gray-100 hover:bg-gray-50">
+      <td className="px-4 py-0.5 text-gray-600 w-64">{label}</td>
+      <td className="px-2 py-0.5">
+        <input
+          type="checkbox"
+          className="w-4 h-4"
+          checked={value}
+          onChange={(e) => onUpdate({ [field]: e.target.checked })}
+        />
+      </td>
+    </tr>
+  )
+}
+
+function SelectRow({ label, value, field, options }: { label: string; value: string | number | undefined; field: string; options: { value: string | number; label: string }[] }) {
+  const onUpdate = useContext(SessionUpdateContext)
+  return (
+    <tr className="border-b border-gray-100 hover:bg-gray-50">
+      <td className="px-4 py-0.5 text-gray-600 w-64">{label}</td>
+      <td className="px-2 py-0.5">
+        <select
+          className="border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
+          value={value ?? ''}
+          onChange={(e) => {
+            const v = e.target.value === '' ? null : isNaN(Number(e.target.value)) ? e.target.value : Number(e.target.value)
+            onUpdate({ [field]: v })
+          }}
+        >
+          {options.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+          </select>
+        </td>
+      </tr>
+    )
+  }
 
 function SessionPropertiesPanel({
   session,
@@ -2396,103 +2523,6 @@ function SessionPropertiesPanel({
     )
   }
 
-  function TextRow({ label, value, field }: { label: string; value: string; field: string }) {
-    return (
-      <tr className="border-b border-gray-100 hover:bg-gray-50">
-        <td className="px-4 py-0.5 text-gray-600 w-64">{label}</td>
-        <td className="px-2 py-0.5">
-          <input
-            type="text"
-            className="w-full border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
-            defaultValue={value}
-            onBlur={(e) => {
-              if (e.target.value !== value) onUpdate({ [field]: e.target.value || null })
-            }}
-            onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-          />
-        </td>
-      </tr>
-    )
-  }
-
-  function NumberRow({ label, value, field }: { label: string; value: number | undefined; field: string }) {
-    return (
-      <tr className="border-b border-gray-100 hover:bg-gray-50">
-        <td className="px-4 py-0.5 text-gray-600 w-64">{label}</td>
-        <td className="px-2 py-0.5">
-          <input
-            type="number"
-            className="w-24 border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
-            defaultValue={value ?? ''}
-            onBlur={(e) => {
-              const v = e.target.value ? Number(e.target.value) : null
-              onUpdate({ [field]: v })
-            }}
-            onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-          />
-        </td>
-      </tr>
-    )
-  }
-
-  function TimeRow({ label, value, field }: { label: string; value: string | undefined; field: string }) {
-    // Pad time to HH:MM format for <input type="time">
-    const padded = value ? value.replace(/^(\d):/, '0$1:') : ''
-    return (
-      <tr className="border-b border-gray-100 hover:bg-gray-50">
-        <td className="px-4 py-0.5 text-gray-600 w-64">{label}</td>
-        <td className="px-2 py-0.5">
-          <input
-            type="time"
-            className="w-28 border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
-            defaultValue={padded}
-            onBlur={(e) => {
-              onUpdate({ [field]: e.target.value || null })
-            }}
-          />
-        </td>
-      </tr>
-    )
-  }
-
-  function CheckRow({ label, value, field }: { label: string; value: boolean; field: string }) {
-    return (
-      <tr className="border-b border-gray-100 hover:bg-gray-50">
-        <td className="px-4 py-0.5 text-gray-600 w-64">{label}</td>
-        <td className="px-2 py-0.5">
-          <input
-            type="checkbox"
-            className="w-4 h-4"
-            checked={value}
-            onChange={(e) => onUpdate({ [field]: e.target.checked })}
-          />
-        </td>
-      </tr>
-    )
-  }
-
-  function SelectRow({ label, value, field, options }: { label: string; value: string | number | undefined; field: string; options: { value: string | number; label: string }[] }) {
-    return (
-      <tr className="border-b border-gray-100 hover:bg-gray-50">
-        <td className="px-4 py-0.5 text-gray-600 w-64">{label}</td>
-        <td className="px-2 py-0.5">
-          <select
-            className="border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
-            value={value ?? ''}
-            onChange={(e) => {
-              const v = e.target.value === '' ? null : isNaN(Number(e.target.value)) ? e.target.value : Number(e.target.value)
-              onUpdate({ [field]: v })
-            }}
-          >
-            {options.map((o) => (
-              <option key={o.value} value={o.value}>{o.label}</option>
-            ))}
-          </select>
-        </td>
-      </tr>
-    )
-  }
-
   const poolOptions = [
     { value: 1, label: 'Bassin 50m' },
     { value: 2, label: 'Bassin 25m (SCM)' },
@@ -2514,6 +2544,7 @@ function SessionPropertiesPanel({
   const courseValue = session.poolSize === 50 ? 1 : 2
 
   return (
+    <SessionUpdateContext.Provider value={onUpdate}>
     <div className="text-xs">
       {/* Header */}
       <div className="flex items-center h-7 bg-gray-50 border-b border-gray-200 px-3 font-semibold text-gray-700 sticky top-0 z-10">
@@ -2600,5 +2631,6 @@ function SessionPropertiesPanel({
         </tbody>
       </table>
     </div>
+    </SessionUpdateContext.Provider>
   )
 }

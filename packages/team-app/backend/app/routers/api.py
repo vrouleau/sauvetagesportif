@@ -1844,6 +1844,19 @@ def create_event(data: dict = Body(default={}), db: Session = Depends(get_db)):
     }
 
 
+@router.put("/events/reorder", dependencies=[Depends(require_organizer_or_admin)])
+def reorder_events(data: dict = Body(default={}), db: Session = Depends(get_db)):
+    """Reorder events: accepts {updates: [{eventId, sessionId, sortcode}]}."""
+    updates = data.get("updates", [])
+    for u in updates:
+        event = db.query(SwimEvent).get(u["eventId"])
+        if event:
+            event.swimsessionid = u.get("sessionId", event.swimsessionid)
+            event.sortcode = u["sortcode"]
+    db.commit()
+    return {"ok": True}
+
+
 @router.put("/events/{event_id}", dependencies=[Depends(require_organizer_or_admin)])
 def update_event(event_id: int, data: dict = Body(default={}), db: Session = Depends(get_db)):
     """Update event fields (gender, swimstyle, number, round, maxentries, etc.)."""
@@ -1888,19 +1901,6 @@ def delete_event(event_id: int, db: Session = Depends(get_db)):
         raise HTTPException(404, "Event not found")
     db.query(AgeGroup).filter(AgeGroup.swimeventid == event_id).delete()
     db.delete(event)
-    db.commit()
-    return {"ok": True}
-
-
-@router.put("/events/reorder", dependencies=[Depends(require_organizer_or_admin)])
-def reorder_events(data: dict = Body(default={}), db: Session = Depends(get_db)):
-    """Reorder events: accepts {updates: [{eventId, sessionId, sortcode}]}."""
-    updates = data.get("updates", [])
-    for u in updates:
-        event = db.query(SwimEvent).get(u["eventId"])
-        if event:
-            event.swimsessionid = u.get("sessionId", event.swimsessionid)
-            event.sortcode = u["sortcode"]
     db.commit()
     return {"ok": True}
 

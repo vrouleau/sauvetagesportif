@@ -217,23 +217,31 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
   const meet = child(child(lenex, 'MEETS')!, 'MEET')
   if (!meet) throw new Error('No MEET element found in LENEX file')
 
+  // Detect entries-only import (existing meet structure + incoming CLUBS) so we don't
+  // clobber meet-level metadata (name/city/etc.) and session names that were customized
+  // locally in meet-app after the initial meet-structure upload.
+  const existingEventCount = (db.prepare(`SELECT COUNT(*) AS c FROM swimevent`).get() as { c: number }).c
+  const clubsElemCheck = child(meet, 'CLUBS')
+  const hasClubs = clubsElemCheck ? children(clubsElemCheck, 'CLUB').length > 0 : false
+  const skipEventStructure = existingEventCount > 0 && hasClubs
+
   // Store MEET-level attributes in individual bsglobal keys (canonical source)
   const meetAttrs = meet.attrs
   const bsglobalStmt = db.prepare(
     `INSERT INTO bsglobal (name, data) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET data=excluded.data`
   )
-  if (meetAttrs.name) bsglobalStmt.run('MeetName', meetAttrs.name)
-  if (meetAttrs.city) bsglobalStmt.run('MeetCity', meetAttrs.city)
-  if (meetAttrs.nation) bsglobalStmt.run('MeetNation', meetAttrs.nation)
-  if (meetAttrs.course) {
-    const courseMap: Record<string, string> = { LCM: '1', SCY: '2', SCM: '3' }
-    bsglobalStmt.run('MeetCourse', courseMap[meetAttrs.course] ?? '1')
-  }
-  if (meetAttrs.organizer) bsglobalStmt.run('MeetOrganizer', meetAttrs.organizer)
-  if (meetAttrs.organizer_url) bsglobalStmt.run('MeetOrganizerUrl', meetAttrs.organizer_url)
+  if (!skipEventStructure) {
+    if (meetAttrs.name) bsglobalStmt.run('MeetName', meetAttrs.name)
+    if (meetAttrs.city) bsglobalStmt.run('MeetCity', meetAttrs.city)
+    if (meetAttrs.nation) bsglobalStmt.run('MeetNation', meetAttrs.nation)
+    if (meetAttrs.course) {
+      const courseMap: Record<string, string> = { LCM: '1', SCY: '2', SCM: '3' }
+      bsglobalStmt.run('MeetCourse', courseMap[meetAttrs.course] ?? '1')
+    }
+    if (meetAttrs.organizer) bsglobalStmt.run('MeetOrganizer', meetAttrs.organizer)
+    if (meetAttrs.organizer_url) bsglobalStmt.run('MeetOrganizerUrl', meetAttrs.organizer_url)
 
-  // Also sync into MEETVALUES blob (Splash compatibility for SMB round-trip)
-  {
+    // Also sync into MEETVALUES blob (Splash compatibility for SMB round-trip)
     const mvRow = db.prepare(`SELECT data FROM bsglobal WHERE name='MEETVALUES'`).get() as { data: string | null } | undefined
     const existing: Record<string, string> = {}
     if (mvRow?.data) {
@@ -343,13 +351,7 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
   }
 
   // ── Sessions → swimsession ─────────────────────────────────────────────
-  // Skip event structure import if this is an entries-only file being imported
-  // into an existing meet. Detect by: events already exist AND file has CLUB elements.
-  const existingEventCount = (db.prepare(`SELECT COUNT(*) AS c FROM swimevent`).get() as { c: number }).c
-  const clubsElemCheck = child(meet, 'CLUBS')
-  const hasClubs = clubsElemCheck ? children(clubsElemCheck, 'CLUB').length > 0 : false
-  const skipEventStructure = existingEventCount > 0 && hasClubs
-
+  // (skipEventStructure computed above, before the meet-level bsglobal writes)
   const sessionsElem = child(meet, 'SESSIONS')
   for (const sess of children(sessionsElem ?? meet, 'SESSION')) {
     const a = sess.attrs

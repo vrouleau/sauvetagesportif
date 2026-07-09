@@ -105,6 +105,7 @@ def _load_from_parsed(db: Session, meet: ParsedMeet) -> int:
                 round=_round_from_lenex(ev.round),
                 masters="T" if ev.is_masters else "F",
                 fee=fee_cents_to_dollars(ev.fee_cents),
+                sortcode=count,
             )
             db.add(event)
             db.flush()
