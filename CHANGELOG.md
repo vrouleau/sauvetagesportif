@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.34] - 2026-07-09
+
+### Other
+
+- Fix event ordering and name-persistence bugs across meet-app/team-app (`a0ab4e0`)
+
 ## [0.3.33] - 2026-07-03
 
 ### Other
