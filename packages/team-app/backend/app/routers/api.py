@@ -954,9 +954,17 @@ def create_new_meet(data: dict = Body(default={}), db: Session = Depends(get_db)
     db.query(SwimStyle).delete()
     db.flush()
 
-    # Import from template
+    # Import from template — this seeds the SwimStyle catalog (each style is declared via
+    # a stub EVENT, since Lenex has no standalone style catalog outside of events) but we
+    # don't want the template's stub session/events themselves in the new meet.
     from ..events import _load_from_parsed
-    count = _load_from_parsed(db, meet)
+    _load_from_parsed(db, meet)
+    db.query(AgeGroup).delete()
+    db.query(SwimEvent).delete()
+    db.query(SwimSession).delete()
+    db.query(TeamEvent).delete()
+    db.query(TeamSession).delete()
+    db.flush()
 
     # Regenerate point scores after loading event structure
     from ..point_scores import regenerate_point_scores
@@ -1001,8 +1009,10 @@ def create_new_meet(data: dict = Body(default={}), db: Session = Depends(get_db)
     # Reset closure date
     _set_config(db, "closure_date", "")
 
+    styles_loaded = db.query(SwimStyle).count()
+
     db.commit()
-    return {"events_loaded": count, "filename": template_path.name, "meet_type": meet_type}
+    return {"events_loaded": 0, "styles_loaded": styles_loaded, "filename": template_path.name, "meet_type": meet_type}
 
 
 @router.get("/meet-info")
@@ -1757,10 +1767,12 @@ def delete_session(session_id: int, db: Session = Depends(get_db)):
 
 @router.post("/events", dependencies=[Depends(require_organizer_or_admin)])
 def create_event(data: dict = Body(default={}), db: Session = Depends(get_db)):
-    """Create a new event in a session.
+    """Create a new event in a session, or a pause/break marker.
 
     Accepts: sessionId, number, gender, phase, swimstyleId (optional).
     If no swimstyleId provided, picks the first available style not already used in the meet.
+    isBreak=true creates a pause/break marker instead (internalevent='T', no swimstyle);
+    breakName sets its display name.
     """
     from sqlalchemy import func
 
@@ -1773,6 +1785,31 @@ def create_event(data: dict = Body(default={}), db: Session = Depends(get_db)):
     gender_int = {"M": 1, "F": 2, "X": 0}.get(gender_str, 0)
     phase = data.get("phase", "Finale directe")
     round_int = {"Eliminatoire": 1, "Finale": 4, "Finale directe": 5}.get(phase, 5)
+
+    if data.get("isBreak"):
+        max_sort = db.query(func.max(SwimEvent.sortcode)).filter(
+            SwimEvent.swimsessionid == session_id
+        ).scalar() or 0
+        next_id = (db.query(func.max(SwimEvent.swimeventid)).scalar() or 0) + 1
+        break_name = data.get("breakName") or "Pause"
+
+        event = SwimEvent(
+            swimeventid=next_id,
+            swimsessionid=session_id,
+            eventnumber=number,
+            gender=gender_int,
+            round=round_int,
+            swimstyleid=None,
+            sortcode=max_sort + 1,
+            internalevent='T',
+            comment=break_name,
+            splashmecanedit='F',
+            masters='F',
+            pfineignore='F',
+        )
+        db.add(event)
+        db.commit()
+        return {"id": next_id, "name": break_name, "distance": 0, "swimstyleId": None}
 
     # Determine swimstyle
     swimstyle_id = data.get("swimstyleId") or data.get("swimstyleid")
@@ -2558,23 +2595,35 @@ def flush_meet(db: Session = Depends(get_db)):
     smb_path = MEET_STORAGE.parent / "meet.smb"
     if smb_path.exists():
         smb_path.unlink()
-    # Reload pool template event structure (empty meet with swimevents)
+    # Reload pool template's swimstyle catalog only (no events — see _reload_pool_template)
     _reload_pool_template(db)
     db.commit()
     return {"deleted": reg_count}
 
 
 def _reload_pool_template(db: Session) -> None:
-    """Reload event structure from pool template into an empty meet."""
+    """Reload the pool template's swimstyle catalog into an empty meet.
+
+    Only seeds SwimStyle (via the template's stub events, since Lenex has no standalone
+    style catalog outside of events) — the stub session/events themselves are discarded,
+    matching "New Pool/Beach meet" behavior. Real sessions/events are built by the organizer.
+    """
     template_path = _get_pool_template_path()
     if not template_path.exists():
-        print(f"[WARN] Pool template not found at {template_path}, skipping event reload")
+        print(f"[WARN] Pool template not found at {template_path}, skipping style reload")
         return
     from ..meet_parser import parse_meet_lxf
     from ..events import _load_from_parsed
+    from ..models_team import Event as TeamEvent, Session as TeamSession
     meet = parse_meet_lxf(template_path)
-    count = _load_from_parsed(db, meet)
-    print(f"Reloaded {count} events from pool template")
+    _load_from_parsed(db, meet)
+    db.query(AgeGroup).delete()
+    db.query(SwimEvent).delete()
+    db.query(SwimSession).delete()
+    db.query(TeamEvent).delete()
+    db.query(TeamSession).delete()
+    styles_loaded = db.query(SwimStyle).count()
+    print(f"Reloaded {styles_loaded} swimstyles from pool template (no events)")
 
 
 def _reset_for_next_meet(db: Session) -> None:
@@ -2633,7 +2682,7 @@ def _reset_for_next_meet(db: Session) -> None:
     if smb_path.exists():
         smb_path.unlink()
 
-    # Reload pool template event structure (empty meet with swimevents)
+    # Reload pool template's swimstyle catalog only (no events — see _reload_pool_template)
     _reload_pool_template(db)
 
 

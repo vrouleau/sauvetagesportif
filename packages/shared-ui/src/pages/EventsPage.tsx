@@ -454,8 +454,8 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
 
     let realId: number
 
-    // If an event is selected, duplicate it (including age groups)
-    if (selected.type === 'event' && api.duplicateEvent) {
+    // If a real event (not a pause/break/award marker) is selected, duplicate it (including age groups)
+    if (selected.type === 'event' && !selected.event.isAdmin && api.duplicateEvent) {
       try {
         const result = await api.duplicateEvent(selected.event.id, targetSession.id)
         realId = result.id

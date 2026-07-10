@@ -1302,8 +1302,16 @@ ipcMain.handle('file:new-meet', async (_event, meetType?: string, lang?: string)
       ? join(process.resourcesPath, templateFile)
       : join(__dirname, '../../../../config', templateFile)
 
-    // Import the template lenex file
+    // Import the template lenex file — this seeds the swimstyle catalog (each style is
+    // declared via a stub EVENT, since Lenex has no standalone style catalog outside of
+    // events) but we don't want the template's stub session/events in the new meet.
     const summary = importLenex(templatePath, db)
+    db.exec(`DELETE FROM agegroup`)
+    db.exec(`DELETE FROM swimevent`)
+    db.exec(`DELETE FROM swimsession`)
+    summary.sessions = 0
+    summary.events = 0
+    summary.ageGroups = 0
 
     // Set MEET_TYPE in BSGLOBAL
     db.prepare(
