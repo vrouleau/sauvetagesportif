@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.35] - 2026-07-10
+
+### 🔧 Chores
+
+- remove invalid files (`482610c`)
+
+### Other
+
+- Fix pause/event mixups and decouple swimstyle catalog from meet templates (`fa2e875`)
+
+# Changelog
+
 ## [0.3.34] - 2026-07-09
 
 ### Other
