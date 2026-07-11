@@ -51,6 +51,7 @@ import {
   getBeachNumberReport,
   getEntriesByEvent,
   getPointStandings,
+  getResultsList,
   nextId,
   duplicateEvent,
   type SessionUpdate,
@@ -1348,6 +1349,10 @@ ipcMain.handle('db:get-entries-by-event', (_event, selectedEventIds: number[]) =
 
 ipcMain.handle('db:get-point-standings', (_event, selectedEventIds: number[]) =>
   getPointStandings(selectedEventIds)
+)
+
+ipcMain.handle('db:get-results-list', (_event, selectedEventIds: number[]) =>
+  getResultsList(selectedEventIds)
 )
 
 interface PdfHeaderInfo { line1: string; line2: string; today: string }

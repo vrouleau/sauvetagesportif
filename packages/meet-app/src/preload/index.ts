@@ -189,6 +189,8 @@ const api = {
       ipcRenderer.invoke('db:get-entries-by-event', selectedEventIds),
     getPointStandings: (selectedEventIds: number[]) =>
       ipcRenderer.invoke('db:get-point-standings', selectedEventIds),
+    getResultsList: (selectedEventIds: number[]) =>
+      ipcRenderer.invoke('db:get-results-list', selectedEventIds),
     // Finals
     getFinalEvents: () =>
       ipcRenderer.invoke('db:get-final-events'),

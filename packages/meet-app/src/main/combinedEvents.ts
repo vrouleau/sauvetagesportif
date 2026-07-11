@@ -52,6 +52,7 @@ export interface CombinedEventsConfig {
 
 interface EventWithAgeGroup {
   swimeventid: number
+  agegroupid: number
   eventnumber: number
   eventgender: number // event-level gender
   internalevent: string | null
@@ -59,6 +60,11 @@ interface EventWithAgeGroup {
   agemax: number
   gender: number // age group gender
   relaycount: number
+}
+
+export interface MatchedEvent {
+  eventId: number
+  agegroupId: number
 }
 
 interface CombinedEventDef {
@@ -74,7 +80,7 @@ interface CombinedEventDef {
   completedsq: string
   finalusetype: string
   agegroupeventid: number
-  eventIds: number[]
+  events: MatchedEvent[]
 }
 
 // ── Config Loading ────────────────────────────────────────────────────────────
@@ -131,7 +137,7 @@ export function queryEventsWithAgeGroups(db: Database.Database): EventWithAgeGro
 
   return db
     .prepare(
-      `SELECT e.swimeventid, e.eventnumber, e.gender AS eventgender, e.internalevent,
+      `SELECT e.swimeventid, ag.agegroupid, e.eventnumber, e.gender AS eventgender, e.internalevent,
               ag.agemin, ag.agemax, ag.gender,
               ss.relaycount
        FROM swimevent e
@@ -152,8 +158,9 @@ export function queryEventsWithAgeGroups(db: Database.Database): EventWithAgeGro
 export function findMatchingEvents(
   events: EventWithAgeGroup[],
   category: CategoryConfig
-): number[] {
-  const matchedIds = new Set<number>()
+): MatchedEvent[] {
+  // Keyed by "eventId:agegroupId" to dedupe while keeping the pairing
+  const matched = new Map<string, MatchedEvent>()
 
   // Build list of age ranges to match against
   const ranges = category.ageRanges && category.ageRanges.length > 0
@@ -181,18 +188,20 @@ export function findMatchingEvents(
     // Check gender match
     // Mixed category (gender=0): matches events with event-level gender=0 (mixed)
     // Gendered category: matches age groups with same gender
-    if (category.gender === 0) {
-      if (event.eventgender === 0 || event.eventgender === 3) {
-        matchedIds.add(event.swimeventid)
-      }
-    } else {
-      if (event.gender === category.gender) {
-        matchedIds.add(event.swimeventid)
-      }
-    }
+    const genderMatch = category.gender === 0
+      ? (event.eventgender === 0 || event.eventgender === 3)
+      : (event.gender === category.gender)
+
+    if (!genderMatch) continue
+
+    // A category matches a specific age group *within* an event, not the whole
+    // event — an event can host multiple age groups (e.g. 11-12 and 13-14 in the
+    // same swimeventid), and only the matching age group's results should count.
+    const key = `${event.swimeventid}:${event.agegroupid}`
+    matched.set(key, { eventId: event.swimeventid, agegroupId: event.agegroupid })
   }
 
-  return Array.from(matchedIds)
+  return Array.from(matched.values())
 }
 
 // ── XML Serialization ─────────────────────────────────────────────────────────
@@ -228,20 +237,20 @@ export function buildCombinedEventsXml(definitions: CombinedEventDef[]): string 
     ]
 
     // Only include agegroupeventid when there are events
-    if (def.eventIds.length > 0) {
+    if (def.events.length > 0) {
       attrs.push(`agegroupeventid="${def.agegroupeventid}"`)
     }
 
     const attrStr = attrs.join(' ')
 
-    if (def.eventIds.length === 0) {
+    if (def.events.length === 0) {
       // Special case: self-closing tag with no EVENTS child
       lines.push(`    <COMBINEDEVENT ${attrStr} />`)
     } else {
       lines.push(`    <COMBINEDEVENT ${attrStr}>`)
       lines.push('      <EVENTS>')
-      for (const eventId of def.eventIds) {
-        lines.push(`        <EVENT eventid="${eventId}" mandatory="F" />`)
+      for (const ev of def.events) {
+        lines.push(`        <EVENT eventid="${ev.eventId}" agegroupid="${ev.agegroupId}" mandatory="F" />`)
       }
       lines.push('      </EVENTS>')
       lines.push('    </COMBINEDEVENT>')
@@ -281,20 +290,20 @@ export function regenerateCombinedEvents(db: Database.Database): void {
         completedsq: 'F',
         finalusetype: category.finalusetype,
         agegroupeventid: 0,
-        eventIds: [],
+        events: [],
       })
       continue
     }
 
-    // Find all events that have an age group matching this category
-    const matchingEventIds = findMatchingEvents(eventsWithAgeGroups, category)
+    // Find all (event, agegroup) pairs that match this category
+    const matchingEvents = findMatchingEvents(eventsWithAgeGroups, category)
 
-    if (matchingEventIds.length === 0) continue // Skip categories with no events
+    if (matchingEvents.length === 0) continue // Skip categories with no events
 
     // Sort by event ID for deterministic ordering
-    matchingEventIds.sort((a, b) => a - b)
+    matchingEvents.sort((a, b) => a.eventId - b.eventId)
 
-    const firstEventId = matchingEventIds[0]
+    const firstEventId = matchingEvents[0].eventId
 
     definitions.push({
       combinedeventid: firstEventId,
@@ -309,7 +318,7 @@ export function regenerateCombinedEvents(db: Database.Database): void {
       completedsq: 'F',
       finalusetype: category.finalusetype,
       agegroupeventid: firstEventId,
-      eventIds: matchingEventIds,
+      events: matchingEvents,
     })
   }
 

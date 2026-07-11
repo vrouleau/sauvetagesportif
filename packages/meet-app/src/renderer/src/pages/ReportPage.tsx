@@ -57,7 +57,7 @@ interface ReportEventSection {
   heats: HeatListEventRow['heats']
 }
 
-type ReportType = 'heatList' | 'startList' | 'combinedResults' | 'beachNumbers' | 'entriesByEvent' | 'pointStandings'
+type ReportType = 'heatList' | 'startList' | 'combinedResults' | 'beachNumbers' | 'entriesByEvent' | 'pointStandings' | 'resultsList'
 
 // ── HTML generator ────────────────────────────────────────────────────────────
 
@@ -892,6 +892,137 @@ function buildPointStandingsPdfHeaderInfo(meetInfo: MeetInfo): PdfHeaderInfo {
   }
 }
 
+// ── Results List (Liste des Résultats) PDF generator ─────────────────────────
+
+interface ResultsListAthleteRow {
+  athleteId: number
+  lastName: string
+  firstName: string
+  birthYear: number
+  clubName: string
+  swimtime: number
+}
+
+interface ResultsListAgeGroupRow {
+  agegroupId: number
+  ageMin: number
+  ageMax: number | null
+  athletes: ResultsListAthleteRow[]
+}
+
+interface ResultsListEventRow {
+  eventId: number
+  ageGroups: ResultsListAgeGroupRow[]
+}
+
+/**
+ * Final results per event, split into age-group subsections (an event can host
+ * several age brackets under one swimeventid, e.g. 11-12 and 19+ racing together).
+ */
+function generateResultsListPdfHtml(
+  sections: ReportEventSection[],
+  resultsByEvent: Map<number, ResultsListEventRow>,
+  isBeach: boolean,
+): string {
+  let html = ''
+
+  for (const s of sections) {
+    const ageGroups = resultsByEvent.get(s.eventId)?.ageGroups ?? []
+
+    // Overall age range: union of the age groups that actually have results,
+    // falling back to the event's own range when nobody has finished yet.
+    let overallMin = s.ageMin
+    let overallMax = s.ageMax
+    if (ageGroups.length > 0) {
+      overallMin = Math.min(...ageGroups.map(ag => ag.ageMin))
+      const openEnd = ageGroups.some(ag => ag.ageMax == null || ag.ageMax < 0 || ag.ageMax === 99)
+      overallMax = openEnd ? -1 : Math.max(...ageGroups.map(ag => ag.ageMax ?? 0))
+    }
+
+    const prefix = genderPrefix(s.gender, overallMin)
+    const centerName = s.gender === 'X' ? esc(s.eventName) : `${esc(prefix)},&nbsp;${esc(s.eventName)}`
+    const ageRange = esc(formatAgeRange(overallMin, overallMax))
+    const dateTimeStr = s.sessionDate ? esc(`${s.sessionDate} - ${s.scheduledTime}`) : esc(s.scheduledTime)
+
+    html += `<div class="ev">
+<table width="100%" cellspacing="0" cellpadding="0" border="0">
+<tr valign="top">
+  <td width="25%">Epreuve ${s.eventNumber}<br>${dateTimeStr}</td>
+  <td width="50%" align="center">${centerName}<br><br></td>
+  <td width="25%" align="right">${ageRange}<br>Liste des r&eacute;sultats</td>
+</tr>
+</table>
+<hr class="ev-rule">
+`
+
+    if (ageGroups.length === 0) {
+      html += `</div>\n`
+      continue
+    }
+
+    html += `<table width="100%" cellspacing="0" cellpadding="1" border="0" class="res-table">
+<tr class="res-hdr">
+  <td width="5%" align="right"><em class="f8">Rang</em></td>
+  <td width="6%"><em class="f8">AN</em></td>
+  <td width="39%"><em class="f8">Nom</em></td>
+  <td width="30%"><em class="f8">Club</em></td>
+  <td width="20%" align="right"><em class="f8">${isBeach ? 'Position' : 'Temps'}</em></td>
+</tr>
+</table>
+`
+
+    for (const ag of ageGroups) {
+      html += `<div class="ag-hdr">${esc(formatAgeRange(ag.ageMin, ag.ageMax))}</div>
+<table width="100%" cellspacing="0" cellpadding="1" border="0" class="res-table">
+${ag.athletes.map((a, i) => {
+  const an = String(a.birthYear % 100).padStart(2, '0')
+  const value = isBeach ? String(Math.round(a.swimtime / 1000)) : msToDisplay(a.swimtime)
+  return `<tr>
+  <td width="5%" align="right">${i + 1}.</td>
+  <td width="6%">${an}</td>
+  <td width="39%"><b>${esc(a.lastName + ', ' + a.firstName)}</b></td>
+  <td width="30%">${esc(a.clubName)}</td>
+  <td width="20%" align="right">${esc(value)}</td>
+</tr>`
+}).join('\n')}
+</table>
+`
+    }
+
+    html += `</div>\n`
+  }
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+BODY, TABLE, TD { font-family: Arial, Helvetica, sans-serif; font-size: 10pt; color: black; }
+.f8 { font-size: 8pt; }
+body { margin: 0; padding: 0; }
+.ev { margin-bottom: 14pt; break-inside: avoid; page-break-inside: avoid; }
+hr.ev-rule { border: none; border-top: 1px solid black; margin: 2px 0 4px 0; }
+.res-table { border-collapse: collapse; }
+.res-table td { padding: 1px 3px; }
+.res-hdr td { border-bottom: 2px solid #333; padding: 1px 3px; }
+.ag-hdr { font-weight: bold; margin: 6pt 0 2pt 0; }
+@page { size: Letter portrait; }
+</style>
+</head>
+<body>
+${html}
+</body>
+</html>`
+}
+
+function buildResultsListPdfHeaderInfo(meetInfo: MeetInfo): PdfHeaderInfo {
+  return {
+    line1: meetInfo.name || 'Compétition',
+    line2: meetInfo.city ? `${meetInfo.city} — Liste des résultats` : 'Liste des résultats',
+    today: new Date().toLocaleDateString('fr-CA'),
+  }
+}
+
 // ── HTML export generator (TOC + hyperlinks, matches reference .htm format) ────
 
 function generateHeatListHtml(
@@ -1272,7 +1403,7 @@ export default function ReportPage({ refreshKey = 0, meetType = 'POOL' }: { refr
 
   async function handleGenerate() {
     const sections = buildSections()
-    if (sections.length === 0 && reportType !== 'combinedResults' && reportType !== 'beachNumbers' && reportType !== 'entriesByEvent' && reportType !== 'pointStandings') return
+    if (sections.length === 0 && reportType !== 'combinedResults' && reportType !== 'beachNumbers' && reportType !== 'entriesByEvent' && reportType !== 'pointStandings' && reportType !== 'resultsList') return
 
     let pdf: string
     let exported: string
@@ -1305,6 +1436,15 @@ export default function ReportPage({ refreshKey = 0, meetType = 'POOL' }: { refr
       pdf = generatePointStandingsPdfHtml(data)
       exported = '' // No HTML export
       hdrInfo = buildPointStandingsPdfHeaderInfo(meetInfo)
+    } else if (reportType === 'resultsList') {
+      // Fetch per-event results (split by age group) from main process
+      const eventIds = [...selectedEventIds]
+      if (eventIds.length === 0) return
+      const eventRows = await dbApi()?.getResultsList(eventIds) as ResultsListEventRow[] | undefined
+      const resultsByEvent = new Map((eventRows ?? []).map(e => [e.eventId, e]))
+      pdf = generateResultsListPdfHtml(sections, resultsByEvent, meetType === 'BEACH')
+      exported = '' // No HTML export for resultsList
+      hdrInfo = buildResultsListPdfHeaderInfo(meetInfo)
     } else if (reportType === 'combinedResults') {
       // Fetch combined results from main process
       const eventIds = [...selectedEventIds]
@@ -1397,6 +1537,7 @@ export default function ReportPage({ refreshKey = 0, meetType = 'POOL' }: { refr
           <option value="heatList">Liste des Séries</option>
           <option value="startList">Fiche de Départs</option>
           <option value="entriesByEvent">Liste des inscriptions par épreuves</option>
+          <option value="resultsList">Liste des Résultats</option>
           <option value="combinedResults">Résultat Combiné</option>
           <option value="pointStandings">Classement au points</option>
           {meetType === 'BEACH' && (
@@ -1493,7 +1634,7 @@ export default function ReportPage({ refreshKey = 0, meetType = 'POOL' }: { refr
             </button>
             <button
               onClick={handleSaveHtml}
-              disabled={!exportHtml || generating || reportType === 'startList' || reportType === 'combinedResults' || reportType === 'beachNumbers' || reportType === 'entriesByEvent' || reportType === 'pointStandings'}
+              disabled={!exportHtml || generating || reportType === 'startList' || reportType === 'combinedResults' || reportType === 'beachNumbers' || reportType === 'entriesByEvent' || reportType === 'pointStandings' || reportType === 'resultsList'}
               className="px-3 py-0.5 text-xs border border-gray-400 bg-white hover:bg-gray-100 disabled:opacity-40"
             >
               HTML

@@ -2753,36 +2753,34 @@ export function getCombinedResults(selectedEventIds: number[]): CombinedResultCa
     const pointsScale = pointsMatch[1].split(',').map(Number)
     const sortByResFirst = sortbyresfirstMatch?.[1] === 'T'
 
-    // Extract event IDs from child EVENT elements
-    const eventIds: number[] = []
-    const evRegex = /eventid="(\d+)"/g
+    // Extract (eventid, agegroupid) pairs from child EVENT elements
+    const events: Array<{ eventId: number; agegroupId: number }> = []
+    const evRegex = /eventid="(\d+)"\s+agegroupid="(\d+)"/g
     let evMatch: RegExpExecArray | null
     while ((evMatch = evRegex.exec(body)) !== null) {
-      eventIds.push(Number(evMatch[1]))
+      events.push({ eventId: Number(evMatch[1]), agegroupId: Number(evMatch[2]) })
     }
 
     // Filter to only selected events
-    const filteredEventIds = eventIds.filter(id => selectedEventIds.includes(id))
+    const filteredEvents = events.filter(ev => selectedEventIds.includes(ev.eventId))
 
     // If no events match (either no events defined or none selected), still show the category header
     // but with empty athletes (like "Cumulatif 10 ans et moins - garçons" which is a special no-events category)
-    if (filteredEventIds.length === 0 && eventIds.length === 0) {
+    if (filteredEvents.length === 0 && events.length === 0) {
       // Special category with no events — just show the title
       categories.push({ name: categoryName, subtitle: '', athletes: [] })
       continue
     }
 
-    if (filteredEventIds.length === 0) {
+    if (filteredEvents.length === 0) {
       // Category has events but none are selected — skip
       continue
     }
 
     // Build subtitle from the age group of the first event
-    const firstEventId = filteredEventIds[0]
     const agRow = db.prepare(
-      `SELECT ag.agemin, ag.agemax, ag.gender
-       FROM agegroup ag WHERE ag.swimeventid = ? ORDER BY ag.sortcode LIMIT 1`
-    ).get(firstEventId) as { agemin: number; agemax: number; gender: number } | undefined
+      `SELECT agemin, agemax, gender FROM agegroup WHERE agegroupid = ?`
+    ).get(filteredEvents[0].agegroupId) as { agemin: number; agemax: number; gender: number } | undefined
 
     let subtitle = ''
     if (agRow) {
@@ -2801,8 +2799,10 @@ export function getCombinedResults(selectedEventIds: number[]): CombinedResultCa
     const athletePoints = new Map<number, { totalPoints: number; eventCount: number }>()
     const athleteInfo = new Map<number, { lastName: string; firstName: string; birthdate: string | number | null; clubName: string }>()
 
-    for (const eventId of filteredEventIds) {
-      // Get all valid results for this event, ordered by time
+    for (const { eventId, agegroupId } of filteredEvents) {
+      // Get all valid results for this event's specific age group, ordered by time.
+      // An event can host multiple age groups under the same swimeventid, so results
+      // must be scoped to the age group matching this category, not the whole event.
       const results = db.prepare(`
         SELECT r.athleteid, r.swimtime, r.resultstatus,
                a.lastname, a.firstname, a.birthdate,
@@ -2811,11 +2811,12 @@ export function getCombinedResults(selectedEventIds: number[]): CombinedResultCa
         JOIN athlete a ON r.athleteid = a.athleteid
         LEFT JOIN club c ON a.clubid = c.clubid
         WHERE r.swimeventid = ?
+          AND r.agegroupid = ?
           AND r.swimtime IS NOT NULL
           AND r.swimtime > 0
           AND (r.resultstatus IS NULL OR r.resultstatus = 0)
         ORDER BY r.swimtime ASC
-      `).all(eventId) as Array<{
+      `).all(eventId, agegroupId) as Array<{
         athleteid: number; swimtime: number; resultstatus: number | null
         lastname: string; firstname: string; birthdate: string | number | null
         clubname: string
@@ -2985,6 +2986,86 @@ export function getEntriesByEvent(selectedEventIds: number[]): EntryByEventRow[]
   `).all(...params) as EntryByEventRow[]
 }
 
+// ── Query: results list report ────────────────────────────────────────────────
+
+export interface ResultsListAthlete {
+  athleteId: number
+  lastName: string
+  firstName: string
+  birthYear: number
+  clubName: string
+  swimtime: number // ms; for beach meets this is position * 1000
+}
+
+export interface ResultsListAgeGroup {
+  agegroupId: number
+  ageMin: number
+  ageMax: number | null
+  athletes: ResultsListAthlete[]
+}
+
+export interface ResultsListEvent {
+  eventId: number
+  ageGroups: ResultsListAgeGroup[]
+}
+
+/**
+ * Per-event final results, split by age group. An event can host multiple age
+ * groups under the same swimeventid (e.g. 11-12 and 19+ swimming together), so
+ * results must be grouped by agegroupid, not lumped into one list — same
+ * scoping issue as the combined-events report.
+ */
+export function getResultsList(selectedEventIds: number[], injectedDb?: ReturnType<typeof getLocalDb>): ResultsListEvent[] {
+  if (selectedEventIds.length === 0) return []
+  const db = injectedDb ?? getLocalDb()
+  const { clause, params } = inClause(selectedEventIds)
+
+  const rows = db.prepare(`
+    SELECT r.swimeventid AS eventId, r.agegroupid AS agegroupId,
+           ag.agemin AS ageMin, ag.agemax AS ageMax, ag.sortcode AS sortcode,
+           a.athleteid AS athleteId, a.lastname AS lastName, a.firstname AS firstName, a.birthdate,
+           COALESCE(c.shortname, c.code, c.name, '') AS clubName,
+           r.swimtime
+    FROM swimresult r
+    JOIN athlete a ON r.athleteid = a.athleteid
+    LEFT JOIN club c ON a.clubid = c.clubid
+    LEFT JOIN agegroup ag ON ag.agegroupid = r.agegroupid
+    WHERE r.swimeventid IN (${clause})
+      AND r.swimtime IS NOT NULL AND r.swimtime > 0
+      AND (r.resultstatus IS NULL OR r.resultstatus = 0)
+    ORDER BY r.swimeventid, ag.sortcode, r.swimtime ASC
+  `).all(...params) as Array<{
+    eventId: number; agegroupId: number | null; ageMin: number | null; ageMax: number | null; sortcode: number | null
+    athleteId: number; lastName: string | null; firstName: string | null; birthdate: string | number | null
+    clubName: string; swimtime: number
+  }>
+
+  const events = new Map<number, Map<number, ResultsListAgeGroup>>()
+  for (const r of rows) {
+    if (r.agegroupId == null) continue
+    let ageGroups = events.get(r.eventId)
+    if (!ageGroups) { ageGroups = new Map(); events.set(r.eventId, ageGroups) }
+    let ag = ageGroups.get(r.agegroupId)
+    if (!ag) {
+      ag = { agegroupId: r.agegroupId, ageMin: r.ageMin ?? 0, ageMax: r.ageMax ?? null, athletes: [] }
+      ageGroups.set(r.agegroupId, ag)
+    }
+    ag.athletes.push({
+      athleteId: r.athleteId,
+      lastName: r.lastName ?? '',
+      firstName: r.firstName ?? '',
+      birthYear: parseBirthYear(r.birthdate),
+      clubName: r.clubName ?? '',
+      swimtime: r.swimtime,
+    })
+  }
+
+  return [...events.entries()].map(([eventId, ageGroups]) => ({
+    eventId,
+    ageGroups: [...ageGroups.values()],
+  }))
+}
+
 // ── Query: point standings report ─────────────────────────────────────────────
 
 export interface PointStandingsClub {
@@ -3033,21 +3114,23 @@ export function getPointStandings(selectedEventIds: number[]): {
       .replace(/&quot;/g, '"').replace(/&apos;/g, "'")
     const pointsScale = pointsMatch[1].split(',').map(Number)
 
-    // Extract event IDs from child EVENT elements
-    const eventIds: number[] = []
-    const evRegex = /eventid="(\d+)"/g
+    // Extract (eventid, agegroupid) pairs from child EVENT elements
+    const events: Array<{ eventId: number; agegroupId: number }> = []
+    const evRegex = /eventid="(\d+)"\s+agegroupid="(\d+)"/g
     let evMatch: RegExpExecArray | null
     while ((evMatch = evRegex.exec(body)) !== null) {
-      eventIds.push(Number(evMatch[1]))
+      events.push({ eventId: Number(evMatch[1]), agegroupId: Number(evMatch[2]) })
     }
 
-    const filteredEventIds = eventIds.filter(id => selectedEventIds.includes(id))
-    if (filteredEventIds.length === 0) continue
+    const filteredEvents = events.filter(ev => selectedEventIds.includes(ev.eventId))
+    if (filteredEvents.length === 0) continue
 
     categoryNames.push(categoryName)
 
-    // For each event, compute places and award points to clubs
-    for (const eventId of filteredEventIds) {
+    // For each event's specific age group, compute places and award points to clubs.
+    // An event can host multiple age groups under the same swimeventid, so results
+    // must be scoped to the age group matching this category, not the whole event.
+    for (const { eventId, agegroupId } of filteredEvents) {
       const results = db.prepare(`
         SELECT r.athleteid, r.swimtime, r.resultstatus,
                COALESCE(c.name, c.code, '') AS clubname,
@@ -3056,11 +3139,12 @@ export function getPointStandings(selectedEventIds: number[]): {
         JOIN athlete a ON r.athleteid = a.athleteid
         LEFT JOIN club c ON a.clubid = c.clubid
         WHERE r.swimeventid = ?
+          AND r.agegroupid = ?
           AND r.swimtime IS NOT NULL
           AND r.swimtime > 0
           AND (r.resultstatus IS NULL OR r.resultstatus = 0)
         ORDER BY r.swimtime ASC
-      `).all(eventId) as Array<{
+      `).all(eventId, agegroupId) as Array<{
         athleteid: number; swimtime: number; resultstatus: number | null
         clubname: string; clubcode: string
       }>
