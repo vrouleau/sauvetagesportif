@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.3.36] - 2026-07-11
+
+### Other
+
+- Allow reassigning an athlete's club without delete/recreate (`98ad9b5`)
+- Fix combined-results grouping and add per-event results list report (`4f81e6b`)
+- Fix pause/break round-tripping in LXF+SMB and stale SQLite backups (`7529b09`)
+
+# Changelog
+
 ## [0.3.35] - 2026-07-10
 
 ### 🔧 Chores
