@@ -239,7 +239,8 @@ function useInscriptionPage(api: RegistrationAPI, role: string, clubId?: string,
   const handleSaveAthleteField = useCallback(async (field: string, value: string) => {
     if (!state.selectedAthleteId) return
     try {
-      await api.updateAthlete(state.selectedAthleteId, { [field]: value })
+      const payload = field === 'club_id' ? { club_id: Number(value) } : { [field]: value }
+      await api.updateAthlete(state.selectedAthleteId, payload)
       // Reload registration data to reflect changes
       const data = await api.getRegistration(state.selectedAthleteId)
       setState(prev => ({ ...prev, registrationData: data }))
@@ -491,6 +492,8 @@ export default function InscriptionPage({ role, clubId, refreshKey, onImportLene
                 athlete={state.registrationData.athlete}
                 athleteId={state.selectedAthleteId}
                 onSave={handleSaveAthleteField}
+                clubs={state.clubs}
+                canChangeClub={role === 'admin' || role === 'organizer'}
               />
               <div className="flex-1 overflow-auto">
                 <RegistrationPanel

@@ -116,7 +116,13 @@ export const registrationApiHttp = {
   },
 
   async updateAthlete(athleteId, data) {
-    await api.put(`/athletes/${athleteId}`, data)
+    try {
+      await api.put(`/athletes/${athleteId}`, data)
+    } catch (err) {
+      if (err.detail) err.message = err.detail
+      throw err
+    }
+    invalidateCache()
   },
 
   async register(data) {

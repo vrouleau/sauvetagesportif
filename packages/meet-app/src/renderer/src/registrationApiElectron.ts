@@ -45,6 +45,7 @@ interface LocalAthlete {
   birthDate: string
   gender: 'M' | 'F'
   nation: string
+  clubId: number | null
   clubCode: string
   clubName: string
   licence?: string
@@ -123,19 +124,6 @@ function calcAge(birthDate: string): number {
   return age
 }
 
-/**
- * Generate a stable numeric ID from a club code string.
- * Uses a simple hash so that getClubs() and getAthletesByClub() produce consistent IDs.
- */
-function clubCodeToId(code: string): number {
-  let hash = 0
-  for (let i = 0; i < code.length; i++) {
-    hash = ((hash << 5) - hash + code.charCodeAt(i)) | 0
-  }
-  // Ensure positive
-  return Math.abs(hash) || 1
-}
-
 function suggestAgeCode(age: number): string {
   if (age <= 10) return '10-'
   if (age <= 12) return '11-12'
@@ -146,28 +134,14 @@ function suggestAgeCode(age: number): string {
 
 export const registrationApiElectron: RegistrationAPI = {
   async getClubs(): Promise<Club[]> {
-    const athletes = (await ipc()?.getAthletes()) as LocalAthlete[] ?? []
-    const clubMap = new Map<string, { name: string; count: number }>()
-    for (const a of athletes) {
-      const key = a.clubCode || a.clubName || 'Unknown'
-      const existing = clubMap.get(key)
-      if (existing) existing.count++
-      else clubMap.set(key, { name: a.clubName || a.clubCode || 'Unknown', count: 1 })
-    }
-    // Use a stable hash of the club code as the ID so getAthletesByClub can match
-    return Array.from(clubMap.entries()).map(([code, { name, count }]) => ({
-      id: clubCodeToId(code),
-      name: `${name} (${code})`,
-      athlete_count: count,
-    }))
+    return (await ipc()?.getClubsReal()) as Club[] ?? []
   },
 
   async getAthletesByClub(clubId: string): Promise<AthleteListItem[]> {
     const athletes = (await ipc()?.getAthletes()) as LocalAthlete[] ?? []
     const numericId = parseInt(clubId, 10)
-    // Filter athletes whose club code hashes to the requested clubId
     return athletes
-      .filter(a => clubCodeToId(a.clubCode || a.clubName || 'Unknown') === numericId)
+      .filter(a => a.clubId === numericId)
       .map(a => ({
         id: a.id,
         first_name: a.firstName,
@@ -191,17 +165,14 @@ export const registrationApiElectron: RegistrationAPI = {
   },
 
   async addAthlete(data) {
-    // Resolve the club code from the numeric club_id (hash-based)
+    // Resolve the club code/name from the real club_id (saveAthlete looks clubs up by code)
     const athletes = (await ipc()?.getAthletes()) as LocalAthlete[] ?? []
     let clubCode = ''
     let clubName = ''
-    for (const a of athletes) {
-      const key = a.clubCode || a.clubName || 'Unknown'
-      if (clubCodeToId(key) === data.club_id) {
-        clubCode = a.clubCode
-        clubName = a.clubName
-        break
-      }
+    const clubMatch = athletes.find(a => a.clubId === data.club_id)
+    if (clubMatch) {
+      clubCode = clubMatch.clubCode
+      clubName = clubMatch.clubName
     }
     await ipc()?.saveAthlete({
       id: 0, // new
@@ -309,6 +280,7 @@ export const registrationApiElectron: RegistrationAPI = {
         birthdate: athlete.birthDate,
         license: athlete.licence ?? '',
         club: athlete.clubName,
+        club_id: athlete.clubId ?? undefined,
         handicapex: athlete.handicapex ?? '',
       },
       individual_events: individualEvents,
@@ -321,6 +293,10 @@ export const registrationApiElectron: RegistrationAPI = {
   },
 
   async updateAthlete(athleteId, data) {
+    if (data.club_id != null) {
+      await ipc()?.setAthleteClub(athleteId, Number(data.club_id))
+      return
+    }
     const athletes = (await ipc()?.getAthletes()) as LocalAthlete[] ?? []
     const athlete = athletes.find(a => a.id === athleteId)
     if (!athlete) return

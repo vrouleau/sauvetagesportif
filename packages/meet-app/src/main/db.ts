@@ -390,6 +390,7 @@ export interface AthleteRow {
   birthDate: string
   gender: 'M' | 'F'
   nation: string
+  clubId: number | null
   clubCode: string
   clubName: string
   licence?: string
@@ -787,7 +788,7 @@ export async function getAthletes(): Promise<AthleteRow[]> {
 
   const athletes = db.prepare(`
     SELECT a.athleteid, a.firstname, a.lastname, a.birthdate, a.gender, a.nation, a.license, a.domicile,
-           a.handicapex, a.nameprefix, c.code AS clubcode, c.name AS clubname
+           a.handicapex, a.nameprefix, a.clubid, c.code AS clubcode, c.name AS clubname
     FROM athlete a
     LEFT JOIN club c ON a.clubid = c.clubid
     ORDER BY a.lastname, a.firstname
@@ -795,7 +796,7 @@ export async function getAthletes(): Promise<AthleteRow[]> {
     athleteid: number; firstname: string | null; lastname: string | null
     birthdate: string | number | null; gender: number | null; nation: string | null
     license: string | null; domicile: string | null; handicapex: string | null
-    nameprefix: string | null; clubcode: string | null; clubname: string | null
+    nameprefix: string | null; clubid: number | null; clubcode: string | null; clubname: string | null
   }>
 
   if (athletes.length === 0) return []
@@ -841,6 +842,7 @@ export async function getAthletes(): Promise<AthleteRow[]> {
     birthDate: parseBirthDate(a.birthdate),
     gender: (a.gender === 2 ? 'F' : 'M') as 'M' | 'F',
     nation: a.nation ?? '',
+    clubId: a.clubid,
     clubCode: a.clubcode ?? '',
     clubName: a.clubname ?? '',
     licence: a.license ?? undefined,
@@ -1391,6 +1393,21 @@ export async function saveAthlete(a: {
      WHERE athleteid=?`
   ).run(a.firstName, a.lastName, a.birthDate || null, gNum, a.nation,
         a.licence || null, a.birthPlace || null, clubId, a.handicapex || null, a.id)
+}
+
+/**
+ * Reassign an athlete to a different (existing) club, without deleting and
+ * recreating the athlete. Blocked while the athlete is on a relay team, since
+ * relay eligibility/composition rules are computed from club membership and
+ * would silently go stale otherwise.
+ */
+export function setAthleteClub(athleteId: number, clubId: number, injectedDb?: ReturnType<typeof getLocalDb>): void {
+  const db = injectedDb ?? getLocalDb()
+  const club = db.prepare(`SELECT clubid FROM club WHERE clubid=?`).get(clubId) as { clubid: number } | undefined
+  if (!club) throw new Error('Club not found')
+  const onRelay = db.prepare(`SELECT 1 FROM relayposition WHERE athleteid=?`).get(athleteId)
+  if (onRelay) throw new Error('Cannot change club while athlete is on a relay team — remove them from all relay teams first')
+  db.prepare(`UPDATE athlete SET clubid=? WHERE athleteid=?`).run(clubId, athleteId)
 }
 
 // ── Local SQLite schema — imported from schema.ts to avoid circular dependency ──

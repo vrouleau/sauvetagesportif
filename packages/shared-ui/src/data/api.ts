@@ -262,6 +262,7 @@ export interface RegistrationData {
     birthdate: string
     license: string
     club: string
+    club_id?: number
     handicapex: string
   }
   individual_events: RegistrationStyle[]

@@ -177,6 +177,8 @@ const api = {
       ipcRenderer.invoke('db:available-athletes-for-event', eventId),
     saveAthlete: (athlete: unknown) =>
       ipcRenderer.invoke('db:save-athlete', athlete),
+    setAthleteClub: (athleteId: number, clubId: number) =>
+      ipcRenderer.invoke('db:set-athlete-club', athleteId, clubId),
     flushMeet: () =>
       ipcRenderer.invoke('db:flush-meet'),
     getMeetInfo: () =>

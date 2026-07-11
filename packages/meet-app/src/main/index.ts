@@ -52,6 +52,7 @@ import {
   getEntriesByEvent,
   getPointStandings,
   getResultsList,
+  setAthleteClub,
   nextId,
   duplicateEvent,
   type SessionUpdate,
@@ -1094,6 +1095,10 @@ ipcMain.handle('db:available-athletes-for-event', async (_event, eventId: number
 ipcMain.handle('db:save-athlete', (_event, athlete: Parameters<typeof saveAthlete>[0]) =>
   saveAthlete(athlete).then(() => ({ ok: true }))
 )
+
+ipcMain.handle('db:set-athlete-club', (_event, athleteId: number, clubId: number) => {
+  setAthleteClub(athleteId, clubId)
+})
 
 // ── Finals IPC ────────────────────────────────────────────────────────────────
 

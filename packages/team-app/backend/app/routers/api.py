@@ -98,6 +98,7 @@ class AthleteUpdate(BaseModel):
     birthdate: str | None = None
     license: str | None = None
     handicapex: str | None = None
+    club_id: int | None = None
 
     @field_validator("gender")
     @classmethod
@@ -1573,7 +1574,7 @@ def update_athlete(athlete_id: int, data: AthleteUpdate, request: Request, db: S
     member = db.query(Member).get(athlete_id)
     if not member:
         raise HTTPException(404)
-    caller_club = _caller_club_id(db, pin)
+    role, caller_club = _resolve_role(pin, db)
     if caller_club is not None and member.clubsid != caller_club:
         raise HTTPException(403, "Cannot modify athletes from another club")
     if data.first_name is not None:
@@ -1589,6 +1590,17 @@ def update_athlete(athlete_id: int, data: AthleteUpdate, request: Request, db: S
         member.license = data.license
     if data.handicapex is not None:
         member.handicapex = data.handicapex or None
+    if data.club_id is not None and data.club_id != member.clubsid:
+        if role not in ("admin", "organizer"):
+            raise HTTPException(403, "Only admin or organizer can change an athlete's club")
+        target_club = db.query(TeamClub).get(data.club_id)
+        if not target_club:
+            raise HTTPException(404, "Target club not found")
+        from ..models_team import RelayPos
+        on_relay = db.query(RelayPos).filter(RelayPos.membersid == athlete_id).first()
+        if on_relay:
+            raise HTTPException(409, "Cannot change club while athlete is on a relay team — remove them from all relay teams first")
+        member.clubsid = data.club_id
     db.commit()
     return {"ok": True}
 

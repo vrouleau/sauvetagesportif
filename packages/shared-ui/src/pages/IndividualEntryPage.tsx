@@ -305,7 +305,8 @@ function useIndividualEntryPage(api: RegistrationAPI, role: string, clubId?: str
   const handleSaveAthleteField = useCallback(async (field: string, value: string) => {
     if (!state.selectedAthleteId) return
     try {
-      await api.updateAthlete(state.selectedAthleteId, { [field]: value })
+      const payload = field === 'club_id' ? { club_id: Number(value) } : { [field]: value }
+      await api.updateAthlete(state.selectedAthleteId, payload)
       // Reload registration data to reflect changes
       const data = await api.getRegistration(state.selectedAthleteId)
       setState(prev => ({ ...prev, registrationData: data }))
@@ -636,6 +637,8 @@ export default function IndividualEntryPage({ role, clubId, refreshKey, onImport
                 athlete={filteredRegistrationData.athlete}
                 athleteId={state.selectedAthleteId}
                 onSave={handleSaveAthleteField}
+                clubs={state.clubs}
+                canChangeClub={role === 'admin' || role === 'organizer'}
               />
               <div className="flex-1 overflow-auto">
                 <RegistrationPanel

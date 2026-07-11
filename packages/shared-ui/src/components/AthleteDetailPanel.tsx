@@ -17,13 +17,17 @@
 // along with Sauvetage Sportif. If not, see <https://www.gnu.org/licenses/>.
 
 import { useState, useEffect } from 'react'
-import type { RegistrationData } from '../data/api'
+import type { RegistrationData, Club } from '../data/api'
 import { useLang } from '../context/LangContext'
 
 export interface AthleteDetailPanelProps {
   athlete: RegistrationData['athlete'] | null
   athleteId: number
   onSave: (field: string, value: string) => void
+  /** Full club list, needed to render the club picker. Only required when canChangeClub is true. */
+  clubs?: Club[]
+  /** Whether the current user is allowed to move this athlete to a different club (admin-only). */
+  canChangeClub?: boolean
 }
 
 /**
@@ -31,7 +35,7 @@ export interface AthleteDetailPanelProps {
  * Uses blur-to-save pattern: edits are saved when the field loses focus.
  * Shows an empty state when no athlete is selected.
  */
-export default function AthleteDetailPanel({ athlete, athleteId, onSave }: AthleteDetailPanelProps) {
+export default function AthleteDetailPanel({ athlete, athleteId, onSave, clubs, canChangeClub }: AthleteDetailPanelProps) {
   const { t } = useLang()
   const tr = t.registration
 
@@ -83,10 +87,20 @@ export default function AthleteDetailPanel({ athlete, athleteId, onSave }: Athle
           checked={athlete.handicapex === 'X'}
           onSave={(checked) => onSave('handicapex', checked ? 'X' : '')}
         />
-        <div className="flex items-center gap-1">
-          <label className="text-xs text-gray-500">{tr.club}:</label>
-          <span className="text-xs text-gray-600">{athlete.club}</span>
-        </div>
+        {canChangeClub && clubs ? (
+          <ClubField
+            key={`${athleteId}-club`}
+            label={tr.club}
+            defaultValue={athlete.club_id ?? ''}
+            clubs={clubs}
+            onSave={(value) => onSave('club_id', value)}
+          />
+        ) : (
+          <div className="flex items-center gap-1">
+            <label className="text-xs text-gray-500">{tr.club}:</label>
+            <span className="text-xs text-gray-600">{athlete.club}</span>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -165,6 +179,45 @@ function GenderField({
       >
         <option value="M">M</option>
         <option value="F">F</option>
+      </select>
+    </div>
+  )
+}
+
+/** Club select with change-to-save (admin-only: reassigns the athlete to a different club) */
+function ClubField({
+  label,
+  defaultValue,
+  clubs,
+  onSave,
+}: {
+  label: string
+  defaultValue: number | ''
+  clubs: Club[]
+  onSave: (value: string) => void
+}) {
+  const [value, setValue] = useState(defaultValue)
+
+  useEffect(() => {
+    setValue(defaultValue)
+  }, [defaultValue])
+
+  function handleChange(newValue: string) {
+    setValue(Number(newValue))
+    if (Number(newValue) !== defaultValue) {
+      onSave(newValue)
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-1">
+      <label className="text-xs text-gray-500">{label}:</label>
+      <select
+        className="border border-gray-300 px-1 py-0.5 rounded text-xs"
+        value={value}
+        onChange={(e) => handleChange(e.target.value)}
+      >
+        {clubs.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
       </select>
     </div>
   )
