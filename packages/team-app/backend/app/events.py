@@ -84,28 +84,32 @@ def _load_from_parsed(db: Session, meet: ParsedMeet) -> int:
         db.flush()
 
         for ev in ses.events:
-            # Upsert swimstyle
-            style = db.query(SwimStyle).get(ev.swimstyleid)
-            if not style:
-                style = SwimStyle(
-                    swimstyleid=ev.swimstyleid,
-                    distance=ev.distance,
-                    name=ev.style_name or f"UID {ev.swimstyleid}",
-                    relaycount=ev.relaycount,
-                )
-                db.add(style)
-                db.flush()
+            # Upsert swimstyle (id 0 marks a style-less pause/break event — no real style to store)
+            if ev.swimstyleid:
+                style = db.query(SwimStyle).get(ev.swimstyleid)
+                if not style:
+                    style = SwimStyle(
+                        swimstyleid=ev.swimstyleid,
+                        distance=ev.distance,
+                        name=ev.style_name or f"UID {ev.swimstyleid}",
+                        relaycount=ev.relaycount,
+                    )
+                    db.add(style)
+                    db.flush()
 
             event = SwimEvent(
                 swimeventid=ev.eventid,
                 swimsessionid=session.swimsessionid,
-                swimstyleid=ev.swimstyleid,
+                swimstyleid=ev.swimstyleid or None,
                 eventnumber=ev.number,
                 gender=ev.gender_int,
                 round=_round_from_lenex(ev.round),
                 masters="T" if ev.is_masters else "F",
                 fee=fee_cents_to_dollars(ev.fee_cents),
                 sortcode=count,
+                roundname=ev.roundname or None,
+                internalevent="T" if ev.is_internal else "F",
+                comment=ev.roundname if ev.is_internal else None,
             )
             db.add(event)
             db.flush()
@@ -134,7 +138,7 @@ def _load_from_parsed(db: Session, meet: ParsedMeet) -> int:
                 meetsid=team_meet.meetsid,
                 sessionnumb=ses.number,
                 numb=ev.number,
-                stylesid=ev.swimstyleid,
+                stylesid=ev.swimstyleid or None,
                 minage=minage,
                 maxage=maxage,
                 fee=fee_cents_to_dollars(ev.fee_cents) if ev.fee_cents else None,

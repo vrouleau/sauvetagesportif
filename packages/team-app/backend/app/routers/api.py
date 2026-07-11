@@ -3070,14 +3070,13 @@ def export_registrations_lxf(db: Session = Depends(get_db)):
 @router.get("/admin/backup-db", dependencies=[Depends(require_admin)])
 def backup_db():
     """Download a full database backup (pg_dump SQL for Postgres, raw .db file for SQLite)."""
-    from ..database import is_sqlite, DATABASE_URL
+    from ..database import is_sqlite, DATABASE_URL, sqlite_snapshot_bytes
     if is_sqlite():
-        import shutil
-        # Extract file path from sqlite:///path
         db_path = DATABASE_URL.replace("sqlite:///", "")
-        if not Path(db_path).exists():
+        try:
+            content = sqlite_snapshot_bytes(db_path)
+        except FileNotFoundError:
             raise HTTPException(404, "Database file not found")
-        content = Path(db_path).read_bytes()
         return Response(
             content=content,
             media_type="application/octet-stream",
@@ -3183,10 +3182,10 @@ BACKUP_DIR = Path(os.environ.get("DATA_DIR", "/app/data")) / "backups"
 
 def _run_pg_dump_bytes() -> bytes:
     """Run pg_dump and return SQL bytes (Postgres) or read .db file (SQLite)."""
-    from ..database import is_sqlite, DATABASE_URL
+    from ..database import is_sqlite, DATABASE_URL, sqlite_snapshot_bytes
     if is_sqlite():
         db_path = DATABASE_URL.replace("sqlite:///", "")
-        return Path(db_path).read_bytes()
+        return sqlite_snapshot_bytes(db_path)
     import subprocess
     from urllib.parse import urlparse
     db_url = os.environ.get("DATABASE_URL", "")

@@ -737,7 +737,8 @@ export function saveSMB(filePath: string, db: Database.Database): { tables: numb
       rows = rows.map(row => {
         const round = row['round'] as number | null
         let newRow = row
-        if (round === 1) newRow = { ...newRow, round: 2, eventnumber: 0, gender: 0 }   // PRE → MDB 2 (reset eventnumber & gender)
+        if (row['internalevent'] === 'T') newRow = { ...newRow, round: 11 }   // Break/Pause → MDB 11 (Splash's native encoding)
+        else if (round === 1) newRow = { ...newRow, round: 2 }   // PRE → MDB 2 (eventnumber/gender kept — Splash stores real values on both PRE and FIN)
         else if (round === 4) newRow = { ...newRow, round: 9 }   // FIN → MDB 9
         else if (round === 5) newRow = { ...newRow, round: 1 }   // TIM → MDB 1
         return newRow

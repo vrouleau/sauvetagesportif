@@ -191,14 +191,16 @@ async def _auto_backup_loop():
                 timestamp = datetime.now().strftime("%Y-%m-%d-%H%M%S")
 
                 if is_sqlite():
-                    # SQLite: simple file copy
+                    # SQLite: consistent snapshot via the backup API (WAL-safe — a raw file
+                    # copy would silently omit recent commits still sitting in the -wal file)
+                    from .database import sqlite_snapshot_bytes
                     db_path = DATABASE_URL.replace("sqlite:///", "")
-                    if Path(db_path).exists():
+                    try:
+                        content = sqlite_snapshot_bytes(db_path)
                         filename = f"auto-{timestamp}.db"
-                        shutil.copy2(db_path, BACKUP_DIR / filename)
-                        size = (BACKUP_DIR / filename).stat().st_size
-                        print(f"Auto-backup created: {filename} ({size} bytes)")
-                    else:
+                        (BACKUP_DIR / filename).write_bytes(content)
+                        print(f"Auto-backup created: {filename} ({len(content)} bytes)")
+                    except FileNotFoundError:
                         print(f"Auto-backup ERROR: SQLite DB not found at {db_path}")
                 else:
                     # PostgreSQL: pg_dump

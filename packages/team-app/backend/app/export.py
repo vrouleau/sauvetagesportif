@@ -202,6 +202,10 @@ def generate_lxf(db: Session) -> bytes:
             }
             if m_ev.swimstyleid:
                 style_attrs["swimstyleid"] = str(m_ev.swimstyleid)
+            else:
+                # Style-less events (pauses/breaks) are flagged code="ID0" so Splash
+                # recognizes the SWIMSTYLE as an intentional placeholder, not a missing style.
+                style_attrs["code"] = "ID0"
             if m_ev.style_name:
                 style_attrs["name"] = m_ev.style_name
             ET.SubElement(ev_xml, "SWIMSTYLE", style_attrs)
@@ -586,8 +590,13 @@ def generate_meet_lxf_from_db(db: Session) -> bytes:
                 "stroke": _STROKE_MAP.get(ev.swimstyle.stroke if ev.swimstyle else 0, "UNKNOWN"),
                 "distance": str(ev.swimstyle.distance if ev.swimstyle else 0),
                 "relaycount": str(ev.swimstyle.relaycount if ev.swimstyle else 1),
-                "swimstyleid": str(ev.swimstyleid or 0),
             }
+            if ev.swimstyleid:
+                style_attrs["swimstyleid"] = str(ev.swimstyleid)
+            else:
+                # Style-less events (pauses/breaks) are flagged code="ID0" so Splash
+                # recognizes the SWIMSTYLE as an intentional placeholder, not a missing style.
+                style_attrs["code"] = "ID0"
             if ev.swimstyle and ev.swimstyle.name:
                 style_attrs["name"] = ev.swimstyle.name
             ET.SubElement(ev_xml, "SWIMSTYLE", style_attrs)

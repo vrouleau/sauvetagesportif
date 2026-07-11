@@ -386,7 +386,11 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
 
       const style = child(event, 'SWIMSTYLE')
       const sa = style?.attrs ?? {}
-      const styleId = parseInt(sa.swimstyleid ?? '0', 10)
+      // Splash represents a style-less event (e.g. a pause/break) with SWIMSTYLE
+      // code="ID0" and no name/distance — the swimstyleid it assigns is an arbitrary
+      // placeholder that may collide with a real style ID, so it must not be persisted.
+      const isPlaceholderStyle = sa.code === 'ID0'
+      const styleId = isPlaceholderStyle ? 0 : parseInt(sa.swimstyleid ?? '0', 10)
       const distance = parseInt(sa.distance ?? '0', 10)
       const relaycount = parseInt(sa.relaycount ?? '1', 10)
       const strokeCode = encodeStroke(sa.stroke)
@@ -403,7 +407,7 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
       const gender = encodeGender(ea.gender)
       const round = encodeRound(ea.round)
       const sortcode = parseInt(ea.order ?? ea.number ?? '0', 10)
-      const isInternal = ea.internalevent === 'T' ? 'T' : 'F'
+      const isInternal = (ea.internalevent === 'T' || isPlaceholderStyle) ? 'T' : 'F'
       const isMasters = ea.type === 'MASTERS' ? 'T' : 'F'
       const evName = ea.name ?? styleName
       const evComment = isInternal === 'T' ? evName : ''
@@ -974,9 +978,11 @@ export function exportLenexResults(filePath: string, db: Database.Database): Exp
       const nameAttr = ev.internalevent === 'T' && ev.roundname ? attr('name', ev.roundname) : ''
       lines.push(`            <EVENT${attr('eventid', ev.swimeventid)}${attr('number', ev.eventnumber)}${attr('gender', decodeGender(ev.gender))}${attr('round', decodeRound(ev.round))}${attr('order', ev.sortcode)}${internalAttr}${nameAttr}>`)
 
-      // SWIMSTYLE
+      // SWIMSTYLE (required by Splash even for pause/break events, hence code="ID0" placeholder)
       if (ev.swimstyleid) {
         lines.push(`              <SWIMSTYLE${attr('swimstyleid', ev.swimstyleid)}${attr('distance', ev.distance)}${attr('stroke', decodeStroke(ev.stroke))}${attr('relaycount', ev.relaycount ?? 1)}${attr('name', ev.stylename)} />`)
+      } else if (ev.internalevent === 'T') {
+        lines.push(`              <SWIMSTYLE stroke="UNKNOWN" code="ID0" />`)
       }
 
       // AGEGROUPS
@@ -1228,6 +1234,8 @@ export function exportMeetLenex(filePath: string, db: Database.Database): MeetEx
 
       if (ev.swimstyleid) {
         lines.push(`              <SWIMSTYLE${attr('swimstyleid', ev.swimstyleid)}${attr('distance', ev.distance)}${attr('stroke', decodeStroke(ev.stroke))}${attr('relaycount', ev.relaycount ?? 1)}${attr('name', ev.stylename)} />`)
+      } else if (ev.internalevent === 'T') {
+        lines.push(`              <SWIMSTYLE stroke="UNKNOWN" code="ID0" />`)
       }
 
       const evAgs = agByEvent.get(ev.swimeventid)

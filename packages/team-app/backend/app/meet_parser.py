@@ -142,17 +142,24 @@ def parse_meet_lxf(source) -> ParsedMeet:
                 fee_cents = int(fee_el.get("value", 0)) if fee_el is not None else 0
             except (ValueError, TypeError):
                 fee_cents = 0
+            # A style-less SWIMSTYLE (code="ID0", no swimstyleid) marks a pause/break
+            # event — this is how Splash represents it, in addition to our own
+            # internalevent="T" attribute on EVENT.
+            is_placeholder_style = style_el is not None and style_el.get("code") == "ID0"
+            is_internal = event_el.get("internalevent", "").upper() == "T" or is_placeholder_style
             ev = MeetEvent(
                 eventid=int(event_el.get("eventid", 0)),
                 number=int(event_el.get("number", 0)),
                 gender=event_el.get("gender", ""),
                 round=event_el.get("round", "TIM"),
                 event_type=event_el.get("type", ""),
-                swimstyleid=int(style_el.get("swimstyleid", 0)) if style_el is not None else 0,
+                swimstyleid=0 if is_placeholder_style else (int(style_el.get("swimstyleid", 0)) if style_el is not None else 0),
                 distance=int(style_el.get("distance", 0)) if style_el is not None else 0,
                 relaycount=int(style_el.get("relaycount", 1)) if style_el is not None else 1,
                 style_name=(style_el.get("name", "") if style_el is not None else ""),
                 fee_cents=fee_cents,
+                roundname=event_el.get("name", ""),
+                is_internal=is_internal,
             )
             for ag_el in event_el.iter("AGEGROUP"):
                 ev.agegroups.append(MeetAgeGroup(

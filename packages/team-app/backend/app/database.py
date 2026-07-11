@@ -18,6 +18,7 @@
 
 """Database connection."""
 import os
+from pathlib import Path
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
@@ -55,6 +56,33 @@ def get_db():
 def is_sqlite() -> bool:
     """Return True if the current database is SQLite."""
     return DATABASE_URL.startswith("sqlite")
+
+
+def sqlite_snapshot_bytes(db_path: str) -> bytes:
+    """Return a consistent SQLite snapshot, safe to call while the app is under WAL mode.
+
+    The live database runs with `PRAGMA journal_mode=WAL`, so recent commits can sit in the
+    `-wal` file and haven't been merged into the main .db file yet. Reading the main file's
+    raw bytes directly (or shutil.copy2) silently omits that data — the backup looks fine
+    but is actually a stale snapshot from before the last checkpoint. SQLite's online backup
+    API reads through a real connection (main db + WAL merged) and produces a complete,
+    self-contained copy regardless of checkpoint timing.
+    """
+    import sqlite3
+    import tempfile
+    if not Path(db_path).exists():
+        raise FileNotFoundError(f"Database file not found: {db_path}")
+    tmp_path = Path(tempfile.mktemp(suffix=".db"))
+    try:
+        src_conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        dst_conn = sqlite3.connect(str(tmp_path))
+        src_conn.backup(dst_conn)
+        dst_conn.close()
+        src_conn.close()
+        return tmp_path.read_bytes()
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink()
 
 
 def reset_engine():
