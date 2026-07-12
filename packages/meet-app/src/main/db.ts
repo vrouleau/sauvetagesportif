@@ -1068,8 +1068,8 @@ export async function addLateEntry(
 
 // ── Write: session CRUD ───────────────────────────────────────────────────────
 
-export function nextId(table: string, pkCol: string): number {
-  const db = getLocalDb()
+export function nextId(table: string, pkCol: string, injectedDb?: ReturnType<typeof getLocalDb>): number {
+  const db = injectedDb ?? getLocalDb()
   // In PG mode, use Splash's global UID sequence to avoid ID conflicts
   if (isPgConnected()) {
     const row = db.prepare(`SELECT nextval('gen_bs_global_uid') AS next`).get() as { next: number | bigint }
@@ -1370,8 +1370,8 @@ export async function saveAthlete(a: {
   id: number; lastName: string; firstName: string; birthDate: string
   gender: 'M' | 'F'; nation: string; clubCode: string; clubName: string
   licence?: string; birthPlace?: string; handicapex?: string
-}): Promise<void> {
-  const db = getLocalDb()
+}, injectedDb?: ReturnType<typeof getLocalDb>): Promise<{ id: number }> {
+  const db = injectedDb ?? getLocalDb()
   const gNum = a.gender === 'F' ? 2 : 1
 
   let clubId: number | null = null
@@ -1381,9 +1381,19 @@ export async function saveAthlete(a: {
       clubId = clubRow.clubid
       db.prepare(`UPDATE club SET name=? WHERE clubid=?`).run(a.clubName, clubId)
     } else {
-      clubId = nextId('club', 'clubid')
+      clubId = nextId('club', 'clubid', db)
       db.prepare(`INSERT INTO club (clubid, code, name) VALUES (?, ?, ?)`).run(clubId, a.clubCode, a.clubName)
     }
+  }
+
+  if (!a.id) {
+    const newId = nextId('athlete', 'athleteid', db)
+    db.prepare(
+      `INSERT INTO athlete (athleteid, firstname, lastname, birthdate, gender, nation, license, domicile, clubid, handicapex)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(newId, a.firstName, a.lastName, a.birthDate || null, gNum, a.nation,
+          a.licence || null, a.birthPlace || null, clubId, a.handicapex || null)
+    return { id: newId }
   }
 
   db.prepare(
@@ -1393,6 +1403,7 @@ export async function saveAthlete(a: {
      WHERE athleteid=?`
   ).run(a.firstName, a.lastName, a.birthDate || null, gNum, a.nation,
         a.licence || null, a.birthPlace || null, clubId, a.handicapex || null, a.id)
+  return { id: a.id }
 }
 
 /**

@@ -1093,7 +1093,7 @@ ipcMain.handle('db:available-athletes-for-event', async (_event, eventId: number
 })
 
 ipcMain.handle('db:save-athlete', (_event, athlete: Parameters<typeof saveAthlete>[0]) =>
-  saveAthlete(athlete).then(() => ({ ok: true }))
+  saveAthlete(athlete).then(({ id }) => ({ ok: true, id }))
 )
 
 ipcMain.handle('db:set-athlete-club', (_event, athleteId: number, clubId: number) => {

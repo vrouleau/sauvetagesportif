@@ -165,26 +165,23 @@ export const registrationApiElectron: RegistrationAPI = {
   },
 
   async addAthlete(data) {
-    // Resolve the club code/name from the real club_id (saveAthlete looks clubs up by code)
-    const athletes = (await ipc()?.getAthletes()) as LocalAthlete[] ?? []
-    let clubCode = ''
-    let clubName = ''
-    const clubMatch = athletes.find(a => a.clubId === data.club_id)
-    if (clubMatch) {
-      clubCode = clubMatch.clubCode
-      clubName = clubMatch.clubName
-    }
-    await ipc()?.saveAthlete({
+    const created = await ipc()?.saveAthlete({
       id: 0, // new
       lastName: data.last_name,
       firstName: data.first_name,
       gender: data.gender,
       birthDate: data.birthdate || '2000-01-01',
       nation: 'CAN',
-      clubCode,
-      clubName,
+      clubCode: '',
+      clubName: '',
       licence: data.license,
-    })
+    }) as { id: number } | undefined
+    // Assign the real club by ID directly — the club may not have any existing
+    // athletes yet, so resolving clubCode/clubName by scanning other athletes
+    // wouldn't work for a brand-new/empty club.
+    if (created?.id) {
+      await ipc()?.setAthleteClub(created.id, data.club_id)
+    }
   },
 
   async deleteAthlete(_id) {
