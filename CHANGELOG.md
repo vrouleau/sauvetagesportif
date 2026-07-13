@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.37] - 2026-07-13
+
+### Other
+
+- Fix wrong age category shown/stuck for athletes in multi-bracket events (`78b8d21`)
+- Add dedicated identifier column to beach heat display, sorted by identifier (`5474255`)
+- Restrict registrations-lxf roster fill to already-participating clubs (`e4f8259`)
+- Include unregistered club athletes in registrations-lxf export (`37d3a0c`)
+- Add move-age-group-to-event feature, fix team-app registration matching (`26e40c4`)
+- Fix Add Athlete silently doing nothing in meet-app (`f7869cd`)
+
 ## [0.3.36] - 2026-07-11
 
 ### Other
