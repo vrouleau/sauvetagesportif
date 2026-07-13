@@ -1259,26 +1259,68 @@ class TestExportRegistrationsLxf:
         finally:
             delete_registration(reg_id, admin_headers)
 
-    def test_unregistered_athlete_still_included(self, clubs, admin_headers):
-        """Athletes with zero registrations must still appear as ATHLETE elements,
-        so meet-app can register late arrivals straight from the imported roster."""
-        club_id = clubs[0]["id"]
-        r = requests.post(
+    def test_unregistered_athlete_included_for_participating_club(self, athletes, admin_headers):
+        """A club with >=1 registered athlete must still export its other, unregistered
+        members, so meet-app can register late arrivals straight from the imported
+        roster without a re-upload."""
+        ath = _by_birthyear(athletes, 2002, gender="M")[0]
+        reg = get_registration(ath["id"], admin_headers)
+        style = next(s for s in reg["individual_events"]
+                     if any(c["age_code"] == "Open" for c in s["categories"]))
+        cat = next(c for c in style["categories"] if c["age_code"] == "Open")
+        r = post_registration(ath["id"], cat["event_id"], "Open", 65000, admin_headers)
+        reg_id = r["id"]
+        r2 = requests.post(
             f"{BASE_URL}/api/athletes",
             json={"first_name": "LateArrival", "last_name": "Tester",
-                  "gender": "M", "club_id": club_id},
+                  "gender": "M", "club_id": ath["club_id"]},
             headers=admin_headers, timeout=10,
         )
-        r.raise_for_status()
-        ath_id = r.json()["id"]
+        r2.raise_for_status()
+        new_ath_id = r2.json()["id"]
         try:
             lxf = export_registrations_lxf(admin_headers)
             lef = lxf.read(next(n for n in lxf.namelist() if n.endswith(".lef"))).decode()
-            assert f'athleteid="{ath_id}"' in lef, (
-                "Unregistered athlete missing from registrations-lxf export"
+            assert f'athleteid="{new_ath_id}"' in lef, (
+                "Unregistered athlete missing from a participating club's export"
+            )
+        finally:
+            delete_registration(reg_id, admin_headers)
+            requests.delete(f"{BASE_URL}/api/athletes/{new_ath_id}",
+                            headers=admin_headers, timeout=10)
+
+    def test_non_participating_club_excluded(self, admin_headers):
+        """A club with zero registrations must not appear in the export at all,
+        even if it has members on the roster — only clubs already participating
+        in the meet should be pulled in."""
+        r = requests.post(
+            f"{BASE_URL}/api/clubs",
+            json={"name": "Non-Participating Club", "code": "NPC"},
+            headers=admin_headers, timeout=10,
+        )
+        r.raise_for_status()
+        club_id = r.json()["id"]
+        r2 = requests.post(
+            f"{BASE_URL}/api/athletes",
+            json={"first_name": "Bench", "last_name": "Warmer",
+                  "gender": "F", "club_id": club_id},
+            headers=admin_headers, timeout=10,
+        )
+        r2.raise_for_status()
+        ath_id = r2.json()["id"]
+        try:
+            lxf = export_registrations_lxf(admin_headers)
+            lef = lxf.read(next(n for n in lxf.namelist() if n.endswith(".lef"))).decode()
+            assert f'athleteid="{ath_id}"' not in lef, (
+                "Athlete from a non-participating club leaked into the export"
+            )
+            assert 'code="NPC"' not in lef, (
+                "Non-participating club leaked into the export"
             )
         finally:
             requests.delete(f"{BASE_URL}/api/athletes/{ath_id}",
+                            headers=admin_headers, timeout=10)
+            requests.delete(f"{BASE_URL}/api/clubs/{club_id}",
                             headers=admin_headers, timeout=10)
 
 
