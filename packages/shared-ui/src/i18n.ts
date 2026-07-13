@@ -216,6 +216,7 @@ const fr = {
     heatLabel: 'Série',
     columns: {
       lane: 'DC',
+      identifier: 'Identifiant',
       name: 'Nom',
       nation: 'AN',
       clubCode: 'Abrév.',
@@ -545,6 +546,7 @@ const en = {
     heatLabel: 'Heat',
     columns: {
       lane: 'Lane',
+      identifier: 'ID',
       name: 'Name',
       nation: 'Nat',
       clubCode: 'Abbrev.',

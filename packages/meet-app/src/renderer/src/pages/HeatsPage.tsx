@@ -384,6 +384,28 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
     allLanes.push({ lane: l, entry })
   }
 
+  // Beach identifier used to sort/display a lane row (lowest team member number for relays)
+  const beachIdOf = (entry: LaneEntry | null): string | null => {
+    if (!entry) return null
+    if (entry.relayMembers && entry.relayMembers.length > 0) {
+      const nums = entry.relayMembers.filter((m) => m.lastName && m.beachNumber).map((m) => m.beachNumber!)
+      return nums.length > 0 ? nums.sort()[0] : null
+    }
+    return entry.beachNumber ?? null
+  }
+
+  // Beach heats have no meaningful lane order — sort by identifier so athletes are easy to find during the meet
+  const displayLanes = isBeach
+    ? [...allLanes].sort((a, b) => {
+        const idA = beachIdOf(a.entry)
+        const idB = beachIdOf(b.entry)
+        if (idA === null && idB === null) return a.lane - b.lane
+        if (idA === null) return 1
+        if (idB === null) return -1
+        return idA.localeCompare(idB)
+      })
+    : allLanes
+
   const ranked = [...entries]
     .filter((e) => e.finalTime && e.status !== 'DNS' && e.status !== 'DNF' && e.status !== 'DSQ')
     .sort((a, b) => parseTimeSecs(a.finalTime!) - parseTimeSecs(b.finalTime!))
@@ -1456,6 +1478,7 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
                 <thead className="sticky top-0 z-10">
                   <tr className="bg-gray-100 border-b border-gray-400 text-gray-600">
                     <th className="px-2 py-0.5 text-center w-8 font-medium border-r border-gray-300">{isBeach ? '#' : t.heats.columns.lane}</th>
+                    {isBeach && <th className="px-2 py-0.5 text-center w-16 font-medium border-r border-gray-300">{t.heats.columns.identifier}</th>}
                     <th className="px-2 py-0.5 text-left font-medium border-r border-gray-300 min-w-[160px]">{t.heats.columns.name}</th>
                     <th className="px-2 py-0.5 text-center w-10 font-medium border-r border-gray-300">{t.heats.columns.nation}</th>
                     <th className="px-2 py-0.5 text-center w-14 font-medium border-r border-gray-300">{t.heats.columns.clubCode}</th>
@@ -1469,7 +1492,7 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
                   </tr>
                 </thead>
                 <tbody>
-                  {allLanes.map(({ lane, entry }) => {
+                  {displayLanes.map(({ lane, entry }) => {
                     const isSelected = lane === selectedLane
                     const isEmpty = !entry
                     const isDragOver = dragOverLane === lane
@@ -1530,19 +1553,23 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
                         <td className={`px-2 text-center font-mono font-bold border-r border-gray-200 ${isSelected ? 'text-blue-700' : 'text-gray-500'}`}>
                           {lane}
                         </td>
+                        {isBeach && (
+                          <td className={`px-2 text-center font-mono border-r border-gray-200 ${isSelected ? 'text-gray-600' : 'text-gray-500'}`}>
+                            {entry.relayMembers && entry.relayMembers.length > 0
+                              ? entry.relayMembers.filter(m => m.lastName).map(m => m.beachNumber || '??').join('/')
+                              : entry.beachNumber ?? ''}
+                          </td>
+                        )}
                         <td className="px-2 border-r border-gray-200 font-medium">
                           {(() => {
                             if (isBeach && entry.relayMembers && entry.relayMembers.length > 0) {
                               // Relay event in beach mode (req 8.1–8.5)
                               const occupiedMembers = entry.relayMembers.filter(m => m.lastName)
                               // Build team name: custom team name or members' last names joined by "/"
-                              const teamName = entry.relayTeamName || occupiedMembers.map(m => m.lastName).join('/')
-                              // Build combined beach number string: use "??" for members without a number
-                              const beachNumberStr = occupiedMembers.map(m => m.beachNumber || '??').join('/')
-                              return beachNumberStr ? `${teamName} - ${beachNumberStr}` : teamName
+                              return entry.relayTeamName || occupiedMembers.map(m => m.lastName).join('/')
                             }
                             // Individual event or pool mode
-                            return `${entry.lastName}, ${entry.firstName}${isBeach && entry.beachNumber ? ` - ${entry.beachNumber}` : ''}`
+                            return `${entry.lastName}, ${entry.firstName}`
                           })()}
                         </td>
                         <td className={`px-2 text-center border-r border-gray-200 ${isSelected ? 'text-gray-600' : 'text-gray-500'}`}>
