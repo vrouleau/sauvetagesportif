@@ -70,6 +70,10 @@ export const meetApiElectron: MeetAPI = {
   async updateAgeGroup(agegroupId, data) {
     await ipc()?.updateAgeGroup(agegroupId, data)
   },
+  async moveAgeGroup(agegroupId, targetEventId) {
+    const result = await ipc()?.moveAgeGroup(agegroupId, targetEventId) as { ok: boolean; error?: string } | undefined
+    if (result && !result.ok) throw new Error(result.error || 'Failed to move age group')
+  },
   async getAthletes() {
     return (await ipc()?.getAthletes()) as Athlete[] ?? []
   },

@@ -29,6 +29,7 @@ from pathlib import Path
 from fastapi import APIRouter, Body, Depends, UploadFile, File, HTTPException, Request
 from fastapi.responses import Response
 from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.exc import IntegrityError
 from collections import defaultdict
 import time as _time
 
@@ -1998,6 +1999,89 @@ def update_age_group(agegroup_id: int, data: dict = Body(default={}), db: Sessio
             setattr(ag, key, data[key])
     db.commit()
     return {"ok": True}
+
+
+@router.put("/age-groups/{agegroup_id}/move", dependencies=[Depends(require_organizer_or_admin)])
+def move_age_group(agegroup_id: int, data: dict = Body(default={}), db: Session = Depends(get_db)):
+    """
+    Move an age group (and every entry registered under it) to a different
+    event of the same swim style, without losing entries. Used to split an
+    event that hosts multiple age brackets — recreating the age group under
+    a new event would orphan its swimresult rows, which are keyed by
+    (swimeventid, agegroupid).
+
+    Entries seeded into heats are unseeded as part of the move (heats are
+    per-event; moving them across events risks heat-number collisions), so
+    both the source and target events need heats regenerated afterward.
+    """
+    target_event_id = data.get("targetEventId") or data.get("target_event_id")
+    if not target_event_id:
+        raise HTTPException(400, "targetEventId required")
+
+    ag = db.query(AgeGroup).get(agegroup_id)
+    if not ag:
+        raise HTTPException(404, "Age group not found")
+
+    source_event_id = ag.swimeventid
+    if source_event_id == target_event_id:
+        return {"ok": True}
+
+    source_event = db.query(SwimEvent).get(source_event_id)
+    target_event = db.query(SwimEvent).get(target_event_id)
+    if not target_event:
+        raise HTTPException(404, "Target event not found")
+    if not source_event or source_event.swimstyleid != target_event.swimstyleid:
+        raise HTTPException(400, "Target event must be the same swim style as the age group's current event")
+
+    source_style = db.query(SwimStyle).get(source_event.swimstyleid)
+    target_style = db.query(SwimStyle).get(target_event.swimstyleid)
+    if (source_style and source_style.relaycount > 1) or (target_style and target_style.relaycount > 1):
+        raise HTTPException(400, "Moving age groups is only supported for individual events, not relays")
+
+    # Registrations in this schema aren't linked via agegroupid (that column is
+    # only populated by historical/LXF imports) — the live coach-registration
+    # flow stamps swimresult.age_code with an event-independent string code
+    # ("15-18", "Open", etc. — see _age_group_code) instead. Match on that
+    # (plus the athlete's gender, in case one event hosts the same age
+    # bracket for two genders) to find the entries that actually belong here.
+    age_code = _age_group_code(ag.agemin, ag.agemax)
+    if age_code is None:
+        raise HTTPException(400, "Cannot determine the age code for this age group")
+
+    matching_query = db.query(SwimResult).join(Member, SwimResult.athleteid == Member.membersid).filter(
+        SwimResult.swimeventid == source_event_id,
+        SwimResult.age_code == age_code,
+    )
+    if ag.gender in (GENDER_M, GENDER_F):
+        matching_query = matching_query.filter(Member.gender == ag.gender)
+
+    validated = (
+        matching_query
+        .join(Heat, SwimResult.heatid == Heat.heatid)
+        .filter(Heat.racestatus == 5)
+        .first()
+    )
+    if validated:
+        raise HTTPException(409, "Cannot move: some heats for this age group are already validated. Invalidate them first.")
+
+    matching_ids = [r.swimresultid for r in matching_query.all()]
+    if matching_ids:
+        try:
+            db.query(SwimResult).filter(SwimResult.swimresultid.in_(matching_ids)).update(
+                {SwimResult.swimeventid: target_event_id, SwimResult.heatid: None, SwimResult.lane: None},
+                synchronize_session=False,
+            )
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(409, "Cannot move: an athlete is already registered for this age bracket on the target event")
+
+    from sqlalchemy import func
+    max_sort = db.query(func.max(AgeGroup.sortcode)).filter(AgeGroup.swimeventid == target_event_id).scalar() or 0
+    ag.swimeventid = target_event_id
+    ag.sortcode = max_sort + 1
+
+    db.commit()
+    return {"ok": True, "movedRegistrations": len(matching_ids)}
 
 
 @router.delete("/age-groups/{agegroup_id}", dependencies=[Depends(require_organizer_or_admin)])

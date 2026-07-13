@@ -890,6 +890,27 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
     }
   }
 
+  async function handleMoveAgeGroup(agegroupId: number, targetEventId: number) {
+    if (!api.moveAgeGroup) return
+    try {
+      await api.moveAgeGroup(agegroupId, targetEventId)
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : String(err))
+      return
+    }
+    const updatedSessions = await api.getSessions()
+    setLocalSessions(updatedSessions)
+    // Re-select the moved age group under its new event
+    for (const s of updatedSessions) {
+      const ev = s.events.find((e: CompetitionEvent) => e.id === targetEventId)
+      if (ev) {
+        const grp = ev.ageGroups.find((g: AgeGroup) => g.id === agegroupId)
+        if (grp) setSelected({ type: 'agegroup', group: grp, event: ev })
+        break
+      }
+    }
+  }
+
   // Contextual toolbar button enable logic
   const canAddSession = selected.type === 'competition' || selected.type === 'session'
   const canAddEvent = selected.type === 'session' || selected.type === 'event'
@@ -1100,7 +1121,7 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
 
         {/* ── Right: properties panel ── */}
         <div className="flex-1 overflow-y-auto bg-white">
-          <PropertiesPanel selected={selected} onUpdateSession={handleUpdateSession} onUpdateEvent={handleUpdateEvent} onMeetNameChange={setMeetName} configVersion={configVersion} />
+          <PropertiesPanel selected={selected} sessions={localSessions} onUpdateSession={handleUpdateSession} onUpdateEvent={handleUpdateEvent} onMoveAgeGroup={handleMoveAgeGroup} onMeetNameChange={setMeetName} configVersion={configVersion} />
         </div>
       </div>
 
@@ -1423,7 +1444,7 @@ function ContextMenu({
 
 // ─── Properties Panel ─────────────────────────────────────────────────────────
 
-function PropertiesPanel({ selected, onUpdateSession, onUpdateEvent, onMeetNameChange, configVersion }: { selected: SelectedItem; onUpdateSession: (sessionId: number, data: Record<string, unknown>) => void; onUpdateEvent: (eventId: number, sessionId: number, data: Record<string, unknown>) => void; onMeetNameChange: (name: string) => void; configVersion: number }) {
+function PropertiesPanel({ selected, sessions, onUpdateSession, onUpdateEvent, onMoveAgeGroup, onMeetNameChange, configVersion }: { selected: SelectedItem; sessions: Session[]; onUpdateSession: (sessionId: number, data: Record<string, unknown>) => void; onUpdateEvent: (eventId: number, sessionId: number, data: Record<string, unknown>) => void; onMoveAgeGroup: (agegroupId: number, targetEventId: number) => void; onMeetNameChange: (name: string) => void; configVersion: number }) {
   if (selected.type === 'competition') {
     return <CompetitionPropertiesPanel key={configVersion} onMeetNameChange={onMeetNameChange} />
   }
@@ -1442,12 +1463,12 @@ function PropertiesPanel({ selected, onUpdateSession, onUpdateEvent, onMeetNameC
 
   // Age group
   const { group, event } = selected as { group: AgeGroup; event: CompetitionEvent }
-  return <AgeGroupPropertiesPanel group={group} event={event} />
+  return <AgeGroupPropertiesPanel group={group} event={event} sessions={sessions} onMoveAgeGroup={onMoveAgeGroup} />
 }
 
 // ─── Age Group Properties Panel (editable) ───────────────────────────────────
 
-function AgeGroupPropertiesPanel({ group, event }: { group: AgeGroup; event: CompetitionEvent }) {
+function AgeGroupPropertiesPanel({ group, event, sessions, onMoveAgeGroup }: { group: AgeGroup; event: CompetitionEvent; sessions: Session[]; onMoveAgeGroup: (agegroupId: number, targetEventId: number) => void }) {
   const { t } = useLang()
   const api = useApi()
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
@@ -1455,13 +1476,30 @@ function AgeGroupPropertiesPanel({ group, event }: { group: AgeGroup; event: Com
   const [maxAge, setMaxAge] = useState<number | null>(group.maxAge)
   const [gender, setGender] = useState(group.gender)
   const [numHeats, setNumHeats] = useState(group.numHeats)
+  const [moveTargetId, setMoveTargetId] = useState<number | ''>('')
 
   useEffect(() => {
     setMinAge(group.minAge)
     setMaxAge(group.maxAge)
     setGender(group.gender)
     setNumHeats(group.numHeats)
+    setMoveTargetId('')
   }, [group.id, group.minAge, group.maxAge, group.gender, group.numHeats])
+
+  // Other events of the same swim style — valid move targets for this age group
+  const moveCandidates = sessions
+    .flatMap((s) => s.events.map((e) => ({ event: e, sessionNumber: s.number })))
+    .filter(({ event: e }) => !e.isAdmin && e.id !== event.id && e.swimstyleId != null && e.swimstyleId === event.swimstyleId)
+
+  function handleMoveClick() {
+    if (!moveTargetId) return
+    const target = moveCandidates.find(({ event: e }) => e.id === moveTargetId)
+    if (!target) return
+    const groupLabel = group.name || ageRangeLabel(group.minAge, group.maxAge, t.events.genderLabel(group.gender))
+    const eventLabel = `${target.event.number}. ${target.event.nameFr}`
+    if (!window.confirm(t.events.props.moveConfirm(groupLabel, eventLabel))) return
+    onMoveAgeGroup(group.id, moveTargetId)
+  }
 
   function toggleSection(title: string) {
     setCollapsed((prev) => {
@@ -1589,6 +1627,33 @@ function AgeGroupPropertiesPanel({ group, event }: { group: AgeGroup; event: Com
                   </select>
                 </td>
               </tr>
+              {moveCandidates.length > 0 && (
+                <tr className="border-b border-gray-100 hover:bg-gray-50">
+                  <td className="px-4 py-0.5 text-gray-600 w-64">{t.events.props.moveToEvent}</td>
+                  <td className="px-2 py-0.5 flex items-center gap-1">
+                    <select
+                      className="border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
+                      value={moveTargetId}
+                      onChange={(e) => setMoveTargetId(e.target.value ? Number(e.target.value) : '')}
+                    >
+                      <option value="">{t.events.props.moveNoTarget}</option>
+                      {moveCandidates.map(({ event: e, sessionNumber }) => (
+                        <option key={e.id} value={e.id}>
+                          {sessionNumber}.{e.number} — {e.nameFr}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      disabled={!moveTargetId}
+                      onClick={handleMoveClick}
+                      className="px-2 py-0 border border-gray-300 rounded text-xs bg-white hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      {t.events.props.moveButton}
+                    </button>
+                  </td>
+                </tr>
+              )}
             </>
           )}
 

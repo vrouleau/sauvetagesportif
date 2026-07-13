@@ -146,6 +146,8 @@ export interface MeetAPI {
   createAgeGroup(eventId: number, name: string, minAge: number, maxAge: number | null, gender: string): Promise<{ id: number }>
   deleteAgeGroup(agegroupId: number): Promise<void>
   updateAgeGroup(agegroupId: number, data: Record<string, unknown>): Promise<void>
+  /** Move an age group (and all its entries) to a different event of the same swim style. */
+  moveAgeGroup?(agegroupId: number, targetEventId: number): Promise<void>
 
   // Athletes
   getAthletes(): Promise<Athlete[]>

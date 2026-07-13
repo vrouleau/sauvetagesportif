@@ -90,6 +90,15 @@ export const meetApiHttp = {
     await api.put(`/age-groups/${agegroupId}`, data)
   },
 
+  async moveAgeGroup(agegroupId, targetEventId) {
+    try {
+      await api.put(`/age-groups/${agegroupId}/move`, { targetEventId })
+    } catch (err) {
+      if (err.detail) err.message = err.detail
+      throw err
+    }
+  },
+
   async getAthletes() {
     const r = await api.get('/athletes', { headers: { 'X-Club-Pin': localStorage.getItem('pin') } })
     return (r.data || []).map(a => ({

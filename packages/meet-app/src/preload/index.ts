@@ -116,6 +116,8 @@ const api = {
       ipcRenderer.invoke('db:delete-age-group', agegroupId),
     updateAgeGroup: (agegroupId: number, data: unknown) =>
       ipcRenderer.invoke('db:update-age-group', agegroupId, data),
+    moveAgeGroup: (agegroupId: number, targetEventId: number) =>
+      ipcRenderer.invoke('db:move-age-group', agegroupId, targetEventId),
     getMeetConfig: () =>
       ipcRenderer.invoke('db:get-meet-config'),
     setMeetConfig: (entries: Record<string, { type: string; value: string }>) =>

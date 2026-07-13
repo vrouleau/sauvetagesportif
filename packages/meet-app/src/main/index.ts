@@ -34,7 +34,7 @@ import {
   createSession, deleteSession, updateSession,
   createBreak,
   createEvent, deleteEvent, updateEvent,
-  createAgeGroup, deleteAgeGroup, updateAgeGroup,
+  createAgeGroup, deleteAgeGroup, updateAgeGroup, moveAgeGroup,
   saveAthlete,
   flushMeet,
   generateHeats,
@@ -240,6 +240,15 @@ ipcMain.handle('db:delete-age-group', (_event, agegroupId: number) =>
 ipcMain.handle('db:update-age-group', (_event, agegroupId: number, data: AgeGroupUpdate) =>
   updateAgeGroup(agegroupId, data).then(() => ({ ok: true }))
 )
+
+ipcMain.handle('db:move-age-group', async (_event, agegroupId: number, targetEventId: number) => {
+  try {
+    await moveAgeGroup(agegroupId, targetEventId)
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+})
 
 ipcMain.handle('db:get-meet-config', () => getMeetValues())
 

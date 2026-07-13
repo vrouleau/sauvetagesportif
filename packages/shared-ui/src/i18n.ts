@@ -88,6 +88,11 @@ const fr = {
       countForMedals: 'Tenir compte pour statistique médailles',
       usedForCombined: 'Utiliser pour les épreuves combinées',
       numHeats: 'Nombre de séries',
+      moveToEvent: "Déplacer vers une autre épreuve",
+      moveButton: 'Déplacer',
+      moveNoTarget: '— choisir —',
+      moveConfirm: (groupLabel: string, eventLabel: string) =>
+        `Déplacer "${groupLabel}" vers l'épreuve ${eventLabel} ? Les séries déjà générées pour ce groupe d'âge seront réinitialisées.`,
       alwaysSwimPrelims: 'Toujours nager les éliminatoires',
       advanceByTime: 'Avance en finale si temps de qualific...',
       laneOrderFinals: 'Sort order lanes in finals',
@@ -412,6 +417,11 @@ const en = {
       countForMedals: 'Count for medal statistics',
       usedForCombined: 'Used for combined events',
       numHeats: 'Number of heats',
+      moveToEvent: 'Move to another event',
+      moveButton: 'Move',
+      moveNoTarget: '— choose —',
+      moveConfirm: (groupLabel: string, eventLabel: string) =>
+        `Move "${groupLabel}" to event ${eventLabel}? Heats already generated for this age group will be reset.`,
       alwaysSwimPrelims: 'Always swim prelims',
       advanceByTime: 'Advance to final if qualifying time...',
       laneOrderFinals: 'Lane order in finals',

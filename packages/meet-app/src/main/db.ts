@@ -1364,6 +1364,71 @@ export async function deleteAgeGroup(agegroupId: number): Promise<void> {
   regeneratePointScores(db)
 }
 
+/**
+ * Move an age group (and every entry registered under it) from its current
+ * event to a different event of the same swim style. Used to split an event
+ * that hosts multiple age brackets (e.g. move "19 ans et plus" out of an
+ * event it shares with "15-18 ans" into its own event) without losing
+ * entries — recreating the age group elsewhere would orphan its swimresult
+ * rows since they're keyed by (swimeventid, agegroupid).
+ *
+ * Entries seeded into heats are unseeded as part of the move (heats are
+ * per-event; moving them across events risks heat-number collisions), so
+ * both the source and target events need "Générer séries" re-run afterward.
+ */
+export async function moveAgeGroup(agegroupId: number, targetEventId: number, injectedDb?: ReturnType<typeof getLocalDb>): Promise<void> {
+  const db = injectedDb ?? getLocalDb()
+
+  const ag = db.prepare(`SELECT agegroupid, swimeventid FROM agegroup WHERE agegroupid=?`).get(agegroupId) as
+    { agegroupid: number; swimeventid: number } | undefined
+  if (!ag) throw new Error('Age group not found')
+
+  const sourceEventId = ag.swimeventid
+  if (sourceEventId === targetEventId) return
+
+  const sourceEvent = db.prepare(
+    `SELECT ss.swimstyleid, ss.relaycount FROM swimevent e JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid WHERE e.swimeventid=?`
+  ).get(sourceEventId) as { swimstyleid: number; relaycount: number } | undefined
+  const targetEvent = db.prepare(
+    `SELECT ss.swimstyleid, ss.relaycount FROM swimevent e JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid WHERE e.swimeventid=?`
+  ).get(targetEventId) as { swimstyleid: number; relaycount: number } | undefined
+
+  if (!targetEvent) throw new Error('Target event not found')
+  if (!sourceEvent || sourceEvent.swimstyleid !== targetEvent.swimstyleid) {
+    throw new Error('Target event must be the same swim style as the age group\'s current event')
+  }
+  if (sourceEvent.relaycount > 1 || targetEvent.relaycount > 1) {
+    throw new Error('Moving age groups is only supported for individual events, not relays')
+  }
+
+  const validated = db.prepare(`
+    SELECT 1 FROM swimresult r JOIN heat h ON r.heatid = h.heatid
+    WHERE r.swimeventid=? AND r.agegroupid=? AND h.racestatus = 5
+    LIMIT 1
+  `).get(sourceEventId, agegroupId)
+  if (validated) {
+    throw new Error('Cannot move: some heats for this age group are already validated. Invalidate them first.')
+  }
+
+  const move = db.transaction(() => {
+    // Unseed affected entries — heats are per-event, so existing heat/lane
+    // assignments in the source event don't carry over to the target event.
+    db.prepare(`
+      UPDATE swimresult SET heatid=NULL, lane=NULL, swimeventid=?
+      WHERE swimeventid=? AND agegroupid=?
+    `).run(targetEventId, sourceEventId, agegroupId)
+
+    const sortRow = db.prepare(`SELECT MAX(sortcode) AS maxsort FROM agegroup WHERE swimeventid=?`).get(targetEventId) as { maxsort: number | null }
+    const sortcode = (sortRow.maxsort ?? 0) + 1
+
+    db.prepare(`UPDATE agegroup SET swimeventid=?, sortcode=? WHERE agegroupid=?`).run(targetEventId, sortcode, agegroupId)
+  })
+  move()
+
+  regenerateCombinedEvents(db)
+  regeneratePointScores(db)
+}
+
 // ── Write: athlete ────────────────────────────────────────────────────────────
 
 export async function saveAthlete(a: {
