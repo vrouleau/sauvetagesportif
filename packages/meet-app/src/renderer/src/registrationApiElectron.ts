@@ -50,7 +50,7 @@ interface LocalAthlete {
   clubName: string
   licence?: string
   handicapex?: string
-  entries: Array<{ eventId: number; eventName: string; category: string; entryTime?: string }>
+  entries: Array<{ eventId: number; eventName: string; category: string; agegroupId: number | null; entryTime?: string }>
 }
 
 interface LocalSession {
@@ -237,8 +237,12 @@ export const registrationApiElectron: RegistrationAPI = {
 
         for (const ag of event.ageGroups) {
           const ageCode = ageCodeFromGroup(ag.name, ag.minAge, ag.maxAge)
-          // Check if athlete is registered for this event
-          const entry = athlete.entries.find(e => e.eventId === event.id)
+          // Check if athlete is registered for this event, in this specific age group.
+          // An event can host multiple age-group brackets (e.g. "15-18" and "Open"), so
+          // matching by eventId alone would mark every bracket as registered.
+          const entry = athlete.entries.find(e =>
+            e.eventId === event.id && (e.agegroupId == null || e.agegroupId === ag.id)
+          )
           style.categories.push({
             age_code: ageCode,
             event_id: event.id,

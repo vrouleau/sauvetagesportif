@@ -292,6 +292,31 @@ ipcMain.handle('db:get-dsq-items', () => {
   }
 })
 
+// Mirrors ageCodeFromGroup() in registrationApiElectron.ts — used to resolve the specific
+// age-group bracket the renderer's category dropdown asked for, so a user's explicit category
+// choice (e.g. "Open" vs "15-18" on the same event) is honored instead of silently overridden.
+function ageGroupCodeFor(name: string | null, agemin: number | null, agemax: number | null): string {
+  if (name) {
+    if (/10/.test(name) && /under|moins|-/.test(name.toLowerCase())) return '10-'
+    if (/11.*12/.test(name)) return '11-12'
+    if (/13.*14/.test(name)) return '13-14'
+    if (/15.*18/.test(name)) return '15-18'
+    if (/master/i.test(name)) return 'Masters'
+  }
+  if (agemin != null && agemax != null) {
+    if (agemax <= 10) return '10-'
+    if (agemin === 11 && agemax === 12) return '11-12'
+    if (agemin === 13 && agemax === 14) return '13-14'
+    if (agemin === 15 && agemax <= 18) return '15-18'
+    if (agemin >= 19) return 'Open'
+  }
+  if (agemin != null && (agemax == null || agemax < 0 || agemax >= 99)) {
+    if (agemin >= 19) return 'Open'
+    if (agemin >= 15) return '15-18'
+  }
+  return 'Open'
+}
+
 ipcMain.handle('db:register', (_event, data: { athlete_id: number; event_id: number; entry_time_ms: number | null; age_code: string }) => {
   const db = getLocalDb()
   // Check if already registered
@@ -304,30 +329,38 @@ ipcMain.handle('db:register', (_event, data: { athlete_id: number; event_id: num
     return { ok: true, id: existing.swimresultid }
   }
   // Find the best matching age group for this event
-  // Try to match by age range based on athlete's birthdate
   const athlete = db.prepare(`SELECT birthdate FROM athlete WHERE athleteid = ?`).get(data.athlete_id) as { birthdate: string | number | null } | undefined
   let agegroupId: number | null = null
 
   const ageGroups = db.prepare(
-    `SELECT agegroupid, agemin, agemax FROM agegroup WHERE swimeventid = ? ORDER BY sortcode`
-  ).all(data.event_id) as Array<{ agegroupid: number; agemin: number | null; agemax: number | null }>
+    `SELECT agegroupid, name, agemin, agemax FROM agegroup WHERE swimeventid = ? ORDER BY sortcode`
+  ).all(data.event_id) as Array<{ agegroupid: number; name: string | null; agemin: number | null; agemax: number | null }>
 
   if (ageGroups.length === 1) {
     agegroupId = ageGroups[0].agegroupid
-  } else if (ageGroups.length > 1 && athlete?.birthdate) {
-    // Calculate athlete age
-    const bd = typeof athlete.birthdate === 'string' ? new Date(athlete.birthdate) : null
-    if (bd && !isNaN(bd.getTime())) {
-      const now = new Date()
-      let age = now.getFullYear() - bd.getFullYear()
-      if (now.getMonth() < bd.getMonth() || (now.getMonth() === bd.getMonth() && now.getDate() < bd.getDate())) age--
-      // Find matching age group
-      for (const ag of ageGroups) {
-        const min = ag.agemin ?? 0
-        const max = ag.agemax == null || ag.agemax < 0 ? 999 : ag.agemax
-        if (age >= min && age <= max) {
-          agegroupId = ag.agegroupid
-          break
+  } else if (ageGroups.length > 1) {
+    // Honor the category the user explicitly picked in the UI, if it matches one of this
+    // event's brackets — don't silently override it with a recomputed guess.
+    const requested = data.age_code
+      ? ageGroups.find(ag => ageGroupCodeFor(ag.name, ag.agemin, ag.agemax) === data.age_code)
+      : undefined
+    if (requested) {
+      agegroupId = requested.agegroupid
+    } else if (athlete?.birthdate) {
+      // Fall back to matching by age range based on athlete's birthdate
+      const bd = typeof athlete.birthdate === 'string' ? new Date(athlete.birthdate) : null
+      if (bd && !isNaN(bd.getTime())) {
+        const now = new Date()
+        let age = now.getFullYear() - bd.getFullYear()
+        if (now.getMonth() < bd.getMonth() || (now.getMonth() === bd.getMonth() && now.getDate() < bd.getDate())) age--
+        // Find matching age group
+        for (const ag of ageGroups) {
+          const min = ag.agemin ?? 0
+          const max = ag.agemax == null || ag.agemax < 0 ? 999 : ag.agemax
+          if (age >= min && age <= max) {
+            agegroupId = ag.agegroupid
+            break
+          }
         }
       }
     }

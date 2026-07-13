@@ -397,7 +397,7 @@ export interface AthleteRow {
   birthPlace?: string
   handicapex?: string
   beachNumber?: string
-  entries: Array<{ eventId: number; eventName: string; category: string; entryTime?: string }>
+  entries: Array<{ eventId: number; eventName: string; category: string; agegroupId: number | null; entryTime?: string }>
 }
 
 // ── Query: all sessions + events + heats + entries for HeatsPage ──────────────
@@ -804,7 +804,7 @@ export async function getAthletes(): Promise<AthleteRow[]> {
   const { clause: aph, params: aphParams } = inClause(athleteIds)
 
   const entries = db.prepare(`
-    SELECT r.athleteid, r.swimeventid, r.entrytime,
+    SELECT r.athleteid, r.swimeventid, r.entrytime, r.agegroupid,
            COALESCE(NULLIF(ag.name, ''), CASE WHEN ag.agemin IS NOT NULL THEN CAST(ag.agemin AS TEXT) || '-' || COALESCE(CAST(ag.agemax AS TEXT), '+') END, '???') AS agegroupname,
            e.eventnumber,
            ss.distance, ss.stroke, ss.name AS stylename
@@ -815,7 +815,7 @@ export async function getAthletes(): Promise<AthleteRow[]> {
     WHERE r.athleteid IN (${aph})
     ORDER BY r.athleteid, e.eventnumber
   `).all(...aphParams) as Array<{
-    athleteid: number; swimeventid: number; entrytime: number | null
+    athleteid: number; swimeventid: number; entrytime: number | null; agegroupid: number | null
     agegroupname: string | null; eventnumber: number | null
     distance: number | null; stroke: number | null; stylename: string | null
   }>
@@ -831,6 +831,7 @@ export async function getAthletes(): Promise<AthleteRow[]> {
         ? (e.stylename || eventName(e.stylename, e.stroke))
         : `${e.distance ?? '?'}m ${eventName(e.stylename, e.stroke)}`.trim(),
       category: e.agegroupname ?? '',
+      agegroupId: e.agegroupid,
       entryTime: msToDisplay(e.entrytime),
     })
   }
