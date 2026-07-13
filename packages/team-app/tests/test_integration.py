@@ -1259,6 +1259,28 @@ class TestExportRegistrationsLxf:
         finally:
             delete_registration(reg_id, admin_headers)
 
+    def test_unregistered_athlete_still_included(self, clubs, admin_headers):
+        """Athletes with zero registrations must still appear as ATHLETE elements,
+        so meet-app can register late arrivals straight from the imported roster."""
+        club_id = clubs[0]["id"]
+        r = requests.post(
+            f"{BASE_URL}/api/athletes",
+            json={"first_name": "LateArrival", "last_name": "Tester",
+                  "gender": "M", "club_id": club_id},
+            headers=admin_headers, timeout=10,
+        )
+        r.raise_for_status()
+        ath_id = r.json()["id"]
+        try:
+            lxf = export_registrations_lxf(admin_headers)
+            lef = lxf.read(next(n for n in lxf.namelist() if n.endswith(".lef"))).decode()
+            assert f'athleteid="{ath_id}"' in lef, (
+                "Unregistered athlete missing from registrations-lxf export"
+            )
+        finally:
+            requests.delete(f"{BASE_URL}/api/athletes/{ath_id}",
+                            headers=admin_headers, timeout=10)
+
 
 # ---------------------------------------------------------------------------
 # /api/export/meet-lxf  (meet structure download)

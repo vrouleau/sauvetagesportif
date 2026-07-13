@@ -136,6 +136,15 @@ def generate_lxf(db: Session) -> bytes:
         clubs_map[club.clubsid]["athletes"].setdefault(member.membersid, {"athlete": member, "entries": []})
         clubs_map[club.clubsid]["athletes"][member.membersid]["entries"].append(reg)
 
+    # Include every club member, not just registered ones, so late arrivals on meet
+    # day can be added straight from the roster in meet-app without a re-upload.
+    for club in db.query(TeamClub).options(joinedload(TeamClub.members)).all():
+        if not club.members:
+            continue
+        club_data = clubs_map.setdefault(club.clubsid, {"club": club, "athletes": {}})
+        for member in club.members:
+            club_data["athletes"].setdefault(member.membersid, {"athlete": member, "entries": []})
+
     # Build XML
     root = ET.Element("LENEX", version="3.0")
     meets = ET.SubElement(root, "MEETS")
