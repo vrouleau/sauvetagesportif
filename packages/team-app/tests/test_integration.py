@@ -2625,3 +2625,74 @@ class TestHistoricalMeetImport:
                          headers=coach_headers, timeout=10)
         assert r.status_code == 403
 
+
+# ---------------------------------------------------------------------------
+# New Meet — must not wipe archived (historical) meets
+# ---------------------------------------------------------------------------
+
+class TestNewMeetPreservesHistory:
+    """Regression test for a prod incident: /api/admin/new-meet used to delete
+    the entire `meets` table with no meetstate filter, cascading away every
+    archived (meetstate=3) meet's results/events/sessions while starting the
+    next meet cycle. Clubs/athletes were untouched (they're repopulated by
+    ongoing registration), which masked the loss until someone went looking
+    for old results."""
+
+    @pytest.fixture(autouse=True, scope="class")
+    def _restore_current_meet(self, admin_headers):
+        """Put the normal current meet back afterward so later test classes
+        (and other test files, which share the session-scoped stack) aren't
+        affected by the fresh empty meet this class creates."""
+        yield
+        with open(MEET_TEMPLATE, "rb") as f:
+            requests.post(f"{BASE_URL}/api/upload/meet",
+                          files={"file": ("meet.lxf", f, "application/octet-stream")},
+                          headers=admin_headers, timeout=60)
+        if ENTRIES_FILE.exists():
+            with open(ENTRIES_FILE, "rb") as f:
+                requests.post(f"{BASE_URL}/api/upload/entries",
+                              files={"file": ("entries.lxf", f, "application/octet-stream")},
+                              headers=admin_headers, timeout=60)
+
+    @pytest.fixture(scope="class")
+    def results_lxf_bytes(self, results_path) -> bytes:
+        return results_path.read_bytes()
+
+    def test_new_meet_keeps_historical_results(self, results_lxf_bytes, admin_headers):
+        """Archiving a historical meet, then starting a new meet cycle, must
+        leave the archived meet and its results in place."""
+        r = requests.post(
+            f"{BASE_URL}/api/admin/import-historical?force=true",
+            files={"file": ("results.lxf", results_lxf_bytes, "application/octet-stream")},
+            headers=admin_headers, timeout=30,
+        )
+        assert r.status_code == 200, f"Historical import failed: {r.text}"
+        meet_id = r.json()["meet_id"]
+
+        before = requests.get(f"{BASE_URL}/api/admin/historical-meets",
+                              headers=admin_headers, timeout=10)
+        before.raise_for_status()
+        before_entry = next((m for m in before.json() if m["id"] == meet_id), None)
+        assert before_entry is not None
+        assert before_entry["resultCount"] > 0
+
+        r = requests.post(f"{BASE_URL}/api/admin/new-meet", json={"meet_type": "pool"},
+                          headers=admin_headers, timeout=60)
+        assert r.status_code == 200, f"new-meet failed: {r.text}"
+
+        after = requests.get(f"{BASE_URL}/api/admin/historical-meets",
+                             headers=admin_headers, timeout=10)
+        after.raise_for_status()
+        after_entry = next((m for m in after.json() if m["id"] == meet_id), None)
+        assert after_entry is not None, "Historical meet vanished after /api/admin/new-meet"
+        assert after_entry["resultCount"] == before_entry["resultCount"], (
+            "Historical results were lost after starting a new meet"
+        )
+
+    def test_new_meet_keeps_swimstyle_catalog_usable(self, admin_headers):
+        """SwimStyle rows are upserted by id, not wiped, so both the surviving
+        historical results and the fresh meet keep valid style references."""
+        r = requests.get(f"{BASE_URL}/api/swim-styles", headers=admin_headers, timeout=10)
+        r.raise_for_status()
+        assert len(r.json()) > 0
+

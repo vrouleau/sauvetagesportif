@@ -943,29 +943,36 @@ def create_new_meet(data: dict = Body(default={}), db: Session = Depends(get_db)
     except Exception as e:
         raise HTTPException(400, f"Invalid template .lxf: {e}")
 
-    # Wipe existing data
+    # Wipe existing data — current (non-historical) meet only. Archived meets
+    # (meetstate=3) and their results/events/sessions must survive, same as
+    # the organizer's end-of-meet reset (_reset_for_next_meet).
     db.query(SwimResult).delete()
     db.query(AgeGroup).delete()
     db.query(SwimEvent).delete()
     db.query(SwimSession).delete()
     # Clear Team Manager event tables BEFORE swimstyle (FK dependency)
-    from ..models_team import Event as TeamEvent, Session as TeamSession, Meet as TeamMeet
-    db.query(TeamEvent).delete()
-    db.query(TeamSession).delete()
-    db.query(TeamMeet).delete()
-    db.query(SwimStyle).delete()
+    from ..models_team import Event as TeamEvent, Session as TeamSession, Meet as TeamMeet, MemberMeet as TeamMemberMeet
+    current_ids = [r for r, in db.query(TeamMeet.meetsid).filter(TeamMeet.meetstate != 3).all()]
+    if current_ids:
+        db.query(TeamMemberMeet).filter(TeamMemberMeet.meetsid.in_(current_ids)).delete(synchronize_session=False)
+        db.query(TeamEvent).filter(TeamEvent.meetsid.in_(current_ids)).delete(synchronize_session=False)
+        db.query(TeamSession).filter(TeamSession.meetsid.in_(current_ids)).delete(synchronize_session=False)
+        db.query(TeamMeet).filter(TeamMeet.meetsid.in_(current_ids)).delete(synchronize_session=False)
     db.flush()
 
     # Import from template — this seeds the SwimStyle catalog (each style is declared via
     # a stub EVENT, since Lenex has no standalone style catalog outside of events) but we
     # don't want the template's stub session/events themselves in the new meet.
+    # SwimStyle rows are upserted by ID in _load_from_parsed (never deleted here) —
+    # historical Event/Result rows keep referencing the same style IDs across meets.
     from ..events import _load_from_parsed
     _load_from_parsed(db, meet)
+    new_meetsid = int(_get_config(db, "current_meetsid"))
     db.query(AgeGroup).delete()
     db.query(SwimEvent).delete()
     db.query(SwimSession).delete()
-    db.query(TeamEvent).delete()
-    db.query(TeamSession).delete()
+    db.query(TeamEvent).filter(TeamEvent.meetsid == new_meetsid).delete(synchronize_session=False)
+    db.query(TeamSession).filter(TeamSession.meetsid == new_meetsid).delete(synchronize_session=False)
     db.flush()
 
     # Regenerate point scores after loading event structure
