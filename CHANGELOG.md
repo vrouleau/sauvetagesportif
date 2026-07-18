@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.38] - 2026-07-18
+
+### Other
+
+- Add new-swimstyle confirmation on LXF import; fix historical-data-wipe and entries-mismatch bugs (`f6b3f42`)
+- Fix /api/admin/new-meet wiping archived historical meets (`cfb29a5`)
+
 ## [0.3.37] - 2026-07-13
 
 ### Other
