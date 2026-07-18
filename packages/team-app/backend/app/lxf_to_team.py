@@ -93,12 +93,16 @@ def _read_lef_xml(content: bytes) -> ET.Element:
     return ET.fromstring(xml_bytes)
 
 
-def import_lxf_as_meet(db: DbSession, content: bytes) -> dict:
+def import_lxf_as_meet(db: DbSession, content: bytes, force: bool = False) -> dict:
     """Import a results .lxf as a historical meet in the Team Manager schema.
 
     If a completed meet with the same name already exists, its results are
     replaced (events/sessions/results deleted and re-imported).  Clubs and
     members are always merged by code/license rather than recreated.
+
+    If the file references swimstyle ids not already in the local catalog,
+    returns {"needs_force": True, ...} instead of importing — the caller
+    should surface a confirmation and retry with force=True.
 
     Returns counts of imported entities.
     """
@@ -106,6 +110,26 @@ def import_lxf_as_meet(db: DbSession, content: bytes) -> dict:
     meet_el = root.find(".//MEET")
     if meet_el is None:
         raise ValueError("No MEET element found in LENEX file")
+
+    if not force:
+        from .swimstyle_check import find_new_swimstyles
+
+        def _to_int(s):
+            try:
+                return int(s)
+            except (TypeError, ValueError):
+                return None
+
+        new_styles = find_new_swimstyles(db, (
+            (_to_int(ss.get("swimstyleid")), ss.get("name"), _to_int(ss.get("distance")))
+            for ss in root.iter("SWIMSTYLE")
+        ))
+        if new_styles:
+            return {
+                "needs_force": True,
+                "warning": f"{len(new_styles)} swimstyle id(s) in this file are not in the local catalog.",
+                "new_swimstyles": new_styles,
+            }
 
     # ── Meet metadata ─────────────────────────────────────────────────────────
     meet_name = meet_el.get("name") or "Imported Meet"

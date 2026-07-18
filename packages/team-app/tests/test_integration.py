@@ -530,7 +530,7 @@ class TestValidation:
         from pathlib import Path
         meet_path = Path(__file__).resolve().parent / "fixtures" / "meet_template.lxf"
         with open(meet_path, "rb") as f:
-            r = requests.post(f"{BASE_URL}/api/upload/meet",
+            r = requests.post(f"{BASE_URL}/api/upload/meet?force=true",
                               files={"file": ("meet.lxf", f, "application/octet-stream")},
                               headers=admin_headers, timeout=60)
         r.raise_for_status()
@@ -1046,6 +1046,8 @@ class TestSwimStyles:
         r = requests.get(f"{BASE_URL}/api/swim-styles", timeout=10)
         r.raise_for_status()
         for s in r.json():
+            if s["id"] == 530:
+                continue  # SERC is judged, not measured — no distance in the real template
             assert s["distance"] > 0, f"Style {s['id']} has invalid distance {s['distance']}"
 
     def test_swim_styles_have_names(self, uploaded):
@@ -1660,7 +1662,7 @@ class TestLiveNotifications:
         meet_path = Path(__file__).resolve().parent / "fixtures" / "meet_template.lxf"
         entries_path = Path(__file__).resolve().parent / "fixtures" / "test_entries.lxf"
         with open(meet_path, "rb") as f:
-            r = requests.post(f"{BASE_URL}/api/upload/meet",
+            r = requests.post(f"{BASE_URL}/api/upload/meet?force=true",
                               files={"file": ("meet.lxf", f, "application/octet-stream")},
                               headers=admin_headers, timeout=60)
             assert r.status_code == 200
@@ -2052,7 +2054,7 @@ class TestRelayTeamComposition:
         meet_path = Path(__file__).resolve().parent / "fixtures" / "meet_template.lxf"
         entries_path = Path(__file__).resolve().parent / "fixtures" / "test_entries.lxf"
         with open(meet_path, "rb") as f:
-            r = requests.post(f"{BASE_URL}/api/upload/meet",
+            r = requests.post(f"{BASE_URL}/api/upload/meet?force=true",
                               files={"file": ("meet.lxf", f, "application/octet-stream")},
                               headers=admin_headers, timeout=60)
             assert r.status_code == 200
@@ -2463,7 +2465,7 @@ class TestHistoricalMeetImport:
         meet_path = Path(__file__).resolve().parent / "fixtures" / "meet_template.lxf"
         entries_path = Path(__file__).resolve().parent / "fixtures" / "test_entries.lxf"
         with open(meet_path, "rb") as f:
-            r = requests.post(f"{BASE_URL}/api/upload/meet",
+            r = requests.post(f"{BASE_URL}/api/upload/meet?force=true",
                               files={"file": ("meet.lxf", f, "application/octet-stream")},
                               headers=admin_headers, timeout=60)
             assert r.status_code == 200
@@ -2645,7 +2647,7 @@ class TestNewMeetPreservesHistory:
         affected by the fresh empty meet this class creates."""
         yield
         with open(MEET_TEMPLATE, "rb") as f:
-            requests.post(f"{BASE_URL}/api/upload/meet",
+            requests.post(f"{BASE_URL}/api/upload/meet?force=true",
                           files={"file": ("meet.lxf", f, "application/octet-stream")},
                           headers=admin_headers, timeout=60)
         if ENTRIES_FILE.exists():
@@ -2695,4 +2697,243 @@ class TestNewMeetPreservesHistory:
         r = requests.get(f"{BASE_URL}/api/swim-styles", headers=admin_headers, timeout=10)
         r.raise_for_status()
         assert len(r.json()) > 0
+
+
+# ---------------------------------------------------------------------------
+# Upload Meet — must not wipe archived (historical) meets either
+# ---------------------------------------------------------------------------
+
+class TestUploadMeetPreservesHistory:
+    """Same regression as TestNewMeetPreservesHistory, but for the far more
+    routine 'Upload meet .lxf' flow (/api/upload/meet) — every meet cycle
+    starts with an organizer re-uploading the structure, so this path is
+    even more likely to hit than /api/admin/new-meet."""
+
+    @pytest.fixture(autouse=True, scope="class")
+    def _restore_current_meet(self, admin_headers):
+        yield
+        with open(MEET_TEMPLATE, "rb") as f:
+            requests.post(f"{BASE_URL}/api/upload/meet?force=true",
+                          files={"file": ("meet.lxf", f, "application/octet-stream")},
+                          headers=admin_headers, timeout=60)
+        if ENTRIES_FILE.exists():
+            with open(ENTRIES_FILE, "rb") as f:
+                requests.post(f"{BASE_URL}/api/upload/entries",
+                              files={"file": ("entries.lxf", f, "application/octet-stream")},
+                              headers=admin_headers, timeout=60)
+
+    @pytest.fixture(scope="class")
+    def results_lxf_bytes(self, results_path) -> bytes:
+        return results_path.read_bytes()
+
+    def test_upload_meet_keeps_historical_results(self, results_lxf_bytes, admin_headers):
+        r = requests.post(
+            f"{BASE_URL}/api/admin/import-historical?force=true",
+            files={"file": ("results.lxf", results_lxf_bytes, "application/octet-stream")},
+            headers=admin_headers, timeout=30,
+        )
+        assert r.status_code == 200, f"Historical import failed: {r.text}"
+        meet_id = r.json()["meet_id"]
+
+        before = requests.get(f"{BASE_URL}/api/admin/historical-meets",
+                              headers=admin_headers, timeout=10)
+        before.raise_for_status()
+        before_entry = next((m for m in before.json() if m["id"] == meet_id), None)
+        assert before_entry is not None
+        assert before_entry["resultCount"] > 0
+
+        with open(MEET_TEMPLATE, "rb") as f:
+            r = requests.post(f"{BASE_URL}/api/upload/meet?force=true",
+                              files={"file": ("meet.lxf", f, "application/octet-stream")},
+                              headers=admin_headers, timeout=60)
+        assert r.status_code == 200, f"upload/meet failed: {r.text}"
+
+        after = requests.get(f"{BASE_URL}/api/admin/historical-meets",
+                             headers=admin_headers, timeout=10)
+        after.raise_for_status()
+        after_entry = next((m for m in after.json() if m["id"] == meet_id), None)
+        assert after_entry is not None, "Historical meet vanished after /api/upload/meet"
+        assert after_entry["resultCount"] == before_entry["resultCount"], (
+            "Historical results were lost after re-uploading the meet structure"
+        )
+
+    def test_upload_meet_beach_detection_ignores_historical_styles(self, results_lxf_bytes, admin_headers):
+        """A pool meet upload must not be misclassified as BEACH just because
+        a historical meet in the (now-persistent) SwimStyle catalog used a
+        beach style id (>= 600)."""
+        # Archive a beach-style historical meet first (test fixtures use pool
+        # ids only, so fabricate a minimal beach SWIMSTYLE reference).
+        import zipfile as _zipfile
+        from io import BytesIO as _BytesIO
+        lef_content = (
+            '<?xml version="1.0"?><LENEX><MEETS><MEET name="Beach Historical Meet" course="LCM">'
+            '<SESSIONS><SESSION number="1"><EVENTS><EVENT eventid="1" number="1" gender="M">'
+            '<SWIMSTYLE swimstyleid="601" distance="100" name="Beach Flags" relaycount="1"/>'
+            '</EVENT></EVENTS></SESSION></SESSIONS><CLUBS></CLUBS></MEET></MEETS></LENEX>'
+        )
+        buf = _BytesIO()
+        with _zipfile.ZipFile(buf, "w") as z:
+            z.writestr("meet.lef", lef_content)
+        beach_lxf = buf.getvalue()
+        r = requests.post(
+            f"{BASE_URL}/api/admin/import-historical?force=true",
+            files={"file": ("beach.lxf", beach_lxf, "application/octet-stream")},
+            headers=admin_headers, timeout=30,
+        )
+        assert r.status_code == 200, f"Beach historical import failed: {r.text}"
+
+        # Now upload the (pool) meet template — must classify as POOL, not BEACH.
+        with open(MEET_TEMPLATE, "rb") as f:
+            r = requests.post(f"{BASE_URL}/api/upload/meet?force=true",
+                              files={"file": ("meet.lxf", f, "application/octet-stream")},
+                              headers=admin_headers, timeout=60)
+        assert r.status_code == 200, f"upload/meet failed: {r.text}"
+
+        r = requests.get(f"{BASE_URL}/api/meet-info", headers=admin_headers, timeout=10)
+        r.raise_for_status()
+        meet_type = r.json()["meet_type"]
+        assert meet_type.upper() == "POOL", (
+            f"Pool meet misclassified as {meet_type} due to a historical beach style"
+        )
+
+
+# ---------------------------------------------------------------------------
+# New Swimstyle Confirmation — LXF imports warn before adding unknown styles
+# ---------------------------------------------------------------------------
+
+class TestNewSwimstyleConfirmation:
+    """New swimstyle ids referenced by an uploaded LXF must be confirmed
+    (409 + ?force=true) before being silently added to the shared catalog —
+    the catalog is never wiped anymore (see TestUploadMeetPreservesHistory),
+    so a stale/foreign template could otherwise pollute it unnoticed."""
+
+    @staticmethod
+    def _fabricate_meet_lxf(style_id: int, meet_name: str) -> bytes:
+        lef_content = (
+            f'<?xml version="1.0"?><LENEX><MEETS><MEET name="{meet_name}" course="LCM">'
+            '<SESSIONS><SESSION number="1"><EVENTS><EVENT eventid="1" number="1" gender="M">'
+            f'<SWIMSTYLE swimstyleid="{style_id}" distance="777" name="Totally New Style" relaycount="1"/>'
+            '</EVENT></EVENTS></SESSION></SESSIONS><CLUBS></CLUBS></MEET></MEETS></LENEX>'
+        )
+        buf = BytesIO()
+        with zipfile.ZipFile(buf, "w") as z:
+            z.writestr("meet.lef", lef_content)
+        return buf.getvalue()
+
+    @pytest.fixture(autouse=True, scope="class")
+    def _restore_current_meet(self, admin_headers):
+        yield
+        with open(MEET_TEMPLATE, "rb") as f:
+            requests.post(f"{BASE_URL}/api/upload/meet?force=true",
+                          files={"file": ("meet.lxf", f, "application/octet-stream")},
+                          headers=admin_headers, timeout=60)
+        if ENTRIES_FILE.exists():
+            with open(ENTRIES_FILE, "rb") as f:
+                requests.post(f"{BASE_URL}/api/upload/entries",
+                              files={"file": ("entries.lxf", f, "application/octet-stream")},
+                              headers=admin_headers, timeout=60)
+
+    def test_upload_meet_warns_then_accepts_with_force(self, admin_headers):
+        lxf = self._fabricate_meet_lxf(555, "Fabricated New Style Meet")
+        r = requests.post(f"{BASE_URL}/api/upload/meet",
+                          files={"file": ("new.lxf", lxf, "application/octet-stream")},
+                          headers=admin_headers, timeout=30)
+        assert r.status_code == 409, f"Expected 409, got {r.status_code}: {r.text}"
+        detail = r.json()["detail"]
+        assert detail["code"] == "new_swimstyles"
+        assert any(s["id"] == 555 for s in detail["styles"])
+
+        r2 = requests.post(f"{BASE_URL}/api/upload/meet?force=true",
+                           files={"file": ("new.lxf", lxf, "application/octet-stream")},
+                           headers=admin_headers, timeout=30)
+        assert r2.status_code == 200, f"force=true should succeed: {r2.text}"
+
+        r3 = requests.get(f"{BASE_URL}/api/swim-styles", headers=admin_headers, timeout=10)
+        r3.raise_for_status()
+        assert any(s["id"] == 555 for s in r3.json())
+
+    def test_upload_meet_known_style_does_not_warn(self, admin_headers):
+        """Once a style id is in the catalog (from the previous test), later
+        uploads referencing it must not warn again."""
+        lxf = self._fabricate_meet_lxf(555, "Fabricated New Style Meet Reupload")
+        r = requests.post(f"{BASE_URL}/api/upload/meet",
+                          files={"file": ("new.lxf", lxf, "application/octet-stream")},
+                          headers=admin_headers, timeout=30)
+        assert r.status_code == 200, f"Known style should not need force: {r.text}"
+
+    def test_import_historical_warns_then_accepts_with_force(self, admin_headers):
+        lxf = self._fabricate_meet_lxf(556, "Fabricated Historical Meet")
+        r = requests.post(f"{BASE_URL}/api/admin/import-historical",
+                          files={"file": ("hist.lxf", lxf, "application/octet-stream")},
+                          headers=admin_headers, timeout=30)
+        assert r.status_code == 409, f"Expected 409, got {r.status_code}: {r.text}"
+        detail = r.json()["detail"]
+        assert detail["code"] == "new_swimstyles"
+        assert any(s["id"] == 556 for s in detail["styles"])
+
+        r2 = requests.post(f"{BASE_URL}/api/admin/import-historical?force=true",
+                           files={"file": ("hist.lxf", lxf, "application/octet-stream")},
+                           headers=admin_headers, timeout=30)
+        assert r2.status_code == 200, f"force=true should succeed: {r2.text}"
+
+    def test_import_results_lxf_warns_then_accepts_with_force(self, admin_headers):
+        lxf = self._fabricate_meet_lxf(557, "Fabricated Results Meet")
+        r = requests.post(f"{BASE_URL}/api/import-results-lxf",
+                          files={"file": ("results.lxf", lxf, "application/octet-stream")},
+                          headers=admin_headers, timeout=30)
+        assert r.status_code == 409, f"Expected 409, got {r.status_code}: {r.text}"
+        detail = r.json()["detail"]
+        assert detail["code"] == "new_swimstyles"
+        assert any(s["id"] == 557 for s in detail["styles"])
+
+        r2 = requests.post(f"{BASE_URL}/api/import-results-lxf?force=true",
+                           files={"file": ("results.lxf", lxf, "application/octet-stream")},
+                           headers=admin_headers, timeout=30)
+        assert r2.status_code == 200, f"force=true should succeed: {r2.text}"
+
+    def test_upload_entries_with_mismatched_structure_warns_then_registers(self, admin_headers):
+        """A combined meet+entries LXF whose own EVENT/eventid isn't in the
+        local catalog must warn (not silently drop the registration) — and
+        once forced, must replace the structure so the entry actually
+        resolves. Regression for the entries-mismatch bug: entries used to
+        be seeded blindly against whatever events already existed, silently
+        dropping any entry whose eventid wasn't in the (possibly stale)
+        catalog."""
+        style_id = 558
+        event_id = 90210
+        lef_content = (
+            '<?xml version="1.0"?><LENEX><MEETS><MEET name="Mismatch Meet" course="LCM">'
+            '<SESSIONS><SESSION number="1"><EVENTS>'
+            f'<EVENT eventid="{event_id}" number="1" gender="M">'
+            f'<SWIMSTYLE swimstyleid="{style_id}" distance="777" name="Totally New Style 558" relaycount="1"/>'
+            '</EVENT></EVENTS></SESSION></SESSIONS>'
+            '<CLUBS><CLUB code="MISM" name="Mismatch Club">'
+            '<ATHLETES><ATHLETE athleteid="1" firstname="Test" lastname="Athlete" '
+            'gender="M" birthdate="2000-01-01">'
+            f'<ENTRIES><ENTRY eventid="{event_id}" entrytime="0"/></ENTRIES>'
+            '</ATHLETE></ATHLETES></CLUB></CLUBS>'
+            '</MEET></MEETS></LENEX>'
+        )
+        buf = BytesIO()
+        with zipfile.ZipFile(buf, "w") as z:
+            z.writestr("meet.lef", lef_content)
+        lxf = buf.getvalue()
+
+        r = requests.post(f"{BASE_URL}/api/upload/entries",
+                          files={"file": ("mismatch.lxf", lxf, "application/octet-stream")},
+                          headers=admin_headers, timeout=30)
+        assert r.status_code == 409, f"Expected 409, got {r.status_code}: {r.text}"
+        detail = r.json()["detail"]
+        assert detail["code"] == "new_swimstyles"
+        assert any(s["id"] == style_id for s in detail["styles"])
+
+        r2 = requests.post(f"{BASE_URL}/api/upload/entries?force=true",
+                           files={"file": ("mismatch.lxf", lxf, "application/octet-stream")},
+                           headers=admin_headers, timeout=30)
+        assert r2.status_code == 200, f"force=true should succeed: {r2.text}"
+        data = r2.json()
+        assert data["events_loaded"] > 0, "Mismatched structure should have been reloaded"
+        assert data["entries_added"] == 1, (
+            "The registration should resolve now that its event was loaded, not be silently dropped"
+        )
 

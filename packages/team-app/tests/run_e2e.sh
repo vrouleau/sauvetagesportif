@@ -1,8 +1,9 @@
 ﻿#!/bin/bash
 cd /mnt/c/Users/vince/Documents/MeetManager/sauvetagesportif/packages/team-app
 
-# Start containers
-docker compose -f docker-compose.yml -f docker-compose.test.yml --env-file tests/test.env up -d
+# Start containers (own project name — must never collide with the dev stack's
+# "team-app" project, whose volume a `down -v` here would otherwise wipe)
+docker compose -p team-app-test -f docker-compose.yml -f docker-compose.test.yml --env-file tests/test.env up -d
 
 # Wait for backend
 for i in $(seq 1 20); do

@@ -39,10 +39,11 @@ All test commands run from a **WSL terminal**. The test suite is in `tests/`.
 
 ### How it works
 
-- `conftest.py` manages the Docker stack automatically via `docker compose -f docker-compose.yml -f docker-compose.test.yml --env-file tests/test.env`
+- `conftest.py` manages the Docker stack automatically via `docker compose -p team-app-test -f docker-compose.yml -f docker-compose.test.yml --env-file tests/test.env`
+- `-p team-app-test` gives the test stack its own project name — **without it, `down -v` targets the same named volume as the plain dev stack (`docker compose up -d` with no `-p`, project name defaults to the directory name) and silently wipes your local dev database.** This has happened before; always pass `-p team-app-test` (or an equivalent unique name) for any test/e2e compose invocation, never reuse the bare `docker-compose.yml` project.
 - `docker-compose.test.yml` adds a port mapping: backend exposed on `http://127.0.0.1:8000`
 - `tests/test.env` provides test-only credentials (`ADMIN_PIN=314159`, `SECRET_KEY=test-only-key-not-for-production`)
-- By default the session fixture runs `down -v && up --build -d` (wipes the DB, rebuilds images) then tears down after. **This destroys the `pgdata` volume.**
+- By default the session fixture runs `down -v && up --build -d` (wipes the test DB, rebuilds images) then tears down after — this is safe because it's scoped to the `team-app-test` project, not the dev stack.
 
 ### Standard run (let pytest manage the stack)
 

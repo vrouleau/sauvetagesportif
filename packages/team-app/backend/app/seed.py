@@ -202,12 +202,19 @@ def seed_from_lxf(db: Session, file_bytes: bytes) -> dict:
                 if event.swimstyle and event.swimstyle.relaycount and event.swimstyle.relaycount > 1:
                     continue
 
-                # Determine age_code
+                # Determine age_code — and only keep agegroup_id if it actually
+                # resolves locally (a stale/mismatched id would otherwise violate
+                # the FK on swimresult.agegroupid when inserted below).
+                agegroup_id = None
                 if event.masters == 'T':
                     age_code = "Masters"
                 elif entry["agegroup_id"]:
                     ag = db.query(AgeGroup).get(entry["agegroup_id"])
-                    age_code = _age_code_from_bounds(ag.agemin or 0, ag.agemax or 99) if ag else "Open"
+                    if ag:
+                        age_code = _age_code_from_bounds(ag.agemin or 0, ag.agemax or 99)
+                        agegroup_id = entry["agegroup_id"]
+                    else:
+                        age_code = "Open"
                 else:
                     age_code = "Open"
 
@@ -224,7 +231,7 @@ def seed_from_lxf(db: Session, file_bytes: bytes) -> dict:
                     db.add(SwimResult(
                         athleteid=member.membersid,
                         swimeventid=event_id,
-                        agegroupid=entry["agegroup_id"],
+                        agegroupid=agegroup_id,
                         age_code=age_code,
                         entrytime=entry["entrytime"],
                     ))

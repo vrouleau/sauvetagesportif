@@ -17,7 +17,9 @@ pip install -r tests/requirements-test.txt
 pytest tests/ -v
 ```
 
-The session fixture wipes and rebuilds the docker stack (`docker compose down -v && up --build -d`) — **any data already in your local `pgdata` volume will be destroyed**. Set `MEETMGR_KEEP_STACK=1` to skip the final teardown.
+The session fixture wipes and rebuilds the docker stack (`docker compose down -v && up --build -d`), scoped to its own `-p team-app-test` project so it never touches the plain dev stack's data or containers. Set `MEETMGR_KEEP_STACK=1` to skip the final teardown.
+
+Note: the test stack binds the same host ports (8000/8001) as the dev stack, so you can't run both at once — stop `docker compose up -d` (dev) before running the test suite, or vice versa.
 
 ## Fixtures
 

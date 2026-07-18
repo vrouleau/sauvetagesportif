@@ -19,6 +19,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useLang } from '../i18n'
 import api from '../api'
+import { newSwimstylesDetail, confirmNewSwimstyles } from '../newSwimstylesConfirm'
 
 export default function Organizer() {
   const [meetInfo, setMeetInfo] = useState(null)
@@ -55,7 +56,7 @@ export default function Organizer() {
     try {
       const r = await api.post('/stripe/connect', {})
       window.location.href = r.data.url
-    } catch (e) { setMsg(e.response?.data?.detail || e.message || 'Error') }
+    } catch (e) { setMsg(e.detail || e.message || 'Error') }
   }
 
   async function disconnectStripe() {
@@ -67,6 +68,50 @@ export default function Organizer() {
     } catch (e) { setMsg(e.message || 'Error') }
   }
 
+  function _applyImportResultsResponse(data) {
+    const r = data.results
+    if (data.reset) {
+      const isOrganizer = localStorage.getItem('role') === 'organizer'
+      if (isOrganizer) {
+        setMsg(lang === 'fr'
+          ? `✓ Meet archivé : ${r} résultat(s) — ${data.meet_name}. Déconnexion en cours…`
+          : `✓ Meet archived: ${r} result(s) — ${data.meet_name}. Logging out…`)
+        setTimeout(() => {
+          localStorage.removeItem('pin')
+          localStorage.removeItem('role')
+          localStorage.removeItem('club_id')
+          localStorage.removeItem('club_name')
+          window.location.href = '/'
+        }, 2500)
+      } else {
+        setMsg(lang === 'fr'
+          ? `✓ Meet archivé et réinitialisé : ${r} résultat(s) — ${data.meet_name}`
+          : `✓ Meet archived and reset: ${r} result(s) — ${data.meet_name}`)
+        loadMeetInfo(); loadClubs()
+      }
+    } else {
+      setMsg(lang === 'fr'
+        ? `✓ Meet historique mis à jour : ${r} résultat(s) — ${data.meet_name}`
+        : `✓ Historical meet updated: ${r} result(s) — ${data.meet_name}`)
+    }
+  }
+
+  async function _postImportResultsLxf(fd, force) {
+    const res = await fetch(`/api/import-results-lxf${force ? '?force=true' : ''}`, {
+      method: 'POST',
+      headers: { 'X-Club-Pin': localStorage.getItem('pin') || '' },
+      body: fd,
+    })
+    const data = await res.json()
+    if (!res.ok) {
+      const err = new Error(typeof data.detail === 'string' ? data.detail : `${res.status}`)
+      err.status = res.status
+      err.detail = data.detail
+      throw err
+    }
+    return data
+  }
+
   async function importResults(e) {
     const file = e.target.files[0]
     if (!file) return
@@ -75,40 +120,20 @@ export default function Organizer() {
     fd.append('file', file)
     e.target.value = ''
     try {
-      const res = await fetch('/api/import-results-lxf', {
-        method: 'POST',
-        headers: { 'X-Club-Pin': localStorage.getItem('pin') || '' },
-        body: fd,
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.detail || `${res.status}`)
-      const r = data.results
-      if (data.reset) {
-        const isOrganizer = localStorage.getItem('role') === 'organizer'
-        if (isOrganizer) {
-          setMsg(lang === 'fr'
-            ? `✓ Meet archivé : ${r} résultat(s) — ${data.meet_name}. Déconnexion en cours…`
-            : `✓ Meet archived: ${r} result(s) — ${data.meet_name}. Logging out…`)
-          setTimeout(() => {
-            localStorage.removeItem('pin')
-            localStorage.removeItem('role')
-            localStorage.removeItem('club_id')
-            localStorage.removeItem('club_name')
-            window.location.href = '/'
-          }, 2500)
-        } else {
-          setMsg(lang === 'fr'
-            ? `✓ Meet archivé et réinitialisé : ${r} résultat(s) — ${data.meet_name}`
-            : `✓ Meet archived and reset: ${r} result(s) — ${data.meet_name}`)
-          loadMeetInfo(); loadClubs()
-        }
-      } else {
-        setMsg(lang === 'fr'
-          ? `✓ Meet historique mis à jour : ${r} résultat(s) — ${data.meet_name}`
-          : `✓ Historical meet updated: ${r} result(s) — ${data.meet_name}`)
-      }
+      const data = await _postImportResultsLxf(fd, false)
+      _applyImportResultsResponse(data)
     } catch (err) {
-      setMsg(err.message || 'Error')
+      const nsw = newSwimstylesDetail(err)
+      if (nsw && confirmNewSwimstyles(nsw, lang)) {
+        const fd2 = new FormData()
+        fd2.append('file', file)
+        try {
+          const data2 = await _postImportResultsLxf(fd2, true)
+          _applyImportResultsResponse(data2)
+        } catch (err2) { setMsg(err2.detail || err2.message || 'Error') }
+      } else {
+        setMsg(nsw?.message || err.detail || err.message || 'Error')
+      }
     }
   }
 
@@ -136,11 +161,27 @@ export default function Organizer() {
     const fd = new FormData()
     fd.append('file', file)
     setMsg(lang === 'fr' ? 'Téléversement...' : 'Uploading...')
-    const r = await api.post('/upload/meet', fd)
-    setMsg(`${r.data.events_loaded} ${t.events}`)
+    try {
+      const r = await api.post('/upload/meet', fd)
+      setMsg(`${r.data.events_loaded} ${t.events}`)
+      loadMeetInfo(); loadClubs()
+      window.dispatchEvent(new Event('meet-changed'))
+    } catch (err) {
+      const nsw = newSwimstylesDetail(err)
+      if (nsw && confirmNewSwimstyles(nsw, lang)) {
+        const fd2 = new FormData()
+        fd2.append('file', file)
+        try {
+          const r2 = await api.post('/upload/meet?force=true', fd2)
+          setMsg(`${r2.data.events_loaded} ${t.events}`)
+          loadMeetInfo(); loadClubs()
+          window.dispatchEvent(new Event('meet-changed'))
+        } catch (err2) { setMsg(err2.detail || err2.message || 'Error') }
+      } else {
+        setMsg(nsw?.message || err.detail || err.message || 'Error')
+      }
+    }
     e.target.value = ''
-    loadMeetInfo(); loadClubs()
-    window.dispatchEvent(new Event('meet-changed'))
   }
 
   async function sendSelectedInvites() {

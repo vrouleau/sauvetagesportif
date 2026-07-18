@@ -352,33 +352,35 @@ def auth(data: dict, request: Request, db: Session = Depends(get_db)):
 # Meet upload
 # ---------------------------------------------------------------------------
 
-@router.post("/upload/meet", dependencies=[Depends(require_organizer_or_admin)])
-async def upload_meet(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    """Upload meet .lxf — sets event structure."""
-    content = await file.read()
-    if len(content) > 10 * 1024 * 1024:
-        raise HTTPException(413, "File too large (max 10MB)")
-    from ..meet_parser import parse_meet_lxf
-    try:
-        meet = parse_meet_lxf(content)
-    except Exception as e:
-        raise HTTPException(400, f"Invalid meet .lxf: {e}")
+def _replace_current_meet_structure(db: Session, meet, content: bytes, filename: str | None) -> int:
+    """Wipe the current (non-historical) meet structure and rebuild it from a
+    parsed meet. Shared by /upload/meet and /upload/entries — the latter
+    takes this path when its own EVENT/SWIMSTYLE elements describe a meet
+    structure not already in the local catalog (see upload_entries).
 
+    Archived meets (meetstate=3) and their results/events/sessions survive,
+    same as _reset_for_next_meet.
+    """
     MEET_STORAGE.parent.mkdir(parents=True, exist_ok=True)
     MEET_STORAGE.write_bytes(content)
 
-    # Wipe registrations (swimresults with entrytime) then events
+    # Wipe registrations (swimresults with entrytime) then events — current
+    # (non-historical) meet only.
     db.query(SwimResult).delete()
     db.query(AgeGroup).delete()
     db.query(SwimEvent).delete()
     db.query(SwimSession).delete()
     # Clear Team Manager event tables BEFORE swimstyle (FK dependency)
-    from ..models_team import Event as TeamEvent, Session as TeamSession, Meet as TeamMeet
-    db.query(TeamEvent).delete()
-    db.query(TeamSession).delete()
-    db.query(TeamMeet).delete()
-    db.query(SwimStyle).delete()
+    from ..models_team import Event as TeamEvent, Session as TeamSession, Meet as TeamMeet, MemberMeet as TeamMemberMeet
+    current_ids = [r for r, in db.query(TeamMeet.meetsid).filter(TeamMeet.meetstate != 3).all()]
+    if current_ids:
+        db.query(TeamMemberMeet).filter(TeamMemberMeet.meetsid.in_(current_ids)).delete(synchronize_session=False)
+        db.query(TeamEvent).filter(TeamEvent.meetsid.in_(current_ids)).delete(synchronize_session=False)
+        db.query(TeamSession).filter(TeamSession.meetsid.in_(current_ids)).delete(synchronize_session=False)
+        db.query(TeamMeet).filter(TeamMeet.meetsid.in_(current_ids)).delete(synchronize_session=False)
     db.flush()
+    # SwimStyle rows are upserted by id in _load_from_parsed (never deleted here) —
+    # historical Event/Result rows keep referencing the same style IDs across meets.
     from ..events import _load_from_parsed
     count = _load_from_parsed(db, meet)
 
@@ -388,7 +390,7 @@ async def upload_meet(file: UploadFile = File(...), db: Session = Depends(get_db
 
     # Track metadata
     import json as _json
-    for key, val in [("meet_filename", file.filename or "meet.lxf"),
+    for key, val in [("meet_filename", filename or "meet.lxf"),
                      ("meet_uploaded_at", datetime.utcnow().isoformat()),
                      ("meet_name", meet.meet_name),
                      ("meet_course", meet.course),
@@ -398,8 +400,14 @@ async def upload_meet(file: UploadFile = File(...), db: Session = Depends(get_db
                      ("age_base_date", meet.age_base_date)]:
         _set_config(db, key, val)
 
-    # Auto-detect meet type from swim style IDs (>= 600 = beach)
-    has_beach = db.query(SwimStyle).filter(SwimStyle.swimstyleid >= 600).first() is not None
+    # Auto-detect meet type from swim style IDs used in *this* upload (>= 600 = beach).
+    # Must look at the parsed meet, not the global SwimStyle table — that table now
+    # accumulates styles across meets (never wiped), so a stale/historical beach
+    # style would otherwise misclassify a brand new pool meet.
+    has_beach = any(
+        ev.swimstyleid and ev.swimstyleid >= 600
+        for ses in meet.sessions for ev in ses.events
+    )
     _set_config(db, "meet_type", "BEACH" if has_beach else "POOL")
 
     # Sync meet identity into MEETVALUES blob for Splash SMB compatibility.
@@ -419,6 +427,41 @@ async def upload_meet(file: UploadFile = File(...), db: Session = Depends(get_db
     for club in db.query(TeamClub).all():
         club.pin = ''.join(secrets.choice(string.digits) for _ in range(6))
 
+    return count
+
+
+@router.post("/upload/meet", dependencies=[Depends(require_organizer_or_admin)])
+async def upload_meet(file: UploadFile = File(...), force: bool = False, db: Session = Depends(get_db)):
+    """Upload meet .lxf — sets event structure.
+
+    Warns (409, pass ?force=true to override) if the LXF references swimstyle
+    ids not already in the local catalog — the catalog is shared across all
+    meets (historical included) and never wiped, so new ids are worth a
+    confirmation rather than a silent add.
+    """
+    content = await file.read()
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(413, "File too large (max 10MB)")
+    from ..meet_parser import parse_meet_lxf
+    try:
+        meet = parse_meet_lxf(content)
+    except Exception as e:
+        raise HTTPException(400, f"Invalid meet .lxf: {e}")
+
+    if not force:
+        from ..swimstyle_check import find_new_swimstyles
+        new_styles = find_new_swimstyles(db, (
+            (ev.swimstyleid, ev.style_name, ev.distance)
+            for ses in meet.sessions for ev in ses.events
+        ))
+        if new_styles:
+            raise HTTPException(409, {
+                "code": "new_swimstyles",
+                "message": f"{len(new_styles)} swimstyle id(s) in this file are not in the local catalog.",
+                "styles": new_styles,
+            })
+
+    count = _replace_current_meet_structure(db, meet, content, file.filename)
     db.commit()
     return {"events_loaded": count, "filename": file.filename}
 
@@ -2510,25 +2553,67 @@ async def upload_preview(file: UploadFile = File(...), db: Session = Depends(get
 
 
 @router.post("/upload/entries", dependencies=[Depends(require_admin)])
-async def upload_entries(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    """Upload .lxf — seeds clubs + athletes and populates best times."""
+async def upload_entries(file: UploadFile = File(...), force: bool = False, db: Session = Depends(get_db)):
+    """Upload .lxf — seeds clubs + athletes and populates best times.
+
+    If this file's own EVENT/SWIMSTYLE elements describe events not already
+    in the local catalog — an empty catalog (first-time bootstrap), or a
+    combined meet+entries export referencing a different meet than what's
+    currently loaded — the current meet structure is replaced from this
+    file's own definitions first (same wipe+rebuild as /upload/meet), so
+    entries aren't silently dropped for referencing unknown event ids. Warns
+    first (409, ?force=true to override) since this replaces the current
+    meet's events/sessions/registrations and resets club PINs.
+    """
     content = await file.read()
     if len(content) > 10 * 1024 * 1024:
         raise HTTPException(413, "File too large (max 10MB)")
-    seed_result = seed_from_lxf(db, content)
+
+    from ..meet_parser import parse_meet_lxf
+    try:
+        events_meet = parse_meet_lxf(content)
+    except Exception:
+        events_meet = None
+
+    needs_reload = False
+    missing_ids: set[int] = set()
+    if events_meet and events_meet.all_events:
+        existing_ids = {eid for (eid,) in db.query(SwimEvent.swimeventid).all()}
+        file_ids = {ev.eventid for ses in events_meet.sessions for ev in ses.events}
+        missing_ids = file_ids - existing_ids
+        needs_reload = bool(missing_ids)
+
+    if needs_reload and not force:
+        from ..swimstyle_check import find_new_swimstyles
+        new_styles = find_new_swimstyles(db, (
+            (ev.swimstyleid, ev.style_name, ev.distance)
+            for ses in events_meet.sessions for ev in ses.events
+        ))
+        message = (
+            f"This file's meet structure doesn't match the current catalog "
+            f"({len(missing_ids)} event id(s) not found locally). Importing will "
+            f"replace the current meet's events, sessions and registrations with "
+            f"this file's own structure, and reset club PINs."
+        )
+        if new_styles:
+            message += f" It also introduces {len(new_styles)} new swimstyle id(s)."
+        raise HTTPException(409, {
+            "code": "new_swimstyles",
+            "message": message,
+            "styles": new_styles,
+        })
+
     events_loaded = 0
-    if not db.query(SwimEvent).first():
-        from ..meet_parser import parse_meet_lxf
-        from ..events import _load_from_parsed
-        try:
-            meet = parse_meet_lxf(content)
-            if meet.all_events:
-                events_loaded = _load_from_parsed(db, meet)
-        except Exception:
-            pass
+    if needs_reload:
+        events_loaded = _replace_current_meet_structure(db, events_meet, content, file.filename)
+        db.flush()
+
+    # Events must be in place before entries can resolve their eventid.
+    seed_result = seed_from_lxf(db, content)
 
     # Import relay teams from LXF
     relays_imported = _import_relays_from_lxf(db, content)
+    db.commit()
 
     return {**seed_result, "events_loaded": events_loaded, "relays_imported": relays_imported}
 
@@ -2563,6 +2648,24 @@ async def upload_results(file: UploadFile = File(...), force: bool = False, db: 
                         f"'{current_meet_name}'. Use Admin → Import Historical instead. "
                         f"Pass ?force=true to override."
                     ))
+
+            def _to_int(s):
+                try:
+                    return int(s)
+                except (TypeError, ValueError):
+                    return None
+
+            from ..swimstyle_check import find_new_swimstyles
+            new_styles = find_new_swimstyles(db, (
+                (_to_int(ss.get("swimstyleid")), ss.get("name"), _to_int(ss.get("distance")))
+                for ss in xml_root.iter("SWIMSTYLE")
+            ))
+            if new_styles:
+                raise HTTPException(409, {
+                    "code": "new_swimstyles",
+                    "message": f"{len(new_styles)} swimstyle id(s) in this file are not in the local catalog.",
+                    "styles": new_styles,
+                })
         except (zipfile.BadZipFile, StopIteration, HTTPException) as e:
             if isinstance(e, HTTPException):
                 raise
@@ -2595,6 +2698,12 @@ async def import_historical(file: UploadFile = File(...), force: bool = False, d
     from ..historical_import import import_historical_meet
     result = import_historical_meet(db, content, force=force)
     if result.get("needs_force"):
+        if result.get("new_swimstyles"):
+            raise HTTPException(409, {
+                "code": "new_swimstyles",
+                "message": result["warning"],
+                "styles": result["new_swimstyles"],
+            })
         raise HTTPException(409, result["warning"])
     return result
 
@@ -2748,13 +2857,14 @@ def _reset_for_next_meet(db: Session) -> None:
         db.query(TeamMeet).filter(TeamMeet.meetsid.in_(current_ids)).delete(synchronize_session=False)
     db.flush()
 
-    # Clear Meet Manager schema (registrations + event structure + swimstyle)
+    # Clear Meet Manager schema (registrations + event structure). SwimStyle is
+    # never wiped here — it's a shared catalog (upserted by id), and historical
+    # Team Manager Event/Result rows we just preserved above still reference it.
     db.query(SwimResult).delete()
     db.query(Heat).delete()
     db.query(AgeGroup).delete()
     db.query(SwimEvent).delete()
     db.query(SwimSession).delete()
-    db.query(SwimStyle).delete()
 
     # Clear bsglobal meet config.
     # Intentionally preserved: admin_pin, GEMINI_KEY_FREE, GEMINI_KEY_PAID, bt_* best-time keys.
@@ -3552,7 +3662,8 @@ def get_historical_best_times(member_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/import-results-lxf", dependencies=[Depends(require_organizer_or_admin)])
-async def import_results_lxf(request: Request, file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def import_results_lxf(request: Request, file: UploadFile = File(...), force: bool = False,
+                              db: Session = Depends(get_db)):
     """Import a meet-app results .lxf as a historical meet.
 
     - Organizer: archives meet as historical, then resets current meet,
@@ -3564,6 +3675,8 @@ async def import_results_lxf(request: Request, file: UploadFile = File(...), db:
     meet-app exports via File → "Exporter les résultats LENEX…".
     Clubs/athletes are merged by code/license; if a completed meet with the
     same name already exists its results are replaced rather than duplicated.
+    Warns (409, pass ?force=true to override) about swimstyle ids not already
+    in the local catalog.
     """
     content = await file.read()
     if len(content) > 50 * 1024 * 1024:
@@ -3585,9 +3698,16 @@ async def import_results_lxf(request: Request, file: UploadFile = File(...), db:
     db.flush()
 
     try:
-        counts = import_lxf_as_meet(db, content)
+        counts = import_lxf_as_meet(db, content, force=force)
     except Exception as e:
         raise HTTPException(400, f"LXF import failed: {e}")
+
+    if counts.get("needs_force"):
+        raise HTTPException(409, {
+            "code": "new_swimstyles",
+            "message": counts["warning"],
+            "styles": counts["new_swimstyles"],
+        })
 
     pin = request.headers.get("X-Club-Pin", "")
     role, _ = _resolve_role(pin, db)

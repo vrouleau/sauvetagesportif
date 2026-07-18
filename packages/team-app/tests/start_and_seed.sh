@@ -7,11 +7,13 @@ ADMIN_PIN="314159"
 
 echo "=== Stopping any existing stack ==="
 cd "$REPO/packages/team-app"
-docker compose -f docker-compose.yml -f docker-compose.test.yml --env-file tests/test.env down -v 2>&1 || true
+# Own project name (-p) — must never collide with the dev stack's "team-app"
+# project, whose volume this script's `down -v` would otherwise wipe.
+docker compose -p team-app-test -f docker-compose.yml -f docker-compose.test.yml --env-file tests/test.env down -v 2>&1 || true
 
 echo ""
 echo "=== Starting stack ==="
-docker compose -f docker-compose.yml -f docker-compose.test.yml --env-file tests/test.env up -d --build 2>&1
+docker compose -p team-app-test -f docker-compose.yml -f docker-compose.test.yml --env-file tests/test.env up -d --build 2>&1
 
 echo ""
 echo "=== Waiting for backend ==="

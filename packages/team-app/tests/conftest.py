@@ -45,9 +45,16 @@ KEEP_STACK = os.environ.get("MEETMGR_KEEP_STACK") == "1"
 SKIP_STACK = os.environ.get("MEETMGR_SKIP_STACK") == "1"
 
 
+TEST_PROJECT_NAME = "team-app-test"
+
+
 def _run_compose(args: list[str], check: bool = True) -> subprocess.CompletedProcess:
+    # -p gives the test stack its own project name, so its containers/volumes
+    # (e.g. team-app-test_appdata) never collide with the plain dev stack's
+    # (team-app_appdata) — `down -v` here must never touch dev data.
     return subprocess.run(
         ["docker", "compose",
+         "-p", TEST_PROJECT_NAME,
          "-f", "docker-compose.yml",
          "-f", "docker-compose.postgres.yml",
          "-f", "docker-compose.test.yml",
@@ -117,10 +124,16 @@ def results_path(entries_path) -> Path:
 
 @pytest.fixture(scope="session")
 def uploaded(entries_path, admin_headers) -> dict:
-    """Upload meet template + generated entries. Returns counts from the API."""
+    """Upload meet template + generated entries. Returns counts from the API.
+
+    force=true: the backend auto-seeds a baseline swimstyle catalog from
+    config/template_pool.lxf at startup, so this fixture's first upload of
+    the test-only meet template legitimately introduces "new" style ids —
+    that's expected test setup, not a scenario to confirm.
+    """
     with open(MEET_TEMPLATE, "rb") as f:
         r = requests.post(
-            f"{BASE_URL}/api/upload/meet",
+            f"{BASE_URL}/api/upload/meet?force=true",
             files={"file": ("meet.lxf", f, "application/octet-stream")},
             headers=admin_headers,
             timeout=60,

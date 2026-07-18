@@ -21,6 +21,7 @@
  * Implements the same MeetAPI interface as the Electron IPC adapter.
  */
 import api from './api'
+import { newSwimstylesDetail, confirmNewSwimstyles } from './newSwimstylesConfirm'
 
 export const meetApiHttp = {
   async getSessions() {
@@ -162,7 +163,21 @@ export const meetApiHttp = {
           window.dispatchEvent(new Event('meet-changed'))
           resolve({ ok: true, events: r.data.events_loaded })
         } catch (err) {
-          resolve({ ok: false, error: err.response?.data?.detail || err.message || 'Error' })
+          const nsw = newSwimstylesDetail(err)
+          const lang = localStorage.getItem('lang') || 'fr'
+          if (nsw && confirmNewSwimstyles(nsw, lang)) {
+            const fd2 = new FormData()
+            fd2.append('file', file)
+            try {
+              const r2 = await api.post('/upload/meet?force=true', fd2)
+              window.dispatchEvent(new Event('meet-changed'))
+              resolve({ ok: true, events: r2.data.events_loaded })
+            } catch (err2) {
+              resolve({ ok: false, error: err2.detail?.message || err2.detail || err2.message || 'Error' })
+            }
+          } else {
+            resolve({ ok: false, error: nsw?.message || err.detail?.message || err.detail || err.message || 'Error' })
+          }
         }
       }
       input.oncancel = () => resolve({ ok: false })
@@ -189,7 +204,7 @@ export const meetApiHttp = {
       window.dispatchEvent(new Event('meet-changed'))
       return { ok: true, meetType: r.data.meet_type }
     } catch (err) {
-      return { ok: false, error: err.response?.data?.detail || err.message || 'Error' }
+      return { ok: false, error: err.detail || err.message || 'Error' }
     }
   },
 }

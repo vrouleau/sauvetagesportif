@@ -20,6 +20,7 @@ import { useState, useEffect } from 'react'
 import { useLang } from '../i18n'
 import api from '../api'
 import { BUILD_TIMESTAMP } from '../buildInfo'
+import { newSwimstylesDetail, confirmNewSwimstyles } from '../newSwimstylesConfirm'
 
 export default function Admin() {
   const [status, setStatus] = useState(null)
@@ -74,9 +75,24 @@ export default function Admin() {
     const fd = new FormData()
     fd.append('file', file)
     setMsg('Uploading entries...')
-    const r = await api.post('/upload/entries', fd)
-    const d = r.data
-    setMsg(`Done: ${d.clubs_added} clubs, ${d.athletes_added} athletes, ${d.athletes_created || 0} new from results, ${d.times_updated} best times`)
+    try {
+      const r = await api.post('/upload/entries', fd)
+      const d = r.data
+      setMsg(`Done: ${d.clubs_added} clubs, ${d.athletes_added} athletes, ${d.athletes_created || 0} new from results, ${d.times_updated} best times`)
+    } catch (err) {
+      const nsw = newSwimstylesDetail(err)
+      if (nsw && confirmNewSwimstyles(nsw, lang)) {
+        const fd2 = new FormData()
+        fd2.append('file', file)
+        try {
+          const r2 = await api.post('/upload/entries?force=true', fd2)
+          const d2 = r2.data
+          setMsg(`Done: ${d2.clubs_added} clubs, ${d2.athletes_added} athletes, ${d2.athletes_created || 0} new from results, ${d2.times_updated} best times`)
+        } catch (err2) { setMsg(err2.detail || err2.message || 'Error') }
+      } else {
+        setMsg(nsw?.message || err.detail || err.message || 'Error')
+      }
+    }
     e.target.value = ''
     loadStatus(); loadClubs()
   }
@@ -150,7 +166,7 @@ export default function Admin() {
               loadStatus()
               window.dispatchEvent(new Event('meet-changed'))
             } catch (err) {
-              setMsg(err.response?.data?.detail || err.message || 'Error')
+              setMsg(err.detail || err.message || 'Error')
             }
             e.target.value = ''
           }}
@@ -275,7 +291,7 @@ export default function Admin() {
                     await api.post(`/clubs/${organizer.club_id}/send-pin`, { lang })
                     setMsg(`${t.send_invitation}: ${organizer.club_name} ✓`)
                     loadClubs()
-                  } catch (e) { setMsg(e.response?.data?.detail || e.message || 'Error') }
+                  } catch (e) { setMsg(e.detail || e.message || 'Error') }
                 }}>
                 {t.send_invitation} → {organizer.club_name}
               </button>
@@ -408,7 +424,7 @@ function HistoricalMeetsSection() {
       await api.delete(`/admin/historical-meets/${id}`)
       setMsg(lang === 'fr' ? 'Compétition supprimée' : 'Meet deleted')
       loadMeets()
-    } catch (e) { setMsg(e.response?.data?.detail || e.message || 'Error') }
+    } catch (e) { setMsg(e.detail || e.message || 'Error') }
   }
 
   async function importMdb(e) {
@@ -424,7 +440,7 @@ function HistoricalMeetsSection() {
         ? `Importé: ${t.MEETS} compétitions, ${t.MEMBERS} athlètes, ${t.RESULTS} résultats`
         : `Imported: ${t.MEETS} meets, ${t.MEMBERS} members, ${t.RESULTS} results`)
       loadMeets()
-    } catch (err) { setMsg(err.response?.data?.detail || err.message || 'Error') }
+    } catch (err) { setMsg(err.detail || err.message || 'Error') }
     finally { setMdbUploading(false); e.target.value = '' }
   }
 
@@ -440,7 +456,7 @@ function HistoricalMeetsSection() {
         ? `Importé: "${r.data.meet_name}" — ${r.data.members} athlètes, ${r.data.results} résultats`
         : `Imported: "${r.data.meet_name}" — ${r.data.members} members, ${r.data.results} results`)
       loadMeets()
-    } catch (err) { setMsg(err.response?.data?.detail || err.message || 'Error') }
+    } catch (err) { setMsg(err.detail || err.message || 'Error') }
     finally { setSmbUploading(false); e.target.value = '' }
   }
 
@@ -476,29 +492,30 @@ function HistoricalMeetsSection() {
       }
       loadMeets()
     } catch (err) {
-      const detail = err.response?.data?.detail || err.message || 'Error'
-      if (err.response?.status === 409) {
-        const forceLabel = lang === 'fr'
-          ? `${detail}\n\nVoulez-vous forcer l'importation ?`
-          : `${detail}\n\nDo you want to force the import?`
-        if (confirm(forceLabel)) {
-          try {
-            const form2 = new FormData()
-            form2.append('file', file)
-            const r2 = await api.post('/admin/import-historical?force=true', form2)
-            const d2 = r2.data
-            const report2 = lang === 'fr'
-              ? `✅ Import forcé: "${d2.meet_name}"\n\n• Résultats: ${d2.results_imported}\n• Athlètes: ${d2.athletes_matched} (${d2.athletes_created} créés)\n• Épreuves: ${d2.events_created}`
-              : `✅ Forced import: "${d2.meet_name}"\n\n• Results: ${d2.results_imported}\n• Athletes: ${d2.athletes_matched} (${d2.athletes_created} created)\n• Events: ${d2.events_created}`
-            alert(report2)
-            setMsg(lang === 'fr'
-              ? `Importé: "${d2.meet_name}" — ${d2.results_imported} résultats`
-              : `Imported: "${d2.meet_name}" — ${d2.results_imported} results`)
-            loadMeets()
-          } catch (err2) { setMsg(err2.response?.data?.detail || err2.message || 'Error') }
-        } else {
-          setMsg('')
-        }
+      const nsw = newSwimstylesDetail(err)
+      const detail = nsw?.message || err.detail || err.message || 'Error'
+      const wantsForce = nsw
+        ? confirmNewSwimstyles(nsw, lang)
+        : err.status === 409 && confirm(lang === 'fr'
+            ? `${detail}\n\nVoulez-vous forcer l'importation ?`
+            : `${detail}\n\nDo you want to force the import?`)
+      if (wantsForce) {
+        try {
+          const form2 = new FormData()
+          form2.append('file', file)
+          const r2 = await api.post('/admin/import-historical?force=true', form2)
+          const d2 = r2.data
+          const report2 = lang === 'fr'
+            ? `✅ Import forcé: "${d2.meet_name}"\n\n• Résultats: ${d2.results_imported}\n• Athlètes: ${d2.athletes_matched} (${d2.athletes_created} créés)\n• Épreuves: ${d2.events_created}`
+            : `✅ Forced import: "${d2.meet_name}"\n\n• Results: ${d2.results_imported}\n• Athletes: ${d2.athletes_matched} (${d2.athletes_created} created)\n• Events: ${d2.events_created}`
+          alert(report2)
+          setMsg(lang === 'fr'
+            ? `Importé: "${d2.meet_name}" — ${d2.results_imported} résultats`
+            : `Imported: "${d2.meet_name}" — ${d2.results_imported} results`)
+          loadMeets()
+        } catch (err2) { setMsg(err2.detail || err2.message || 'Error') }
+      } else if (err.status === 409 || nsw) {
+        setMsg('')
       } else {
         setMsg(detail)
       }
@@ -604,7 +621,7 @@ function BackupSection() {
       const r = await api.post('/admin/backups/create', {})
       setMsg(lang === 'fr' ? `Backup créé: ${r.data.filename}` : `Backup created: ${r.data.filename}`)
       loadBackups()
-    } catch (e) { setMsg(e.response?.data?.detail || e.message || 'Error') }
+    } catch (e) { setMsg(e.detail || e.message || 'Error') }
   }
 
   async function downloadBackup(filename) {
@@ -641,7 +658,7 @@ function BackupSection() {
       await api.post('/admin/restore-db', fd)
       setMsg(lang === 'fr' ? '✓ Base restaurée' : '✓ Database restored')
       e.target.value = ''
-    } catch (err) { setMsg(err.response?.data?.detail || err.message || 'Error') }
+    } catch (err) { setMsg(err.detail || err.message || 'Error') }
   }
 
   return (

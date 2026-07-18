@@ -120,6 +120,51 @@ def import_historical_meet(db: Session, file_bytes: bytes, force: bool = False) 
                 "needs_force": True,
             }
 
+    # ── Build event→style_uid map ──
+    event_style: dict[str, int] = {}
+    event_number: dict[str, int] = {}
+    event_gender: dict[str, int] = {}
+    style_names: dict[int, str] = {}
+    style_distances: dict[int, int] = {}
+
+    for event_el in root.iter("EVENT"):
+        eid = event_el.get("eventid", "")
+        enumber = int(event_el.get("number", "0") or "0")
+        egender = {"M": 1, "F": 2}.get(event_el.get("gender", ""), 0)
+        event_number[eid] = enumber
+        event_gender[eid] = egender
+
+        for ss in event_el.iter("SWIMSTYLE"):
+            uid_raw = ss.get("swimstyleid") or ""
+            try:
+                uid_int = int(uid_raw)
+            except (ValueError, TypeError):
+                continue
+            event_style[eid] = uid_int
+            name = ss.get("name", "")
+            if name:
+                style_names[uid_int] = name
+            distance_raw = ss.get("distance") or ""
+            try:
+                style_distances[uid_int] = int(distance_raw)
+            except (ValueError, TypeError):
+                pass
+
+    # ── Warn about swimstyle ids not already in the local catalog ──
+    if not force:
+        from .swimstyle_check import find_new_swimstyles
+        new_styles = find_new_swimstyles(db, (
+            (uid, style_names.get(uid), style_distances.get(uid))
+            for uid in set(event_style.values())
+        ))
+        if new_styles:
+            return {
+                "warning": f"{len(new_styles)} swimstyle id(s) in this file are not in the local catalog.",
+                "meet_name": meta["name"],
+                "needs_force": True,
+                "new_swimstyles": new_styles,
+            }
+
     # ── Deduplication: check if this meet was already imported ──
     existing_meet = None
     if meta["startdate"]:
@@ -159,30 +204,6 @@ def import_historical_meet(db: Session, file_bytes: bytes, force: bool = False) 
         db.flush()
 
     course_int = _course_str_to_int(meta["course"])
-
-    # ── Build event→style_uid map ──
-    event_style: dict[str, int] = {}
-    event_number: dict[str, int] = {}
-    event_gender: dict[str, int] = {}
-    style_names: dict[int, str] = {}
-
-    for event_el in root.iter("EVENT"):
-        eid = event_el.get("eventid", "")
-        enumber = int(event_el.get("number", "0") or "0")
-        egender = {"M": 1, "F": 2}.get(event_el.get("gender", ""), 0)
-        event_number[eid] = enumber
-        event_gender[eid] = egender
-
-        for ss in event_el.iter("SWIMSTYLE"):
-            uid_raw = ss.get("swimstyleid") or ""
-            try:
-                uid_int = int(uid_raw)
-            except (ValueError, TypeError):
-                continue
-            event_style[eid] = uid_int
-            name = ss.get("name", "")
-            if name:
-                style_names[uid_int] = name
 
     # ── Create Event records for this meet ──
     events_created = 0

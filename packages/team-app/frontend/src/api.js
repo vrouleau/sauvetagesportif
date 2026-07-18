@@ -28,6 +28,7 @@ const api = {
     const res = await fetch(`${API}${path}`, { headers: headers() })
     if (!res.ok) {
       const err = new Error(`${res.status}`)
+      err.status = res.status
       try { err.detail = (await res.json()).detail } catch {}
       throw err
     }
@@ -42,6 +43,7 @@ const api = {
     })
     if (!res.ok) {
       const err = new Error(`${res.status}`)
+      err.status = res.status
       try { err.detail = (await res.json()).detail } catch {}
       throw err
     }
@@ -60,6 +62,7 @@ const api = {
     })
     if (!res.ok) {
       const err = new Error(`${res.status}`)
+      err.status = res.status
       try { err.detail = (await res.json()).detail } catch {}
       throw err
     }
