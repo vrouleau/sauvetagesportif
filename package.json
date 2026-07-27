@@ -5,6 +5,10 @@
   "workspaces": [
     "packages/*"
   ],
+  "overrides": {
+    "brace-expansion": "^5.0.8",
+    "sharp": "^0.35.3"
+  },
   "scripts": {
     "dev:meet": "npm run dev -w @meetmgr/meet-app",
     "dev:team": "npm run dev -w @meetmgr/team-app",
