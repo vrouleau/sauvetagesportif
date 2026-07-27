@@ -17,19 +17,32 @@
  * along with Sauvetage Sportif. If not, see <https://www.gnu.org/licenses/>.
  */
 
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
 
-* {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
+/* Scan shared-ui source for Tailwind classes */
+@source "../../../../shared-ui/src";
+
+@theme {
+  --text-2xs: 0.65rem;
+  --color-border: var(--color-gray-200);
 }
 
-html, body, #root {
-  height: 100%;
-  overflow: hidden;
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200);
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  html, body, #root {
+    height: 100%;
+    overflow: hidden;
+  }
 }
 
 body {

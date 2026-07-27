@@ -1649,7 +1649,7 @@ export default function ReportPage({ refreshKey = 0, meetType = 'POOL' }: { refr
               </div>
             )}
             {generating && (
-              <div className="absolute inset-0 flex items-center justify-center bg-gray-700 bg-opacity-70 z-10">
+              <div className="absolute inset-0 flex items-center justify-center bg-gray-700/70 z-10">
                 <span className="text-white text-sm">Génération de l'aperçu…</span>
               </div>
             )}

@@ -19,6 +19,7 @@
 import { resolve } from 'path'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
 import { copyFileSync, mkdirSync, existsSync } from 'fs'
 
 export default defineConfig({
@@ -47,6 +48,6 @@ export default defineConfig({
         '@shared': resolve('../shared-ui/src')
       }
     },
-    plugins: [react()]
+    plugins: [tailwindcss(), react()]
   }
 })
