@@ -22,11 +22,26 @@
  * so node-gyp finds VS Build Tools even when VS Community is also installed.
  */
 const { execSync } = require('child_process')
+const { existsSync } = require('fs')
 const { platform } = require('os')
+const path = require('path')
 
 if (platform() === 'win32' && !process.env.GYP_MSVS_OVERRIDE_PATH) {
   process.env.GYP_MSVS_OVERRIDE_PATH =
     'C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools'
+}
+
+// electron's npm package doesn't run its own binary download via a lifecycle
+// script (no postinstall in its package.json) — do it explicitly so a fresh
+// `npm install` doesn't leave `electron-vite dev` unable to find the binary.
+try {
+  const electronDir = path.dirname(require.resolve('electron/package.json'))
+  if (!existsSync(path.join(electronDir, 'dist'))) {
+    console.log('Downloading Electron binary...')
+    execSync('node install.js', { stdio: 'inherit', cwd: electronDir })
+  }
+} catch {
+  // electron not installed, skip
 }
 
 // Rebuild all native modules for Electron's Node version
