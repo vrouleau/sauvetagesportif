@@ -1787,7 +1787,18 @@ def list_events(db: Session = Depends(get_db)):
 
 @router.get("/swim-styles")
 def list_swim_styles(db: Session = Depends(get_db)):
+    """Swim styles for the current meet only.
+
+    The style catalog is never pruned across meets (historical events/results
+    keep referencing old style ids — see create_new_meet), so without this
+    filter a beach meet would still offer every pool style ever loaded, and
+    vice versa. Pool/beach ids never overlap (501-540 vs 601-605).
+    """
     styles = db.query(SwimStyle).order_by(SwimStyle.distance, SwimStyle.stroke).all()
+    if _get_meet_type(db) == "BEACH":
+        styles = [s for s in styles if s.swimstyleid and s.swimstyleid >= 600]
+    else:
+        styles = [s for s in styles if s.swimstyleid and s.swimstyleid < 600]
     return [{
         "id": s.swimstyleid,
         "distance": s.distance or 0,

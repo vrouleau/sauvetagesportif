@@ -1187,6 +1187,53 @@ class TestSwimStyles:
                         f"which is not in /swim-styles"
                     )
 
+    def test_swim_styles_filtered_to_current_meet_type(self, uploaded, entries_path, admin_headers):
+        """The style catalog is never pruned across meets (old pool styles
+        stick around after a beach meet is created, and vice versa — see
+        create_new_meet), so /swim-styles must filter to the current meet's
+        type or the EventsPage designation dropdown offers styles from the
+        wrong sport. Regression for a live bug: after creating a beach meet,
+        the dropdown still showed every historical pool style.
+
+        /api/admin/new-meet loads the bare pool/beach template (no entries,
+        no registrations), which would wipe the Gatineau fixture every other
+        session-scoped test in this file depends on — so this test restores
+        the real meet + entries fixture afterward, not just the meet type.
+        """
+        try:
+            r = requests.post(f"{BASE_URL}/api/admin/new-meet", json={"meet_type": "beach"},
+                               headers=admin_headers, timeout=60)
+            assert r.status_code == 200, f"new-meet (beach) failed: {r.text}"
+
+            r = requests.get(f"{BASE_URL}/api/swim-styles", timeout=10)
+            r.raise_for_status()
+            styles = r.json()
+            assert len(styles) > 0
+            assert all(s["id"] >= 600 for s in styles), (
+                f"Beach meet's /swim-styles still includes pool styles: "
+                f"{[s['id'] for s in styles if s['id'] < 600]}"
+            )
+        finally:
+            with open(MEET_TEMPLATE, "rb") as f:
+                r = requests.post(f"{BASE_URL}/api/upload/meet?force=true",
+                                   files={"file": ("meet.lxf", f, "application/octet-stream")},
+                                   headers=admin_headers, timeout=60)
+            assert r.status_code == 200, f"restoring Gatineau meet failed: {r.text}"
+            with open(entries_path, "rb") as f:
+                r = requests.post(f"{BASE_URL}/api/upload/entries",
+                                   files={"file": ("entries.lxf", f, "application/octet-stream")},
+                                   headers=admin_headers, timeout=60)
+            assert r.status_code == 200, f"restoring entries failed: {r.text}"
+
+            r = requests.get(f"{BASE_URL}/api/swim-styles", timeout=10)
+            r.raise_for_status()
+            styles = r.json()
+            assert len(styles) > 0
+            assert all(s["id"] < 600 for s in styles), (
+                f"Pool meet's /swim-styles still includes beach styles: "
+                f"{[s['id'] for s in styles if s['id'] >= 600]}"
+            )
+
 
 # ---------------------------------------------------------------------------
 # SMB upload round normalization
