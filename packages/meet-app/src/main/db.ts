@@ -356,6 +356,8 @@ export interface CompetitionEventRow {
   swimstyleId?: number | null
   finalOrder?: number | null
   maxEntries?: number | null
+  masters?: boolean
+  fee?: number | null
   ageGroups: AgeGroupRow[]
 }
 
@@ -663,8 +665,8 @@ export async function getHeatListSessions(): Promise<HeatListSessionRow[]> {
 
 // ── Query: sessions + events + age groups for EventsPage ─────────────────────
 
-export async function getSessions(): Promise<SessionRow[]> {
-  const db = getLocalDb()
+export async function getSessions(injectedDb?: ReturnType<typeof getLocalDb>): Promise<SessionRow[]> {
+  const db = injectedDb ?? getLocalDb()
 
   const sessions = db.prepare(`
     SELECT swimsessionid, sessionnumber, name, daytime, startdate, endtime, course,
@@ -692,7 +694,7 @@ export async function getSessions(): Promise<SessionRow[]> {
   const events = db.prepare(`
     SELECT e.swimeventid, e.swimsessionid, e.eventnumber, e.gender, e.round,
            e.internalevent, e.daytime, e.duration, e.roundname AS eventname, e.comment, e.swimstyleid,
-           e.finalorder, e.maxentries,
+           e.finalorder, e.maxentries, e.masters, e.fee,
            ss.distance, ss.stroke, ss.name AS stylename
     FROM swimevent e
     LEFT JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid
@@ -704,6 +706,7 @@ export async function getSessions(): Promise<SessionRow[]> {
     stroke: number | null; stylename: string | null; swimstyleid: number | null
     internalevent: string | null; daytime: string | number | null; duration: string | number | null
     eventname: string | null; comment: string | null; finalorder: number | null; maxentries: number | null
+    masters: string | null; fee: number | null
   }>
 
   const eventIds = events.map(r => r.swimeventid)
@@ -754,6 +757,8 @@ export async function getSessions(): Promise<SessionRow[]> {
       swimstyleId: e.swimstyleid ?? null,
       finalOrder: e.finalorder,
       maxEntries: e.maxentries ?? null,
+      masters: e.masters === 'T',
+      fee: e.fee ?? null,
       ageGroups: agMap.get(e.swimeventid) ?? [],
     })
   }
@@ -2200,10 +2205,11 @@ export interface EventUpdate {
   finalorder?: number | null
   maxentries?: number | null
   preveventid?: number | null
+  fee?: number | null
 }
 
-export async function updateEvent(eventId: number, data: EventUpdate): Promise<void> {
-  const db = getLocalDb()
+export async function updateEvent(eventId: number, data: EventUpdate, injectedDb?: ReturnType<typeof getLocalDb>): Promise<void> {
+  const db = injectedDb ?? getLocalDb()
   const sets: string[] = []
   const vals: unknown[] = []
 
@@ -2227,6 +2233,7 @@ export async function updateEvent(eventId: number, data: EventUpdate): Promise<v
   if (data.finalorder !== undefined) { sets.push('finalorder=?'); vals.push(data.finalorder) }
   if (data.maxentries !== undefined) { sets.push('maxentries=?'); vals.push(data.maxentries) }
   if (data.preveventid !== undefined) { sets.push('preveventid=?'); vals.push(data.preveventid) }
+  if (data.fee !== undefined) { sets.push('fee=?'); vals.push(data.fee) }
 
   if (sets.length === 0) return
   vals.push(eventId)

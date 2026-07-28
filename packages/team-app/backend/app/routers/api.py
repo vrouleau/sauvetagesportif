@@ -1682,6 +1682,11 @@ def list_sessions(db: Session = Depends(get_db)):
                 "isAdmin": is_admin,
                 "swimstyleId": e.swimstyleid,
                 "fee": e.fee,
+                "masters": e.masters == "T",
+                "maxEntries": e.maxentries,
+                "finalOrder": e.finalorder,
+                "scheduledTime": e.daytime.strftime("%H:%M") if e.daytime else None,
+                "duration": e.duration.strftime("%H:%M") if e.duration else None,
                 "ageGroups": [{
                     "id": ag.agegroupid,
                     "number": i + 1,
@@ -1987,6 +1992,9 @@ def update_event(event_id: int, data: dict = Body(default={}), db: Session = Dep
             # Convert gender string to int if needed
             if key == "gender" and isinstance(val, str):
                 val = {"M": 1, "F": 2, "X": 0}.get(val, 0)
+            elif key in ("daytime", "duration") and val:
+                if ":" in str(val) and "-" not in str(val):
+                    val = datetime(2000, 1, 1, *[int(x) for x in str(val).split(":")[:2]])
             setattr(event, col, val)
 
     db.commit()

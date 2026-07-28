@@ -1014,6 +1014,119 @@ class TestSessions:
 
 
 # ---------------------------------------------------------------------------
+# Event field round-trip (PUT /events/{id} -> GET /sessions)
+# ---------------------------------------------------------------------------
+
+class TestEventFieldRoundTrip:
+    """Regression coverage for the "write path works, read path drops the
+    field" bug class: update_event persisted a column correctly but
+    list_sessions (the query behind GET /sessions, feeding the shared
+    EventsPage) never selected it back, so the UI showed a stale/default
+    value and a re-save from that stale state could silently overwrite the
+    real value. See HANDOFF_2026-07-28.md.
+    """
+
+    def _get_event(self, event_id):
+        r = requests.get(f"{BASE_URL}/api/sessions", timeout=10)
+        r.raise_for_status()
+        for s in r.json():
+            for ev in s["events"]:
+                if ev["id"] == event_id:
+                    return ev
+        raise AssertionError(f"event {event_id} not found in /api/sessions")
+
+    def _first_individual_event_id(self):
+        r = requests.get(f"{BASE_URL}/api/sessions", timeout=10)
+        r.raise_for_status()
+        for s in r.json():
+            for ev in s["events"]:
+                if not ev["isAdmin"]:
+                    return ev["id"]
+        raise AssertionError("no non-admin event found")
+
+    def test_masters_fee_maxentries_round_trip(self, uploaded, admin_headers):
+        event_id = self._first_individual_event_id()
+        original = self._get_event(event_id)
+        try:
+            r = requests.put(
+                f"{BASE_URL}/api/events/{event_id}",
+                json={"masters": "T", "fee": 12.5, "maxentries": 6},
+                headers=admin_headers, timeout=10,
+            )
+            r.raise_for_status()
+
+            updated = self._get_event(event_id)
+            assert updated["masters"] is True
+            assert updated["fee"] == 12.5
+            assert updated["maxEntries"] == 6
+        finally:
+            requests.put(
+                f"{BASE_URL}/api/events/{event_id}",
+                json={
+                    "masters": "T" if original.get("masters") else "F",
+                    "fee": original.get("fee") or 0,
+                    "maxentries": original.get("maxEntries"),
+                },
+                headers=admin_headers, timeout=10,
+            )
+
+    def test_final_order_scheduled_time_duration_round_trip(self, uploaded, admin_headers):
+        event_id = self._first_individual_event_id()
+        original = self._get_event(event_id)
+        try:
+            r = requests.put(
+                f"{BASE_URL}/api/events/{event_id}",
+                # <input type="time"> in EventsPage always sends zero-padded "HH:MM"
+                json={"finalorder": 1, "daytime": "09:15", "duration": "00:45"},
+                headers=admin_headers, timeout=10,
+            )
+            r.raise_for_status()
+
+            updated = self._get_event(event_id)
+            assert updated["finalOrder"] == 1
+            assert updated["scheduledTime"] == "09:15"
+            assert updated["duration"] == "00:45"
+        finally:
+            requests.put(
+                f"{BASE_URL}/api/events/{event_id}",
+                json={
+                    "finalorder": original.get("finalOrder"),
+                    "daytime": original.get("scheduledTime"),
+                    "duration": original.get("duration"),
+                },
+                headers=admin_headers, timeout=10,
+            )
+
+    def test_scheduled_time_and_duration_clear_to_null(self, uploaded, admin_headers):
+        event_id = self._first_individual_event_id()
+        original = self._get_event(event_id)
+        try:
+            requests.put(
+                f"{BASE_URL}/api/events/{event_id}",
+                json={"daytime": "09:15", "duration": "00:45"},
+                headers=admin_headers, timeout=10,
+            ).raise_for_status()
+            requests.put(
+                f"{BASE_URL}/api/events/{event_id}",
+                json={"daytime": None, "duration": None},
+                headers=admin_headers, timeout=10,
+            ).raise_for_status()
+
+            updated = self._get_event(event_id)
+            assert updated["scheduledTime"] is None
+            assert updated["duration"] is None
+        finally:
+            requests.put(
+                f"{BASE_URL}/api/events/{event_id}",
+                json={
+                    "daytime": original.get("scheduledTime"),
+                    "duration": original.get("duration"),
+                },
+                headers=admin_headers, timeout=10,
+            )
+
+
+# ---------------------------------------------------------------------------
 # Swim styles endpoint (EventsPage dropdown data source)
 # ---------------------------------------------------------------------------
 

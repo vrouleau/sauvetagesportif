@@ -1836,13 +1836,9 @@ function EventPropertiesPanel({ event, onUpdate }: { event: CompetitionEvent; on
   const [swimStyles, setSwimStyles] = useState<SwimStyle[]>([])
   const [selectedStyleId, setSelectedStyleId] = useState<number | null>(null)
   const [finalOrder, setFinalOrder] = useState<number>(event.finalOrder ?? 2)
-  const [isBeach, setIsBeach] = useState(false)
-
-  useEffect(() => {
-    api.getMeetConfig().then(cfg => {
-      setIsBeach((cfg?.MEETTYPE || '').toUpperCase() === 'BEACH')
-    }).catch(() => {})
-  }, [api])
+  // Beach swim styles use IDs >= 600 (see lenex.ts auto-detect convention); event.swimstyleId
+  // is always available synchronously, unlike the MEETTYPE key which is never written to MEETVALUES.
+  const isBeach = (event.swimstyleId ?? 0) >= 600
 
   useEffect(() => {
     setEvNumber(event.number)
@@ -1852,6 +1848,7 @@ function EventPropertiesPanel({ event, onUpdate }: { event: CompetitionEvent; on
     setDuration(event.duration ?? '')
     setSelectedStyleId(event.swimstyleId ?? null)
     setFinalOrder(event.finalOrder ?? 2)
+    setMasters(event.masters ?? false)
     // Load swim styles
     api.getSwimStyles().then((styles) => {
       setSwimStyles(styles || [])
