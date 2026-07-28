@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.3.39] - 2026-07-28
+
+### Other
+
+- Document meet_type semantics and the Vite symlink gotcha (`2de1ede`)
+- Filter /swim-styles to the current meet's type (`85894b4`)
+- Fix duplicate React instances in team-app frontend build (`12739f0`)
+- Fix event fields silently dropped between write and read paths (`f617d9c`)
+- Uplift team-app/frontend to react-markdown 10.1.0 (`c2b4c14`)
+- Uplift team-app/frontend to Vite 7 + @vitejs/plugin-react 5 (`cbacfcc`)
+- Uplift meet-app to better-sqlite3 13.0.1 (`0dcb820`)
+- Uplift meet-app to Electron 43.2.0 (`9b38d4f`)
+- Uplift team-app/frontend to react-router 8.3.0 (`f216062`)
+- Fix @types/react version mismatch in team-app/frontend (`c25c727`)
+- Fix missing Electron binary on fresh install (`99ae850`)
+- Uplift meet-app to Tailwind CSS v4 (`001660a`)
+- Merge remote-tracking branch 'origin/agents/uplift-ts7' (`bed3b10`)
+- Merge pull request #2 from vrouleau/agents/uplift-ts7 (`7cfbfb4`)
+- Uplift meet-app and shared-ui to React 19.2 (`a30cf19`)
+- Uplift TypeScript to 7.0.2 and patch transitive vulnerabilities (`da50803`)
+- Merge pull request #1 from vrouleau/agents/prevent-version-in-app-name (`d4b370f`)
+- Fix Windows installed app name by removing version from NSIS uninstall display name (`e3d8ff3`)
+
+# Changelog
+
 ## [0.3.38] - 2026-07-18
 
 ### Other
