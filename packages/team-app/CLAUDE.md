@@ -33,6 +33,17 @@ docker compose down -v           # stop + wipe volumes (full DB reset)
 
 **Build context note:** `docker-compose.yml` uses `context: ../..` (monorepo root) so the frontend build can `COPY packages/shared-ui/src`. Always run `docker compose` from `packages/team-app/`.
 
+**Vite symlink gotcha:** the frontend Dockerfile copies `shared-ui/src` in
+separately, then symlinks `/shared-ui/node_modules -> /app/node_modules` so
+its imports resolve. `vite.config.js`'s `resolve` must **not** set
+`preserveSymlinks: true` — that makes Vite treat `react` imported from
+`/app/src/*` and from `/shared-ui/src/*` (via the symlink) as two distinct
+modules instead of collapsing them to the same real path, so the bundle
+ships two React instances. Symptom: a full white-screen crash the instant
+any shared-ui component calls a hook — `Cannot read properties of null
+(reading 'useState')` — invisible at build time, only shows up once a
+shared-ui page is actually loaded in a browser.
+
 ## Integration tests (WSL)
 
 All test commands run from a **WSL terminal**. The test suite is in `tests/`.
@@ -124,6 +135,22 @@ The old dual-schema architecture (separate `club`/`athlete` tables + dual-write)
 - `closure_date` — registration deadline (synced with MEETVALUES DEADLINE)
 - `backup_interval_days` — auto-backup interval (default 1)
 - `backup_max_count` — auto-backup retention count (default 7)
+- `meet_type` — `POOL` or `BEACH` for the *current* meet (also read as `MEET_TYPE`, the meet-app/`.smb` key name)
+
+`meet_type` is a **cached flag**, not an independent source of truth — the
+real signal is always the swimstyleid range (pool 501-540, beach 601-605).
+It's recomputed fresh on every `POST /api/upload/meet`, scanning only *that
+upload's own* events — deliberately not the SwimStyle catalog (see below),
+so a stale historical style can't misclassify a new upload. `POST
+/api/admin/new-meet` sets it explicitly from the request body. Historical
+imports (`import-historical`, `import-results-lxf`) never touch it.
+
+**SwimStyle catalog is never pruned across meets.** Historical events/results
+keep referencing old style ids, so once a pool meet has ever run, its 5xx
+styles stay in the catalog forever (same in reverse for 6xx beach styles).
+Any endpoint that reads the catalog directly (`GET /api/swim-styles`) must
+filter by the current `meet_type`, or it'll offer styles from the wrong
+sport — this bit us for real once already.
 
 ## Best times storage
 
@@ -136,7 +163,7 @@ Best times are computed from the Team Manager `results` table via `best_times_v2
 | Endpoint | Purpose | Access |
 |---|---|---|
 | `GET /api/sessions` | Sessions + events + age groups (for EventsPage) | Public |
-| `GET /api/swim-styles` | All swimstyles (for dropdown) | Public |
+| `GET /api/swim-styles` | Swimstyles for the current meet's type only (for dropdown) — see catalog note above | Public |
 | `GET /api/meet-info` | Meet metadata | Public |
 | `GET /api/events` | Flat event list | Public |
 | `POST /api/auth` | PIN authentication | Public |
