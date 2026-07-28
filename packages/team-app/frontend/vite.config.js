@@ -33,7 +33,6 @@ export default defineConfig({
     alias: {
       '@shared': path.resolve(__dirname, '../../shared-ui/src'),
     },
-    preserveSymlinks: true,
   },
   server: {
     proxy: {
