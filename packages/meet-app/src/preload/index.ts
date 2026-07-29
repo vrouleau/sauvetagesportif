@@ -89,6 +89,14 @@ const api = {
       splits: Record<number, string> | undefined,
       dsqItemId?: number | null,
     ) => ipcRenderer.invoke('db:save-result', swimresultId, finalTime, reactionTimeSecs, status, splits, dsqItemId),
+    saveRelayResult: (
+      relayId: number,
+      finalTime: string | undefined,
+      reactionTimeSecs: number | null,
+      status: string | null,
+      splits: Record<number, string> | undefined,
+      dsqItemId?: number | null,
+    ) => ipcRenderer.invoke('db:save-relay-result', relayId, finalTime, reactionTimeSecs, status, splits, dsqItemId),
     createSession: (name: string, number: number) =>
       ipcRenderer.invoke('db:create-session', name, number),
     updateSession: (sessionId: number, data: unknown) =>
@@ -173,10 +181,18 @@ const api = {
       ipcRenderer.invoke('db:assign-to-heat-lane', swimresultId, heatId, lane),
     swapLanes: (resultIdA: number, heatIdA: number, laneA: number, resultIdB: number, heatIdB: number, laneB: number) =>
       ipcRenderer.invoke('db:swap-lanes', resultIdA, heatIdA, laneA, resultIdB, heatIdB, laneB),
+    removeRelayFromHeat: (relayId: number) =>
+      ipcRenderer.invoke('db:remove-relay-from-heat', relayId),
+    assignRelayToHeatLane: (relayId: number, heatId: number, lane: number) =>
+      ipcRenderer.invoke('db:assign-relay-to-heat-lane', relayId, heatId, lane),
+    swapRelayLanes: (relayIdA: number, heatIdA: number, laneA: number, relayIdB: number, heatIdB: number, laneB: number) =>
+      ipcRenderer.invoke('db:swap-relay-lanes', relayIdA, heatIdA, laneA, relayIdB, heatIdB, laneB),
     addLateEntry: (athleteId: number, eventId: number, heatId: number, lane: number, entryTime: number | null) =>
       ipcRenderer.invoke('db:add-late-entry', athleteId, eventId, heatId, lane, entryTime),
     getAvailableAthletesForEvent: (eventId: number) =>
       ipcRenderer.invoke('db:available-athletes-for-event', eventId),
+    getAvailableRelayTeamsForEvent: (eventId: number) =>
+      ipcRenderer.invoke('db:available-relay-teams-for-event', eventId),
     saveAthlete: (athlete: unknown) =>
       ipcRenderer.invoke('db:save-athlete', athlete),
     setAthleteClub: (athleteId: number, clubId: number) =>

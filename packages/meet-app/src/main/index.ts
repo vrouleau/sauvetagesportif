@@ -30,7 +30,8 @@ import {
   getHeatListEvents, getHeatListSessions, getSessions, getAthletes,
   saveResult,
   removeFromHeat, assignToHeatLane, swapLanes, addLateEntry,
-  getAvailableAthletesForEvent,
+  saveRelayResult, removeRelayFromHeat, assignRelayToHeatLane, swapRelayLanes,
+  getAvailableAthletesForEvent, getAvailableRelayTeamsForEvent,
   createSession, deleteSession, updateSession,
   createBreak,
   createEvent, deleteEvent, updateEvent,
@@ -191,6 +192,16 @@ ipcMain.handle('db:save-result', (
   splits: Record<number, string> | undefined,
   dsqItemId?: number | null,
 ) => saveResult(swimresultId, finalTime, reactionTimeSecs, status, splits, dsqItemId))
+
+ipcMain.handle('db:save-relay-result', (
+  _event,
+  relayId: number,
+  finalTime: string | undefined,
+  reactionTimeSecs: number | null,
+  status: 'DNS' | 'DNF' | 'DSQ' | null,
+  splits: Record<number, string> | undefined,
+  dsqItemId?: number | null,
+) => saveRelayResult(relayId, finalTime, reactionTimeSecs, status, splits, dsqItemId))
 
 ipcMain.handle('db:create-session', (_event, name: string, number: number) =>
   createSession(name, number).then(id => ({ id }))
@@ -1125,6 +1136,21 @@ ipcMain.handle('db:swap-lanes', async (_event, resultIdA: number, heatIdA: numbe
   return { ok: true }
 })
 
+ipcMain.handle('db:remove-relay-from-heat', async (_event, relayId: number) => {
+  await removeRelayFromHeat(relayId)
+  return { ok: true }
+})
+
+ipcMain.handle('db:assign-relay-to-heat-lane', async (_event, relayId: number, heatId: number, lane: number) => {
+  await assignRelayToHeatLane(relayId, heatId, lane)
+  return { ok: true }
+})
+
+ipcMain.handle('db:swap-relay-lanes', async (_event, relayIdA: number, heatIdA: number, laneA: number, relayIdB: number, heatIdB: number, laneB: number) => {
+  await swapRelayLanes(relayIdA, heatIdA, laneA, relayIdB, heatIdB, laneB)
+  return { ok: true }
+})
+
 ipcMain.handle('db:add-late-entry', async (_event, athleteId: number, eventId: number, heatId: number, lane: number, entryTime: number | null) => {
   const id = await addLateEntry(athleteId, eventId, heatId, lane, entryTime)
   return { ok: true, swimresultId: id }
@@ -1132,6 +1158,10 @@ ipcMain.handle('db:add-late-entry', async (_event, athleteId: number, eventId: n
 
 ipcMain.handle('db:available-athletes-for-event', async (_event, eventId: number) => {
   return getAvailableAthletesForEvent(eventId)
+})
+
+ipcMain.handle('db:available-relay-teams-for-event', async (_event, eventId: number) => {
+  return getAvailableRelayTeamsForEvent(eventId)
 })
 
 ipcMain.handle('db:save-athlete', (_event, athlete: Parameters<typeof saveAthlete>[0]) =>

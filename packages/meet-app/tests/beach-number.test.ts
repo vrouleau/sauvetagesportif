@@ -961,3 +961,82 @@ describe('Beach heat generation respects swimstyle.distance as max per heat', ()
     expect(total).toBe(28)
   })
 })
+
+// ── Unit Tests: Beach relay heat generation ────────────────────────────────
+
+describe('Beach relay heat generation', () => {
+  let db: Database.Database
+  let cleanup: () => void
+
+  beforeEach(() => {
+    const t = createTestDb()
+    db = t.db
+    cleanup = t.cleanup
+    db.exec(`INSERT INTO bsglobal (name, data) VALUES ('MEET_TYPE', 'BEACH')`)
+    db.exec(`INSERT INTO club (clubid, code, name, nation) VALUES (1, 'ABC', 'Alpha Club', 'CAN')`)
+    db.exec(`INSERT INTO swimsession (swimsessionid, sessionnumber, name, lanemin, lanemax) VALUES (1, 1, 'Session 1', 1, 8)`)
+    // Beach relay swimstyle: relaycount=4, distance=4 (max teams per heat)
+    db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount, stroke, sortcode) VALUES (605, 4, 'Relais Sauvetage', 4, 1, 1)`)
+    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode, internalevent) VALUES (1, 1, 605, 1, 3, 5, 1, 'F')`)
+  })
+
+  afterEach(() => cleanup())
+
+  function insertRelayTeams(eventId: number, count: number) {
+    for (let i = 1; i <= count; i++) {
+      db.exec(`INSERT INTO relay (relayid, clubid, swimeventid, name, teamnumber) VALUES (${i}, 1, ${eventId}, 'Team ${i}', ${i})`)
+    }
+  }
+
+  function getRelayHeats(eventId: number) {
+    return db.prepare(`
+      SELECT h.heatid, h.heatnumber, COUNT(r.relayid) as team_count
+      FROM heat h
+      LEFT JOIN relay r ON r.heatid = h.heatid
+      WHERE h.swimeventid = ?
+      GROUP BY h.heatid
+      ORDER BY h.heatnumber
+    `).all(eventId) as Array<{ heatid: number; heatnumber: number; team_count: number }>
+  }
+
+  it('assigns relay teams to heats instead of skipping the event', async () => {
+    insertRelayTeams(1, 5)
+
+    const result = await generateHeats(1, undefined, db)
+
+    expect(result.heatsCreated).toBeGreaterThanOrEqual(1)
+    expect(result.entriesAssigned).toBe(5)
+    const heats = getRelayHeats(1)
+    const total = heats.reduce((sum, h) => sum + h.team_count, 0)
+    expect(total).toBe(5)
+  })
+
+  it('splits relay teams across heats respecting the distance cap', async () => {
+    // distance=4 → max 4 teams per heat; 9 teams → 3 heats
+    insertRelayTeams(1, 9)
+
+    const result = await generateHeats(1, undefined, db)
+
+    expect(result.heatsCreated).toBe(3)
+    expect(result.entriesAssigned).toBe(9)
+    const heats = getRelayHeats(1)
+    for (const heat of heats) {
+      expect(heat.team_count).toBeLessThanOrEqual(4)
+    }
+  })
+
+  it('writes heat/lane assignment onto the relay table, not swimresult', async () => {
+    insertRelayTeams(1, 3)
+
+    await generateHeats(1, undefined, db)
+
+    const relayRows = db.prepare(`SELECT relayid, heatid, lane FROM relay WHERE swimeventid=1`).all() as Array<{ relayid: number; heatid: number | null; lane: number | null }>
+    expect(relayRows).toHaveLength(3)
+    for (const row of relayRows) {
+      expect(row.heatid).not.toBeNull()
+      expect(row.lane).not.toBeNull()
+    }
+    const swimresultCount = (db.prepare(`SELECT COUNT(*) as c FROM swimresult WHERE swimeventid=1`).get() as { c: number }).c
+    expect(swimresultCount).toBe(0)
+  })
+})

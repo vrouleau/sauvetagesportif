@@ -272,6 +272,7 @@ function parseBirthDate(birthdate: string | number | null): string {
 
 export interface LaneEntryRow {
   swimresultId: number
+  relayId?: number
   lane: number
   athleteId: number
   lastName: string
@@ -537,84 +538,78 @@ export async function getHeatListSessions(): Promise<HeatListSessionRow[]> {
     })
   }
 
-  // ── Relay member lookup for beach meets ──────────────────────────────────────
-  // For relay events (relaycount > 1), attach relay member data (with beach numbers)
-  if (isBeachMeet) {
-    const relayEventIds = events.filter(e => (e.relaycount ?? 1) > 1).map(e => e.swimeventid)
-    if (relayEventIds.length > 0) {
-      const { clause: rEvPh, params: rEvParams } = inClause(relayEventIds)
-      // Get all relay teams for relay events, including their positions with athlete nameprefix
-      const relayRows = db.prepare(`
-        SELECT r.relayid, r.swimeventid, r.clubid, r.name AS teamname,
-               rp.relaynumber, rp.athleteid AS memberathleteid,
-               a.lastname AS memberlastname, a.nameprefix AS memberbeachnumber
-        FROM relay r
-        JOIN relayposition rp ON r.relayid = rp.relayid
+  // ── Relay entries: build first-class LaneEntryRow objects from the `relay` table ──
+  // (relay teams never get a swimresult row — heatid/lane/times live on `relay` itself)
+  const relayEventIds = events.filter(e => (e.relaycount ?? 1) > 1).map(e => e.swimeventid)
+  if (relayEventIds.length > 0) {
+    const { clause: rEvPh, params: rEvParams } = inClause(relayEventIds)
+    const relayRows = db.prepare(`
+      SELECT r.relayid, r.heatid, r.lane, r.swimeventid, r.clubid, r.name AS teamname,
+             r.entrytime, r.swimtime, r.reactiontime, r.resultstatus, r.dsqitemid, r.agegroupid,
+             c.code AS clubcode, c.name AS clubname,
+             COALESCE(NULLIF(ag.name, ''), CASE WHEN ag.agemin IS NOT NULL THEN CAST(ag.agemin AS TEXT) || '-' || COALESCE(CAST(ag.agemax AS TEXT), '+') END, '???') AS agegroupname
+      FROM relay r
+      LEFT JOIN club c ON r.clubid = c.clubid
+      LEFT JOIN agegroup ag ON r.agegroupid = ag.agegroupid
+      WHERE r.swimeventid IN (${rEvPh}) AND r.heatid IS NOT NULL AND r.lane IS NOT NULL
+      ORDER BY r.heatid, r.lane
+    `).all(...rEvParams) as Array<{
+      relayid: number; heatid: number; lane: number | null; swimeventid: number; clubid: number | null; teamname: string | null
+      entrytime: number | null; swimtime: number | null; reactiontime: number | null; resultstatus: number | null
+      dsqitemid: number | null; agegroupid: number | null
+      clubcode: string | null; clubname: string | null; agegroupname: string | null
+    }>
+
+    const relayIds = relayRows.map(r => r.relayid)
+    let relayMemberRows: Array<{ relayid: number; relaynumber: number; lastname: string | null; beachnumber: string | null }> = []
+    if (relayIds.length > 0) {
+      const { clause: rIdPh, params: rIdParams } = inClause(relayIds)
+      relayMemberRows = db.prepare(`
+        SELECT rp.relayid, rp.relaynumber, a.lastname, a.nameprefix AS beachnumber
+        FROM relayposition rp
         LEFT JOIN athlete a ON rp.athleteid = a.athleteid
-        WHERE r.swimeventid IN (${rEvPh})
-        ORDER BY r.relayid, rp.relaynumber
-      `).all(...rEvParams) as Array<{
-        relayid: number; swimeventid: number; clubid: number; teamname: string | null
-        relaynumber: number; memberathleteid: number; memberlastname: string | null; memberbeachnumber: string | null
-      }>
+        WHERE rp.relayid IN (${rIdPh})
+        ORDER BY rp.relayid, rp.relaynumber
+      `).all(...rIdParams) as typeof relayMemberRows
+    }
 
-      // Group relay positions by relayid
-      const relayDataMap = new Map<number, {
-        swimeventid: number; clubid: number; teamname: string | null
-        members: Array<{ position: number; lastName: string; beachNumber?: string; athleteId: number }>
-      }>()
-      for (const row of relayRows) {
-        if (!relayDataMap.has(row.relayid)) {
-          relayDataMap.set(row.relayid, {
-            swimeventid: row.swimeventid,
-            clubid: row.clubid,
-            teamname: row.teamname,
-            members: [],
-          })
-        }
-        relayDataMap.get(row.relayid)!.members.push({
-          position: row.relaynumber,
-          lastName: row.memberlastname ?? '',
-          beachNumber: row.memberbeachnumber || undefined,
-          athleteId: row.memberathleteid,
-        })
-      }
+    const membersByRelay = new Map<number, Array<{ position: number; lastName: string; beachNumber?: string }>>()
+    for (const m of relayMemberRows) {
+      if (!membersByRelay.has(m.relayid)) membersByRelay.set(m.relayid, [])
+      membersByRelay.get(m.relayid)!.push({
+        position: m.relaynumber,
+        lastName: m.lastname ?? '',
+        beachNumber: m.beachnumber || undefined,
+      })
+    }
 
-      // Build index: athleteId → relay data (for matching swimresult.athleteid to relay team)
-      const athleteToRelay = new Map<string, { members: Array<{ position: number; lastName: string; beachNumber?: string }>; teamname: string | null }>()
-      for (const [, data] of relayDataMap) {
-        for (const m of data.members) {
-          // Key: eventId + athleteId to handle athlete in multiple events
-          const key = `${data.swimeventid}:${m.athleteId}`
-          if (!athleteToRelay.has(key)) {
-            athleteToRelay.set(key, {
-              members: data.members.map(({ position, lastName, beachNumber }) => ({ position, lastName, beachNumber })),
-              teamname: data.teamname,
-            })
-          }
-        }
-      }
-
-      // Attach relay members to entries in relay events
-      for (const ev of events) {
-        if ((ev.relaycount ?? 1) <= 1) continue
-        const eventHeats = heats.filter(h => h.swimeventid === ev.swimeventid)
-        for (const heat of eventHeats) {
-          const heatEntries = entryMap.get(heat.heatid)
-          if (!heatEntries) continue
-          for (const entry of heatEntries) {
-            const key = `${ev.swimeventid}:${entry.athleteId}`
-            const relayData = athleteToRelay.get(key)
-            if (relayData && relayData.members.length > 0) {
-              entry.relayMembers = relayData.members
-              // Store custom team name separately (don't mutate firstName)
-              if (relayData.teamname) {
-                entry.relayTeamName = relayData.teamname
-              }
-            }
-          }
-        }
-      }
+    for (const r of relayRows) {
+      if (!entryMap.has(r.heatid)) entryMap.set(r.heatid, [])
+      const status = decodeResultStatus(r.resultstatus)
+      const finalTimeDisplay = status ? undefined : (
+        isBeachMeet && r.swimtime != null
+          ? String(Math.round(r.swimtime / 1000))
+          : msToDisplay(r.swimtime)
+      )
+      entryMap.get(r.heatid)!.push({
+        relayId: r.relayid,
+        swimresultId: 0,
+        lane: r.lane ?? 0,
+        athleteId: 0,
+        lastName: r.teamname ?? '',
+        firstName: '',
+        birthYear: 0,
+        nation: '',
+        clubCode: r.clubcode ?? '',
+        clubName: r.clubname ?? '',
+        category: r.agegroupname ?? '',
+        entryTime: isBeachMeet ? '' : (msToDisplay(r.entrytime) ?? 'NT'),
+        finalTime: finalTimeDisplay,
+        status,
+        dsqItemId: r.dsqitemid ?? undefined,
+        relayMembers: membersByRelay.get(r.relayid),
+        relayTeamName: r.teamname ?? undefined,
+      })
     }
   }
 
@@ -1024,6 +1019,63 @@ export async function getAvailableAthletesForEvent(eventId: number): Promise<Arr
   }))
 }
 
+/** Get relay teams available for late entry in a specific event (created but not yet assigned to a heat) */
+export async function getAvailableRelayTeamsForEvent(eventId: number): Promise<Array<{
+  id: number; teamName: string; clubCode: string; clubName: string; category: string; entryTime: string | undefined
+  members: Array<{ position: number; lastName: string; beachNumber?: string }>
+}>> {
+  const db = getLocalDb()
+  const rows = db.prepare(`
+    SELECT r.relayid, r.name AS teamname, r.entrytime,
+           c.code AS clubcode, c.name AS clubname,
+           COALESCE(NULLIF(ag.name, ''), CASE WHEN ag.agemin IS NOT NULL THEN CAST(ag.agemin AS TEXT) || '-' || COALESCE(CAST(ag.agemax AS TEXT), '+') END, '???') AS agegroupname
+    FROM relay r
+    LEFT JOIN club c ON r.clubid = c.clubid
+    LEFT JOIN agegroup ag ON r.agegroupid = ag.agegroupid
+    WHERE r.swimeventid = ? AND r.heatid IS NULL
+    ORDER BY r.relayid
+  `).all(eventId) as Array<{
+    relayid: number; teamname: string | null; entrytime: number | null
+    clubcode: string | null; clubname: string | null; agegroupname: string | null
+  }>
+
+  if (rows.length === 0) return []
+
+  const relayIds = rows.map(r => r.relayid)
+  const { clause, params } = inClause(relayIds)
+  const memberRows = db.prepare(`
+    SELECT rp.relayid, rp.relaynumber, a.lastname, a.nameprefix AS beachnumber
+    FROM relayposition rp
+    LEFT JOIN athlete a ON rp.athleteid = a.athleteid
+    WHERE rp.relayid IN (${clause})
+    ORDER BY rp.relayid, rp.relaynumber
+  `).all(...params) as Array<{ relayid: number; relaynumber: number; lastname: string | null; beachnumber: string | null }>
+
+  const membersByRelay = new Map<number, Array<{ position: number; lastName: string; beachNumber?: string }>>()
+  for (const m of memberRows) {
+    if (!membersByRelay.has(m.relayid)) membersByRelay.set(m.relayid, [])
+    membersByRelay.get(m.relayid)!.push({
+      position: m.relaynumber,
+      lastName: m.lastname ?? '',
+      beachNumber: m.beachnumber || undefined,
+    })
+  }
+
+  return rows.map(r => {
+    const members = membersByRelay.get(r.relayid) ?? []
+    const occupied = members.filter(m => m.lastName)
+    return {
+      id: r.relayid,
+      teamName: r.teamname || occupied.map(m => m.lastName).join('/') || `Team ${r.relayid}`,
+      clubCode: r.clubcode ?? '',
+      clubName: r.clubname ?? '',
+      category: r.agegroupname ?? '',
+      entryTime: msToDisplay(r.entrytime),
+      members,
+    }
+  })
+}
+
 /** Remove an entry from its heat/lane (unseed it, don't delete the entry) */
 export async function removeFromHeat(swimresultId: number): Promise<void> {
   const db = getLocalDb()
@@ -1072,6 +1124,75 @@ export async function addLateEntry(
   }
 
   return id
+}
+
+// ── Write: relay heat lane management ─────────────────────────────────────────
+
+/** Check that the heat containing a relay team is not validated; throws if it is */
+function assertRelayNotValidated(db: ReturnType<typeof getLocalDb>, relayId: number): void {
+  const row = db.prepare(
+    `SELECT h.racestatus FROM relay r JOIN heat h ON r.heatid = h.heatid WHERE r.relayid=?`
+  ).get(relayId) as { racestatus: number | null } | undefined
+  if (row && row.racestatus === 5) {
+    throw new Error('Heat is validated — modifications are not allowed.')
+  }
+}
+
+export async function saveRelayResult(
+  relayId: number,
+  finalTime: string | undefined,
+  reactionTimeSecs: number | null,
+  status: 'DNS' | 'DNF' | 'DSQ' | null,
+  splits: Record<number, string> | undefined,
+  dsqItemId?: number | null,
+): Promise<void> {
+  const db = getLocalDb()
+  assertRelayNotValidated(db, relayId)
+  const swimtime = finalTime ? displayToMs(finalTime) : null
+  const resultstatus = encodeResultStatus(status)
+  const reactiontime = reactionTimeSecs != null ? Math.round(reactionTimeSecs * 1000) : null
+
+  db.prepare(
+    `UPDATE relay SET swimtime=?, reactiontime=?, resultstatus=?, dsqitemid=? WHERE relayid=?`
+  ).run(swimtime, reactiontime, resultstatus, dsqItemId ?? null, relayId)
+
+  db.prepare(`DELETE FROM relaysplit WHERE relayid=?`).run(relayId)
+  if (splits) {
+    const ins = db.prepare(`INSERT INTO relaysplit (relayid, distance, swimtime) VALUES (?, ?, ?)`)
+    for (const [dist, t] of Object.entries(splits)) {
+      const ms = displayToMs(t)
+      if (ms != null) ins.run(relayId, Number(dist), ms)
+    }
+  }
+}
+
+/** Remove a relay team from its heat/lane (unseed it, don't delete the team) */
+export async function removeRelayFromHeat(relayId: number): Promise<void> {
+  const db = getLocalDb()
+  assertRelayNotValidated(db, relayId)
+  db.prepare(`UPDATE relay SET heatid=NULL, lane=NULL WHERE relayid=?`).run(relayId)
+}
+
+/** Assign a relay team to a specific heat and lane */
+export async function assignRelayToHeatLane(relayId: number, heatId: number, lane: number): Promise<void> {
+  const db = getLocalDb()
+  assertHeatIdNotValidated(db, heatId)
+  db.prepare(`UPDATE relay SET heatid=?, lane=? WHERE relayid=?`).run(heatId, lane, relayId)
+}
+
+/** Swap two relay teams' lanes (can be in same or different heats) */
+export async function swapRelayLanes(
+  relayIdA: number, heatIdA: number, laneA: number,
+  relayIdB: number, heatIdB: number, laneB: number,
+): Promise<void> {
+  const db = getLocalDb()
+  assertHeatIdNotValidated(db, heatIdA)
+  assertHeatIdNotValidated(db, heatIdB)
+  const swap = db.transaction(() => {
+    db.prepare(`UPDATE relay SET heatid=?, lane=? WHERE relayid=?`).run(heatIdB, laneB, relayIdA)
+    db.prepare(`UPDATE relay SET heatid=?, lane=? WHERE relayid=?`).run(heatIdA, laneA, relayIdB)
+  })
+  swap()
 }
 
 // ── Write: session CRUD ───────────────────────────────────────────────────────
@@ -1607,6 +1728,10 @@ export async function generateHeats(eventId?: number, sessionId?: number, inject
     const laneCount = laneMax - laneMin + 1
     const eventCourse = evRow?.course ?? meetCourse
 
+    const isRelayEvent = ((db.prepare(
+      `SELECT ss.relaycount FROM swimevent e JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid WHERE e.swimeventid=?`
+    ).get(evId) as { relaycount: number | null } | undefined)?.relaycount ?? 1) > 1
+
     // Event-level overrides (fall back to global config)
     const seedBonusLast = evRow?.seedbonuslast === 'T' || globalSeedBonusLast
     const seedExhLast = evRow?.seedexhlast === 'T' || globalSeedExhLast
@@ -1629,8 +1754,12 @@ export async function generateHeats(eventId?: number, sessionId?: number, inject
 
     // Delete existing heats for this event
     db.prepare(`DELETE FROM heat WHERE swimeventid=?`).run(evId)
-    // Reset heat assignments for all results in this event
-    db.prepare(`UPDATE swimresult SET heatid=NULL, lane=NULL WHERE swimeventid=?`).run(evId)
+    // Reset heat assignments for all results/teams in this event
+    if (isRelayEvent) {
+      db.prepare(`UPDATE relay SET heatid=NULL, lane=NULL WHERE swimeventid=?`).run(evId)
+    } else {
+      db.prepare(`UPDATE swimresult SET heatid=NULL, lane=NULL WHERE swimeventid=?`).run(evId)
+    }
 
     // Determine groups to process
     if (combineAgeGroups || ageGroups.length === 0) {
@@ -1639,16 +1768,18 @@ export async function generateHeats(eventId?: number, sessionId?: number, inject
       const fastCount = ageGroups.length > 0 ? (ageGroups[0].fastheatcount ?? globalFastHeatCount) : globalFastHeatCount
       const minHeats = ageGroups.length > 0 ? (ageGroups[0].heatcount ?? 1) : 1
 
-      const entries = loadEntries(db, evId, null, seedBonusLast, seedExhLast, seedLateLast, qualiFrom, qualiTo, qualiCourse, eventCourse)
+      const entries = loadEntries(db, evId, null, seedBonusLast, seedExhLast, seedLateLast, qualiFrom, qualiTo, qualiCourse, eventCourse, isRelayEvent)
       if (entries.length > 0) {
-        const result = seedAndAssignHeats(db, evId, null, entries, laneCount, laneMin, laneMax, minHeats, seedType, fastCount, globalMinPerHeat, customLaneOrder)
+        const result = seedAndAssignHeats(db, evId, null, entries, laneCount, laneMin, laneMax, minHeats, seedType, fastCount, globalMinPerHeat, customLaneOrder, isRelayEvent)
         totalHeats += result.heats
         totalAssigned += result.assigned
       }
     } else {
       // Check if entries actually have agegroupid assigned
       const hasAgAssigned = (db.prepare(
-        `SELECT COUNT(*) as c FROM swimresult WHERE swimeventid=? AND agegroupid IS NOT NULL`
+        isRelayEvent
+          ? `SELECT COUNT(*) as c FROM relay WHERE swimeventid=? AND agegroupid IS NOT NULL`
+          : `SELECT COUNT(*) as c FROM swimresult WHERE swimeventid=? AND agegroupid IS NOT NULL`
       ).get(evId) as { c: number }).c > 0
 
       if (!hasAgAssigned) {
@@ -1657,9 +1788,9 @@ export async function generateHeats(eventId?: number, sessionId?: number, inject
         const fastCount = ageGroups[0].fastheatcount ?? globalFastHeatCount
         const minHeats = ageGroups[0].heatcount ?? 1
 
-        const entries = loadEntries(db, evId, null, seedBonusLast, seedExhLast, seedLateLast, qualiFrom, qualiTo, qualiCourse, eventCourse)
+        const entries = loadEntries(db, evId, null, seedBonusLast, seedExhLast, seedLateLast, qualiFrom, qualiTo, qualiCourse, eventCourse, isRelayEvent)
         if (entries.length > 0) {
-          const result = seedAndAssignHeats(db, evId, null, entries, laneCount, laneMin, laneMax, minHeats, seedType, fastCount, globalMinPerHeat, customLaneOrder)
+          const result = seedAndAssignHeats(db, evId, null, entries, laneCount, laneMin, laneMax, minHeats, seedType, fastCount, globalMinPerHeat, customLaneOrder, isRelayEvent)
           totalHeats += result.heats
           totalAssigned += result.assigned
         }
@@ -1670,9 +1801,9 @@ export async function generateHeats(eventId?: number, sessionId?: number, inject
           const fastCount = ag.fastheatcount ?? globalFastHeatCount
           const minHeats = ag.heatcount ?? 1
 
-          const entries = loadEntries(db, evId, ag.agegroupid, seedBonusLast, seedExhLast, seedLateLast, qualiFrom, qualiTo, qualiCourse, eventCourse)
+          const entries = loadEntries(db, evId, ag.agegroupid, seedBonusLast, seedExhLast, seedLateLast, qualiFrom, qualiTo, qualiCourse, eventCourse, isRelayEvent)
           if (entries.length > 0) {
-            const result = seedAndAssignHeats(db, evId, ag.agegroupid, entries, laneCount, laneMin, laneMax, minHeats, seedType, fastCount, globalMinPerHeat, customLaneOrder)
+            const result = seedAndAssignHeats(db, evId, ag.agegroupid, entries, laneCount, laneMin, laneMax, minHeats, seedType, fastCount, globalMinPerHeat, customLaneOrder, isRelayEvent)
             totalHeats += result.heats
             totalAssigned += result.assigned
           }
@@ -1721,25 +1852,33 @@ function generateHeatsBeach(
 
     // Get max participants from swimevent.maxentries (override) or swimstyle.distance (default)
     const styleRow = db.prepare(`
-      SELECT e.maxentries, ss.distance FROM swimevent e
+      SELECT e.maxentries, ss.distance, ss.relaycount FROM swimevent e
       JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid
       WHERE e.swimeventid = ?
-    `).get(evId) as { maxentries: number | null; distance: number | null } | undefined
+    `).get(evId) as { maxentries: number | null; distance: number | null; relaycount: number | null } | undefined
     const maxPerHeat = styleRow?.maxentries ?? styleRow?.distance ?? 16
+    const isRelayEvent = (styleRow?.relaycount ?? 1) > 1
 
     // Delete existing heats for this event
     db.prepare(`DELETE FROM heat WHERE swimeventid=?`).run(evId)
-    db.prepare(`UPDATE swimresult SET heatid=NULL, lane=NULL WHERE swimeventid=?`).run(evId)
 
-    // Get all entries for this event
-    const entries = db.prepare(`
-      SELECT swimresultid FROM swimresult WHERE swimeventid=? ORDER BY swimresultid
-    `).all(evId) as Array<{ swimresultid: number }>
+    let entryIds: number[]
+    if (isRelayEvent) {
+      db.prepare(`UPDATE relay SET heatid=NULL, lane=NULL WHERE swimeventid=?`).run(evId)
+      entryIds = (db.prepare(
+        `SELECT relayid AS id FROM relay WHERE swimeventid=? ORDER BY relayid`
+      ).all(evId) as Array<{ id: number }>).map(r => r.id)
+    } else {
+      db.prepare(`UPDATE swimresult SET heatid=NULL, lane=NULL WHERE swimeventid=?`).run(evId)
+      entryIds = (db.prepare(
+        `SELECT swimresultid AS id FROM swimresult WHERE swimeventid=? ORDER BY swimresultid`
+      ).all(evId) as Array<{ id: number }>).map(r => r.id)
+    }
 
-    if (entries.length === 0) continue
+    if (entryIds.length === 0) continue
 
     // Shuffle entries randomly (Fisher-Yates)
-    const shuffled = [...entries]
+    const shuffled = [...entryIds]
     for (let i = shuffled.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1))
       ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
@@ -1750,6 +1889,12 @@ function generateHeatsBeach(
     // Distribute evenly: each heat gets roughly the same number
     const baseSize = Math.floor(shuffled.length / numHeats)
     const remainder = shuffled.length % numHeats
+
+    const updateEntry = db.prepare(
+      isRelayEvent
+        ? `UPDATE relay SET heatid=?, lane=? WHERE relayid=?`
+        : `UPDATE swimresult SET heatid=?, lane=? WHERE swimresultid=?`
+    )
 
     let idx = 0
     for (let h = 0; h < numHeats; h++) {
@@ -1764,11 +1909,9 @@ function generateHeatsBeach(
       totalHeats++
 
       for (let i = 0; i < heatSize; i++) {
-        const entry = shuffled[idx++]
+        const entryId = shuffled[idx++]
         // No lane assignment for beach — use sequential number as placeholder
-        db.prepare(
-          `UPDATE swimresult SET heatid=?, lane=? WHERE swimresultid=?`
-        ).run(heatId, i + 1, entry.swimresultid)
+        updateEntry.run(heatId, i + 1, entryId)
         totalAssigned++
       }
     }
@@ -1780,7 +1923,7 @@ function generateHeatsBeach(
 // ── Entry loading with priority ordering ──────────────────────────────────────
 
 interface EntryRow {
-  swimresultid: number
+  id: number
   entrytime: number | null
   bonusentry: string | null
   lateentry: string | null
@@ -1800,23 +1943,22 @@ function loadEntries(
   qualiTo: string | null,
   qualiCourse: number,
   eventCourse: number,
+  isRelay = false,
 ): EntryRow[] {
-  let entries: EntryRow[]
-  if (agegroupId != null) {
-    entries = db.prepare(`
-      SELECT swimresultid, entrytime, bonusentry, lateentry, infocode, qtdate, entrycourse
-      FROM swimresult
-      WHERE swimeventid=? AND agegroupid=?
-      ORDER BY swimresultid
-    `).all(eventId, agegroupId) as EntryRow[]
-  } else {
-    entries = db.prepare(`
-      SELECT swimresultid, entrytime, bonusentry, lateentry, infocode, qtdate, entrycourse
-      FROM swimresult
-      WHERE swimeventid=?
-      ORDER BY swimresultid
-    `).all(eventId) as EntryRow[]
-  }
+  // `relay` has no bonusentry/lateentry/infocode/qtdate/entrycourse columns —
+  // relay entries always fall into the "regular timed"/NT priority bucket.
+  const sql = isRelay
+    ? `SELECT relayid AS id, entrytime, NULL AS bonusentry, NULL AS lateentry, NULL AS infocode, NULL AS qtdate, NULL AS entrycourse
+       FROM relay
+       WHERE swimeventid=?${agegroupId != null ? ' AND agegroupid=?' : ''}
+       ORDER BY relayid`
+    : `SELECT swimresultid AS id, entrytime, bonusentry, lateentry, infocode, qtdate, entrycourse
+       FROM swimresult
+       WHERE swimeventid=?${agegroupId != null ? ' AND agegroupid=?' : ''}
+       ORDER BY swimresultid`
+  const entries: EntryRow[] = agegroupId != null
+    ? db.prepare(sql).all(eventId, agegroupId) as EntryRow[]
+    : db.prepare(sql).all(eventId) as EntryRow[]
 
   // Apply qualification period filter: entries outside the period lose their time
   if (qualiFrom || qualiTo) {
@@ -1879,6 +2021,7 @@ function seedAndAssignHeats(
   fastHeatCount: number,
   minPerHeat: number,
   customLaneOrder: number[] | null,
+  isRelay = false,
 ): { heats: number; assigned: number } {
   let totalHeats = 0
   let totalAssigned = 0
@@ -1981,7 +2124,9 @@ function seedAndAssignHeats(
      VALUES (?, ?, ?, ?, 4, ?)`
   )
   const updateResult = db.prepare(
-    `UPDATE swimresult SET heatid=?, lane=? WHERE swimresultid=?`
+    isRelay
+      ? `UPDATE relay SET heatid=?, lane=? WHERE relayid=?`
+      : `UPDATE swimresult SET heatid=?, lane=? WHERE swimresultid=?`
   )
 
   // Get current max heat number for this event (so multiple age groups get sequential numbers)
@@ -2008,7 +2153,7 @@ function seedAndAssignHeats(
 
     for (let i = 0; i < sorted.length; i++) {
       const lane = laneOrder[i] ?? (laneMin + i)
-      updateResult.run(heatId, lane, sorted[i].swimresultid)
+      updateResult.run(heatId, lane, sorted[i].id)
       totalAssigned++
     }
   }

@@ -592,4 +592,86 @@ describe('Heat generation', () => {
       expect(lastMin).toBeLessThan(firstMin)
     })
   })
+
+  // ── Relay heat generation (pool) ───────────────────────────────────────────
+
+  describe('relay heat generation', () => {
+    beforeEach(() => {
+      // Relay swimstyle (relaycount=4) + event on session 1, no age groups
+      db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount, stroke) VALUES (3, 100, '4x100 Relay', 4, 1)`)
+      db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode, internalevent) VALUES (4, 1, 3, 4, 3, 5, 4, 'F')`)
+    })
+
+    function addRelayEntries(eventId: number, count: number, startTime = 60000) {
+      const baseId = (db.prepare('SELECT COALESCE(MAX(relayid),0)+1 AS n FROM relay').get() as { n: number }).n
+      for (let i = 0; i < count; i++) {
+        db.prepare(
+          `INSERT INTO relay (relayid, clubid, swimeventid, name, teamnumber, entrytime) VALUES (?, 1, ?, ?, ?, ?)`
+        ).run(baseId + i, eventId, `Team ${baseId + i}`, baseId + i, startTime + i * 1000)
+      }
+    }
+
+    function getRelayAssignments(heatId: number) {
+      return db.prepare(
+        `SELECT relayid, lane, entrytime FROM relay WHERE heatid=? ORDER BY lane`
+      ).all(heatId) as Array<{ relayid: number; lane: number; entrytime: number | null }>
+    }
+
+    it('generates heats for a relay event, sourcing teams from the relay table', async () => {
+      setLanes(1, 8)
+      addRelayEntries(4, 10) // 10 teams, 8 lanes → 2 heats
+
+      const result = await generateHeats(4, undefined, db)
+
+      expect(result.heatsCreated).toBe(2)
+      expect(result.entriesAssigned).toBe(10)
+      const heats = getHeats(4)
+      expect(heats).toHaveLength(2)
+    })
+
+    it('writes heat/lane assignment onto the relay table, not swimresult', async () => {
+      setLanes(1, 8)
+      addRelayEntries(4, 3)
+
+      await generateHeats(4, undefined, db)
+
+      const relayRows = db.prepare(`SELECT relayid, heatid, lane FROM relay WHERE swimeventid=4`).all() as Array<{ relayid: number; heatid: number | null; lane: number | null }>
+      expect(relayRows).toHaveLength(3)
+      for (const row of relayRows) {
+        expect(row.heatid).not.toBeNull()
+        expect(row.lane).not.toBeNull()
+      }
+      const swimresultCount = (db.prepare(`SELECT COUNT(*) as c FROM swimresult WHERE swimeventid=4`).get() as { c: number }).c
+      expect(swimresultCount).toBe(0)
+    })
+
+    it('seeds relay teams by entry time, fastest gets center lane', async () => {
+      setLanes(1, 8)
+      addRelayEntries(4, 6)
+
+      await generateHeats(4, undefined, db)
+
+      const heats = getHeats(4)
+      const assignments = getRelayAssignments(heats[0].heatid)
+      const centerLaneEntry = assignments.find(a => a.lane === 5) // center-out order starts at lane 5 for 8 lanes
+      const fastestTime = Math.min(...assignments.map(a => a.entrytime!))
+      expect(centerLaneEntry?.entrytime).toBe(fastestTime)
+    })
+
+    it('generates heats for both an individual and a relay event in the same session', async () => {
+      setLanes(1, 8)
+      addEntries(1, 1, 6)
+      addRelayEntries(4, 6)
+
+      const result = await generateHeats(undefined, 1, db)
+
+      expect(result.heatsCreated).toBe(2) // one heat each
+      expect(getHeats(1)).toHaveLength(1)
+      expect(getHeats(4)).toHaveLength(1)
+      const swimresultCount = (db.prepare(`SELECT COUNT(*) as c FROM swimresult WHERE heatid IS NOT NULL`).get() as { c: number }).c
+      const relayCount = (db.prepare(`SELECT COUNT(*) as c FROM relay WHERE heatid IS NOT NULL`).get() as { c: number }).c
+      expect(swimresultCount).toBe(6)
+      expect(relayCount).toBe(6)
+    })
+  })
 })

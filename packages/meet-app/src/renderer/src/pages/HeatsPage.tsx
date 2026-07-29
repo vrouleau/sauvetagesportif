@@ -37,6 +37,29 @@ const quantumApi = () => (window as any).api?.quantum
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const dbApi = () => (window as any).api?.db
 
+// A relay row shares swimresultId=0 across every team, so lane-diffing code
+// that needs a unique key per entry (drag/drop across heats) must use this instead.
+function entryKey(e: LaneEntry): string {
+  return e.relayId != null ? `r${e.relayId}` : `s${e.swimresultId}`
+}
+
+function saveEntryResult(
+  entry: LaneEntry,
+  finalTime: string | undefined,
+  reactionTimeSecs: number | null,
+  status: 'DNS' | 'DNF' | 'DSQ' | null,
+  splits: Record<number, string> | undefined,
+  dsqItemId?: number | null,
+) {
+  const api = dbApi()
+  if (!api) return
+  if (entry.relayId) {
+    api.saveRelayResult(entry.relayId, finalTime, reactionTimeSecs, status, splits, dsqItemId).catch(console.error)
+  } else if (entry.swimresultId) {
+    api.saveResult(entry.swimresultId, finalTime, reactionTimeSecs, status, splits, dsqItemId).catch(console.error)
+  }
+}
+
 // ── DSQ Searchable Dropdown ───────────────────────────────────────────────────
 
 function DsqSearchDropdown({ items, value, onChange, disabled, eventType }: {
@@ -229,6 +252,10 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
   const [lateEntryDialog, setLateEntryDialog] = useState<{ lane: number } | null>(null)
   const [lateSearchQuery, setLateSearchQuery] = useState('')
   const [athletes, setAthletes] = useState<Array<{ id: number; lastName: string; firstName: string; clubCode: string; clubName: string; nation: string; entryTime: string | undefined }>>([])
+  const [relayTeams, setRelayTeams] = useState<Array<{
+    id: number; teamName: string; clubCode: string; clubName: string; category: string; entryTime: string | undefined
+    members: Array<{ position: number; lastName: string; beachNumber?: string }>
+  }>>([])
 
   // Drag state
   const [dragSource, setDragSource] = useState<{ heatId: number; lane: number; entry: LaneEntry } | null>(null)
@@ -342,15 +369,7 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
             splitTimes,
           }
           // Save to DB immediately
-          if (e.swimresultId) {
-            dbApi()?.saveResult(
-              e.swimresultId,
-              updated.finalTime,
-              r.reactiontime,
-              updated.status ?? null,
-              updated.splitTimes,
-            ).catch(console.error)
-          }
+          saveEntryResult(e, updated.finalTime, r.reactiontime, updated.status ?? null, updated.splitTimes)
           return updated
         })
         return { ...prev, [hid]: lanes }
@@ -617,16 +636,12 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
           const updated = (prev[selectedHeatId] ?? []).map((e) => {
             if (e.lane === lane) {
               const next: LaneEntry = { ...e, finalTime: parsed || undefined, status: null }
-              if (next.swimresultId) {
-                dbApi()?.saveResult(next.swimresultId, next.finalTime, null, null, next.splitTimes).catch(console.error)
-              }
+              saveEntryResult(next, next.finalTime, null, null, next.splitTimes)
               return next
             }
             if (e.lane === conflict.lane) {
               const next: LaneEntry = { ...e, finalTime: currentPos || undefined, status: null }
-              if (next.swimresultId) {
-                dbApi()?.saveResult(next.swimresultId, next.finalTime, null, null, next.splitTimes).catch(console.error)
-              }
+              saveEntryResult(next, next.finalTime, null, null, next.splitTimes)
               return next
             }
             return e
@@ -644,9 +659,7 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
         if (e.lane !== lane) return e
         const next: LaneEntry = { ...e, finalTime: parsed || undefined, status: null }
         // Persist to DB
-        if (next.swimresultId) {
-          dbApi()?.saveResult(next.swimresultId, next.finalTime, null, null, next.splitTimes).catch(console.error)
-        }
+        saveEntryResult(next, next.finalTime, null, null, next.splitTimes)
         return next
       })
       return { ...prev, [selectedHeatId]: updated }
@@ -673,10 +686,8 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
       const updated = (prev[selectedHeatId] ?? []).map((e) => {
         if (e.lane !== lane) return e
         const next: LaneEntry = { ...e, status, finalTime: status ? undefined : e.finalTime }
-        if (next.swimresultId) {
-          const dsqId = status === 'DSQ' ? selectedDsqItemId : null
-          dbApi()?.saveResult(next.swimresultId, next.finalTime, null, next.status ?? null, next.splitTimes, dsqId).catch(console.error)
-        }
+        const dsqId = status === 'DSQ' ? selectedDsqItemId : null
+        saveEntryResult(next, next.finalTime, null, next.status ?? null, next.splitTimes, dsqId)
         return next
       })
       return { ...prev, [selectedHeatId]: updated }
@@ -712,10 +723,15 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
   }
 
   async function handleRemoveFromHeat() {
-    if (!contextMenu?.entry?.swimresultId || selectedHeatId === null) return
+    const entry = contextMenu?.entry
+    if (!entry || (!entry.swimresultId && !entry.relayId) || selectedHeatId === null) return
     const api = dbApi()
     if (!api) return
-    await api.removeFromHeat(contextMenu.entry.swimresultId)
+    if (entry.relayId) {
+      await api.removeRelayFromHeat(entry.relayId)
+    } else {
+      await api.removeFromHeat(entry.swimresultId)
+    }
     // Update local state: remove entry from this lane
     setHeatData((prev) => {
       const updated = (prev[selectedHeatId] ?? []).filter((e) => e.lane !== contextMenu.lane)
@@ -727,35 +743,67 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
   function handleAddLateEntry() {
     if (!contextMenu || selectedHeatId === null || !selectedEvent) return
     setLateEntryDialog({ lane: contextMenu.lane })
-    // Load athletes not already seeded in this event
-    dbApi()?.getAvailableAthletesForEvent(selectedEvent.id).then((aths: typeof athletes) => setAthletes(aths ?? []))
+    if ((selectedEvent.relaycount ?? 1) > 1) {
+      // Load relay teams created but not yet assigned to a heat
+      dbApi()?.getAvailableRelayTeamsForEvent(selectedEvent.id).then((teams: typeof relayTeams) => setRelayTeams(teams ?? []))
+    } else {
+      // Load athletes not already seeded in this event
+      dbApi()?.getAvailableAthletesForEvent(selectedEvent.id).then((aths: typeof athletes) => setAthletes(aths ?? []))
+    }
     closeContextMenu()
   }
 
-  async function confirmLateEntry(athleteId: number) {
+  async function confirmLateEntry(id: number) {
     if (!lateEntryDialog || selectedHeatId === null || !selectedEvent) return
     const api = dbApi()
     if (!api) return
-    const ath = athletes.find((a) => a.id === athleteId)
-    const result = await api.addLateEntry(athleteId, selectedEvent.id, selectedHeatId, lateEntryDialog.lane, null)
-    if (result?.ok && ath) {
+
+    if ((selectedEvent.relaycount ?? 1) > 1) {
+      const team = relayTeams.find((t) => t.id === id)
+      if (!team) return
+      await api.assignRelayToHeatLane(id, selectedHeatId, lateEntryDialog.lane)
       const newEntry: LaneEntry = {
-        swimresultId: result.swimresultId,
+        swimresultId: 0,
+        relayId: id,
         lane: lateEntryDialog.lane,
-        athleteId: ath.id,
-        lastName: ath.lastName,
-        firstName: ath.firstName,
-        birthYear: 2000,
-        nation: ath.nation ?? '',
-        clubCode: ath.clubCode ?? '',
-        clubName: ath.clubName ?? '',
-        category: '',
-        entryTime: ath.entryTime ?? 'NT',
+        athleteId: 0,
+        lastName: team.teamName,
+        firstName: '',
+        birthYear: 0,
+        nation: '',
+        clubCode: team.clubCode,
+        clubName: team.clubName,
+        category: team.category,
+        entryTime: team.entryTime ?? 'NT',
+        relayMembers: team.members,
+        relayTeamName: team.teamName,
       }
       setHeatData((prev) => ({
         ...prev,
         [selectedHeatId!]: [...(prev[selectedHeatId!] ?? []), newEntry],
       }))
+    } else {
+      const ath = athletes.find((a) => a.id === id)
+      const result = await api.addLateEntry(id, selectedEvent.id, selectedHeatId, lateEntryDialog.lane, null)
+      if (result?.ok && ath) {
+        const newEntry: LaneEntry = {
+          swimresultId: result.swimresultId,
+          lane: lateEntryDialog.lane,
+          athleteId: ath.id,
+          lastName: ath.lastName,
+          firstName: ath.firstName,
+          birthYear: 2000,
+          nation: ath.nation ?? '',
+          clubCode: ath.clubCode ?? '',
+          clubName: ath.clubName ?? '',
+          category: '',
+          entryTime: ath.entryTime ?? 'NT',
+        }
+        setHeatData((prev) => ({
+          ...prev,
+          [selectedHeatId!]: [...(prev[selectedHeatId!] ?? []), newEntry],
+        }))
+      }
     }
     setLateEntryDialog(null)
     setLateSearchQuery('')
@@ -828,36 +876,50 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
 
     if (targetEntry) {
       // Swap two entries
-      await api.swapLanes(
-        srcEntry.swimresultId, srcHeatId, srcLane,
-        targetEntry.swimresultId, targetHeatId, targetLane
-      )
+      if (srcEntry.relayId || targetEntry.relayId) {
+        await api.swapRelayLanes(
+          srcEntry.relayId!, srcHeatId, srcLane,
+          targetEntry.relayId!, targetHeatId, targetLane
+        )
+      } else {
+        await api.swapLanes(
+          srcEntry.swimresultId, srcHeatId, srcLane,
+          targetEntry.swimresultId, targetHeatId, targetLane
+        )
+      }
       // Update local state
+      const srcKey = entryKey(srcEntry)
+      const targetKey = entryKey(targetEntry)
       setHeatData((prev) => {
         const next = { ...prev }
         // Update source heat
         next[srcHeatId] = (next[srcHeatId] ?? []).map((e) =>
-          e.swimresultId === srcEntry.swimresultId ? { ...targetEntry, lane: srcLane } : e
+          entryKey(e) === srcKey ? { ...targetEntry, lane: srcLane } : e
         )
         // Update target heat
         if (srcHeatId === targetHeatId) {
           next[targetHeatId] = next[targetHeatId].map((e) =>
-            e.swimresultId === targetEntry.swimresultId ? { ...srcEntry, lane: targetLane } : e
+            entryKey(e) === targetKey ? { ...srcEntry, lane: targetLane } : e
           )
         } else {
           next[targetHeatId] = (next[targetHeatId] ?? []).map((e) =>
-            e.swimresultId === targetEntry.swimresultId ? { ...srcEntry, lane: targetLane } : e
+            entryKey(e) === targetKey ? { ...srcEntry, lane: targetLane } : e
           )
         }
         return next
       })
     } else {
       // Move to empty lane
-      await api.assignToHeatLane(srcEntry.swimresultId, targetHeatId, targetLane)
+      if (srcEntry.relayId) {
+        await api.assignRelayToHeatLane(srcEntry.relayId, targetHeatId, targetLane)
+      } else {
+        await api.assignToHeatLane(srcEntry.swimresultId, targetHeatId, targetLane)
+      }
+      const srcKey = entryKey(srcEntry)
       setHeatData((prev) => {
         const next = { ...prev }
         // Remove from source heat
-        next[srcHeatId] = (next[srcHeatId] ?? []).filter((e) => e.swimresultId !== srcEntry.swimresultId)
+        next[srcHeatId] = (next[srcHeatId] ?? []).filter((e) => entryKey(e) !== srcKey)
         // Add to target heat
         next[targetHeatId] = [...(next[targetHeatId] ?? []), { ...srcEntry, lane: targetLane }]
         return next
@@ -1562,13 +1624,12 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
                         )}
                         <td className="px-2 border-r border-gray-200 font-medium">
                           {(() => {
-                            if (isBeach && entry.relayMembers && entry.relayMembers.length > 0) {
-                              // Relay event in beach mode (req 8.1–8.5)
+                            if (entry.relayMembers && entry.relayMembers.length > 0) {
+                              // Relay team: custom team name or members' last names joined by "/"
                               const occupiedMembers = entry.relayMembers.filter(m => m.lastName)
-                              // Build team name: custom team name or members' last names joined by "/"
                               return entry.relayTeamName || occupiedMembers.map(m => m.lastName).join('/')
                             }
-                            // Individual event or pool mode
+                            // Individual event
                             return `${entry.lastName}, ${entry.firstName}`
                           })()}
                         </td>
@@ -1729,39 +1790,59 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
       )}
 
       {/* ── Late entry dialog ── */}
-      {lateEntryDialog && (
+      {lateEntryDialog && (() => {
+        const isRelayLateEntry = (selectedEvent?.relaycount ?? 1) > 1
+        return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
           <div className="bg-white rounded shadow-xl w-96 max-h-[400px] flex flex-col">
             <div className="px-4 py-2 border-b border-gray-200 font-medium text-sm">
-              Ajouter inscription tardive — DC {lateEntryDialog.lane}
+              {isRelayLateEntry ? 'Ajouter une équipe tardive' : 'Ajouter inscription tardive'} — DC {lateEntryDialog.lane}
             </div>
             <div className="px-4 py-2">
               <input
                 autoFocus
                 className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
-                placeholder="Rechercher un athlète…"
+                placeholder={isRelayLateEntry ? 'Rechercher une équipe…' : 'Rechercher un athlète…'}
                 value={lateSearchQuery}
                 onChange={(e) => setLateSearchQuery(e.target.value)}
               />
             </div>
             <div className="flex-1 overflow-y-auto px-2 pb-2">
-              {athletes
-                .filter((a) => {
-                  if (!lateSearchQuery) return true
-                  const q = lateSearchQuery.toLowerCase()
-                  return a.lastName.toLowerCase().includes(q) || a.firstName.toLowerCase().includes(q) || (a.clubCode ?? '').toLowerCase().includes(q) || (a.clubName ?? '').toLowerCase().includes(q)
-                })
-                .slice(0, 50)
-                .map((a) => (
-                  <button
-                    key={a.id}
-                    className="w-full text-left px-2 py-1 text-xs hover:bg-blue-50 rounded flex justify-between"
-                    onClick={() => confirmLateEntry(a.id)}
-                  >
-                    <span className="font-medium">{a.lastName}, {a.firstName}</span>
-                    <span className="text-gray-400">{a.clubName || a.clubCode} {a.entryTime ?? 'NT'}</span>
-                  </button>
-                ))}
+              {isRelayLateEntry
+                ? relayTeams
+                    .filter((team) => {
+                      if (!lateSearchQuery) return true
+                      const q = lateSearchQuery.toLowerCase()
+                      return team.teamName.toLowerCase().includes(q) || (team.clubCode ?? '').toLowerCase().includes(q) || (team.clubName ?? '').toLowerCase().includes(q)
+                    })
+                    .slice(0, 50)
+                    .map((team) => (
+                      <button
+                        key={team.id}
+                        className="w-full text-left px-2 py-1 text-xs hover:bg-blue-50 rounded flex justify-between"
+                        onClick={() => confirmLateEntry(team.id)}
+                      >
+                        <span className="font-medium">{team.teamName}</span>
+                        <span className="text-gray-400">{team.clubName || team.clubCode} {team.entryTime ?? 'NT'}</span>
+                      </button>
+                    ))
+                : athletes
+                    .filter((a) => {
+                      if (!lateSearchQuery) return true
+                      const q = lateSearchQuery.toLowerCase()
+                      return a.lastName.toLowerCase().includes(q) || a.firstName.toLowerCase().includes(q) || (a.clubCode ?? '').toLowerCase().includes(q) || (a.clubName ?? '').toLowerCase().includes(q)
+                    })
+                    .slice(0, 50)
+                    .map((a) => (
+                      <button
+                        key={a.id}
+                        className="w-full text-left px-2 py-1 text-xs hover:bg-blue-50 rounded flex justify-between"
+                        onClick={() => confirmLateEntry(a.id)}
+                      >
+                        <span className="font-medium">{a.lastName}, {a.firstName}</span>
+                        <span className="text-gray-400">{a.clubName || a.clubCode} {a.entryTime ?? 'NT'}</span>
+                      </button>
+                    ))}
             </div>
             <div className="px-4 py-2 border-t border-gray-200 text-right">
               <button
@@ -1773,7 +1854,8 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
             </div>
           </div>
         </div>
-      )}
+        )
+      })()}
     </div>
   )
 }

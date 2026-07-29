@@ -28,6 +28,7 @@ export type { Session, CompetitionEvent, AgeGroup, Athlete } from '@shared/data/
 
 export interface LaneEntry {
   swimresultId: number   // DB primary key — used for writing results back
+  relayId?: number        // set instead of swimresultId for relay-team rows
   lane: number
   athleteId: number
   lastName: string
