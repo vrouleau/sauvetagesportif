@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.3.40] - 2026-07-29
+
+### Other
+
+- Hide Pool column in meet page for beach meets (`c993e36`)
+- Fix Men/Women vs Boys/Girls label to use 19+ threshold, not maxAge<=14 (`ff4f6de`)
+- Normalize line endings to LF repo-wide via .gitattributes (`1336b37`)
+- Make age group range labels bilingual and fix open-lower-bound display (`eeadfdb`)
+
 ## [0.3.39] - 2026-07-28
 
 ### Other
