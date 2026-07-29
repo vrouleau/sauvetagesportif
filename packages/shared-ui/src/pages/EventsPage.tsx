@@ -16,7 +16,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with Sauvetage Sportif. If not, see <https://www.gnu.org/licenses/>.
 
-import { useState, useEffect, useCallback, useRef, useContext, createContext, type ReactNode, type CSSProperties, type MouseEvent } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef, useContext, createContext, type ReactNode, type CSSProperties, type MouseEvent } from 'react'
 import {
   DndContext,
   closestCenter,
@@ -151,6 +151,12 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
   const [meetName, setMeetName] = useState<string>('')
   const [poolSize, setPoolSize] = useState<number>(50)
   const [configVersion, setConfigVersion] = useState(0)
+  // Beach swim styles use IDs >= 600 (see lenex.ts auto-detect convention); one meet type per database,
+  // so any beach event on the tree means the whole meet is a beach meet and the Pool column is irrelevant.
+  const isBeachMeet = useMemo(
+    () => localSessions.some((s) => s.events.some((e) => (e.swimstyleId ?? 0) >= 600)),
+    [localSessions]
+  )
   const { prompt, promptState, handleConfirm, handleCancel } = usePromptDialog()
 
   // Resizable left panel
@@ -996,7 +1002,7 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
             <span className="flex-1">{t.events.columns.name}</span>
             <span className="w-28 text-center">{t.events.columns.datePhase}</span>
             <span className="w-14 text-center">{t.events.columns.time}</span>
-            <span className="w-14 text-center">{t.events.columns.pool}</span>
+            {!isBeachMeet && <span className="w-14 text-center">{t.events.columns.pool}</span>}
           </div>
 
           {/* Competition root */}
@@ -1013,7 +1019,7 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
             <span className="flex-1 font-semibold truncate">{meetName}</span>
             <span className="w-28" />
             <span className="w-14" />
-            <span className="w-14 text-center">{t.events.poolUnit(poolSize)}</span>
+            {!isBeachMeet && <span className="w-14 text-center">{t.events.poolUnit(poolSize)}</span>}
           </div>
 
           {loading && (
@@ -1054,7 +1060,7 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
                   </span>
                   <span className="w-28" />
                   <span className="w-14 text-center">{session.time ?? ''}</span>
-                  <span className="w-14 text-center">{t.events.poolUnit(session.poolSize)}</span>
+                  {!isBeachMeet && <span className="w-14 text-center">{t.events.poolUnit(session.poolSize)}</span>}
                 </DroppableSessionRow>
 
                 {/* Events (sortable) */}
