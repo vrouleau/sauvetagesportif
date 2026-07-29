@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.41] - 2026-07-29
+
+### 🏗️ CI
+
+- upgrade GitHub Actions to Node 24 runtime majors (`e9d252d`)
+
 ## [0.3.40] - 2026-07-29
 
 ### Other

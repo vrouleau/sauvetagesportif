@@ -1,6 +1,6 @@
 {
   "name": "sauvetagesportif",
-  "version": "0.3.40",
+  "version": "0.3.41",
   "private": true,
   "workspaces": [
     "packages/*"
