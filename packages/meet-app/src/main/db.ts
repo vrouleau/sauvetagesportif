@@ -730,9 +730,11 @@ export async function getSessions(injectedDb?: ReturnType<typeof getLocalDb>): P
   for (const ag of ageGroups) {
     if (!agMap.has(ag.swimeventid)) { agMap.set(ag.swimeventid, []); agSeq = 0 }
     agSeq++
+    // agemax uses -1 or >=99 as a Splash "Open" (no upper limit) sentinel — normalize to null
+    const normalizedMaxAge = (ag.agemax == null || ag.agemax < 0 || ag.agemax >= 99) ? null : ag.agemax
     agMap.get(ag.swimeventid)!.push({
       id: ag.agegroupid, number: agSeq, name: ag.name || (ag.agemin != null ? `${ag.agemin}-${ag.agemax}` : '???'),
-      minAge: ag.agemin ?? 0, maxAge: ag.agemax ?? null,
+      minAge: ag.agemin ?? 0, maxAge: normalizedMaxAge,
       gender: decodeGender(ag.gender),
       numHeats: ag.heatcount ?? 1, ranking: 'Selon temps nagé',
       countForMedalStats: ag.useformedals === 'T', usedForCombined: false,

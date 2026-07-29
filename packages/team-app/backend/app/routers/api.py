@@ -1692,7 +1692,8 @@ def list_sessions(db: Session = Depends(get_db)):
                     "number": i + 1,
                     "name": ag.name or (f"{ag.agemin}-{ag.agemax}" if ag.agemin is not None else "???"),
                     "minAge": ag.agemin or 0,
-                    "maxAge": ag.agemax,
+                    # agemax uses -1 or >=99 as a Splash "Open" (no upper limit) sentinel — normalize to null
+                    "maxAge": None if ag.agemax is None or ag.agemax < 0 or ag.agemax >= 99 else ag.agemax,
                     "gender": "M" if ag.gender == 1 else "F" if ag.gender == 2 else ("M" if e.gender == 1 else "F" if e.gender == 2 else "X"),
                     "numHeats": ag.heatcount or 1,
                     "ranking": "By time",

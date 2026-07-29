@@ -1735,8 +1735,11 @@ function AgeGroupPropertiesPanel({ group, event, sessions, onMoveAgeGroup }: { g
   )
 }
 
+// A group is "adult" (Men/Women) if it reaches age 19 or older, including
+// open-ended groups (maxAge === null, e.g. "19+"/"Open"). Otherwise it's
+// a youth group (Boys/Girls).
 function isYouthCategory(maxAge: number | null): boolean {
-  return maxAge !== null && maxAge <= 14
+  return maxAge !== null && maxAge < 19
 }
 
 function ageRangeLabel(t: ReturnType<typeof useLang>['t'], minAge: number, maxAge: number | null, genderLabel: string): string {
