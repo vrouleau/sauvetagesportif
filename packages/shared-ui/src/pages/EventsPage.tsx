@@ -1305,6 +1305,7 @@ function SortableEventItem({
               </span>
               <span className="flex-1 truncate">
                 {group.number}. {ageRangeLabel(
+                  t,
                   group.minAge,
                   group.maxAge,
                   isYouthCategory(group.maxAge)
@@ -1495,7 +1496,7 @@ function AgeGroupPropertiesPanel({ group, event, sessions, onMoveAgeGroup }: { g
     if (!moveTargetId) return
     const target = moveCandidates.find(({ event: e }) => e.id === moveTargetId)
     if (!target) return
-    const groupLabel = group.name || ageRangeLabel(group.minAge, group.maxAge, t.events.genderLabel(group.gender))
+    const groupLabel = group.name || ageRangeLabel(t, group.minAge, group.maxAge, t.events.genderLabel(group.gender))
     const eventLabel = `${target.event.number}. ${target.event.nameFr}`
     if (!window.confirm(t.events.props.moveConfirm(groupLabel, eventLabel))) return
     onMoveAgeGroup(group.id, moveTargetId)
@@ -1738,10 +1739,10 @@ function isYouthCategory(maxAge: number | null): boolean {
   return maxAge !== null && maxAge <= 14
 }
 
-function ageRangeLabel(minAge: number, maxAge: number | null, genderLabel: string): string {
+function ageRangeLabel(t: ReturnType<typeof useLang>['t'], minAge: number, maxAge: number | null, genderLabel: string): string {
+  const lower = minAge < 0 ? null : minAge
   const upper = maxAge == null || maxAge < 0 ? null : maxAge
-  if (upper == null) return `${minAge} ans et plus, ${genderLabel}`
-  return `${minAge} - ${upper} ans, ${genderLabel}`
+  return t.events.ageRangeLabel(lower, upper, genderLabel)
 }
 
 // ─── Pause Properties Panel (simplified: name, time, duration) ────────────────

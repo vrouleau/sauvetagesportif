@@ -33,6 +33,11 @@ const fr = {
     columns: { name: 'Nom', datePhase: 'Date / Phase', time: 'Heure', pool: 'Bassin' },
     genderLabel: (g: string) => g === 'M' ? 'Messieurs' : g === 'F' ? 'Dames' : 'Mixte',
     youthGenderLabel: (g: string) => g === 'M' ? 'Garçons' : g === 'F' ? 'Filles' : 'Mixte',
+    ageRangeLabel: (minAge: number | null, maxAge: number | null, genderLabel: string) => {
+      if (maxAge == null) return `${minAge ?? 0} ans et plus, ${genderLabel}`
+      if (minAge == null) return `${maxAge} ans et moins, ${genderLabel}`
+      return `${minAge} - ${maxAge} ans, ${genderLabel}`
+    },
     phaseLabel: (p: string) => p,
     poolUnit: (s: number) => `${s}m`,
     sessionLabel: (n: number, name: string) => `${n} - Session ${n} ${name}`,
@@ -362,6 +367,11 @@ const en = {
     columns: { name: 'Name', datePhase: 'Date / Phase', time: 'Time', pool: 'Pool' },
     genderLabel: (g: string) => g === 'M' ? 'Men' : g === 'F' ? 'Women' : 'Mixed',
     youthGenderLabel: (g: string) => g === 'M' ? 'Boys' : g === 'F' ? 'Girls' : 'Mixed',
+    ageRangeLabel: (minAge: number | null, maxAge: number | null, genderLabel: string) => {
+      if (maxAge == null) return `${minAge ?? 0} and older, ${genderLabel}`
+      if (minAge == null) return `${maxAge} and younger, ${genderLabel}`
+      return `${minAge} - ${maxAge}, ${genderLabel}`
+    },
     phaseLabel: (p: string) =>
       p === 'Eliminatoire' ? 'Prelims' : p === 'Finale' ? 'Final' : p === 'Finale directe' ? 'Direct Final' : p,
     poolUnit: (s: number) => `${s}m`,
