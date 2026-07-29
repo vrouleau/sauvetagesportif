@@ -26,6 +26,7 @@ import { tmpdir } from 'os'
 app.setName(app.isPackaged ? 'SauvetageMeet' : 'SauvetageMeet-Dev')
 
 import { QuantumBridge, type ActiveHeat, type ScheduleEvent } from './quantum'
+import { assignLateBeachNumber } from './beachNumber'
 import {
   getHeatListEvents, getHeatListSessions, getSessions, getAthletes,
   saveResult,
@@ -334,57 +335,66 @@ ipcMain.handle('db:register', (_event, data: { athlete_id: number; event_id: num
   const existing = db.prepare(
     `SELECT swimresultid FROM swimresult WHERE athleteid = ? AND swimeventid = ?`
   ).get(data.athlete_id, data.event_id) as { swimresultid: number } | undefined
+  let id: number
   if (existing) {
     // Update entry time
     db.prepare(`UPDATE swimresult SET entrytime = ? WHERE swimresultid = ?`).run(data.entry_time_ms, existing.swimresultid)
-    return { ok: true, id: existing.swimresultid }
-  }
-  // Find the best matching age group for this event
-  const athlete = db.prepare(`SELECT birthdate FROM athlete WHERE athleteid = ?`).get(data.athlete_id) as { birthdate: string | number | null } | undefined
-  let agegroupId: number | null = null
+    id = existing.swimresultid
+  } else {
+    // Find the best matching age group for this event
+    const athlete = db.prepare(`SELECT birthdate FROM athlete WHERE athleteid = ?`).get(data.athlete_id) as { birthdate: string | number | null } | undefined
+    let agegroupId: number | null = null
 
-  const ageGroups = db.prepare(
-    `SELECT agegroupid, name, agemin, agemax FROM agegroup WHERE swimeventid = ? ORDER BY sortcode`
-  ).all(data.event_id) as Array<{ agegroupid: number; name: string | null; agemin: number | null; agemax: number | null }>
+    const ageGroups = db.prepare(
+      `SELECT agegroupid, name, agemin, agemax FROM agegroup WHERE swimeventid = ? ORDER BY sortcode`
+    ).all(data.event_id) as Array<{ agegroupid: number; name: string | null; agemin: number | null; agemax: number | null }>
 
-  if (ageGroups.length === 1) {
-    agegroupId = ageGroups[0].agegroupid
-  } else if (ageGroups.length > 1) {
-    // Honor the category the user explicitly picked in the UI, if it matches one of this
-    // event's brackets — don't silently override it with a recomputed guess.
-    const requested = data.age_code
-      ? ageGroups.find(ag => ageGroupCodeFor(ag.name, ag.agemin, ag.agemax) === data.age_code)
-      : undefined
-    if (requested) {
-      agegroupId = requested.agegroupid
-    } else if (athlete?.birthdate) {
-      // Fall back to matching by age range based on athlete's birthdate
-      const bd = typeof athlete.birthdate === 'string' ? new Date(athlete.birthdate) : null
-      if (bd && !isNaN(bd.getTime())) {
-        const now = new Date()
-        let age = now.getFullYear() - bd.getFullYear()
-        if (now.getMonth() < bd.getMonth() || (now.getMonth() === bd.getMonth() && now.getDate() < bd.getDate())) age--
-        // Find matching age group
-        for (const ag of ageGroups) {
-          const min = ag.agemin ?? 0
-          const max = ag.agemax == null || ag.agemax < 0 ? 999 : ag.agemax
-          if (age >= min && age <= max) {
-            agegroupId = ag.agegroupid
-            break
+    if (ageGroups.length === 1) {
+      agegroupId = ageGroups[0].agegroupid
+    } else if (ageGroups.length > 1) {
+      // Honor the category the user explicitly picked in the UI, if it matches one of this
+      // event's brackets — don't silently override it with a recomputed guess.
+      const requested = data.age_code
+        ? ageGroups.find(ag => ageGroupCodeFor(ag.name, ag.agemin, ag.agemax) === data.age_code)
+        : undefined
+      if (requested) {
+        agegroupId = requested.agegroupid
+      } else if (athlete?.birthdate) {
+        // Fall back to matching by age range based on athlete's birthdate
+        const bd = typeof athlete.birthdate === 'string' ? new Date(athlete.birthdate) : null
+        if (bd && !isNaN(bd.getTime())) {
+          const now = new Date()
+          let age = now.getFullYear() - bd.getFullYear()
+          if (now.getMonth() < bd.getMonth() || (now.getMonth() === bd.getMonth() && now.getDate() < bd.getDate())) age--
+          // Find matching age group
+          for (const ag of ageGroups) {
+            const min = ag.agemin ?? 0
+            const max = ag.agemax == null || ag.agemax < 0 ? 999 : ag.agemax
+            if (age >= min && age <= max) {
+              agegroupId = ag.agegroupid
+              break
+            }
           }
         }
       }
+      if (!agegroupId) agegroupId = ageGroups[0].agegroupid
+    } else if (ageGroups.length > 0) {
+      agegroupId = ageGroups[0].agegroupid
     }
-    if (!agegroupId) agegroupId = ageGroups[0].agegroupid
-  } else if (ageGroups.length > 0) {
-    agegroupId = ageGroups[0].agegroupid
+
+    id = nextId('swimresult', 'swimresultid')
+    db.prepare(
+      `INSERT INTO swimresult (swimresultid, athleteid, swimeventid, agegroupid, entrytime, usetimetype)
+       VALUES (?, ?, ?, ?, ?, 0)`
+    ).run(id, data.athlete_id, data.event_id, agegroupId, data.entry_time_ms)
   }
 
-  const id = nextId('swimresult', 'swimresultid')
-  db.prepare(
-    `INSERT INTO swimresult (swimresultid, athleteid, swimeventid, agegroupid, entrytime, usetimetype)
-     VALUES (?, ?, ?, ?, ?, 0)`
-  ).run(id, data.athlete_id, data.event_id, agegroupId, data.entry_time_ms)
+  // Assign a beach number immediately for beach meets, instead of waiting on the next heat generation
+  const meetTypeRow = db.prepare(`SELECT data FROM bsglobal WHERE name = 'MEET_TYPE'`).get() as { data: string } | undefined
+  if ((meetTypeRow?.data || 'POOL').toUpperCase() === 'BEACH') {
+    assignLateBeachNumber(db, data.athlete_id)
+  }
+
   return { ok: true, id }
 })
 
