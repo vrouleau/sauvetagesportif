@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.42] - 2026-07-29
+
+### Other
+
+- Add relay support to heat generation, display, timing, and late entry (`36980d4`)
+
 ## [0.3.41] - 2026-07-29
 
 ### 🏗️ CI
