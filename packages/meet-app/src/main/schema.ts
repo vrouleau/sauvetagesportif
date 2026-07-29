@@ -226,4 +226,4 @@ export function runSchemaInit(backend: DbBackend): void {
   for (const ddl of SCHEMA_DDL) {
     backend.exec(ddl)
   }
-}
+}

@@ -91,4 +91,4 @@ parentPort.on('message', async (msg) => {
     Atomics.store(int32, 0, 1)
     Atomics.notify(int32, 0)
   }
-})
+})

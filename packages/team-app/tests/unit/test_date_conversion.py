@@ -306,4 +306,4 @@ class TestFullPipeline:
 
         # Convert back
         back_to_ole = (pg_datetime - OLE_EPOCH).total_seconds() / 86400
-        assert back_to_ole == pytest.approx(46188.5, abs=1e-4)
+        assert back_to_ole == pytest.approx(46188.5, abs=1e-4)

@@ -156,4 +156,4 @@ def load_events(db: Session, lxf_path: Path) -> int:
     if db.query(SwimEvent).first():
         return 0
     meet = parse_meet_lxf(lxf_path)
-    return _load_from_parsed(db, meet)
+    return _load_from_parsed(db, meet)

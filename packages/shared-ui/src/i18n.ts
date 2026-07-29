@@ -688,4 +688,4 @@ const en = {
 }
 
 export const translations = { fr, en }
-export type T = (typeof translations)[Lang]
+export type T = (typeof translations)[Lang]

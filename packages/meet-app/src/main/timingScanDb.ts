@@ -309,4 +309,4 @@ function mapRow(row: RawScanRow): TimingScan {
     validatedAt: row.validated_at,
     notes: row.notes,
   }
-}
+}

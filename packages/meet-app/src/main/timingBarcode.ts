@@ -59,4 +59,4 @@ export function decodeBarcode(raw: string): BarcodeData | null {
     heatNumber: parseInt(heatStr, 10),
     lane: parseInt(laneStr, 10),
   }
-}
+}

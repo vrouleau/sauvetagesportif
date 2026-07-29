@@ -406,4 +406,4 @@ def generate_invoice_pdf(db: Session, club_id: int) -> bytes:
     flow.append(totals)
 
     doc.build(flow)
-    return buf.getvalue()
+    return buf.getvalue()

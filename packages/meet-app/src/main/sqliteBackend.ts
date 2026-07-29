@@ -59,4 +59,4 @@ export class SqliteBackend implements DbBackend {
   get raw(): Database.Database {
     return this.db
   }
-}
+}

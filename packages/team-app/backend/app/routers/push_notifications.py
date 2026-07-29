@@ -362,4 +362,4 @@ def send_announcement_notifications(
         db.query(PushSubscription).filter(
             PushSubscription.id.in_(dead_endpoints)
         ).delete(synchronize_session=False)
-        db.commit()
+        db.commit()

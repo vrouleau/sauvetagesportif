@@ -417,4 +417,4 @@ describe('encodeGbin date handling with ISO strings', () => {
     const { rows: decoded } = decodeGbin(encoded)
     expect(decoded[0].birthdate).toBeNull()
   })
-})
+})

@@ -29,4 +29,4 @@ export function useRegistrationApi(): RegistrationAPI {
   const api = useContext(RegistrationApiContext)
   if (!api) throw new Error('useRegistrationApi must be used within a RegistrationApiProvider')
   return api
-}
+}

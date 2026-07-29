@@ -292,4 +292,4 @@ function buildTitle(section, config, lang) {
   const idx = parseInt(section.replace('victim_', ''))
   const vf = (config?.victim_factors || [])[idx] || {}
   return `${lang === 'fr' ? 'Victime' : 'Victim'} ${idx + 1} — ${vf.type || '?'}`
-}
+}

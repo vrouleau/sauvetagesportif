@@ -390,4 +390,4 @@ class TestDeleteRegistrationSingleWrite:
             Result.resultsid == historical_result.resultsid
         ).first()
         assert hist is not None
-        assert hist.totaltime == 59000
+        assert hist.totaltime == 59000

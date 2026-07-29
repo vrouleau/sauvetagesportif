@@ -250,4 +250,4 @@ def seed_from_lxf(db: Session, file_bytes: bytes) -> dict:
         "athletes_added": athletes_added,
         "entries_added": entries_added,
         "entries_updated": entries_updated,
-    }
+    }

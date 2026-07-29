@@ -397,4 +397,4 @@ export default function RegistrationPage({ athleteId, onNavigateBack }: Registra
       </div>
     </div>
   )
-}
+}

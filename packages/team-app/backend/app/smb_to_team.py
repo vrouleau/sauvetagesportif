@@ -335,4 +335,4 @@ def import_smb_as_meet(db: DbSession, smb_bytes: bytes) -> dict:
         "sessions": sessions_imported,
         "events": events_imported,
         "results": results_imported,
-    }
+    }

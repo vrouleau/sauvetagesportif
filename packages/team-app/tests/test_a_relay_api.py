@@ -793,4 +793,4 @@ class TestRelayInvalidPosition:
         """Deleting a team that doesn't exist → 404."""
         r = requests.delete(f"{BASE_URL}/api/relay-teams/999999",
                             headers=admin_headers, timeout=5)
-        assert r.status_code == 404
+        assert r.status_code == 404

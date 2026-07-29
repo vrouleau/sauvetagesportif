@@ -30,4 +30,4 @@ export default defineConfig({
       electron: './tests/mocks/electron.ts',
     },
   },
-})
+})

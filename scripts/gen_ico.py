@@ -30,4 +30,4 @@ print(f"Source: {img.size[0]}x{img.size[1]}")
 sizes = [(16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]
 
 img.save(dst, format='ICO', sizes=sizes)
-print(f"Created {dst} with sizes: {[f'{w}x{h}' for w,h in sizes]}")
+print(f"Created {dst} with sizes: {[f'{w}x{h}' for w,h in sizes]}")

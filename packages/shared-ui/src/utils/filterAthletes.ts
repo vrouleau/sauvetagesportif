@@ -66,4 +66,4 @@ export function computeVisibleExpansion(
     return autoExpandClubs
   }
   return expandedClubs
-}
+}

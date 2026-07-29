@@ -55,4 +55,4 @@ export default function RelayEntryPageWrapper({ refreshKey = 0 }: { refreshKey?:
       </RegistrationApiProvider>
     </RelayErrorBoundary>
   )
-}
+}

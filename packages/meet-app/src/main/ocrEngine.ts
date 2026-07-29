@@ -83,4 +83,4 @@ export function assembleTimeString(digitResults: Array<{ text: string }>, format
     return `${digits[0]}:${digits[1]}${digits[2]}.${digits[3]}${digits[4]}.${digits[5]}${digits[6]}`
   }
   return digits.join('')
-}
+}

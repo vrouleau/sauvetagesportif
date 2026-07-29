@@ -375,4 +375,4 @@ def write_smb(
 
         z.writestr("geologix.ini", ini_text.encode("ascii", errors="replace"))
 
-    return total_rows
+    return total_rows

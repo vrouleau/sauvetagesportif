@@ -42,4 +42,4 @@ export default defineConfig({
       allow: [path.resolve(__dirname, '../../shared-ui/src'), '.'],
     },
   },
-})
+})

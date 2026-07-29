@@ -121,4 +121,4 @@ export const meetApiElectron: MeetAPI = {
     }
     return { ok: result.ok, meetType: result.meetType, error: result.error }
   },
-}
+}

@@ -592,4 +592,4 @@ describe('Heat generation', () => {
       expect(lastMin).toBeLessThan(firstMin)
     })
   })
-})
+})

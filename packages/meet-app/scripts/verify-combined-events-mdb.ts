@@ -353,4 +353,4 @@ console.log(`\n${allMatch ? '✓ ALL CATEGORIES MATCH' : '✗ SOME MISMATCHES �
 
 // Cleanup
 db.close()
-try { unlinkSync(dbPath) } catch {}
+try { unlinkSync(dbPath) } catch {}

@@ -47,4 +47,4 @@ export interface DbBackend {
 
   /** Backend type identifier */
   readonly type: 'sqlite' | 'pg'
-}
+}

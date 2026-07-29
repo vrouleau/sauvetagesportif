@@ -435,4 +435,4 @@ export default function FinalsPage({ refreshKey = 0, meetType = 'POOL' }: { refr
       </div>
     </div>
   )
-}
+}

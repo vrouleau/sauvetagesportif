@@ -43,4 +43,4 @@ export { default as AddAthleteDialog } from './components/AddAthleteDialog'
 export { filterAthletes, computeVisibleExpansion } from './utils/filterAthletes'
 
 // i18n
-export { translations, type Lang, type T } from './i18n'
+export { translations, type Lang, type T } from './i18n'

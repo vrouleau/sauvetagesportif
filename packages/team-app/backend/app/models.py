@@ -363,4 +363,4 @@ def fee_dollars_to_cents(fee: float | None) -> int:
 def fee_cents_to_dollars(cents: int | None) -> float:
     if cents is None:
         return 0.0
-    return cents / 100.0
+    return cents / 100.0

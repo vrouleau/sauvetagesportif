@@ -271,4 +271,4 @@ class TestHistoricalImportHandicap:
         import_historical_meet(db, _lxf([
             {"first": "Eve", "last": "Fortin", "license": "L305", "exception_attr": "X"}
         ], meet_name="HistE"))
-        assert _find(db, "Eve", "Fortin").handicapex == "X"
+        assert _find(db, "Eve", "Fortin").handicapex == "X"

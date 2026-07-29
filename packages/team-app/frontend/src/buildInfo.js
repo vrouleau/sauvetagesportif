@@ -16,4 +16,4 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with Sauvetage Sportif. If not, see <https://www.gnu.org/licenses/>.
 
-export const BUILD_TIMESTAMP = 'dev';
+export const BUILD_TIMESTAMP = 'dev';

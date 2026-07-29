@@ -58,4 +58,4 @@ print(f"Forwarding 0.0.0.0:{LISTEN_PORT} -> localhost:{TARGET_PORT}", flush=True
 
 while True:
     client, addr = sock.accept()
-    threading.Thread(target=handle, args=(client,), daemon=True).start()
+    threading.Thread(target=handle, args=(client,), daemon=True).start()

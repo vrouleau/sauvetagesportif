@@ -1013,4 +1013,4 @@ function normalizeRoundEncoding(db: Database.Database): void {
       seq++
     }
   }
-}
+}

@@ -142,4 +142,4 @@ def main():
     print(f"Created {output_path} ({output_path.stat().st_size} bytes)")
 
 if __name__ == "__main__":
-    main()
+    main()

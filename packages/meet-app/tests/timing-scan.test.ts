@@ -170,4 +170,4 @@ describe('Gemini keys roundtrip via SMB', () => {
     const free = db.prepare(`SELECT data FROM bsglobal WHERE name = 'GEMINI_KEY_FREE'`).get()
     expect(free).toBeUndefined()
   })
-})
+})

@@ -155,4 +155,4 @@ describe('SMB save/restore', () => {
     const finEvent = db.prepare('SELECT round FROM swimevent WHERE swimeventid=300').get() as { round: number }
     expect(finEvent.round).toBe(4)  // Restored to canonical FIN
   })
-})
+})

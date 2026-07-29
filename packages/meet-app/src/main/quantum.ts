@@ -350,4 +350,4 @@ export class QuantumBridge {
     this.stop()
     this.webContents = null
   }
-}
+}

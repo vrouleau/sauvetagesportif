@@ -88,4 +88,4 @@ describe('AddAthleteDialog validation', () => {
     const result = validateNewAthlete({ first_name: 'Bob', last_name: 'Martin', gender: 'M', birthdate: null, license: '', club_id: 1 })
     expect(result.valid).toBe(true)
   })
-})
+})

@@ -181,4 +181,4 @@ export default function AthletesListPage({ role, clubId, onNavigateToRegistratio
       </div>
     </div>
   )
-}
+}

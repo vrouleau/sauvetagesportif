@@ -67,4 +67,4 @@ execSync('npx electron-vite build', {
   cwd: root,
 })
 
-console.log('✅ Clean build complete.')
+console.log('✅ Clean build complete.')

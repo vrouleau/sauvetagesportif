@@ -814,4 +814,4 @@ def generate_smb_from_db(db: Session) -> bytes:
         write_smb(tmp.name, table_data)
         return Path(tmp.name).read_bytes()
     finally:
-        Path(tmp.name).unlink(missing_ok=True)
+        Path(tmp.name).unlink(missing_ok=True)

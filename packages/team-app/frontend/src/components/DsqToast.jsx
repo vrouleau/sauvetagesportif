@@ -122,4 +122,4 @@ export function useDsqAlerts(subscribedClubName) {
   }, [subscribedClubName, addAlert])
 
   return { alerts, dismissAlert, processResults }
-}
+}

@@ -73,4 +73,4 @@ class SercScore(Base):
     __table_args__ = (
         UniqueConstraint("config_id", "draw_number", "relay_team_id", "section", "field",
                          name="uq_serc_score"),
-    )
+    )

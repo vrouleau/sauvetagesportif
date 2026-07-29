@@ -212,4 +212,4 @@ function markdownToHtml(md: string): string {
 
   closeList(); closeTable(); closeBlockquote()
   return out.join('\n')
-}
+}

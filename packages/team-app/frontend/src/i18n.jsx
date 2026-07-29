@@ -343,4 +343,4 @@ export function LangProvider({ children }) {
 
 export function useLang() {
   return useContext(LangContext)
-}
+}

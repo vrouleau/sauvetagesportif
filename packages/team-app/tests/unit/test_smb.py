@@ -573,4 +573,4 @@ class TestOleDateConversion:
         assert ole_to_time(-36522.270833333336) == "6:30"
         assert ole_to_time(None) == None
         assert ole_to_time(-36522.0) == None  # null sentinel, no time
-        assert ole_to_time(0.0) == None  # zero, no fractional time
+        assert ole_to_time(0.0) == None  # zero, no fractional time

@@ -201,4 +201,4 @@ class PgStatement implements PreparedStatement {
       lastInsertRowid: 0,
     }
   }
-}
+}

@@ -685,4 +685,4 @@ def print_sheets(
 {sheets_html}
 </body>
 </html>"""
-    return HTMLResponse(html)
+    return HTMLResponse(html)

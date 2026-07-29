@@ -626,4 +626,4 @@ def generate_meet_lxf_from_db(db: Session) -> bytes:
     buf = BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("meet.lef", xml_bytes)
-    return buf.getvalue()
+    return buf.getvalue()

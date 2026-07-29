@@ -106,4 +106,4 @@ class PushSubscription(Base):
     endpoint = Column(String(500), nullable=False, unique=True)
     p256dh = Column(String(200), nullable=False)
     auth = Column(String(100), nullable=False)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))

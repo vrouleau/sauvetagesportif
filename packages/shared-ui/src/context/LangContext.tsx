@@ -47,4 +47,4 @@ export function LangProvider({ children, initialLang }: { children: React.ReactN
 
 export function useLang() {
   return useContext(LangContext)
-}
+}

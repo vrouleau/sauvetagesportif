@@ -145,4 +145,4 @@ def regenerate_point_scores(db: Session) -> None:
 
     # Apply scoretype assignments to age groups
     _apply_assignments(db, config["assignments"])
-    db.flush()
+    db.flush()

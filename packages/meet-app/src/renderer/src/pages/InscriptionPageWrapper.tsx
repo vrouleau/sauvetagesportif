@@ -36,4 +36,4 @@ export default function InscriptionPageWrapper({ refreshKey = 0, onImportLenex }
       />
     </RegistrationApiProvider>
   )
-}
+}

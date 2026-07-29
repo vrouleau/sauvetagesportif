@@ -153,4 +153,4 @@ def best_times_public(db: Session = Depends(get_db)):
     course_cfg = db.query(BsGlobal).get("meet_course")
     course = course_cfg.data if course_cfg and course_cfg.data else "LCM"
 
-    return {"styles": styles, "clubs": clubs, "course": course}
+    return {"styles": styles, "clubs": clubs, "course": course}

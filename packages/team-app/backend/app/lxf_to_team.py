@@ -342,4 +342,4 @@ def import_lxf_as_meet(db: DbSession, content: bytes, force: bool = False) -> di
         "sessions": sessions_imported,
         "events": events_imported,
         "results": results_imported,
-    }
+    }

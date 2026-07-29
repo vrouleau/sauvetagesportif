@@ -233,4 +233,4 @@ def export_meet_lxf(headers: dict) -> zipfile.ZipFile:
     """Call /api/export/meet-lxf directly (organizer + admin accessible)."""
     r = requests.get(f"{BASE_URL}/api/export/meet-lxf", headers=headers, timeout=30)
     r.raise_for_status()
-    return zipfile.ZipFile(BytesIO(r.content))
+    return zipfile.ZipFile(BytesIO(r.content))

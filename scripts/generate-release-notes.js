@@ -154,4 +154,4 @@ if (require.main === module) {
   generate(version)
 }
 
-module.exports = { generate }
+module.exports = { generate }

@@ -232,4 +232,4 @@ class TestResultsImportCompleteness:
                 assert row.totaltime is not None, f"Result {row.resultsid} has null totaltime"
                 assert row.totaltime > 0, f"Result {row.resultsid} has totaltime <= 0"
         finally:
-            db.close()
+            db.close()

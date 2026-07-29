@@ -120,4 +120,4 @@ describe('MEETVALUES parser/writer', () => {
     setMeetValues(db, { NAME: { type: 'S', value: 'New Name' } })
     expect(getMeetValues(db).NAME).toBe('New Name')
   })
-})
+})

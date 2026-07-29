@@ -695,4 +695,4 @@ writeFileSync(join(outDir, 'fixture_beach.smb'), beachSmb)
 console.log(`✓ fixture_beach.smb written (${beachSmb.length} bytes)`)
 
 const athletes = generateAthletes()
-console.log(`  ${CLUBS.length} clubs, ${athletes.length} athletes`)
+console.log(`  ${CLUBS.length} clubs, ${athletes.length} athletes`)

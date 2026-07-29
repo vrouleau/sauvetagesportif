@@ -543,4 +543,4 @@ function FeeSummary({ meetInfo, t, lang }) {
       </details>
     </div>
   )
-}
+}

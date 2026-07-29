@@ -429,4 +429,4 @@ function parseTimeInput(str: string): number | null {
     if (totalMs > 0) return totalMs
   }
   return null
-}
+}

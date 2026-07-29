@@ -347,4 +347,4 @@ export const registrationApiElectron: RegistrationAPI = {
   async setRelayTeamName(teamId: number, name: string | null): Promise<void> {
     await ipc()?.setRelayTeamName(teamId, name)
   },
-}
+}

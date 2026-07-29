@@ -228,4 +228,4 @@ class TestSercRelayExemption:
         """Print sheets endpoint returns HTML."""
         r = requests.get(f"{BASE_URL}/api/serc/print/sheets?lang=en", timeout=10)
         assert r.status_code == 200
-        assert "JUDGE SCORING SHEET" in r.text or "No SERC configuration" not in r.text
+        assert "JUDGE SCORING SHEET" in r.text or "No SERC configuration" not in r.text

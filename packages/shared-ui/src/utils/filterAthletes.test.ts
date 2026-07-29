@@ -94,4 +94,4 @@ describe('computeVisibleExpansion', () => {
     const result = computeVisibleExpansion(manualExpanded, autoExpanded, '')
     expect(result).toBe(manualExpanded)
   })
-})
+})

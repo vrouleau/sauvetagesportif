@@ -727,4 +727,4 @@ function QRModal({ config, onClose, lang }) {
       </div>
     </div>
   )
-}
+}

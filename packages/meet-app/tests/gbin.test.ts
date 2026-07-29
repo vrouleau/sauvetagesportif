@@ -477,4 +477,4 @@ describe('gbin encode/decode roundtrip', () => {
 
     expect(decoded[0].data).toBe(longMemo)
   })
-})
+})

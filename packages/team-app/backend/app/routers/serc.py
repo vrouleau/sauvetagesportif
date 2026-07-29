@@ -376,4 +376,4 @@ def _config_to_dict(config: SercConfig) -> dict:
         "overall_factors": json.loads(config.overall_factors_json) if config.overall_factors_json else {},
         "bystander_factors": json.loads(config.bystander_factors_json) if config.bystander_factors_json else {},
         "victim_factors": json.loads(config.victim_factors_json) if config.victim_factors_json else [],
-    }
+    }

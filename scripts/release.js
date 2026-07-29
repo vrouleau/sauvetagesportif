@@ -127,4 +127,4 @@ This will trigger the Release CI workflow which builds:
   - Windows installer (.exe)
   - macOS DMG
   - Docker images (ghcr.io)
-`)
+`)

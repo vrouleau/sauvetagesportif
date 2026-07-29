@@ -110,4 +110,4 @@ describe('Age group name resolution', () => {
     expect(queryAgeName(2)).toBe('15-18')
     expect(queryAgeName(3)).toBe('???')
   })
-})
+})

@@ -210,4 +210,4 @@ function clearConnectionConfig(): void {
   if (existsSync(path)) {
     unlinkSync(path)
   }
-}
+}

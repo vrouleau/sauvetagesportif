@@ -29,4 +29,4 @@ new = "COALESCE(NULLIF(ag.name, ''), CASE WHEN ag.agemin IS NOT NULL THEN ag.age
 count = content.count(old)
 content = content.replace(old, new)
 db_ts.write_text(content, encoding="utf-8")
-print(f"Replaced {count} occurrences")
+print(f"Replaced {count} occurrences")

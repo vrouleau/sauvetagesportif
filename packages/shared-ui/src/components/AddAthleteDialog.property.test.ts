@@ -104,4 +104,4 @@ describe('AddAthleteDialog - Property 6: Add Athlete Validation', () => {
       )
     )
   })
-})
+})

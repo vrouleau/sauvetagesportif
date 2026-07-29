@@ -150,4 +150,4 @@ describe('Schema integrity', () => {
       cleanup()
     }
   })
-})
+})

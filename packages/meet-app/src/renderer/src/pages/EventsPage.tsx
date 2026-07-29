@@ -30,4 +30,4 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
       <SharedEventsPage refreshKey={refreshKey} />
     </ApiProvider>
   )
-}
+}

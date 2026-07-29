@@ -193,4 +193,4 @@ export async function autoResubscribe() {
     return null
   }
   return result.club_name
-}
+}

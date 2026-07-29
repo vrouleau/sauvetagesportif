@@ -172,4 +172,4 @@ export function regeneratePointScores(db: Database.Database): void {
 
   // Step 4: Apply scoretype assignments to age groups
   applyPointScoreAssignments(db, config.assignments)
-}
+}

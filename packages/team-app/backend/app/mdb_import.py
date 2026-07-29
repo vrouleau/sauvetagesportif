@@ -407,4 +407,4 @@ def import_team_mdb(db: Session, mdb_bytes: bytes) -> dict[str, int]:
     finally:
         Path(mdb_path).unlink(missing_ok=True)
 
-    return counts
+    return counts

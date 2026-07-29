@@ -732,4 +732,4 @@ class TestRelayBackwardCompat:
         virtual_teams = _build_virtual_teams_for_club(
             db_session, club_id=1, relay_events=relay_events, existing_relays=existing_relays_all
         )
-        assert virtual_teams == {}  # No virtual teams — real ones exist
+        assert virtual_teams == {}  # No virtual teams — real ones exist

@@ -24,4 +24,4 @@ aids = [int(m) for m in re.findall(r'agegroupid="(\d+)"', content)]
 sids = [int(m) for m in re.findall(r'swimstyleid="(\d+)"', content)]
 print(f'swimstyleids: {min(sids)}-{max(sids)} ({len(set(sids))} unique)')
 print(f'eventids: {min(eids)}-{max(eids)} ({len(set(eids))} unique)')
-print(f'agegroupids: {min(aids)}-{max(aids)} ({len(set(aids))} unique)')
+print(f'agegroupids: {min(aids)}-{max(aids)} ({len(set(aids))} unique)')

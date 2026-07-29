@@ -29,4 +29,4 @@ export const shell = {}
 export const ipcMain = { handle: () => {} }
 export const dialog = {}
 export const nativeImage = { createFromPath: () => ({}) }
-export const Menu = { buildFromTemplate: () => ({}), setApplicationMenu: () => {} }
+export const Menu = { buildFromTemplate: () => ({}), setApplicationMenu: () => {} }

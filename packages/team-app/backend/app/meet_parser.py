@@ -170,4 +170,4 @@ def parse_meet_lxf(source) -> ParsedMeet:
             ses.events.append(ev)
         meet.sessions.append(ses)
 
-    return meet
+    return meet

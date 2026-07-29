@@ -56,4 +56,4 @@ class TestSwimResultFK:
         fk_set = SwimResult.__table__.c.athleteid.foreign_keys
         assert len(fk_set) == 1
         fk = next(iter(fk_set))
-        assert fk.target_fullname == "members.membersid"
+        assert fk.target_fullname == "members.membersid"

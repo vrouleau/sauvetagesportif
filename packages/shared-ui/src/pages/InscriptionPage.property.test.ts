@@ -260,4 +260,4 @@ describe('InscriptionPage - Property 3: Coach Role Isolation', () => {
       )
     )
   })
-})
+})

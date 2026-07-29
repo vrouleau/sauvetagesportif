@@ -1,1 +1,18 @@
-*.sh text eol=lf
+# Normalize line endings for all text files to LF, regardless of which OS/editor
+# checked them out or saved them (this repo is edited from multiple machines).
+* text=auto eol=lf
+
+# Windows batch/VBS scripts are more reliable with CRLF.
+*.bat text eol=crlf
+*.vbs text eol=crlf
+
+# Binary formats — never apply line-ending conversion (would corrupt them).
+*.smb binary
+*.lxf binary
+*.mdb binary
+*.ico binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.pdf binary
