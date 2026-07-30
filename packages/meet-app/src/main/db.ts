@@ -3057,12 +3057,14 @@ export function getCombinedResults(selectedEventIds: number[]): CombinedResultCa
                COALESCE(c.shortname, c.code, c.name, '') AS clubname
         FROM swimresult r
         JOIN athlete a ON r.athleteid = a.athleteid
+        JOIN heat h ON r.heatid = h.heatid
         LEFT JOIN club c ON a.clubid = c.clubid
         WHERE r.swimeventid = ?
           AND r.agegroupid = ?
           AND r.swimtime IS NOT NULL
           AND r.swimtime > 0
           AND (r.resultstatus IS NULL OR r.resultstatus = 0)
+          AND h.racestatus = 5
         ORDER BY r.swimtime ASC
       `).all(eventId, agegroupId) as Array<{
         athleteid: number; swimtime: number; resultstatus: number | null
@@ -3276,11 +3278,13 @@ export function getResultsList(selectedEventIds: number[], injectedDb?: ReturnTy
            r.swimtime
     FROM swimresult r
     JOIN athlete a ON r.athleteid = a.athleteid
+    JOIN heat h ON r.heatid = h.heatid
     LEFT JOIN club c ON a.clubid = c.clubid
     LEFT JOIN agegroup ag ON ag.agegroupid = r.agegroupid
     WHERE r.swimeventid IN (${clause})
       AND r.swimtime IS NOT NULL AND r.swimtime > 0
       AND (r.resultstatus IS NULL OR r.resultstatus = 0)
+      AND h.racestatus = 5
     ORDER BY r.swimeventid, ag.sortcode, r.swimtime ASC
   `).all(...params) as Array<{
     eventId: number; agegroupId: number | null; ageMin: number | null; ageMax: number | null; sortcode: number | null
@@ -3385,12 +3389,14 @@ export function getPointStandings(selectedEventIds: number[]): {
                COALESCE(c.code, '') AS clubcode
         FROM swimresult r
         JOIN athlete a ON r.athleteid = a.athleteid
+        JOIN heat h ON r.heatid = h.heatid
         LEFT JOIN club c ON a.clubid = c.clubid
         WHERE r.swimeventid = ?
           AND r.agegroupid = ?
           AND r.swimtime IS NOT NULL
           AND r.swimtime > 0
           AND (r.resultstatus IS NULL OR r.resultstatus = 0)
+          AND h.racestatus = 5
         ORDER BY r.swimtime ASC
       `).all(eventId, agegroupId) as Array<{
         athleteid: number; swimtime: number; resultstatus: number | null

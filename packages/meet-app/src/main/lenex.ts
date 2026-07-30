@@ -889,8 +889,9 @@ export function exportLenexResults(filePath: string, db: Database.Database): Exp
     heatsByEvent.set(h.swimeventid, list)
   }
 
-  // ── Results with athlete + club info ────────────────────────────────────────
-  const results = db.prepare(
+  // ── Results with athlete + club info (validated heats only) ─────────────────
+  const validatedHeatIds = new Set(heats.filter(h => h.racestatus === 5).map(h => h.heatid))
+  const results = (db.prepare(
     `SELECT r.swimresultid, r.athleteid, r.swimeventid, r.agegroupid,
             r.heatid, r.lane, r.swimtime, r.reactiontime, r.resultstatus,
             a.firstname, a.lastname, a.birthdate, a.gender AS athgender,
@@ -906,7 +907,7 @@ export function exportLenexResults(filePath: string, db: Database.Database): Exp
     firstname: string | null; lastname: string | null; birthdate: string | null
     athgender: number | null; athnation: string | null; license: string | null
     clubid: number | null
-  }>
+  }>).filter(r => r.heatid != null && validatedHeatIds.has(r.heatid))
 
   // ── Splits ──────────────────────────────────────────────────────────────────
   const splits = db.prepare(

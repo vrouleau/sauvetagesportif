@@ -36,9 +36,12 @@ function seedSharedEvent(db: ReturnType<typeof createTestDb>['db']) {
   db.exec(`INSERT INTO athlete (athleteid, clubid, firstname, lastname, gender, birthdate) VALUES (1, 1, 'Junior', 'Athlete', 2, '2014-01-01')`)
   db.exec(`INSERT INTO athlete (athleteid, clubid, firstname, lastname, gender, birthdate) VALUES (2, 1, 'Senior', 'Athlete', 2, '2000-01-01')`)
 
+  // getResultsList only returns results from validated (racestatus=5) heats
+  db.exec(`INSERT INTO heat (heatid, swimeventid, heatnumber, racestatus, sortcode) VALUES (1, 1, 1, 5, 1)`)
+
   // Junior swims under the 11-12 age group, senior under 19+ — same swimeventid
-  db.exec(`INSERT INTO swimresult (swimresultid, athleteid, swimeventid, agegroupid, swimtime) VALUES (1, 1, 1, 10, 30000)`)
-  db.exec(`INSERT INTO swimresult (swimresultid, athleteid, swimeventid, agegroupid, swimtime) VALUES (2, 2, 1, 20, 32000)`)
+  db.exec(`INSERT INTO swimresult (swimresultid, athleteid, swimeventid, agegroupid, heatid, swimtime) VALUES (1, 1, 1, 10, 1, 30000)`)
+  db.exec(`INSERT INTO swimresult (swimresultid, athleteid, swimeventid, agegroupid, heatid, swimtime) VALUES (2, 2, 1, 20, 1, 32000)`)
 }
 
 describe('getResultsList age-group scoping', () => {
@@ -66,7 +69,7 @@ describe('getResultsList age-group scoping', () => {
     try {
       seedSharedEvent(db)
       db.exec(`INSERT INTO athlete (athleteid, clubid, firstname, lastname, gender, birthdate) VALUES (3, 1, 'Faster', 'Athlete', 2, '2013-01-01')`)
-      db.exec(`INSERT INTO swimresult (swimresultid, athleteid, swimeventid, agegroupid, swimtime) VALUES (3, 3, 1, 10, 25000)`)
+      db.exec(`INSERT INTO swimresult (swimresultid, athleteid, swimeventid, agegroupid, heatid, swimtime) VALUES (3, 3, 1, 10, 1, 25000)`)
 
       const events = getResultsList([1], db)
       const junior = events[0].ageGroups.find(ag => ag.agegroupId === 10)
