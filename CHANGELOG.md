@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.46] - 2026-07-30
+
+### Other
+
+- Replace relay age-group majority rule with event-anchored composition rule (`9493aaf`)
+
 ## [0.3.45] - 2026-07-30
 
 ### Other

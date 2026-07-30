@@ -26,7 +26,9 @@
       "Bash(wsl -- bash -c \"cd /mnt/c/Users/vince/Documents/MeetManager/sauvetagesportif/packages/team-app && python3 -m pytest tests/ -v 2>&1\")",
       "Bash(wsl -- bash -c \"cd /mnt/c/Users/vince/Documents/MeetManager/sauvetagesportif/packages/team-app && pip install -r tests/requirements-test.txt -q 2>&1 | tail -5\")",
       "Bash(wsl -- bash -c \"cd /mnt/c/Users/vince/Documents/MeetManager/sauvetagesportif/packages/team-app && pip install -r tests/requirements-test.txt --break-system-packages -q 2>&1 | tail -5\")",
-      "Bash(wsl -- bash -c \"cd /mnt/c/Users/vince/Documents/MeetManager/sauvetagesportif/packages/team-app && MEETMGR_SKIP_STACK=1 python3 -m pytest tests/test_integration.py::TestLiveNotifications -v 2>&1\")"
+      "Bash(wsl -- bash -c \"cd /mnt/c/Users/vince/Documents/MeetManager/sauvetagesportif/packages/team-app && MEETMGR_SKIP_STACK=1 python3 -m pytest tests/test_integration.py::TestLiveNotifications -v 2>&1\")",
+      "Bash(python -m py_compile app/routers/api.py)",
+      "Bash(python -m py_compile tests/test_integration.py)"
     ]
   }
 }
