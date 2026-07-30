@@ -79,8 +79,8 @@ export default function Login({ onLogin }) {
                 {t.self_invite_title}
               </Link>
               <span className="mx-2 text-gray-300">·</span>
-              <a href="/best-times" target="_blank" rel="noopener noreferrer" className="text-xs text-gray-500 hover:underline">
-                {t.best_times_link}
+              <a href="/results" target="_blank" rel="noopener noreferrer" className="text-xs text-gray-500 hover:underline">
+                {t.results_link}
               </a>
             </div>
           )}

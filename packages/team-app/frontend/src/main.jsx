@@ -18,7 +18,7 @@
 
 import React, { useState, useEffect, useRef } from 'react'
 import ReactDOM from 'react-dom/client'
-import { BrowserRouter, Routes, Route, Link, useLocation, useParams, useNavigate, Navigate } from 'react-router'
+import { BrowserRouter, Routes, Route, Link, useLocation, useParams, useNavigate } from 'react-router'
 import './index.css'
 import { LangProvider, useLang } from './i18n'
 import Login from './pages/Login'
@@ -40,7 +40,6 @@ import SercPage from './pages/Serc'
 import SercJudgePage from './pages/SercJudge'
 import Secret from './pages/Secret'
 import SelfInvite from './pages/SelfInvite'
-import BestTimesPublic from './pages/BestTimesPublic'
 import ResultsPage from './pages/ResultsPage'
 import Workflow from './pages/Workflow'
 import Footer from './Footer'
@@ -197,7 +196,7 @@ function RegisterPage() {
 
 function AuthLayout({ children, canOrganizer, canAdmin, meetName, toggle, lang, logout, auth, t }) {
   const location = useLocation()
-  const standalone = location.pathname === '/best-times' || location.pathname === '/results'
+  const standalone = location.pathname === '/results'
   if (standalone) return children
 
   const tabs = [
@@ -302,7 +301,6 @@ function AppInner() {
       <Routes>
         <Route path="/secret/:token" element={<Secret />} />
         <Route path="/self-invite" element={<SelfInvite />} />
-        <Route path="/best-times" element={<Navigate to="/results" replace />} />
         <Route path="/results" element={<ResultsPage />} />
         <Route path="/usage" element={<Workflow />} />
         <Route path="/serc/judge/:section" element={<SercJudgePage />} />
@@ -328,7 +326,6 @@ function AppInner() {
           {canOrganizer && <Route path="/serc" element={<SercPage />} />}
           {canAdmin && <Route path="/admin" element={<Admin />} />}
           <Route path="/secret/:token" element={<Secret />} />
-          <Route path="/best-times" element={<Navigate to="/results" replace />} />
           <Route path="/results" element={<ResultsPage />} />
           <Route path="/usage" element={<Workflow />} />
           <Route path="/serc/judge/:section" element={<SercJudgePage />} />

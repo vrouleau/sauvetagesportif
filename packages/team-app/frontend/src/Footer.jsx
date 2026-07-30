@@ -24,8 +24,8 @@ export default function Footer({ showUsage = false }) {
 
   return (
     <footer className="text-center text-sm text-gray-500 py-4 px-4 border-t mt-8">
-      <a href="/best-times" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">
-        {t.best_times_link}
+      <a href="/results" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">
+        {t.results_link}
       </a>
       {email && (
         <span>
