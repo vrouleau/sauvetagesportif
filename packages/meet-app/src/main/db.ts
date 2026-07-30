@@ -2964,8 +2964,8 @@ export interface CombinedResultAthlete {
  * - Sum points per athlete, count events completed
  * - Sort by total points descending
  */
-export function getCombinedResults(selectedEventIds: number[]): CombinedResultCategory[] {
-  const db = getLocalDb()
+export function getCombinedResults(selectedEventIds: number[], injectedDb?: ReturnType<typeof getLocalDb>): CombinedResultCategory[] {
+  const db = injectedDb ?? getLocalDb()
   const meetYear = new Date().getFullYear()
 
   // Ensure combined event definitions are up-to-date before querying
@@ -3330,12 +3330,12 @@ export interface PointStandingsClub {
   }>
 }
 
-export function getPointStandings(selectedEventIds: number[]): {
+export function getPointStandings(selectedEventIds: number[], injectedDb?: ReturnType<typeof getLocalDb>): {
   clubs: PointStandingsClub[]
   categories: string[]
 } {
   if (selectedEventIds.length === 0) return { clubs: [], categories: [] }
-  const db = getLocalDb()
+  const db = injectedDb ?? getLocalDb()
 
   // Ensure combined event definitions are up-to-date before querying
   regenerateCombinedEvents(db)
