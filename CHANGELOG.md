@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.3.43] - 2026-07-30
+
+### Other
+
+- Fix Best Times tab returning empty despite uploaded historical results (`6425dd4`)
+- Show beach live results as position, not formatted time (`c331ee3`)
+- Add regression tests for the validated-heat results filter (`d1c45a2`)
+- Restore Best Times as a tab on the merged results page (`44914aa`)
+- Update coach guide docs for the renamed results link (`4425aae`)
+- Remove dead best-times public API endpoints (`7ad15d3`)
+- Fix Best Times footer link label and stale /best-times route (`7f2a270`)
+- Add per-result validation status indicator to live results page (`a05e305`)
+- Only include validated heat results in results reports and results export (`88c5fee`)
+- Assign beach number immediately when registering an athlete (`a08c791`)
+
 ## [0.3.42] - 2026-07-29
 
 ### Other
