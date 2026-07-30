@@ -74,11 +74,11 @@ Relay entries are managed in the **Relay Entries** tab:
 
 ---
 
-## Best Times Public Page
+## Live/Historical Results Page
 
-A public page is available (no login required) to consult best times:
-- From the login page, click **Consult Best Times**
-- Search by athlete name or club
+A public page is available (no login required) to follow results:
+- From the login page, click **Consult Live/Historical Results**
+- Shows live heat-by-heat results while a meet is running, or the list of past competitions once it's over
 
 ---
 
@@ -101,5 +101,5 @@ A public page is available (no login required) to consult best times:
 | Change category | Select from dropdown at top of panel |
 | Adjust entry time | Click the time field, type new time |
 | Assign relay members | Check relay event → Assign Members |
-| View best times | Login page → Consult Best Times |
+| View results | Login page → Consult Live/Historical Results |
 | Get a new PIN | Login page → Request an Invitation |

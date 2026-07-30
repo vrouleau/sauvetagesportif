@@ -74,11 +74,11 @@ Les relais sont gérés dans l'onglet **Inscriptions relais** :
 
 ---
 
-## Page publique des meilleurs temps
+## Page publique des résultats en direct/historiques
 
-Une page publique est disponible (sans connexion) pour consulter les meilleurs temps :
-- Depuis la page de connexion, cliquer **Consulter les meilleurs temps**
-- Rechercher par nom d'athlète ou club
+Une page publique est disponible (sans connexion) pour suivre les résultats :
+- Depuis la page de connexion, cliquer **Consulter les résultats en direct/historiques**
+- Affiche les résultats série par série en direct pendant une compétition, ou la liste des compétitions passées une fois celle-ci terminée
 
 ---
 
@@ -101,5 +101,5 @@ Une page publique est disponible (sans connexion) pour consulter les meilleurs t
 | Changer de catégorie | Sélectionner dans le menu déroulant |
 | Ajuster le temps d'inscription | Cliquer sur le champ de temps, taper le nouveau temps |
 | Assigner les relayeurs | Cocher l'épreuve de relais → Assigner les membres |
-| Consulter les meilleurs temps | Page de connexion → Consulter les meilleurs temps |
+| Consulter les résultats | Page de connexion → Consulter les résultats en direct/historiques |
 | Obtenir un nouveau NIP | Page de connexion → Demander une invitation |
