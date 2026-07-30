@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.45] - 2026-07-30
+
+### Other
+
+- Fix relay team event misattribution and age group display (`bef58a4`)
+
 ## [0.3.44] - 2026-07-30
 
 ### Other
