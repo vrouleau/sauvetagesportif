@@ -67,6 +67,31 @@
   white-space: nowrap;
 }
 
+@media print {
+  .best-times-print {
+    padding: 0;
+  }
+  @page {
+    size: landscape;
+    margin: 1cm;
+  }
+  .best-times-header {
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+    white-space: nowrap;
+    display: inline-block;
+  }
+}
+
+@media screen {
+  .best-times-header {
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+    white-space: nowrap;
+    display: inline-block;
+  }
+}
+
 /* DSQ toast slide-in animation */
 @keyframes slide-in {
   from {

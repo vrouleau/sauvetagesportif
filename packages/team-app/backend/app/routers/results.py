@@ -16,7 +16,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with Sauvetage Sportif. If not, see <https://www.gnu.org/licenses/>.
 
-"""Public results API — historical meets."""
+"""Public results API — historical meets and best times."""
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
@@ -81,3 +81,76 @@ def get_meet_results(meet_id: int, db: Session = Depends(get_db)):
         "meet_name": meet.name,
         "events": events,
     }
+
+
+@router.get("/best-times")
+def best_times_public(db: Session = Depends(get_db)):
+    """Best times per athlete, grouped by club."""
+    from ..models import BsGlobal, SwimStyle
+    from sqlalchemy.orm import joinedload
+    import json as _json
+
+    # Gather style names
+    cfg = db.query(BsGlobal).get("style_names_json")
+    imported_names: dict[int, str] = {int(k): v for k, v in _json.loads(cfg.data).items()} if cfg and cfg.data else {}
+
+    # All best times from bsglobal bt_* entries
+    bt_entries = db.query(BsGlobal).filter(BsGlobal.name.like("bt_%")).all()
+
+    all_uids: set[int] = set()
+    athlete_bt: dict[int, dict] = {}
+    for entry in bt_entries:
+        try:
+            athlete_id = int(entry.name.replace("bt_", ""))
+            bt_data = _json.loads(entry.data)
+            athlete_bt[athlete_id] = bt_data
+            for uid_key in bt_data:
+                all_uids.add(int(uid_key))
+        except (ValueError, TypeError):
+            pass
+
+    style_uids = sorted(all_uids)
+    styles = []
+    for uid in style_uids:
+        style = db.query(SwimStyle).get(uid)
+        name = style.name if style else imported_names.get(uid, f"ID{uid}")
+        styles.append({"uid": uid, "name": name})
+
+    # Load athletes with clubs
+    athlete_ids = list(athlete_bt.keys())
+    athletes_db = db.query(Member).options(
+        joinedload(Member.club)
+    ).filter(Member.membersid.in_(athlete_ids)).all() if athlete_ids else []
+    athlete_map = {a.membersid: a for a in athletes_db}
+
+    # Group by club
+    clubs_map: dict[int, dict] = {}
+    for athlete_id, bt_data in athlete_bt.items():
+        a = athlete_map.get(athlete_id)
+        if not a or not a.club:
+            continue
+        c = a.club
+        if c.clubsid not in clubs_map:
+            clubs_map[c.clubsid] = {"name": c.name, "athletes": []}
+        times = {}
+        for uid_str, val in bt_data.items():
+            if isinstance(val, dict):
+                if val.get("LCM"):
+                    times[f"{uid_str}_LCM"] = val["LCM"]
+                if val.get("SCM"):
+                    times[f"{uid_str}_SCM"] = val["SCM"]
+        clubs_map[c.clubsid]["athletes"].append({
+            "name": f"{a.lastname}, {a.firstname}",
+            "times": times,
+        })
+
+    # Sort clubs and athletes
+    clubs = sorted(clubs_map.values(), key=lambda c: c["name"])
+    for club in clubs:
+        club["athletes"].sort(key=lambda a: a["name"])
+
+    # Determine course
+    course_cfg = db.query(BsGlobal).get("meet_course")
+    course = course_cfg.data if course_cfg and course_cfg.data else "LCM"
+
+    return {"styles": styles, "clubs": clubs, "course": course}

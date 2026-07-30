@@ -16,7 +16,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with Sauvetage Sportif. If not, see <https://www.gnu.org/licenses/>.
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, Fragment } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import { useLang } from '../i18n'
 import DsqNotifyPanel from '../components/DsqNotifyPanel'
@@ -465,6 +465,94 @@ function StartListView({ eventId, lang }) {
   )
 }
 
+// ── Best Times View ──────────────────────────────────────────────────────────
+
+function BestTimesView() {
+  const { t, lang } = useLang()
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    setLoading(true)
+    setError('')
+    fetch('/api/results/best-times')
+      .then(r => { if (!r.ok) throw new Error(`Error ${r.status}`); return r.json() })
+      .then(setData)
+      .catch(e => setError(e.message))
+      .finally(() => setLoading(false))
+  }, [])
+
+  if (loading) {
+    return <div className="flex items-center justify-center h-32"><span className="text-sm text-gray-500">…</span></div>
+  }
+
+  if (error) {
+    return <div className="p-4 text-center text-sm text-red-600">{error}</div>
+  }
+
+  if (!data || data.clubs.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full p-8 text-center">
+        <p className="text-gray-500 text-sm">
+          {lang === 'fr' ? 'Aucun temps disponible.' : 'No times available.'}
+        </p>
+      </div>
+    )
+  }
+
+  const { styles, clubs, course } = data
+
+  return (
+    <div className="best-times-print p-4 h-full overflow-auto">
+      <div className="print:hidden flex justify-between items-center mb-3">
+        <p className="text-sm text-gray-600">{t.best_times_course}: {course}</p>
+        <button
+          onClick={() => window.print()}
+          className="text-xs bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700"
+        >
+          {t.best_times_print}
+        </button>
+      </div>
+
+      <table className="w-full text-xs border-collapse border border-gray-300">
+        <thead>
+          <tr>
+            <th className="border border-gray-300 px-1 py-1 bg-gray-100 text-left sticky left-0">{t.best_times_athlete}</th>
+            {styles.map(s => (
+              <th key={s.uid} className="border border-gray-300 px-1 py-1 bg-gray-100">
+                <span className="best-times-header">{s.name}</span>
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {clubs.map(club => (
+            <Fragment key={club.name}>
+              <tr>
+                <td colSpan={styles.length + 1} className="border border-gray-300 px-1 py-1 bg-blue-50 font-bold">
+                  {club.name}
+                </td>
+              </tr>
+              {club.athletes.map((ath, i) => (
+                <tr key={`${club.name}-${i}`}>
+                  <td className="border border-gray-300 px-1 py-0.5 whitespace-nowrap">{ath.name}</td>
+                  {styles.map(s => {
+                    const lcm = ath.times[`${s.uid}_LCM`]
+                    const scm = ath.times[`${s.uid}_SCM`]
+                    const val = course === 'SCM' ? (scm || lcm) : (lcm || scm)
+                    return <td key={s.uid} className="border border-gray-300 px-1 py-0.5 text-center font-mono">{formatTime(val)}</td>
+                  })}
+                </tr>
+              ))}
+            </Fragment>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 // ── Historical View ───────────────────────────────────────────────────────────
 
 function HistoricalView() {
@@ -512,12 +600,30 @@ function HistoricalView() {
   )
 }
 
+// ── Tab button ────────────────────────────────────────────────────────────────
+
+function TabButton({ active, onClick, children }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+        active
+          ? 'border-blue-600 text-blue-700'
+          : 'border-transparent text-gray-500 hover:text-gray-700'
+      }`}
+    >
+      {children}
+    </button>
+  )
+}
+
 // ── Main Results Page ─────────────────────────────────────────────────────────
 
 export default function ResultsPage() {
   const { t, lang, toggle } = useLang()
   const [liveStatus, setLiveStatus] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [tab, setTab] = useState(null) // null = default (live if active, else historical)
 
   useEffect(() => {
     fetch('/api/live/status')
@@ -532,6 +638,7 @@ export default function ResultsPage() {
   }
 
   const isLive = liveStatus?.active
+  const activeTab = tab || (isLive ? 'live' : 'historical')
 
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col">
@@ -541,7 +648,7 @@ export default function ResultsPage() {
           <h1 className="text-lg font-bold">
             {lang === 'fr' ? 'Résultats' : 'Results'}
           </h1>
-          {isLive && (
+          {isLive && activeTab === 'live' && (
             <span className="flex items-center gap-1 text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">
               <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
               {lang === 'fr' ? 'En direct' : 'Live'}
@@ -558,9 +665,26 @@ export default function ResultsPage() {
         </div>
       </div>
 
+      {/* Tabs */}
+      <div className="bg-white border-b px-4 flex gap-1 shrink-0 overflow-x-auto">
+        {isLive && (
+          <TabButton active={activeTab === 'live'} onClick={() => setTab('live')}>
+            {t.results_tab_live}
+          </TabButton>
+        )}
+        <TabButton active={activeTab === 'historical'} onClick={() => setTab('historical')}>
+          {t.results_tab_historical}
+        </TabButton>
+        <TabButton active={activeTab === 'best-times'} onClick={() => setTab('best-times')}>
+          {t.results_tab_best_times}
+        </TabButton>
+      </div>
+
       {/* Content */}
       <div className="flex-1 overflow-hidden">
-        {isLive ? <LiveView status={liveStatus} /> : <HistoricalView />}
+        {activeTab === 'live' && isLive && <LiveView status={liveStatus} />}
+        {activeTab === 'historical' && <HistoricalView />}
+        {activeTab === 'best-times' && <BestTimesView />}
       </div>
     </div>
   )

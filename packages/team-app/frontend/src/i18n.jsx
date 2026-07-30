@@ -163,6 +163,13 @@ const translations = {
     footer_get_help: "Get help",
     footer_usage: "Usage guide",
     results_link: "Consult Live/Historical Results",
+    results_tab_live: "Live",
+    results_tab_historical: "Historical",
+    results_tab_best_times: "Best Times",
+    best_times_title: "Best Times",
+    best_times_print: "Print",
+    best_times_athlete: "Athlete",
+    best_times_course: "Course",
   },
   fr: {
     athletes: "Athlètes",
@@ -308,6 +315,13 @@ const translations = {
     footer_get_help: "Obtenir de l'aide",
     footer_usage: "Guide d'utilisation",
     results_link: "Consulter les résultats en direct/historiques",
+    results_tab_live: "En direct",
+    results_tab_historical: "Historique",
+    results_tab_best_times: "Meilleurs temps",
+    best_times_title: "Meilleurs temps",
+    best_times_print: "Imprimer",
+    best_times_athlete: "Athlète",
+    best_times_course: "Bassin",
   },
 }
 
