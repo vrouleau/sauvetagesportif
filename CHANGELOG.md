@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.47] - 2026-07-30
+
+### Other
+
+- Require 2 native-category members for relay age-group anchor rule (`c28973e`)
+
 ## [0.3.46] - 2026-07-30
 
 ### Other
