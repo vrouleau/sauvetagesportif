@@ -16,8 +16,8 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with Sauvetage Sportif. If not, see <https://www.gnu.org/licenses/>.
 
-"""GET /api/results/best-times must read from the live `results` table
-(via best_times.get_best_times_for_member), not from the dead bsglobal
+"""best_times.get_public_best_times (powers GET /api/results/best-times)
+must read from the live `results` table, not from the dead bsglobal
 `bt_*` rows nothing in the codebase writes anymore.
 """
 from __future__ import annotations
@@ -33,7 +33,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "backend"))
 
 from app.models import Base, SwimStyle, BsGlobal
 from app.models_team import Meet, Result, TeamClub, Member
-from app.routers.results import best_times_public
+from app.best_times import get_public_best_times
 
 
 def _create_session():
@@ -67,7 +67,7 @@ def test_aggregates_across_clubs_from_results_table():
         ])
         db.commit()
 
-        data = best_times_public(db=db)
+        data = get_public_best_times(db)
 
         assert data["styles"] == [{"uid": 101, "name": "100 Free"}]
         assert [c["name"] for c in data["clubs"]] == ["Alpha Club", "Beta Club"]
@@ -106,7 +106,7 @@ def test_excludes_unofficial_results_and_athletes_without_a_club():
         ])
         db.commit()
 
-        data = best_times_public(db=db)
+        data = get_public_best_times(db)
 
         assert data["clubs"] == []
     finally:
@@ -120,7 +120,7 @@ def test_returns_configured_meet_course():
         db.add(BsGlobal(name="meet_course", data="SCM"))
         db.commit()
 
-        data = best_times_public(db=db)
+        data = get_public_best_times(db)
 
         assert data["course"] == "SCM"
         assert data["clubs"] == []

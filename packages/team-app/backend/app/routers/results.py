@@ -22,12 +22,11 @@ from __future__ import annotations
 import os
 
 from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import SwimStyle
 from ..models_team import Meet, Result, Member, TeamClub
-from ..best_times import get_best_times_for_member
+from ..best_times import get_public_best_times
 
 router = APIRouter(prefix="/api/results")
 
@@ -93,69 +92,4 @@ def get_meet_results(meet_id: int, db: Session = Depends(get_db)):
 def best_times_public(db: Session = Depends(get_db)):
     """Best times per athlete, grouped by club, computed from historical results
     (same source as the per-athlete registration page — see best_times.py)."""
-    from ..models import BsGlobal
-
-    # Members with at least one qualifying historical result
-    member_ids = [
-        row[0] for row in db.query(Result.membersid).filter(
-            Result.membersid.isnot(None),
-            Result.totaltime.isnot(None),
-            Result.totaltime > 0,
-            Result.resulttyp == 0,
-        ).distinct().all()
-    ]
-
-    all_uids: set[int] = set()
-    athlete_bt: dict[int, dict] = {}
-    for member_id in member_ids:
-        bt_data = get_best_times_for_member(db, member_id, _BEST_TIME_MAX_AGE_MONTHS)
-        if not bt_data:
-            continue
-        athlete_bt[member_id] = bt_data
-        for uid_key in bt_data:
-            all_uids.add(int(uid_key))
-
-    style_uids = sorted(all_uids)
-    styles = []
-    for uid in style_uids:
-        style = db.query(SwimStyle).get(uid)
-        name = style.name if style else f"ID{uid}"
-        styles.append({"uid": uid, "name": name})
-
-    # Load athletes with clubs
-    athlete_ids = list(athlete_bt.keys())
-    athletes_db = db.query(Member).options(
-        joinedload(Member.club)
-    ).filter(Member.membersid.in_(athlete_ids)).all() if athlete_ids else []
-    athlete_map = {a.membersid: a for a in athletes_db}
-
-    # Group by club
-    clubs_map: dict[int, dict] = {}
-    for athlete_id, bt_data in athlete_bt.items():
-        a = athlete_map.get(athlete_id)
-        if not a or not a.club:
-            continue
-        c = a.club
-        if c.clubsid not in clubs_map:
-            clubs_map[c.clubsid] = {"name": c.name, "athletes": []}
-        times = {}
-        for uid_str, style_data in bt_data.items():
-            if "LCM" in style_data:
-                times[f"{uid_str}_LCM"] = style_data["LCM"]["time_ms"]
-            if "SCM" in style_data:
-                times[f"{uid_str}_SCM"] = style_data["SCM"]["time_ms"]
-        clubs_map[c.clubsid]["athletes"].append({
-            "name": f"{a.lastname}, {a.firstname}",
-            "times": times,
-        })
-
-    # Sort clubs and athletes
-    clubs = sorted(clubs_map.values(), key=lambda c: c["name"])
-    for club in clubs:
-        club["athletes"].sort(key=lambda a: a["name"])
-
-    # Determine course (current meet's course, used to pick LCM vs SCM when both exist)
-    course_cfg = db.query(BsGlobal).get("meet_course")
-    course = course_cfg.data if course_cfg and course_cfg.data else "LCM"
-
-    return {"styles": styles, "clubs": clubs, "course": course}
+    return get_public_best_times(db, _BEST_TIME_MAX_AGE_MONTHS)

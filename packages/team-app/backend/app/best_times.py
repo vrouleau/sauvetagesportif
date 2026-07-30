@@ -26,8 +26,9 @@ from __future__ import annotations
 import re
 from datetime import date
 from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
+from .models import SwimStyle, BsGlobal
 from .models_team import Result, Member, TeamClub
 
 
@@ -90,6 +91,84 @@ def get_best_times_for_member(
 
 # Alias for backward compatibility
 get_best_times = get_best_times_for_member
+
+
+def get_public_best_times(db: Session, max_age_months: int = 18) -> dict:
+    """Best times for every member with a qualifying result, grouped by club.
+
+    Powers the public /results Best Times tab. Pure SQLAlchemy — no FastAPI
+    import here on purpose, so it stays importable (and testable) without
+    the full backend dependency stack.
+
+    Returns: {
+        "styles": [{"uid": int, "name": str}, ...],
+        "clubs": [{"name": str, "athletes": [{"name": str, "times": {"{uid}_LCM": ms, ...}}]}],
+        "course": str,  # current meet's course (LCM/SCY/SCM), for display preference
+    }
+    """
+    member_ids = [
+        row[0] for row in db.query(Result.membersid).filter(
+            Result.membersid.isnot(None),
+            Result.totaltime.isnot(None),
+            Result.totaltime > 0,
+            Result.resulttyp == 0,
+        ).distinct().all()
+    ]
+
+    all_uids: set[int] = set()
+    athlete_bt: dict[int, dict] = {}
+    for member_id in member_ids:
+        bt_data = get_best_times_for_member(db, member_id, max_age_months)
+        if not bt_data:
+            continue
+        athlete_bt[member_id] = bt_data
+        for uid_key in bt_data:
+            all_uids.add(int(uid_key))
+
+    style_uids = sorted(all_uids)
+    styles = []
+    for uid in style_uids:
+        style = db.query(SwimStyle).get(uid)
+        name = style.name if style else f"ID{uid}"
+        styles.append({"uid": uid, "name": name})
+
+    # Load athletes with clubs
+    athlete_ids = list(athlete_bt.keys())
+    athletes_db = db.query(Member).options(
+        joinedload(Member.club)
+    ).filter(Member.membersid.in_(athlete_ids)).all() if athlete_ids else []
+    athlete_map = {a.membersid: a for a in athletes_db}
+
+    # Group by club
+    clubs_map: dict[int, dict] = {}
+    for athlete_id, bt_data in athlete_bt.items():
+        a = athlete_map.get(athlete_id)
+        if not a or not a.club:
+            continue
+        c = a.club
+        if c.clubsid not in clubs_map:
+            clubs_map[c.clubsid] = {"name": c.name, "athletes": []}
+        times = {}
+        for uid_str, style_data in bt_data.items():
+            if "LCM" in style_data:
+                times[f"{uid_str}_LCM"] = style_data["LCM"]["time_ms"]
+            if "SCM" in style_data:
+                times[f"{uid_str}_SCM"] = style_data["SCM"]["time_ms"]
+        clubs_map[c.clubsid]["athletes"].append({
+            "name": f"{a.lastname}, {a.firstname}",
+            "times": times,
+        })
+
+    # Sort clubs and athletes
+    clubs = sorted(clubs_map.values(), key=lambda c: c["name"])
+    for club in clubs:
+        club["athletes"].sort(key=lambda a: a["name"])
+
+    # Determine course (current meet's course, used to pick LCM vs SCM when both exist)
+    course_cfg = db.query(BsGlobal).get("meet_course")
+    course = course_cfg.data if course_cfg and course_cfg.data else "LCM"
+
+    return {"styles": styles, "clubs": clubs, "course": course}
 
 
 def get_best_time(
