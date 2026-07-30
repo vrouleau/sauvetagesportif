@@ -341,9 +341,13 @@ function LiveView({ status }) {
                     <h3 className="text-sm font-medium text-gray-700">
                       {lang === 'fr' ? 'Série' : 'Heat'} {heatNum}
                     </h3>
-                    {entries[0]?.is_official && (
+                    {entries[0]?.is_official ? (
                       <span className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded">
                         {lang === 'fr' ? 'Officiel' : 'Official'}
+                      </span>
+                    ) : (
+                      <span className="text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">
+                        {lang === 'fr' ? 'Provisoire' : 'Provisional'}
                       </span>
                     )}
                   </div>
@@ -374,6 +378,15 @@ function LiveView({ status }) {
                               ? <span className="text-red-600" title={entry.dsq_reason || ''}>{entry.status}{entry.dsq_reason ? ' ⓘ' : ''}</span>
                               : formatTime(entry.swimtime_ms)
                             }
+                            {' '}
+                            <span
+                              className={entry.is_official ? 'text-green-600' : 'text-amber-500'}
+                              title={entry.is_official
+                                ? (lang === 'fr' ? 'Résultat validé' : 'Validated result')
+                                : (lang === 'fr' ? 'Résultat provisoire, non validé' : 'Provisional result, not yet validated')}
+                            >
+                              {entry.is_official ? '✓' : '⏳'}
+                            </span>
                           </td>
                         </tr>
                       ))}
