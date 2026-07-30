@@ -32,6 +32,12 @@ function formatTime(ms) {
     : `${sec}.${cs.toString().padStart(2, '0')}`
 }
 
+/** Beach meets store finish order as position*1000 in the same field pool meets use for real times. */
+function formatResultValue(ms, isBeach) {
+  if (!ms) return ''
+  return isBeach ? String(Math.round(ms / 1000)) : formatTime(ms)
+}
+
 function GenderBadge({ gender }) {
   if (!gender) return null
   const colors = { M: 'bg-blue-100 text-blue-700', F: 'bg-pink-100 text-pink-700', X: 'bg-purple-100 text-purple-700' }
@@ -40,7 +46,7 @@ function GenderBadge({ gender }) {
 
 // ── Live View ─────────────────────────────────────────────────────────────────
 
-function LiveView({ status }) {
+function LiveView({ status, isBeach }) {
   const { t, lang } = useLang()
   const [events, setEvents] = useState([])
   const [searchParams] = useSearchParams()
@@ -358,7 +364,7 @@ function LiveView({ status }) {
                         <th className="text-left py-1 w-8">{lang === 'fr' ? 'Coul.' : 'Ln'}</th>
                         <th className="text-left py-1">{lang === 'fr' ? 'Athlète' : 'Athlete'}</th>
                         <th className="text-left py-1">{lang === 'fr' ? 'Club' : 'Club'}</th>
-                        <th className="text-right py-1">{lang === 'fr' ? 'Temps' : 'Time'}</th>
+                        <th className="text-right py-1">{isBeach ? 'Position' : (lang === 'fr' ? 'Temps' : 'Time')}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -376,7 +382,7 @@ function LiveView({ status }) {
                           <td className="py-1 text-right font-mono">
                             {entry.status
                               ? <span className="text-red-600" title={entry.dsq_reason || ''}>{entry.status}{entry.dsq_reason ? ' ⓘ' : ''}</span>
-                              : formatTime(entry.swimtime_ms)
+                              : formatResultValue(entry.swimtime_ms, isBeach)
                             }
                             {' '}
                             <span
@@ -622,6 +628,7 @@ function TabButton({ active, onClick, children }) {
 export default function ResultsPage() {
   const { t, lang, toggle } = useLang()
   const [liveStatus, setLiveStatus] = useState(null)
+  const [meetType, setMeetType] = useState('POOL')
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState(null) // null = default (live if active, else historical)
 
@@ -631,6 +638,10 @@ export default function ResultsPage() {
       .then(setLiveStatus)
       .catch(() => setLiveStatus({ active: false }))
       .finally(() => setLoading(false))
+    fetch('/api/meet-info')
+      .then(r => r.json())
+      .then(data => setMeetType(data.meet_type || 'POOL'))
+      .catch(() => {})
   }, [])
 
   if (loading) {
@@ -638,6 +649,7 @@ export default function ResultsPage() {
   }
 
   const isLive = liveStatus?.active
+  const isBeach = meetType === 'BEACH'
   const activeTab = tab || (isLive ? 'live' : 'historical')
 
   return (
@@ -682,7 +694,7 @@ export default function ResultsPage() {
 
       {/* Content */}
       <div className="flex-1 overflow-hidden">
-        {activeTab === 'live' && isLive && <LiveView status={liveStatus} />}
+        {activeTab === 'live' && isLive && <LiveView status={liveStatus} isBeach={isBeach} />}
         {activeTab === 'historical' && <HistoricalView />}
         {activeTab === 'best-times' && <BestTimesView />}
       </div>
