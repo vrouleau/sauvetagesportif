@@ -166,7 +166,7 @@ RelayEntryPage (shared-ui)
 `importLenex` processes `RELAY` and `RELAYPOSITION` elements, creating relay teams from imported .lxf files.
 
 ### Team composition
-Age group determined by majority of members' individual registration age groups. See `docs/RELAY_TEAM_RULES.md` for full rules (3-1 valid, 2-2 invalid, 2M+2F for mixed).
+Age group: a team's category = the event it was created under. Members must be that exact category or the single adjacent-younger one (swim-up); ≥1 member must match exactly. No per-team age label shown in UI. See `docs/RELAY_TEAM_RULES.md` for full rules (any split valid beyond the anchor — 4-0/3-1/2-2/1-3 — 2M+2F for mixed).
 
 ## Heat Generation
 

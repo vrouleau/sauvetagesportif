@@ -511,6 +511,63 @@ function decodeRelayGender(g: number | null): 'M' | 'F' | 'X' {
   return 'X'
 }
 
+/**
+ * Ordered list of age category codes (youngest → oldest) used across this meet's
+ * relay events. Used to decide whether two age groups on a relay team are "adjacent"
+ * (see the composition rule: a team may span at most 2 adjacent age categories).
+ */
+function getRelayAgeCategoryOrder(db: ReturnType<typeof getLocalDb>): string[] {
+  const rows = db.prepare(`
+    SELECT DISTINCT ag.agemin, ag.agemax
+    FROM agegroup ag
+    JOIN swimevent e ON ag.swimeventid = e.swimeventid
+    JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid
+    WHERE ss.relaycount > 1
+  `).all() as Array<{ agemin: number | null; agemax: number | null }>
+  const codes = new Set(rows.map(r => buildAgeCode(r.agemin, r.agemax)))
+  return Array.from(codes).sort((a, b) => parseInt(a, 10) - parseInt(b, 10))
+}
+
+/**
+ * The event's own age category, if it has exactly one distinct agegroup code —
+ * this is the category a team under that event is anchored to. Returns null when
+ * the event has 0 or 2+ distinct codes (ambiguous — anchor rule doesn't apply).
+ */
+function getEventNativeAgeCode(db: ReturnType<typeof getLocalDb>, swimeventid: number): string | null {
+  const rows = db.prepare(`SELECT DISTINCT agemin, agemax FROM agegroup WHERE swimeventid = ?`)
+    .all(swimeventid) as Array<{ agemin: number | null; agemax: number | null }>
+  const codes = new Set(rows.map(r => buildAgeCode(r.agemin, r.agemax)))
+  return codes.size === 1 ? Array.from(codes)[0] : null
+}
+
+/**
+ * Is `candidateCode` allowed on a team anchored to `nativeCode`? Members must be
+ * from the event's exact own category, or the single adjacent-younger one (swim-up).
+ * `order` is ageCategoryOrder-shaped (youngest → oldest); unknown codes never block.
+ */
+function isAgeCodeAllowedOnTeam(candidateCode: string, nativeCode: string, order: string[]): boolean {
+  if (candidateCode === nativeCode) return true
+  const ni = order.indexOf(nativeCode)
+  const ci = order.indexOf(candidateCode)
+  if (ni === -1 || ci === -1) return true
+  return ci === ni - 1
+}
+
+/**
+ * Would assigning `candidateCode` to the last remaining empty position make it
+ * impossible for the team to have at least 1 member from the event's own exact
+ * category? Only relevant when no positions remain to fill after this one.
+ */
+function wouldMissNativeAnchor(
+  otherAssignedCodes: string[],
+  candidateCode: string,
+  nativeCode: string,
+  remainingAfterThis: number
+): boolean {
+  if (remainingAfterThis > 0) return false
+  return !otherAssignedCodes.includes(nativeCode) && candidateCode !== nativeCode
+}
+
 ipcMain.handle('db:get-clubs', () => {
   const db = getLocalDb()
   const rows = db.prepare(
@@ -626,6 +683,10 @@ ipcMain.handle('db:get-relay-page-data', (_event, clubId?: number) => {
           eventNumber: e.eventNumber,
         })),
     }))
+
+  // Age category codes, youngest → oldest (already sorted by ageMin above) — used to
+  // check the "at most 2 adjacent age categories" relay team composition rule
+  const relayAgeCategoryOrder = ageCategories.map(cat => cat.ageCode)
 
   // 4. Load existing relay teams
   const teamsByEvent: Record<string, Array<{
@@ -743,7 +804,9 @@ ipcMain.handle('db:get-relay-page-data', (_event, clubId?: number) => {
       }
     }
 
-    // Compute team age group from members' individual registrations (majority rule)
+    // Compute team age group (informational only — no longer shown in the UI,
+    // which now just relies on the event's own category): the oldest category
+    // present among members' individual registrations.
     const memberAgeCodes: string[] = []
     for (const m of members) {
       if (m.athleteId) {
@@ -753,12 +816,11 @@ ipcMain.handle('db:get-relay-page-data', (_event, clubId?: number) => {
     }
     let computedAgeGroup = ageCode // fallback to event agegroup
     if (memberAgeCodes.length > 0) {
-      // Find the most common age code
-      const counts = new Map<string, number>()
-      for (const ac of memberAgeCodes) counts.set(ac, (counts.get(ac) ?? 0) + 1)
-      let maxCount = 0
-      for (const [ac, cnt] of counts) {
-        if (cnt > maxCount) { maxCount = cnt; computedAgeGroup = ac }
+      computedAgeGroup = memberAgeCodes[0]
+      let bestIdx = relayAgeCategoryOrder.indexOf(computedAgeGroup)
+      for (const ac of memberAgeCodes.slice(1)) {
+        const idx = relayAgeCategoryOrder.indexOf(ac)
+        if (idx > bestIdx) { bestIdx = idx; computedAgeGroup = ac }
       }
     }
 
@@ -978,12 +1040,12 @@ ipcMain.handle('db:set-relay-team-member', (_event, teamId: number, position: nu
       }
     }
 
-    // Age group majority validation:
-    // Adding this athlete must not make it impossible for any single age group
-    // to achieve a strict majority (≥ relaycount/2 + 1) once all positions are filled.
-    // SERC events skip this check.
+    // Age group composition validation: a team is anchored to the event's own
+    // age category — members must be from that exact category, or the single
+    // adjacent-younger one (swim-up), and at least 1 member must match the exact
+    // category. SERC events skip this check.
     if (!isSERC) {
-    const requiredMajority = Math.floor(relaycount / 2) + 1
+    const nativeCode = getEventNativeAgeCode(db, relay.swimeventid)
 
     // Get the new athlete's dominant registration age group (from individual entries)
     const newAthleteAgRow = db.prepare(`
@@ -998,8 +1060,15 @@ ipcMain.handle('db:set-relay-team-member', (_event, teamId: number, position: nu
       LIMIT 1
     `).get(athleteId) as { agemin: number | null; agemax: number | null } | undefined
 
-    if (newAthleteAgRow) {
+    if (nativeCode && newAthleteAgRow) {
       const newAthleteAgeCode = buildAgeCode(newAthleteAgRow.agemin, newAthleteAgRow.agemax)
+      const order = getRelayAgeCategoryOrder(db)
+
+      if (!isAgeCodeAllowedOnTeam(newAthleteAgeCode, nativeCode, order)) {
+        throw new Error(
+          `Cannot assign: must be from the event's own age category (${nativeCode}) or the next-younger category`
+        )
+      }
 
       // Get age groups of other assigned team members (excluding current position)
       const otherMembers = db.prepare(`
@@ -1007,40 +1076,29 @@ ipcMain.handle('db:set-relay-team-member', (_event, teamId: number, position: nu
         WHERE rp.relayid = ? AND rp.relaynumber != ? AND rp.athleteid IS NOT NULL
       `).all(teamId, position) as Array<{ athleteid: number }>
 
-      if (otherMembers.length > 0) {
-        const memberAgeCodes: string[] = []
-        for (const om of otherMembers) {
-          const agRow = db.prepare(`
-            SELECT ag.agemin, ag.agemax, COUNT(*) as cnt
-            FROM swimresult sr
-            JOIN agegroup ag ON sr.agegroupid = ag.agegroupid
-            JOIN swimevent e ON sr.swimeventid = e.swimeventid
-            JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid
-            WHERE sr.athleteid = ? AND ss.relaycount = 1
-            GROUP BY ag.agemin, ag.agemax
-            ORDER BY cnt DESC
-            LIMIT 1
-          `).get(om.athleteid) as { agemin: number | null; agemax: number | null } | undefined
-          if (agRow) {
-            memberAgeCodes.push(buildAgeCode(agRow.agemin, agRow.agemax))
-          }
+      const memberAgeCodes: string[] = []
+      for (const om of otherMembers) {
+        const agRow = db.prepare(`
+          SELECT ag.agemin, ag.agemax, COUNT(*) as cnt
+          FROM swimresult sr
+          JOIN agegroup ag ON sr.agegroupid = ag.agegroupid
+          JOIN swimevent e ON sr.swimeventid = e.swimeventid
+          JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid
+          WHERE sr.athleteid = ? AND ss.relaycount = 1
+          GROUP BY ag.agemin, ag.agemax
+          ORDER BY cnt DESC
+          LIMIT 1
+        `).get(om.athleteid) as { agemin: number | null; agemax: number | null } | undefined
+        if (agRow) {
+          memberAgeCodes.push(buildAgeCode(agRow.agemin, agRow.agemax))
         }
+      }
 
-        // Simulate adding the new athlete
-        const allAgeCodes = [...memberAgeCodes, newAthleteAgeCode]
-        const remainingPositions = relaycount - allAgeCodes.length
-
-        // Count occurrences
-        const counts = new Map<string, number>()
-        for (const ac of allAgeCodes) counts.set(ac, (counts.get(ac) ?? 0) + 1)
-        let maxCount = 0
-        for (const c of counts.values()) { if (c > maxCount) maxCount = c }
-
-        if (maxCount + remainingPositions < requiredMajority) {
-          throw new Error(
-            `Cannot assign: adding this athlete would make it impossible to achieve an age group majority (${requiredMajority} of ${relaycount} required)`
-          )
-        }
+      const remainingAfterThis = relaycount - otherMembers.length - 1
+      if (wouldMissNativeAnchor(memberAgeCodes, newAthleteAgeCode, nativeCode, remainingAfterThis)) {
+        throw new Error(
+          `Cannot assign: this team must include at least 1 member from the event's own age category (${nativeCode})`
+        )
       }
     }
     } // end if (!isSERC)

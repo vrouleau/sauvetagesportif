@@ -31,27 +31,28 @@ Athletes are classified into the following age groups based on their age as of t
 
 ## Team Age Group Determination
 
-The team's age group is NOT calculated from birthdates. It is derived from the **individual registration age group** of each team member — the category selected by the coach in the Individual Entry page (stored in `swimresult.agegroupid`).
+A relay team's age category is **not** calculated from member composition — it's the category of the **event card** the team was created under (e.g. a team created under the "Open" event is an Open team). Each relay event maps to exactly one age category in the meet's structure, so this is unambiguous in the normal case; the UI shows the category once, in the event card header, and no longer repeats it per team.
 
-The team's age group is determined by the **majority** age group of its members:
+Members must be from that exact ("native") category, or the single **adjacent-younger** category (swim-up). Swim-up is **one-directional**: a younger athlete may join an older team's relay, but an older athlete can never appear on a younger team's relay — so there's no separate "older" category to allow.
 
-- **4-0**: All 4 members from the same age group → team belongs to that age group ✓
-- **3-1**: 3 members from one age group + 1 from another → team belongs to the majority (3) age group ✓
-- **2-2**: 2 members from one age group + 2 from another → **INVALID** composition ✗
+At least **1 member must match the native category exactly** — a team built entirely from swim-up members, with nobody actually in the event's own category, is invalid. Beyond that minimum, any split is valid — there is no majority requirement:
 
-### Rule
+- **4-0, 3-1, 2-2, 1-3** (native/swim-up split): all valid, as long as ≥1 member is native ✓
+- **0-4** (no native member at all, only swim-up) → **INVALID** ✗
+- **A member from any category other than native or the single adjacent-younger one** (skipping a category, or an older category) → **INVALID** ✗
 
-> A relay team must have a clear majority (≥3 out of 4, or ≥2 out of 2 for 2-person relays) of members from the same age group. A 50/50 split is not allowed.
+### Examples (Open event, adjacent-younger = 15-18)
 
-### General Formula
+- 4×Open members → **valid**
+- 1×Open + 3×15-18 members → **valid**
+- 2×Open + 2×15-18 members → **valid**
+- 0×Open + 4×15-18 members → **INVALID** — no native (Open) member
+- 1×Open + 3×13-14 members → **INVALID** — 13-14 skips 15-18
+- 1×Open + 1×19+ member (an older category, if one existed) → **INVALID** — no swim-down
 
-For a relay of N members:
-- At least ⌈(N/2) + 1⌉ members must share the same age group (strict majority)
-- Equivalently: no two age groups may have the same count as the maximum
+### Incremental assignment UX
 
-### Calculated Age Group
-
-The team's displayed age group is the age group with the most members assigned.
+The "at least 1 native member" requirement is only enforced once it would actually become impossible — i.e. when assigning the **last remaining empty position** and no native member has been assigned yet (and the candidate isn't native either). Earlier positions can be filled with swim-up members without being blocked, since there's still room to add a native member later. The "member must be native or single-adjacent-younger" check, by contrast, is unconditional and applies to every assignment regardless of position.
 
 ## Gender Rules for Mixed (X) Events
 
@@ -91,7 +92,8 @@ When populating the member selection dropdown for a position:
 1. Exclude athletes already assigned to another position on the same team
 2. Exclude athletes already assigned to another team for the same event
 3. For mixed events: enforce the 2M/2F balance (if 2 men are already assigned, only show women)
-4. Show a warning indicator if selecting an athlete would create a 2-2 age group split
+4. Exclude an athlete whose age category is neither the event's native category nor the single adjacent-younger one
+5. Exclude an athlete if, once assigned, no position would remain to add a native-category member and none has been assigned yet (only checked on the last remaining position)
 
 ## Team Numbering
 

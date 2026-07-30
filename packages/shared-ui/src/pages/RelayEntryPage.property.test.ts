@@ -735,31 +735,43 @@ function computeAllowedGender(
   return null
 }
 
-// ─── Age Group Majority Filtering Logic ───────────────────────────────────────
+// ─── Age Group Composition (Event-Anchored) Filtering Logic ───────────────────
+
+// Age category codes, youngest → oldest — mirrors what a backend would send as
+// `pageData.ageCategories` (sorted by ageMin) for these tests' purposes.
+const AGE_GROUP_ORDER = ['10-', '11-12', '13-14', '15-18', '19+']
 
 /**
- * Determines if adding an athlete with a given age group would make it impossible
- * to achieve a strict majority once all positions are filled.
- * Returns true if the athlete should be BLOCKED (excluded from dropdown).
+ * Is `candidateCode` allowed on a team anchored to `nativeCode` (the relay
+ * event's own age category)? Members must be the exact native category, or the
+ * single adjacent-younger one (swim-up — never the reverse).
+ * Mirrors the production `isAgeCodeAllowedOnTeam` in RelayEntryPage.tsx.
  */
-function wouldBlockAgeGroupMajority(
-  currentAgeGroups: string[],
-  candidateAgeGroup: string,
-  relaycount: number
+function isAgeCodeAllowedOnTeam(
+  candidateCode: string,
+  nativeCode: string,
+  order: string[] = AGE_GROUP_ORDER
 ): boolean {
-  const allAgeCodes = [...currentAgeGroups, candidateAgeGroup]
-  const remainingPositions = relaycount - allAgeCodes.length
-  const requiredMajority = Math.floor(relaycount / 2) + 1
+  if (candidateCode === nativeCode) return true
+  const ni = order.indexOf(nativeCode)
+  const ci = order.indexOf(candidateCode)
+  if (ni === -1 || ci === -1) return true
+  return ci === ni - 1
+}
 
-  // Count occurrences of each age group
-  const counts = new Map<string, number>()
-  for (const g of allAgeCodes) counts.set(g, (counts.get(g) ?? 0) + 1)
-
-  // Best possible: the most common group gets all remaining positions
-  let maxCount = 0
-  for (const c of counts.values()) { if (c > maxCount) maxCount = c }
-
-  return maxCount + remainingPositions < requiredMajority
+/**
+ * Would assigning `candidateCode` to the last remaining empty position make it
+ * impossible for the team to have at least 1 member from the native category?
+ * Mirrors the production `wouldMissNativeAnchor` in RelayEntryPage.tsx.
+ */
+function wouldMissNativeAnchor(
+  otherAssignedCodes: string[],
+  candidateCode: string,
+  nativeCode: string,
+  remainingAfterThis: number
+): boolean {
+  if (remainingAfterThis > 0) return false
+  return !otherAssignedCodes.includes(nativeCode) && candidateCode !== nativeCode
 }
 
 // ─── Property Tests for Mixed Gender Balance ──────────────────────────────────
@@ -841,130 +853,95 @@ describe('RelayEntryPage - Property 10: Mixed Event Gender Balance Filtering', (
   })
 })
 
-// ─── Property Tests for Age Group Majority ────────────────────────────────────
+// ─── Property Tests for Age Group Composition (Event-Anchored) ────────────────
 
-describe('RelayEntryPage - Property 11: Age Group Majority Filtering', () => {
+describe('RelayEntryPage - Property 11: Age Group Composition Filtering', () => {
   /**
    * **Validates: RELAY_TEAM_RULES.md - Team Age Group Determination**
    *
-   * A relay team must have a clear majority (≥3 out of 4 for 4-person relays,
-   * ≥2 out of 2 for 2-person relays). The dropdown SHALL exclude athletes whose
-   * age group would make achieving a majority impossible given remaining positions.
+   * A relay team is anchored to the event's own age category (e.g. an Open
+   * event's team is an Open team). Members must be that exact category, or the
+   * single adjacent-younger one (swim-up, never the reverse). At least 1 member
+   * must match the exact native category — but that's only checked once no
+   * positions remain to fill after the one being assigned.
    */
 
-  const ageGroupArb = fc.constantFrom('10-', '11-12', '13-14', '15-18', '19+')
+  const ageGroupArb = fc.constantFrom(...AGE_GROUP_ORDER)
 
-  it('2-2 split on a 4-person relay is always blocked (last position)', () => {
+  it('the exact native category is always allowed', () => {
     fc.assert(
-      fc.property(
-        ageGroupArb,
-        ageGroupArb.filter(() => true), // second group (may be same or different)
-        (groupA, groupB) => {
-          // Scenario: 3 positions filled with 2×groupA + 1×groupB
-          // The 4th position with groupB would create 2-2 → should be blocked
-          if (groupA === groupB) return // same group → would be 3-1, not 2-2
-
-          const currentAgeGroups = [groupA, groupA, groupB]
-          const blocked = wouldBlockAgeGroupMajority(currentAgeGroups, groupB, 4)
-          expect(blocked).toBe(true) // 2A + 2B → no majority possible, 0 remaining
-
-          // But adding groupA should be allowed (3A + 1B → valid majority)
-          const allowedA = wouldBlockAgeGroupMajority(currentAgeGroups, groupA, 4)
-          expect(allowedA).toBe(false)
-        }
-      ),
-      { numRuns: 200 }
+      fc.property(ageGroupArb, (native) => {
+        expect(isAgeCodeAllowedOnTeam(native, native)).toBe(true)
+      }),
+      { numRuns: 100 }
     )
   })
 
-  it('3-1 split on a 4-person relay is always valid', () => {
+  it('the single adjacent-younger category is allowed (swim-up)', () => {
     fc.assert(
       fc.property(
-        ageGroupArb,
-        ageGroupArb,
-        (groupA, groupB) => {
-          // 3 positions already from groupA, adding anyone is fine (already majority)
-          const currentAgeGroups = [groupA, groupA, groupA]
-          const blocked = wouldBlockAgeGroupMajority(currentAgeGroups, groupB, 4)
-          expect(blocked).toBe(false) // 3A already ≥ required majority of 3
-        }
-      ),
-      { numRuns: 200 }
-    )
-  })
-
-  it('with remaining positions, candidate is allowed if majority is still achievable', () => {
-    fc.assert(
-      fc.property(
-        ageGroupArb,
-        ageGroupArb,
-        (groupA, groupB) => {
-          // 1 position filled with groupA, adding groupB for 2nd position
-          // Remaining = 4 - 2 = 2 positions. Best = max(1,1) + 2 = 3 ≥ 3 → allowed
-          const currentAgeGroups = [groupA]
-          const blocked = wouldBlockAgeGroupMajority(currentAgeGroups, groupB, 4)
-          expect(blocked).toBe(false)
-        }
-      ),
-      { numRuns: 200 }
-    )
-  })
-
-  it('all-different groups with no remaining positions is blocked', () => {
-    // 4 different age groups → max count = 1, no majority possible
-    const blocked = wouldBlockAgeGroupMajority(
-      ['10-', '11-12', '13-14'],
-      '15-18',
-      4
-    )
-    expect(blocked).toBe(true) // 1-1-1-1 → max=1, remaining=0, 1+0 < 3
-  })
-
-  it('2-person relay: 1-1 split is blocked', () => {
-    fc.assert(
-      fc.property(
-        ageGroupArb,
-        ageGroupArb.filter(() => true),
-        (groupA, groupB) => {
-          if (groupA === groupB) return // same group → 2-0, valid
-          // For 2-person relay, required majority = 2
-          // 1 position filled with groupA, adding groupB → 1-1, remaining=0, max=1 < 2
-          const currentAgeGroups = [groupA]
-          const blocked = wouldBlockAgeGroupMajority(currentAgeGroups, groupB, 2)
-          expect(blocked).toBe(true)
-        }
-      ),
-      { numRuns: 200 }
-    )
-  })
-
-  it('2-person relay: same group is always allowed', () => {
-    fc.assert(
-      fc.property(
-        ageGroupArb,
-        (group) => {
-          const currentAgeGroups = [group]
-          const blocked = wouldBlockAgeGroupMajority(currentAgeGroups, group, 2)
-          expect(blocked).toBe(false) // 2-0 → max=2 ≥ required 2
+        fc.integer({ min: 1, max: AGE_GROUP_ORDER.length - 1 }),
+        (ni) => {
+          const native = AGE_GROUP_ORDER[ni]
+          const youngerAdjacent = AGE_GROUP_ORDER[ni - 1]
+          expect(isAgeCodeAllowedOnTeam(youngerAdjacent, native)).toBe(true)
         }
       ),
       { numRuns: 100 }
     )
   })
 
-  it('empty team never blocks any athlete', () => {
+  it('the adjacent-older category is never allowed (no swim-down)', () => {
     fc.assert(
       fc.property(
-        ageGroupArb,
-        fc.constantFrom(2, 4),
-        (group, relaycount) => {
-          // No existing members → remaining = relaycount - 1, max = 1
-          // For 4-person: 1 + 3 = 4 ≥ 3 → allowed
-          // For 2-person: 1 + 1 = 2 ≥ 2 → allowed
-          const blocked = wouldBlockAgeGroupMajority([], group, relaycount)
-          expect(blocked).toBe(false)
+        fc.integer({ min: 0, max: AGE_GROUP_ORDER.length - 2 }),
+        (ni) => {
+          const native = AGE_GROUP_ORDER[ni]
+          const olderAdjacent = AGE_GROUP_ORDER[ni + 1]
+          expect(isAgeCodeAllowedOnTeam(olderAdjacent, native)).toBe(false)
         }
       ),
+      { numRuns: 100 }
+    )
+  })
+
+  it('a category 2+ steps away (skipping one) is never allowed', () => {
+    fc.assert(
+      fc.property(
+        fc.tuple(
+          fc.integer({ min: 0, max: AGE_GROUP_ORDER.length - 1 }),
+          fc.integer({ min: 0, max: AGE_GROUP_ORDER.length - 1 })
+        ).filter(([i, j]) => Math.abs(i - j) > 1),
+        ([i, j]) => {
+          expect(isAgeCodeAllowedOnTeam(AGE_GROUP_ORDER[j], AGE_GROUP_ORDER[i])).toBe(false)
+        }
+      ),
+      { numRuns: 100 }
+    )
+  })
+
+  it('unknown age codes (not in the order list) are never blocked', () => {
+    expect(isAgeCodeAllowedOnTeam('Masters', '15-18')).toBe(true)
+    expect(isAgeCodeAllowedOnTeam('15-18', 'Masters')).toBe(true)
+  })
+
+  it('missing the native anchor only blocks on the last remaining position', () => {
+    // 2 swim-up members assigned, 1 slot still open after this one → not blocked yet
+    expect(wouldMissNativeAnchor(['13-14', '13-14'], '13-14', '15-18', 1)).toBe(false)
+    // last remaining position, still no native member anywhere → blocked
+    expect(wouldMissNativeAnchor(['13-14', '13-14'], '13-14', '15-18', 0)).toBe(true)
+    // last remaining position, but this candidate IS the native category → fine
+    expect(wouldMissNativeAnchor(['13-14', '13-14'], '15-18', '15-18', 0)).toBe(false)
+    // last remaining position, an earlier member already anchors the team → fine
+    expect(wouldMissNativeAnchor(['15-18', '13-14'], '13-14', '15-18', 0)).toBe(false)
+  })
+
+  it('a team made entirely of the native category never trips the anchor check', () => {
+    fc.assert(
+      fc.property(ageGroupArb, fc.integer({ min: 0, max: 3 }), (native, count) => {
+        const others = Array(count).fill(native)
+        expect(wouldMissNativeAnchor(others, native, native, 0)).toBe(false)
+      }),
       { numRuns: 100 }
     )
   })

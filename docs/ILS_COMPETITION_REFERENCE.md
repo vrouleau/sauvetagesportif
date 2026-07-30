@@ -58,7 +58,7 @@ A competitor's age is determined by how old they are as of **31 December** of th
 
 ## 3. Beach and Ocean Events (CRB Section 4)
 
-> **Quebec Adaptation**: Sauvetage Sportif Québec runs all relay events with **4-person teams**, even for events that the ILS defines as 3-person (Board Relay, Ski Relay). The same relay composition rules (gender balance, age group majority) apply uniformly to both pool and beach meets.
+> **Quebec Adaptation**: Sauvetage Sportif Québec runs all relay events with **4-person teams**, even for events that the ILS defines as 3-person (Board Relay, Ski Relay). The same relay composition rules (gender balance, age group anchor) apply uniformly to both pool and beach meets.
 
 ### 3.1 Individual Beach/Ocean Events
 
@@ -140,15 +140,21 @@ For M-only or F-only events, all team members must be of the specified gender.
 
 The following rules are enforced by this application (frontend dropdown filtering + backend validation):
 
-### 5.1 Age Group Majority Rule
+### 5.1 Age Group Anchor Rule
 
-The team's age group is determined by the **majority** of its members' individual registration age groups:
+A relay team's age category is the category of the **event it was created under**
+(e.g. an Open event's team is an Open team) — not computed from member composition.
+Members must be that exact native category, or the single **adjacent-younger** one
+(swim-up). Swim-up is one-directional: a younger athlete may join an older team, but
+an older athlete can never appear on a younger team.
 
-- **4-0**: All 4 members from same age group → valid ✓
-- **3-1**: 3 from one group + 1 from another → valid ✓ (team competes in the majority group)
-- **2-2**: 2 from one + 2 from another → **INVALID** ✗
+At least **1 member must match the native category exactly**; beyond that, any split
+of native/swim-up members is valid — no majority requirement.
 
-**Formula**: For a relay of N members, at least ⌈N/2⌉ + 1 members must share the same age group.
+- **4-0, 3-1, 2-2, 1-3** (native/swim-up split): valid, as long as ≥1 member is native ✓
+- **0-4** (no native member, only swim-up) → **INVALID** ✗
+- **A member from any category other than native or the single adjacent-younger one**
+  (skipping a category, or an older category) → **INVALID** ✗
 
 ### 5.2 Gender Balance (Mixed Events)
 
@@ -170,7 +176,9 @@ An athlete is eligible for a relay team if:
 1. Exclude athletes assigned elsewhere on this team (intra-team)
 2. Exclude athletes on another team for the same event (cross-team)
 3. For mixed events: hide gender that reached quota (N/2)
-4. For age groups: hide athletes that would make majority impossible
+4. For age groups: hide athletes whose category is neither native nor the single
+   adjacent-younger one; on the last remaining position, also hide athletes that
+   would leave the team with no native-category member
 
 ### 5.5 Team Numbering
 
@@ -194,7 +202,7 @@ An athlete is eligible for a relay team if:
 | 11 | Drapeau Sur Plage | Individual | X | 11-12 |
 | 12-13 | Drapeau Sur Plage | Individual | F / M | 13-14 |
 
-> The beach relay event follows the same 2M+2F composition rule and age group majority rule as pool relay events.
+> The beach relay event follows the same 2M+2F composition rule and age group anchor rule as pool relay events.
 
 ## 7. References
 

@@ -246,6 +246,113 @@ def _age_group_code(age_min: int, age_max: int) -> str | None:
     return None
 
 
+def _age_code_allowed_on_team(candidate_code: str, native_code: str) -> bool:
+    """Is candidate_code allowed on a team anchored to native_code (the relay
+    event's own age category)? Members must be the exact native category, or the
+    single adjacent-younger one (swim-up — never the reverse). Codes not found in
+    _AGE_CODE_ORDER never block (can't judge adjacency)."""
+    if candidate_code == native_code:
+        return True
+    if native_code not in _AGE_CODE_ORDER or candidate_code not in _AGE_CODE_ORDER:
+        return True
+    return _AGE_CODE_ORDER.index(candidate_code) == _AGE_CODE_ORDER.index(native_code) - 1
+
+
+def _would_miss_native_anchor(
+    other_assigned_codes: list[str], candidate_code: str, native_code: str, remaining_after_this: int
+) -> bool:
+    """Would assigning candidate_code to the last remaining empty position make it
+    impossible for the team to have at least 1 member from the native category?"""
+    if remaining_after_this > 0:
+        return False
+    return native_code not in other_assigned_codes and candidate_code != native_code
+
+
+def _get_event_native_age_code(db: Session, stylesid: int, eventnumb: int | None, gender: int | None) -> str | None:
+    """A relay team's own age category — resolved from its SwimEvent (same match
+    priority as get_relay_teams: eventnumb first, falling back to style+gender for
+    legacy rows without eventnumb). Returns None when the event can't be resolved,
+    or has 0 or 2+ distinct age categories (ambiguous — anchor rule doesn't apply)."""
+    event = None
+    if eventnumb:
+        event = (
+            db.query(SwimEvent)
+            .filter(SwimEvent.swimstyleid == stylesid, SwimEvent.eventnumber == eventnumb)
+            .first()
+        )
+    if not event:
+        gender_str = "M" if gender == GENDER_M else "F" if gender == GENDER_F else "X"
+        for ev in db.query(SwimEvent).filter(SwimEvent.swimstyleid == stylesid).all():
+            ev_gender_str = "M" if ev.gender == GENDER_M else "F" if ev.gender == GENDER_F else "X"
+            if ev_gender_str == gender_str:
+                event = ev
+                break
+    if not event:
+        return None
+    rows = db.query(AgeGroup.agemin, AgeGroup.agemax).filter(AgeGroup.swimeventid == event.swimeventid).distinct().all()
+    codes = {_age_group_code(r.agemin, r.agemax) for r in rows}
+    codes.discard(None)
+    return next(iter(codes)) if len(codes) == 1 else None
+
+
+def _oldest_age_code(codes: list[str]) -> str:
+    """The oldest (highest-index in _AGE_CODE_ORDER) code among codes — this is
+    the age category a relay team competes under (younger members swim up)."""
+    best = codes[0]
+    best_idx = _AGE_CODE_ORDER.index(best) if best in _AGE_CODE_ORDER else -1
+    for c in codes[1:]:
+        idx = _AGE_CODE_ORDER.index(c) if c in _AGE_CODE_ORDER else -1
+        if idx > best_idx:
+            best_idx = idx
+            best = c
+    return best
+
+
+def _resolve_athlete_age_codes(db: Session, athlete_ids: list[int]) -> dict[int, str]:
+    """Resolve each athlete's dominant individual-registration age code.
+    Primary path: SwimResult.age_code column (set by team-app registrations).
+    Fallback: agegroupid FK join (rows without an age_code, e.g. meet-app imports)."""
+    if not athlete_ids:
+        return {}
+    from sqlalchemy import func as _sqla_func
+    result: dict[int, str] = {}
+    ac_counts = (
+        db.query(SwimResult.athleteid, SwimResult.age_code, _sqla_func.count().label("cnt"))
+        .join(SwimEvent, SwimResult.swimeventid == SwimEvent.swimeventid)
+        .join(SwimStyle, SwimEvent.swimstyleid == SwimStyle.swimstyleid)
+        .filter(
+            SwimResult.athleteid.in_(athlete_ids),
+            SwimStyle.relaycount == 1,
+            SwimResult.age_code.isnot(None),
+            SwimResult.age_code != "",
+        )
+        .group_by(SwimResult.athleteid, SwimResult.age_code)
+        .order_by(SwimResult.athleteid, _sqla_func.count().desc())
+        .all()
+    )
+    for row in ac_counts:
+        result.setdefault(row.athleteid, row.age_code)
+
+    remaining = [aid for aid in athlete_ids if aid not in result]
+    if remaining:
+        ag_counts = (
+            db.query(SwimResult.athleteid, AgeGroup.agemin, AgeGroup.agemax, _sqla_func.count().label("cnt"))
+            .join(AgeGroup, SwimResult.agegroupid == AgeGroup.agegroupid)
+            .join(SwimEvent, SwimResult.swimeventid == SwimEvent.swimeventid)
+            .join(SwimStyle, SwimEvent.swimstyleid == SwimStyle.swimstyleid)
+            .filter(
+                SwimResult.athleteid.in_(remaining),
+                SwimStyle.relaycount == 1,
+            )
+            .group_by(SwimResult.athleteid, AgeGroup.agemin, AgeGroup.agemax)
+            .order_by(SwimResult.athleteid, _sqla_func.count().desc())
+            .all()
+        )
+        for row in ag_counts:
+            result.setdefault(row.athleteid, _relay_age_code(row.agemin, row.agemax))
+    return result
+
+
 # Rate limiting
 _auth_attempts: dict[str, list[float]] = defaultdict(list)
 _RATE_LIMIT = 5
@@ -4141,12 +4248,12 @@ def get_relay_teams(request: Request, club_id: int | None = None, db: Session = 
             if athlete_id and athlete_id in member_age_group_map:
                 member_age_codes_for_team.append(member_age_group_map[athlete_id])
 
-        # Compute team age group from majority of members' registered age groups
+        # Compute team age group (informational only — no longer shown in the UI,
+        # which now just relies on the event's own category): the oldest category
+        # present among members' individual registrations.
         computed_age_group = age_code  # fallback
         if member_age_codes_for_team:
-            from collections import Counter
-            counts = Counter(member_age_codes_for_team)
-            computed_age_group = counts.most_common(1)[0][0]
+            computed_age_group = _oldest_age_code(member_age_codes_for_team)
 
         team_data = {
             "id": relay.relaysid,
@@ -4907,83 +5014,41 @@ def set_relay_team_member(
                     f"Cannot add another woman: mixed relay requires exactly {max_per_gender} men and {max_per_gender} women"
                 )
 
-        # Age group majority validation:
-        # Adding this athlete must not make it impossible for any single age group
-        # to achieve a strict majority (≥ relaycount/2 + 1) once all positions are filled.
-        # SERC events skip this check.
-        from sqlalchemy import func as sqla_func_ag
-        required_majority = relaycount // 2 + 1
+        # Age group composition validation: a team is anchored to the event's own
+        # age category — members must be from that exact category, or the single
+        # adjacent-younger one (swim-up), and at least 1 member must match the
+        # exact category. SERC events skip this check.
+        if not is_serc:
+            native_code = _get_event_native_age_code(db, relay.stylesid, relay.eventnumb, relay.gender)
+            new_athlete_age_code = _resolve_athlete_age_codes(db, [athlete_id]).get(athlete_id)
 
-        # Get age groups of currently assigned members (excluding current position)
-        current_positions_ag = (
-            db.query(RelayPos)
-            .filter(
-                RelayPos.relaysid == team_id,
-                RelayPos.numb != position,
-                RelayPos.membersid.isnot(None),
-            )
-            .all()
-        )
-        current_member_ids = [rp.membersid for rp in current_positions_ag]
+            if native_code and new_athlete_age_code:
+                if not _age_code_allowed_on_team(new_athlete_age_code, native_code):
+                    raise HTTPException(
+                        400,
+                        f"Cannot assign: must be from the event's own age category "
+                        f"({native_code}) or the next-younger category"
+                    )
 
-        # Get the new athlete's registration age group (non-relay individual entries)
-        new_athlete_ag_row = (
-            db.query(AgeGroup.agemin, AgeGroup.agemax, sqla_func_ag.count().label("cnt"))
-            .join(SwimResult, SwimResult.agegroupid == AgeGroup.agegroupid)
-            .join(SwimEvent, SwimResult.swimeventid == SwimEvent.swimeventid)
-            .join(SwimStyle, SwimEvent.swimstyleid == SwimStyle.swimstyleid)
-            .filter(
-                SwimResult.athleteid == athlete_id,
-                SwimStyle.relaycount == 1,
-            )
-            .group_by(AgeGroup.agemin, AgeGroup.agemax)
-            .order_by(sqla_func_ag.count().desc())
-            .first()
-        )
-        new_athlete_age_code = (
-            _relay_age_code(new_athlete_ag_row.agemin, new_athlete_ag_row.agemax)
-            if new_athlete_ag_row else None
-        )
-
-        if new_athlete_age_code and current_member_ids and not is_serc:
-            # Get age groups for current team members
-            existing_ag_rows = (
-                db.query(SwimResult.athleteid, AgeGroup.agemin, AgeGroup.agemax, sqla_func_ag.count().label("cnt"))
-                .join(AgeGroup, SwimResult.agegroupid == AgeGroup.agegroupid)
-                .join(SwimEvent, SwimResult.swimeventid == SwimEvent.swimeventid)
-                .join(SwimStyle, SwimEvent.swimstyleid == SwimStyle.swimstyleid)
-                .filter(
-                    SwimResult.athleteid.in_(current_member_ids),
-                    SwimStyle.relaycount == 1,
+                current_positions_ag = (
+                    db.query(RelayPos)
+                    .filter(
+                        RelayPos.relaysid == team_id,
+                        RelayPos.numb != position,
+                        RelayPos.membersid.isnot(None),
+                    )
+                    .all()
                 )
-                .group_by(SwimResult.athleteid, AgeGroup.agemin, AgeGroup.agemax)
-                .order_by(SwimResult.athleteid, sqla_func_ag.count().desc())
-                .all()
-            )
-            # Take the dominant age group per member
-            member_age_codes: list[str] = []
-            seen_ids: set[int] = set()
-            for row in existing_ag_rows:
-                if row.athleteid in seen_ids:
-                    continue
-                seen_ids.add(row.athleteid)
-                member_age_codes.append(_relay_age_code(row.agemin, row.agemax))
+                current_member_ids = [rp.membersid for rp in current_positions_ag]
+                member_age_codes = list(_resolve_athlete_age_codes(db, current_member_ids).values())
 
-            # Simulate adding the new athlete
-            all_age_codes = member_age_codes + [new_athlete_age_code]
-            remaining_positions = relaycount - len(all_age_codes)
-
-            # Count occurrences
-            from collections import Counter
-            counts = Counter(all_age_codes)
-            max_count = max(counts.values())
-
-            if max_count + remaining_positions < required_majority:
-                raise HTTPException(
-                    400,
-                    f"Cannot assign: adding this athlete would make it impossible to achieve "
-                    f"an age group majority ({required_majority} of {relaycount} required)"
-                )
+                remaining_after_this = relaycount - len(current_positions_ag) - 1
+                if _would_miss_native_anchor(member_age_codes, new_athlete_age_code, native_code, remaining_after_this):
+                    raise HTTPException(
+                        400,
+                        f"Cannot assign: this team must include at least 1 member from "
+                        f"the event's own age category ({native_code})"
+                    )
 
     # Upsert the position record
     existing_pos = db.query(RelayPos).filter(

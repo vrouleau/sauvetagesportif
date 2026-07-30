@@ -214,11 +214,11 @@ Full CRUD management for relay team entries (events with `relaycount > 1`).
 1. Coach navigates to "Inscriptions relais" tab
 2. Selects a relay event → sees existing teams (A, B, C…)
 3. Creates a team → assigns members from dropdown (filtered by eligibility)
-4. Team age group auto-computed from majority of members' individual registration age groups
+4. Team age group = the category of the event the team was created under (not computed from members); no per-team label shown, event card header applies
 5. Exported in .lxf via `relays`/`relayspos` tables (Team Manager schema)
 
 ### Key rules
-- Team age group: majority rule (3-1 OK, 2-2 invalid) — see `docs/RELAY_TEAM_RULES.md`
+- Team age group: anchored to the event's own category; members must be that exact category or the single adjacent-younger one (swim-up), ≥1 member must match exactly, any split beyond that is OK (4-0/3-1/2-2/1-3) — see `docs/RELAY_TEAM_RULES.md`
 - Mixed events: exactly 2M + 2F
 - **SERC events (swimstyle 530): NO gender/age restrictions** — any mix allowed
 - Member eligibility: same club, registered for individual events, not on another team for same event

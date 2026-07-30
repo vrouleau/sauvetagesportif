@@ -54,10 +54,36 @@ interface FlatRelayEvent {
 
 // ─── RelayEventCard ───────────────────────────────────────────────────────────
 
+// A team is anchored to the event's own age category (`nativeCode`, e.g. "Open"
+// for an Open relay event) — members must be from that exact category, or the
+// single adjacent-younger category (swim-up). `order` is the meet's age category
+// codes sorted youngest → oldest.
+function isAgeCodeAllowedOnTeam(candidateCode: string, nativeCode: string, order: string[]): boolean {
+  if (candidateCode === nativeCode) return true
+  const ni = order.indexOf(nativeCode)
+  const ci = order.indexOf(candidateCode)
+  if (ni === -1 || ci === -1) return true // unknown code, don't block
+  return ci === ni - 1
+}
+
+// Would assigning `candidateCode` to the LAST remaining empty position make it
+// impossible for the team to have at least 1 member from the event's own exact
+// category? Only relevant when this is the final position being filled.
+function wouldMissNativeAnchor(
+  otherAssignedCodes: string[],
+  candidateCode: string,
+  nativeCode: string,
+  remainingAfterThis: number
+): boolean {
+  if (remainingAfterThis > 0) return false // still room to add a native-category member later
+  return !otherAssignedCodes.includes(nativeCode) && candidateCode !== nativeCode
+}
+
 function RelayEventCard({
   event,
   teams,
   eligibleAthletes,
+  ageCategoryOrder,
   isDisabled,
   onMemberChange,
   onNameChange,
@@ -67,6 +93,7 @@ function RelayEventCard({
   event: FlatRelayEvent
   teams: RelayTeam[]
   eligibleAthletes: EligibleAthlete[]
+  ageCategoryOrder: string[]
   isDisabled: boolean
   onMemberChange: (teamId: number, position: number, athleteId: number | null) => void
   onNameChange: (teamId: number, name: string | null) => void
@@ -124,6 +151,7 @@ function RelayEventCard({
               event={event}
               ageCode=""
               eligibleAthletes={eligibleAthletes}
+              ageCategoryOrder={ageCategoryOrder}
               allTeamsForEvent={teams}
               isDisabled={isDisabled}
               onMemberChange={onMemberChange}
@@ -144,6 +172,7 @@ function RelayTeamRow({
   team,
   event,
   eligibleAthletes,
+  ageCategoryOrder,
   allTeamsForEvent,
   isDisabled,
   onMemberChange,
@@ -154,6 +183,7 @@ function RelayTeamRow({
   event: RelayEventGroup | FlatRelayEvent
   ageCode: string
   eligibleAthletes: EligibleAthlete[]
+  ageCategoryOrder: string[]
   allTeamsForEvent: RelayTeam[]
   isDisabled: boolean
   onMemberChange: (teamId: number, position: number, athleteId: number | null) => void
@@ -213,16 +243,13 @@ function RelayTeamRow({
 
   return (
     <div className="border border-gray-200 rounded px-3 py-2 bg-gray-50">
-      {/* Team header with team number, age group, editable name, and delete button */}
+      {/* Team header with team number, editable name, and delete button.
+          No age-group label here — it's redundant with the event card's own
+          age category shown in the header (a team always anchors to that). */}
       <div className="flex items-center gap-2 mb-2">
         <span className="text-xs font-semibold text-blue-700 shrink-0">
           {team.teamNumber}
         </span>
-        {team.ageGroup && event.swimstyleId !== 530 && (
-          <span className="text-xs text-gray-500 shrink-0">
-            {team.ageGroup}
-          </span>
-        )}
         <input
           type="text"
           value={team.teamName ?? ''}
@@ -276,8 +303,12 @@ function RelayTeamRow({
             else if (fCount >= maxPerGender) allowedGender = 'M'
           }
 
-          // For age group filtering: compute current age groups on this team (excluding current position)
-          // and determine how many remaining unfilled positions exist after this one
+          // For age group filtering: compute current age groups on this team (excluding
+          // current position), and how many other positions are still unfilled after this one.
+          // The event's own age category (nativeCode) is only well-defined when the event
+          // card represents exactly one category — the common case. Otherwise skip the
+          // anchor rule (permissive) rather than guess which category is "native".
+          const nativeCode = 'ageCodes' in event && event.ageCodes.length === 1 ? event.ageCodes[0] : null
           const currentAgeGroups: string[] = []
           let filledCount = 0
           for (const m of team.members) {
@@ -287,7 +318,6 @@ function RelayTeamRow({
             if (assigned?.ageGroup) currentAgeGroups.push(assigned.ageGroup)
           }
           const remainingAfterThis = event.relaycount - filledCount - 1
-          const requiredMajority = Math.floor(event.relaycount / 2) + 1
 
           const filteredAthletes = eligibleAthletes.filter(athlete => {
             // Always show the currently assigned athlete for this position
@@ -300,16 +330,13 @@ function RelayTeamRow({
             if (!isSERC && event.gender !== 'X' && athlete.gender !== event.gender) return false
             // For mixed events: exclude gender that has reached its quota
             if (!isSERC && allowedGender != null && athlete.gender !== allowedGender) return false
-            // Age group check: would adding this athlete make a valid majority impossible?
-            if (!isSERC && athlete.ageGroup && currentAgeGroups.length > 0) {
-              const groupsAfter = [...currentAgeGroups, athlete.ageGroup]
-              // Count occurrences of each age group
-              const counts = new Map<string, number>()
-              for (const g of groupsAfter) counts.set(g, (counts.get(g) ?? 0) + 1)
-              // Best possible outcome: the most common group gets all remaining positions
-              let maxCount = 0
-              for (const c of counts.values()) { if (c > maxCount) maxCount = c }
-              if (maxCount + remainingAfterThis < requiredMajority) return false
+            // Age group check: a team is anchored to the event's own category — members
+            // must be from that exact category or the single adjacent-younger one, and
+            // at least 1 member must match the exact category (checked once no positions
+            // remain to fill after this one — no need to block earlier).
+            if (!isSERC && athlete.ageGroup && nativeCode) {
+              if (!isAgeCodeAllowedOnTeam(athlete.ageGroup, nativeCode, ageCategoryOrder)) return false
+              if (wouldMissNativeAnchor(currentAgeGroups, athlete.ageGroup, nativeCode, remainingAfterThis)) return false
             }
             return true
           })
@@ -568,6 +595,13 @@ export default function RelayEntryPage({ role, clubId, refreshKey }: RelayEntryP
     return events
   }, [pageData])
 
+  // Age category codes sorted youngest → oldest, used to check that a team's
+  // members span at most 2 adjacent age categories (see wouldBreakAgeGroupComposition)
+  const ageCategoryOrder: string[] = useMemo(() => {
+    if (!pageData || !pageData.ageCategories) return []
+    return [...pageData.ageCategories].sort((a, b) => a.ageMin - b.ageMin).map(c => c.ageCode)
+  }, [pageData])
+
   // ─── Loading state ──────────────────────────────────────────────────────────
   if (loading && !pageData) {
     return (
@@ -651,6 +685,7 @@ export default function RelayEntryPage({ role, clubId, refreshKey }: RelayEntryP
                   event={event}
                   teams={allTeams}
                   eligibleAthletes={allEligible}
+                  ageCategoryOrder={ageCategoryOrder}
                   isDisabled={isDisabled}
                   onMemberChange={handleMemberChange}
                   onNameChange={handleNameChange}
