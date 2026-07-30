@@ -19,13 +19,19 @@
 """Public results API — historical meets and best times."""
 from __future__ import annotations
 
+import os
+
 from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from ..database import get_db
+from ..models import SwimStyle
 from ..models_team import Meet, Result, Member, TeamClub
+from ..best_times import get_best_times_for_member
 
 router = APIRouter(prefix="/api/results")
+
+_BEST_TIME_MAX_AGE_MONTHS = int(os.environ.get("BEST_TIME_MAX_AGE_MONTHS", "18"))
 
 
 @router.get("/meets")
@@ -85,35 +91,35 @@ def get_meet_results(meet_id: int, db: Session = Depends(get_db)):
 
 @router.get("/best-times")
 def best_times_public(db: Session = Depends(get_db)):
-    """Best times per athlete, grouped by club."""
-    from ..models import BsGlobal, SwimStyle
-    from sqlalchemy.orm import joinedload
-    import json as _json
+    """Best times per athlete, grouped by club, computed from historical results
+    (same source as the per-athlete registration page — see best_times.py)."""
+    from ..models import BsGlobal
 
-    # Gather style names
-    cfg = db.query(BsGlobal).get("style_names_json")
-    imported_names: dict[int, str] = {int(k): v for k, v in _json.loads(cfg.data).items()} if cfg and cfg.data else {}
-
-    # All best times from bsglobal bt_* entries
-    bt_entries = db.query(BsGlobal).filter(BsGlobal.name.like("bt_%")).all()
+    # Members with at least one qualifying historical result
+    member_ids = [
+        row[0] for row in db.query(Result.membersid).filter(
+            Result.membersid.isnot(None),
+            Result.totaltime.isnot(None),
+            Result.totaltime > 0,
+            Result.resulttyp == 0,
+        ).distinct().all()
+    ]
 
     all_uids: set[int] = set()
     athlete_bt: dict[int, dict] = {}
-    for entry in bt_entries:
-        try:
-            athlete_id = int(entry.name.replace("bt_", ""))
-            bt_data = _json.loads(entry.data)
-            athlete_bt[athlete_id] = bt_data
-            for uid_key in bt_data:
-                all_uids.add(int(uid_key))
-        except (ValueError, TypeError):
-            pass
+    for member_id in member_ids:
+        bt_data = get_best_times_for_member(db, member_id, _BEST_TIME_MAX_AGE_MONTHS)
+        if not bt_data:
+            continue
+        athlete_bt[member_id] = bt_data
+        for uid_key in bt_data:
+            all_uids.add(int(uid_key))
 
     style_uids = sorted(all_uids)
     styles = []
     for uid in style_uids:
         style = db.query(SwimStyle).get(uid)
-        name = style.name if style else imported_names.get(uid, f"ID{uid}")
+        name = style.name if style else f"ID{uid}"
         styles.append({"uid": uid, "name": name})
 
     # Load athletes with clubs
@@ -133,12 +139,11 @@ def best_times_public(db: Session = Depends(get_db)):
         if c.clubsid not in clubs_map:
             clubs_map[c.clubsid] = {"name": c.name, "athletes": []}
         times = {}
-        for uid_str, val in bt_data.items():
-            if isinstance(val, dict):
-                if val.get("LCM"):
-                    times[f"{uid_str}_LCM"] = val["LCM"]
-                if val.get("SCM"):
-                    times[f"{uid_str}_SCM"] = val["SCM"]
+        for uid_str, style_data in bt_data.items():
+            if "LCM" in style_data:
+                times[f"{uid_str}_LCM"] = style_data["LCM"]["time_ms"]
+            if "SCM" in style_data:
+                times[f"{uid_str}_SCM"] = style_data["SCM"]["time_ms"]
         clubs_map[c.clubsid]["athletes"].append({
             "name": f"{a.lastname}, {a.firstname}",
             "times": times,
@@ -149,7 +154,7 @@ def best_times_public(db: Session = Depends(get_db)):
     for club in clubs:
         club["athletes"].sort(key=lambda a: a["name"])
 
-    # Determine course
+    # Determine course (current meet's course, used to pick LCM vs SCM when both exist)
     course_cfg = db.query(BsGlobal).get("meet_course")
     course = course_cfg.data if course_cfg and course_cfg.data else "LCM"
 
