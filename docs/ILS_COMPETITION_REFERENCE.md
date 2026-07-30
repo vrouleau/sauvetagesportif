@@ -148,11 +148,11 @@ Members must be that exact native category, or the single **adjacent-younger** o
 (swim-up). Swim-up is one-directional: a younger athlete may join an older team, but
 an older athlete can never appear on a younger team.
 
-At least **1 member must match the native category exactly**; beyond that, any split
+At least **2 members must match the native category exactly**; beyond that, any split
 of native/swim-up members is valid — no majority requirement.
 
-- **4-0, 3-1, 2-2, 1-3** (native/swim-up split): valid, as long as ≥1 member is native ✓
-- **0-4** (no native member, only swim-up) → **INVALID** ✗
+- **4-0, 3-1, 2-2** (native/swim-up split): valid, as long as ≥2 members are native ✓
+- **1-3, 0-4** (fewer than 2 native members) → **INVALID** ✗
 - **A member from any category other than native or the single adjacent-younger one**
   (skipping a category, or an older category) → **INVALID** ✗
 
@@ -177,8 +177,9 @@ An athlete is eligible for a relay team if:
 2. Exclude athletes on another team for the same event (cross-team)
 3. For mixed events: hide gender that reached quota (N/2)
 4. For age groups: hide athletes whose category is neither native nor the single
-   adjacent-younger one; on the last remaining position, also hide athletes that
-   would leave the team with no native-category member
+   adjacent-younger one; also hide athletes that would make it impossible to ever
+   reach 2 native-category members (native so far + remaining open positions,
+   including this one, would total fewer than 2)
 
 ### 5.5 Team Numbering
 

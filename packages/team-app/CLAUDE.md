@@ -218,7 +218,7 @@ Full CRUD management for relay team entries (events with `relaycount > 1`).
 5. Exported in .lxf via `relays`/`relayspos` tables (Team Manager schema)
 
 ### Key rules
-- Team age group: anchored to the event's own category; members must be that exact category or the single adjacent-younger one (swim-up), ≥1 member must match exactly, any split beyond that is OK (4-0/3-1/2-2/1-3) — see `docs/RELAY_TEAM_RULES.md`
+- Team age group: anchored to the event's own category; members must be that exact category or the single adjacent-younger one (swim-up), ≥2 members must match exactly (1-3/0-4 invalid), any split beyond that is OK (4-0/3-1/2-2) — see `docs/RELAY_TEAM_RULES.md`
 - Mixed events: exactly 2M + 2F
 - **SERC events (swimstyle 530): NO gender/age restrictions** — any mix allowed
 - Member eligibility: same club, registered for individual events, not on another team for same event

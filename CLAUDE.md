@@ -179,7 +179,7 @@ Both apps show two entry tabs:
 | `PUT /api/relay-teams/{id}/name` | Set custom team name |
 
 ### Team Composition Rules (see `docs/RELAY_TEAM_RULES.md`)
-- **Age group**: a team's category = the event it was created under (not computed from members). Members must be that exact category or the single adjacent-younger one (swim-up, never the reverse). At least 1 member must match the exact category — no all-swim-up teams. Beyond that, any split is valid (4-0, 3-1, 2-2, 1-3) — no majority requirement. No per-team age label is shown in the UI; the event card's own category applies.
+- **Age group**: a team's category = the event it was created under (not computed from members). Members must be that exact category or the single adjacent-younger one (swim-up, never the reverse). At least 2 members must match the exact category — 1-3 and 0-4 splits are invalid. Beyond that, any split is valid (4-0, 3-1, 2-2) — no majority requirement. No per-team age label is shown in the UI; the event card's own category applies.
 - **Mixed events (gender=X)**: exactly 2M + 2F required (for 4-person relay)
 - **SERC events (swimstyle 530)**: NO gender or age restrictions — any composition allowed
 - **Eligibility**: same club, registered for individual events, no duplicate across teams for same event

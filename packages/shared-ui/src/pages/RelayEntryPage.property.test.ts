@@ -759,9 +759,12 @@ function isAgeCodeAllowedOnTeam(
   return ci === ni - 1
 }
 
+// A relay team needs at least this many members from the native category.
+const REQUIRED_NATIVE_COUNT = 2
+
 /**
- * Would assigning `candidateCode` to the last remaining empty position make it
- * impossible for the team to have at least 1 member from the native category?
+ * Would assigning `candidateCode` to this position make it impossible for the
+ * team to end up with at least REQUIRED_NATIVE_COUNT native-category members?
  * Mirrors the production `wouldMissNativeAnchor` in RelayEntryPage.tsx.
  */
 function wouldMissNativeAnchor(
@@ -770,8 +773,10 @@ function wouldMissNativeAnchor(
   nativeCode: string,
   remainingAfterThis: number
 ): boolean {
-  if (remainingAfterThis > 0) return false
-  return !otherAssignedCodes.includes(nativeCode) && candidateCode !== nativeCode
+  const nativeSoFar = otherAssignedCodes.filter(c => c === nativeCode).length
+    + (candidateCode === nativeCode ? 1 : 0)
+  const maxPossibleNative = nativeSoFar + remainingAfterThis
+  return maxPossibleNative < REQUIRED_NATIVE_COUNT
 }
 
 // ─── Property Tests for Mixed Gender Balance ──────────────────────────────────
@@ -925,20 +930,25 @@ describe('RelayEntryPage - Property 11: Age Group Composition Filtering', () => 
     expect(isAgeCodeAllowedOnTeam('15-18', 'Masters')).toBe(true)
   })
 
-  it('missing the native anchor only blocks on the last remaining position', () => {
-    // 2 swim-up members assigned, 1 slot still open after this one → not blocked yet
-    expect(wouldMissNativeAnchor(['13-14', '13-14'], '13-14', '15-18', 1)).toBe(false)
-    // last remaining position, still no native member anywhere → blocked
-    expect(wouldMissNativeAnchor(['13-14', '13-14'], '13-14', '15-18', 0)).toBe(true)
-    // last remaining position, but this candidate IS the native category → fine
-    expect(wouldMissNativeAnchor(['13-14', '13-14'], '15-18', '15-18', 0)).toBe(false)
-    // last remaining position, an earlier member already anchors the team → fine
-    expect(wouldMissNativeAnchor(['15-18', '13-14'], '13-14', '15-18', 0)).toBe(false)
+  it('blocks as soon as reaching 2 native members becomes mathematically impossible', () => {
+    // 0 native so far, 2 slots left after this one (including this candidate as swim-up):
+    // best case is 0 + 2 remaining = 2 → still achievable, not blocked
+    expect(wouldMissNativeAnchor(['13-14', '13-14'], '13-14', '15-18', 2)).toBe(false)
+    // 0 native so far, only 1 slot left after this one → best case 0 + 1 = 1 < 2 → blocked
+    expect(wouldMissNativeAnchor(['13-14'], '13-14', '15-18', 1)).toBe(true)
+    // 1 native already assigned, 1 slot left after this one → best case 1 + 1 = 2 → fine
+    expect(wouldMissNativeAnchor(['15-18'], '13-14', '15-18', 1)).toBe(false)
+    // last remaining position, only 1 native so far, candidate is swim-up → 1 < 2 → blocked
+    expect(wouldMissNativeAnchor(['15-18', '13-14'], '13-14', '15-18', 0)).toBe(true)
+    // last remaining position, only 1 native so far, but candidate IS native → 2 → fine
+    expect(wouldMissNativeAnchor(['15-18', '13-14'], '15-18', '15-18', 0)).toBe(false)
+    // last remaining position, 2 native already assigned → already satisfied → fine
+    expect(wouldMissNativeAnchor(['15-18', '15-18'], '13-14', '15-18', 0)).toBe(false)
   })
 
   it('a team made entirely of the native category never trips the anchor check', () => {
     fc.assert(
-      fc.property(ageGroupArb, fc.integer({ min: 0, max: 3 }), (native, count) => {
+      fc.property(ageGroupArb, fc.integer({ min: 2, max: 3 }), (native, count) => {
         const others = Array(count).fill(native)
         expect(wouldMissNativeAnchor(others, native, native, 0)).toBe(false)
       }),

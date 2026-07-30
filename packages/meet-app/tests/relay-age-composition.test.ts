@@ -65,14 +65,18 @@ function isAgeCodeAllowedOnTeam(candidateCode: string, nativeCode: string, order
   return ci === ni - 1
 }
 
+const REQUIRED_NATIVE_COUNT = 2
+
 function wouldMissNativeAnchor(
   otherAssignedCodes: string[],
   candidateCode: string,
   nativeCode: string,
   remainingAfterThis: number
 ): boolean {
-  if (remainingAfterThis > 0) return false
-  return !otherAssignedCodes.includes(nativeCode) && candidateCode !== nativeCode
+  const nativeSoFar = otherAssignedCodes.filter(c => c === nativeCode).length
+    + (candidateCode === nativeCode ? 1 : 0)
+  const maxPossibleNative = nativeSoFar + remainingAfterThis
+  return maxPossibleNative < REQUIRED_NATIVE_COUNT
 }
 
 describe('relay age-group composition — pure anchor logic', () => {
@@ -98,16 +102,19 @@ describe('relay age-group composition — pure anchor logic', () => {
     expect(isAgeCodeAllowedOnTeam('Masters', '15-18', order)).toBe(true)
   })
 
-  it('missing the native anchor is only blocked on the last remaining position', () => {
-    // 2 positions already filled with swim-up members, 1 more slot after this one:
-    // still possible to add a native member later, so don't block yet
-    expect(wouldMissNativeAnchor(['13-14', '13-14'], '13-14', '15-18', 1)).toBe(false)
-    // last remaining position, and neither existing nor candidate is native → blocked
-    expect(wouldMissNativeAnchor(['13-14', '13-14'], '13-14', '15-18', 0)).toBe(true)
-    // last remaining position, but the candidate itself is native → fine
-    expect(wouldMissNativeAnchor(['13-14', '13-14'], '15-18', '15-18', 0)).toBe(false)
-    // last remaining position, an earlier member is already native → fine
-    expect(wouldMissNativeAnchor(['15-18', '13-14'], '13-14', '15-18', 0)).toBe(false)
+  it('blocks as soon as reaching 2 native members becomes mathematically impossible', () => {
+    // 0 native so far, 2 slots left after this one → best case 0 + 2 = 2 → not blocked
+    expect(wouldMissNativeAnchor(['13-14', '13-14'], '13-14', '15-18', 2)).toBe(false)
+    // 0 native so far, only 1 slot left after this one → best case 0 + 1 = 1 < 2 → blocked
+    expect(wouldMissNativeAnchor(['13-14'], '13-14', '15-18', 1)).toBe(true)
+    // 1 native already assigned, 1 slot left after this one → best case 1 + 1 = 2 → fine
+    expect(wouldMissNativeAnchor(['15-18'], '13-14', '15-18', 1)).toBe(false)
+    // last remaining position, only 1 native so far, candidate is swim-up → 1 < 2 → blocked
+    expect(wouldMissNativeAnchor(['15-18', '13-14'], '13-14', '15-18', 0)).toBe(true)
+    // last remaining position, only 1 native so far, but candidate IS native → 2 → fine
+    expect(wouldMissNativeAnchor(['15-18', '13-14'], '15-18', '15-18', 0)).toBe(false)
+    // last remaining position, 2 native already assigned → already satisfied → fine
+    expect(wouldMissNativeAnchor(['15-18', '15-18'], '13-14', '15-18', 0)).toBe(false)
   })
 })
 

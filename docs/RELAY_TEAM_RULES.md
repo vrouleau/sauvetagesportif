@@ -35,24 +35,25 @@ A relay team's age category is **not** calculated from member composition — it
 
 Members must be from that exact ("native") category, or the single **adjacent-younger** category (swim-up). Swim-up is **one-directional**: a younger athlete may join an older team's relay, but an older athlete can never appear on a younger team's relay — so there's no separate "older" category to allow.
 
-At least **1 member must match the native category exactly** — a team built entirely from swim-up members, with nobody actually in the event's own category, is invalid. Beyond that minimum, any split is valid — there is no majority requirement:
+At least **2 members must match the native category exactly** — a team with only 1 (or 0) native member, propped up by swim-up members, is invalid. Beyond that minimum, any split is valid — there is no majority requirement:
 
-- **4-0, 3-1, 2-2, 1-3** (native/swim-up split): all valid, as long as ≥1 member is native ✓
-- **0-4** (no native member at all, only swim-up) → **INVALID** ✗
+- **4-0, 3-1, 2-2** (native/swim-up split): all valid, as long as ≥2 members are native ✓
+- **1-3, 0-4** (fewer than 2 native members) → **INVALID** ✗
 - **A member from any category other than native or the single adjacent-younger one** (skipping a category, or an older category) → **INVALID** ✗
 
 ### Examples (Open event, adjacent-younger = 15-18)
 
 - 4×Open members → **valid**
-- 1×Open + 3×15-18 members → **valid**
+- 3×Open + 1×15-18 members → **valid**
 - 2×Open + 2×15-18 members → **valid**
+- 1×Open + 3×15-18 members → **INVALID** — only 1 native (Open) member
 - 0×Open + 4×15-18 members → **INVALID** — no native (Open) member
-- 1×Open + 3×13-14 members → **INVALID** — 13-14 skips 15-18
-- 1×Open + 1×19+ member (an older category, if one existed) → **INVALID** — no swim-down
+- 2×Open + 2×13-14 members → **INVALID** — 13-14 skips 15-18
+- 2×Open + 1×19+ member (an older category, if one existed) → **INVALID** — no swim-down
 
 ### Incremental assignment UX
 
-The "at least 1 native member" requirement is only enforced once it would actually become impossible — i.e. when assigning the **last remaining empty position** and no native member has been assigned yet (and the candidate isn't native either). Earlier positions can be filled with swim-up members without being blocked, since there's still room to add a native member later. The "member must be native or single-adjacent-younger" check, by contrast, is unconditional and applies to every assignment regardless of position.
+The "at least 2 native members" requirement is only enforced once it would actually become impossible to reach — i.e. when the number of already-assigned native members plus the positions still open (including the one being assigned) drops below 2. In practice this can start blocking swim-up assignments a couple of positions before the last one, not just on the very last position — assigning a swim-up member is only fine while enough empty positions remain that 2 native members could still be added later. The "member must be native or single-adjacent-younger" check, by contrast, is unconditional and applies to every assignment regardless of position.
 
 ## Gender Rules for Mixed (X) Events
 
@@ -93,7 +94,7 @@ When populating the member selection dropdown for a position:
 2. Exclude athletes already assigned to another team for the same event
 3. For mixed events: enforce the 2M/2F balance (if 2 men are already assigned, only show women)
 4. Exclude an athlete whose age category is neither the event's native category nor the single adjacent-younger one
-5. Exclude an athlete if, once assigned, no position would remain to add a native-category member and none has been assigned yet (only checked on the last remaining position)
+5. Exclude an athlete if assigning them would make it impossible to ever reach 2 native-category members (native members so far, plus remaining open positions including this one, would total fewer than 2)
 
 ## Team Numbering
 

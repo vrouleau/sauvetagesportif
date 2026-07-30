@@ -258,14 +258,20 @@ def _age_code_allowed_on_team(candidate_code: str, native_code: str) -> bool:
     return _AGE_CODE_ORDER.index(candidate_code) == _AGE_CODE_ORDER.index(native_code) - 1
 
 
+# A relay team needs at least this many members from the event's own exact
+# ("native") category — the rest may swim up from the adjacent-younger category.
+_REQUIRED_NATIVE_COUNT = 2
+
+
 def _would_miss_native_anchor(
     other_assigned_codes: list[str], candidate_code: str, native_code: str, remaining_after_this: int
 ) -> bool:
-    """Would assigning candidate_code to the last remaining empty position make it
-    impossible for the team to have at least 1 member from the native category?"""
-    if remaining_after_this > 0:
-        return False
-    return native_code not in other_assigned_codes and candidate_code != native_code
+    """Would assigning candidate_code to this position make it impossible for the
+    team to end up with at least _REQUIRED_NATIVE_COUNT native-category members,
+    given how many positions remain to fill after this one?"""
+    native_so_far = other_assigned_codes.count(native_code) + (1 if candidate_code == native_code else 0)
+    max_possible_native = native_so_far + remaining_after_this
+    return max_possible_native < _REQUIRED_NATIVE_COUNT
 
 
 def _get_event_native_age_code(db: Session, stylesid: int, eventnumb: int | None, gender: int | None) -> str | None:
@@ -5046,8 +5052,8 @@ def set_relay_team_member(
                 if _would_miss_native_anchor(member_age_codes, new_athlete_age_code, native_code, remaining_after_this):
                     raise HTTPException(
                         400,
-                        f"Cannot assign: this team must include at least 1 member from "
-                        f"the event's own age category ({native_code})"
+                        f"Cannot assign: this team must include at least {_REQUIRED_NATIVE_COUNT} "
+                        f"members from the event's own age category ({native_code})"
                     )
 
     # Upsert the position record

@@ -554,9 +554,15 @@ function isAgeCodeAllowedOnTeam(candidateCode: string, nativeCode: string, order
 }
 
 /**
- * Would assigning `candidateCode` to the last remaining empty position make it
- * impossible for the team to have at least 1 member from the event's own exact
- * category? Only relevant when no positions remain to fill after this one.
+ * A relay team needs at least this many members from the event's own exact
+ * ("native") category — the rest may swim up from the adjacent-younger category.
+ */
+const REQUIRED_NATIVE_COUNT = 2
+
+/**
+ * Would assigning `candidateCode` to this position make it impossible for the
+ * team to end up with at least REQUIRED_NATIVE_COUNT native-category members,
+ * given how many positions remain to fill after this one?
  */
 function wouldMissNativeAnchor(
   otherAssignedCodes: string[],
@@ -564,8 +570,10 @@ function wouldMissNativeAnchor(
   nativeCode: string,
   remainingAfterThis: number
 ): boolean {
-  if (remainingAfterThis > 0) return false
-  return !otherAssignedCodes.includes(nativeCode) && candidateCode !== nativeCode
+  const nativeSoFar = otherAssignedCodes.filter(c => c === nativeCode).length
+    + (candidateCode === nativeCode ? 1 : 0)
+  const maxPossibleNative = nativeSoFar + remainingAfterThis
+  return maxPossibleNative < REQUIRED_NATIVE_COUNT
 }
 
 ipcMain.handle('db:get-clubs', () => {
@@ -1097,7 +1105,7 @@ ipcMain.handle('db:set-relay-team-member', (_event, teamId: number, position: nu
       const remainingAfterThis = relaycount - otherMembers.length - 1
       if (wouldMissNativeAnchor(memberAgeCodes, newAthleteAgeCode, nativeCode, remainingAfterThis)) {
         throw new Error(
-          `Cannot assign: this team must include at least 1 member from the event's own age category (${nativeCode})`
+          `Cannot assign: this team must include at least ${REQUIRED_NATIVE_COUNT} members from the event's own age category (${nativeCode})`
         )
       }
     }
