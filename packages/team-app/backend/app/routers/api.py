@@ -814,10 +814,13 @@ async def upload_meet_smb(file: UploadFile = File(...), db: Session = Depends(ge
 
     # ── Import RELAY ──────────────────────────────────────────────────────
     from ..models_team import Relay, RelayPos
-    # Build event→swimstyleid lookup for mapping swimeventid to stylesid
+    # Build event→(swimstyleid, eventnumber) lookup. eventnumber is needed so
+    # get_relay_teams can disambiguate events that share the same style+gender.
     event_style_map: dict[int, int] = {}
+    event_number_map: dict[int, int] = {}
     for ev in db.query(SwimEvent).filter(SwimEvent.swimstyleid.isnot(None)).all():
         event_style_map[ev.swimeventid] = ev.swimstyleid
+        event_number_map[ev.swimeventid] = ev.eventnumber
 
     relays_imported = 0
     for row in tables.get("RELAY", []):
@@ -839,6 +842,7 @@ async def upload_meet_smb(file: UploadFile = File(...), db: Session = Depends(ge
             maxage=row.get("agemax"),
             entrytime=row.get("entrytime"),
             course=row.get("entrycourse"),
+            eventnumb=event_number_map.get(event_id) if event_id else None,
         ))
         relays_imported += 1
     db.flush()
@@ -3739,10 +3743,13 @@ def _import_relays_from_lxf(db: "Session", file_bytes: bytes) -> int:
     # First try direct ID match (if IDs were preserved during seed)
     member_ids: set[int] = {m.membersid for m in db.query(Member.membersid).all()}
 
-    # Build event swimstyleid lookup
+    # Build event swimstyleid/eventnumber lookups. eventnumber is needed so
+    # get_relay_teams can disambiguate events that share the same style+gender.
     event_style: dict[int, int] = {}
+    event_number: dict[int, int] = {}
     for ev in db.query(SwimEvent).filter(SwimEvent.swimstyleid.isnot(None)).all():
         event_style[ev.swimeventid] = ev.swimstyleid
+        event_number[ev.swimeventid] = ev.eventnumber
 
     # Get current meet ID
     meet_id_str = db.query(BsGlobal).get("current_meetsid")
@@ -3823,6 +3830,7 @@ def _import_relays_from_lxf(db: "Session", file_bytes: bytes) -> int:
                     gender=gender_int,
                     minage=agemin,
                     maxage=agemax,
+                    eventnumb=event_number.get(event_id),
                 )
                 db.add(relay)
                 db.flush()
@@ -4031,44 +4039,86 @@ def get_relay_teams(request: Request, club_id: int | None = None, db: Session = 
     # Map relays to event keys
     # Compute each member's registered age group from individual entries (majority rule)
     # Map membersid → most common age code from their individual event registrations
+    # Primary path: use age_code column directly (set by team-app registrations).
+    # Fallback: agegroupid FK join, for rows without an age_code (e.g. meet-app imports).
     member_age_group_map: dict[int, str] = {}
     if member_ids_in_positions:
         from sqlalchemy import func as sqla_func
-        age_group_counts = (
+        ac_counts = (
             db.query(
                 SwimResult.athleteid,
-                AgeGroup.agemin,
-                AgeGroup.agemax,
+                SwimResult.age_code,
                 sqla_func.count().label("cnt"),
             )
-            .join(AgeGroup, SwimResult.agegroupid == AgeGroup.agegroupid)
             .join(SwimEvent, SwimResult.swimeventid == SwimEvent.swimeventid)
             .join(SwimStyle, SwimEvent.swimstyleid == SwimStyle.swimstyleid)
             .filter(
                 SwimResult.athleteid.in_(list(member_ids_in_positions)),
                 SwimStyle.relaycount == 1,  # only individual events
+                SwimResult.age_code.isnot(None),
+                SwimResult.age_code != "",
             )
-            .group_by(SwimResult.athleteid, AgeGroup.agemin, AgeGroup.agemax)
+            .group_by(SwimResult.athleteid, SwimResult.age_code)
             .order_by(SwimResult.athleteid, sqla_func.count().desc())
             .all()
         )
         seen_members: set[int] = set()
-        for row in age_group_counts:
+        for row in ac_counts:
             if row.athleteid in seen_members:
                 continue
             seen_members.add(row.athleteid)
-            member_age_group_map[row.athleteid] = _relay_age_code(row.agemin, row.agemax)
+            member_age_group_map[row.athleteid] = row.age_code
+
+        remaining_ids = [mid for mid in member_ids_in_positions if mid not in seen_members]
+        if remaining_ids:
+            age_group_counts = (
+                db.query(
+                    SwimResult.athleteid,
+                    AgeGroup.agemin,
+                    AgeGroup.agemax,
+                    sqla_func.count().label("cnt"),
+                )
+                .join(AgeGroup, SwimResult.agegroupid == AgeGroup.agegroupid)
+                .join(SwimEvent, SwimResult.swimeventid == SwimEvent.swimeventid)
+                .join(SwimStyle, SwimEvent.swimstyleid == SwimStyle.swimstyleid)
+                .filter(
+                    SwimResult.athleteid.in_(remaining_ids),
+                    SwimStyle.relaycount == 1,  # only individual events
+                )
+                .group_by(SwimResult.athleteid, AgeGroup.agemin, AgeGroup.agemax)
+                .order_by(SwimResult.athleteid, sqla_func.count().desc())
+                .all()
+            )
+            for row in age_group_counts:
+                if row.athleteid in seen_members:
+                    continue
+                seen_members.add(row.athleteid)
+                member_age_group_map[row.athleteid] = _relay_age_code(row.agemin, row.agemax)
 
     for relay in existing_relays:
         age_code = _relay_age_code(relay.minage, relay.maxage)
-        # Find the event key by matching stylesid + gender to the event groups
-        # Age code on the relay is the computed team age, not the event category
+        # Find the event key. Prefer an exact eventnumb match — style+gender alone
+        # is ambiguous when two distinct relay events share the same style and
+        # gender (e.g. the same relay offered at two age categories), which used
+        # to attribute every such relay's teams to whichever event sorted first.
+        # Age code on the relay is the computed team age, not the event category.
         relay_gender_str = "M" if relay.gender == GENDER_M else "F" if relay.gender == GENDER_F else "X"
         event_key = None
-        for key, group in event_groups_by_key.items():
-            if group["swimstyleId"] == relay.stylesid and group["gender"] == relay_gender_str:
-                event_key = key
-                break
+        if relay.eventnumb:
+            for key, group in event_groups_by_key.items():
+                if (
+                    group["swimstyleId"] == relay.stylesid
+                    and group["gender"] == relay_gender_str
+                    and group["eventNumber"] == relay.eventnumb
+                ):
+                    event_key = key
+                    break
+        if not event_key:
+            # Legacy rows without eventnumb — fall back to the old ambiguous match
+            for key, group in event_groups_by_key.items():
+                if group["swimstyleId"] == relay.stylesid and group["gender"] == relay_gender_str:
+                    event_key = key
+                    break
 
         if not event_key:
             continue
@@ -4158,9 +4208,15 @@ def get_relay_teams(request: Request, club_id: int | None = None, db: Session = 
             existing_relay_keys: set[tuple[int, str, int]] = set()
             for relay in existing_relays:
                 age_code_r = _relay_age_code(relay.minage, relay.maxage)
-                for ev in relay_events:
-                    if ev.swimstyleid == relay.stylesid:
-                        existing_relay_keys.add((ev.swimeventid, age_code_r, relay.clubsid))
+                if relay.eventnumb:
+                    for ev in relay_events:
+                        if ev.swimstyleid == relay.stylesid and ev.eventnumber == relay.eventnumb:
+                            existing_relay_keys.add((ev.swimeventid, age_code_r, relay.clubsid))
+                else:
+                    # Legacy rows without eventnumb — fall back to the old ambiguous match
+                    for ev in relay_events:
+                        if ev.swimstyleid == relay.stylesid:
+                            existing_relay_keys.add((ev.swimeventid, age_code_r, relay.clubsid))
 
             # Track which (event_key, club_id) combos we've already handled
             handled_virtual_keys: set[tuple[str, int]] = set()
