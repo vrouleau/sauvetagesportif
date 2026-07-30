@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.44] - 2026-07-30
+
+### Other
+
+- Fix CI: move best-times aggregation out of the FastAPI router module (`7969733`)
+
 ## [0.3.43] - 2026-07-30
 
 ### Other
