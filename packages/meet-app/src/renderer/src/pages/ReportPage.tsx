@@ -975,12 +975,13 @@ function generateResultsListPdfHtml(
       html += `<div class="ag-hdr">${esc(formatAgeRange(ag.ageMin, ag.ageMax))}</div>
 <table width="100%" cellspacing="0" cellpadding="1" border="0" class="res-table">
 ${ag.athletes.map((a, i) => {
-  const an = String(a.birthYear % 100).padStart(2, '0')
+  const an = a.birthYear > 0 ? String(a.birthYear % 100).padStart(2, '0') : ''
   const value = isBeach ? String(Math.round(a.swimtime / 1000)) : msToDisplay(a.swimtime)
+  const name = a.firstName ? `${a.lastName}, ${a.firstName}` : a.lastName
   return `<tr>
   <td width="5%" align="right">${i + 1}.</td>
   <td width="6%">${an}</td>
-  <td width="39%"><b>${esc(a.lastName + ', ' + a.firstName)}</b></td>
+  <td width="39%"><b>${esc(name)}</b></td>
   <td width="30%">${esc(a.clubName)}</td>
   <td width="20%" align="right">${esc(value)}</td>
 </tr>`

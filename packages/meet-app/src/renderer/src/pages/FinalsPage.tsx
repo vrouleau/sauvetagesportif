@@ -386,7 +386,7 @@ export default function FinalsPage({ refreshKey = 0, meetType = 'POOL' }: { refr
                         {c.prelimRank > 0 ? c.prelimRank : ''}
                       </td>
                       <td className="px-2 py-1 font-medium">
-                        {c.lastName}, {c.firstName}
+                        {c.firstName ? `${c.lastName}, ${c.firstName}` : c.lastName}
                       </td>
                       <td className="px-2 py-1 text-gray-600">{c.clubCode}</td>
                       <td className="px-2 py-1 text-gray-500">{c.ageGroupName}</td>

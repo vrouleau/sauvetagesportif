@@ -2483,6 +2483,14 @@ export async function invalidateSession(sessionId: number): Promise<void> {
 
 // ── Finals Page ───────────────────────────────────────────────────────────────
 
+/** True if the event's swim style is a relay (relaycount > 1) — relay results live in
+ *  `relay`/`relayposition`, not `swimresult`/`athlete`. */
+function eventIsRelay(db: ReturnType<typeof getLocalDb>, eventId: number): boolean {
+  return ((db.prepare(
+    `SELECT ss.relaycount FROM swimevent e JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid WHERE e.swimeventid = ?`
+  ).get(eventId) as { relaycount: number | null } | undefined)?.relaycount ?? 1) > 1
+}
+
 export interface FinalEventRow {
   eventId: number
   eventNumber: number
@@ -2524,7 +2532,7 @@ export function getFinalEvents(): FinalEventRow[] {
     SELECT e.swimeventid, e.eventnumber, e.gender, e.preveventid, e.finalorder,
            e.swimsessionid, e.qualbyplace,
            s.sessionnumber, s.name AS sessionname, s.lanemin, s.lanemax,
-           ss.distance, ss.stroke, ss.name AS stylename
+           ss.distance, ss.stroke, ss.name AS stylename, ss.relaycount
     FROM swimevent e
     JOIN swimsession s ON e.swimsessionid = s.swimsessionid
     LEFT JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid
@@ -2537,6 +2545,7 @@ export function getFinalEvents(): FinalEventRow[] {
     sessionnumber: number | null; sessionname: string | null
     lanemin: number | null; lanemax: number | null
     distance: number | null; stroke: number | null; stylename: string | null
+    relaycount: number | null
   }>
 
   // Get heatcount from the first age group of each final event
@@ -2550,12 +2559,18 @@ export function getFinalEvents(): FinalEventRow[] {
     FROM swimresult WHERE swimeventid = ? AND qualcode IS NOT NULL
     GROUP BY qualcode
   `)
+  const countStmtRelay = db.prepare(`
+    SELECT qualcode, COUNT(*) AS cnt
+    FROM relay WHERE swimeventid = ? AND qualcode IS NOT NULL AND qualcode <> ''
+    GROUP BY qualcode
+  `)
 
   return rows.map(r => {
     const hcRow = heatCountStmt.get(r.swimeventid) as { heatcount: number | null } | undefined
     const heatCount = hcRow?.heatcount ?? 1
 
-    const countRows = countStmt.all(r.swimeventid) as Array<{ qualcode: string; cnt: number }>
+    const isRelay = (r.relaycount ?? 1) > 1
+    const countRows = (isRelay ? countStmtRelay : countStmt).all(r.swimeventid) as Array<{ qualcode: string; cnt: number }>
     const counts: Record<string, number> = {}
     for (const cr of countRows) {
       counts[cr.qualcode] = cr.cnt
@@ -2597,6 +2612,10 @@ export function getFinalCandidates(finalEventId: number): FinalCandidateRow[] {
 
   if (!finalEvent?.preveventid) return []
   const prelimEventId = finalEvent.preveventid
+
+  if (eventIsRelay(db, finalEventId)) {
+    return getFinalCandidatesRelay(db, finalEventId, prelimEventId, isBeachMeet3)
+  }
 
   // Get all prelim results with athlete info
   const prelimResults = db.prepare(`
@@ -2661,7 +2680,133 @@ export function getFinalCandidates(finalEventId: number): FinalCandidateRow[] {
   })
 }
 
-/** Set qualification status for an athlete in a final event */
+/** getFinalCandidates() relay branch — relay teams live in `relay`/`relayposition`,
+ *  not `swimresult`/`athlete`. A prelim team is identified by (clubid, teamnumber);
+ *  that same pair identifies the corresponding team on the final event once it
+ *  qualifies (Splash's own relay finals use the identical scheme). */
+function getFinalCandidatesRelay(
+  db: ReturnType<typeof getLocalDb>,
+  finalEventId: number,
+  prelimEventId: number,
+  isBeachMeet: boolean,
+): FinalCandidateRow[] {
+  const prelimTeams = db.prepare(`
+    SELECT r.relayid, r.clubid, r.teamnumber, r.name AS teamname, r.swimtime, r.resultstatus,
+           c.code AS clubcode,
+           COALESCE(NULLIF(ag.name, ''), CASE WHEN ag.agemin IS NOT NULL THEN CAST(ag.agemin AS TEXT) || '-' || COALESCE(CAST(ag.agemax AS TEXT), '+') END, '???') AS agegroupname
+    FROM relay r
+    LEFT JOIN club c ON r.clubid = c.clubid
+    LEFT JOIN agegroup ag ON r.agegroupid = ag.agegroupid
+    WHERE r.swimeventid = ?
+    ORDER BY
+      CASE WHEN r.resultstatus IS NOT NULL AND r.resultstatus > 0 THEN 1 ELSE 0 END,
+      CASE WHEN r.swimtime IS NULL THEN 1 ELSE 0 END,
+      r.swimtime ASC
+  `).all(prelimEventId) as Array<{
+    relayid: number; clubid: number | null; teamnumber: number | null; teamname: string | null
+    swimtime: number | null; resultstatus: number | null
+    clubcode: string | null; agegroupname: string | null
+  }>
+
+  const relayIds = prelimTeams.map(t => t.relayid)
+  const membersByRelay = new Map<number, string[]>()
+  if (relayIds.length > 0) {
+    const { clause, params } = inClause(relayIds)
+    const memberRows = db.prepare(`
+      SELECT rp.relayid, a.lastname
+      FROM relayposition rp
+      LEFT JOIN athlete a ON rp.athleteid = a.athleteid
+      WHERE rp.relayid IN (${clause})
+      ORDER BY rp.relayid, rp.relaynumber
+    `).all(...params) as Array<{ relayid: number; lastname: string | null }>
+    for (const m of memberRows) {
+      if (!membersByRelay.has(m.relayid)) membersByRelay.set(m.relayid, [])
+      if (m.lastname) membersByRelay.get(m.relayid)!.push(m.lastname)
+    }
+  }
+
+  // Qualification state from the FINAL event's own relay rows, keyed by (clubid, teamnumber)
+  const finalTeams = db.prepare(`
+    SELECT clubid, teamnumber, qualcode, noadvance, finalfix
+    FROM relay WHERE swimeventid = ?
+  `).all(finalEventId) as Array<{
+    clubid: number | null; teamnumber: number | null
+    qualcode: string | null; noadvance: string | null; finalfix: string | null
+  }>
+  const qualMap = new Map<string, { qualCode: string | null; noAdvance: boolean; finalFix: boolean }>()
+  for (const ft of finalTeams) {
+    qualMap.set(`${ft.clubid}:${ft.teamnumber}`, {
+      qualCode: ft.qualcode || null,
+      noAdvance: ft.noadvance === 'T',
+      finalFix: ft.finalfix === 'T',
+    })
+  }
+
+  let rank = 0
+  return prelimTeams.map(t => {
+    const status = decodeResultStatus(t.resultstatus)
+    if (!status && t.swimtime != null) rank++
+    const qual = qualMap.get(`${t.clubid}:${t.teamnumber}`)
+    const teamName = t.teamname || membersByRelay.get(t.relayid)?.join('/') || ''
+    return {
+      swimresultId: t.relayid,
+      athleteId: t.relayid,   // opaque identity token — passed back to setQualification as the prelim relayid
+      lastName: teamName,
+      firstName: '',
+      clubCode: t.clubcode ?? '',
+      ageGroupName: t.agegroupname ?? '',
+      prelimTime: isBeachMeet && t.swimtime != null ? String(Math.round(t.swimtime / 1000)) : (msToDisplay(t.swimtime) ?? null),
+      prelimTimeMs: t.swimtime,
+      prelimRank: status ? 0 : (t.swimtime != null ? rank : 0),
+      resultStatus: status,
+      qualCode: qual?.qualCode ?? null,
+      noAdvance: qual?.noAdvance ?? false,
+      finalFix: qual?.finalFix ?? false,
+    }
+  })
+}
+
+/** Resolve the final event's own agegroup matching the prelim's category (agegroup
+ *  rows are duplicated per event, so a raw agegroupid from the prelim doesn't apply
+ *  to the final's swimeventid). If the final event has no agegroup rows at all yet
+ *  (not set up in EventsPage), one is created by copying the prelim's category —
+ *  otherwise qualified athletes/teams would end up with a NULL agegroupid and show
+ *  "???" wherever the category is displayed. */
+function resolveFinalAgeGroupId(
+  db: ReturnType<typeof getLocalDb>,
+  finalEventId: number,
+  prelimAgegroupId: number | null,
+): number | null {
+  const prelimAg = prelimAgegroupId
+    ? db.prepare(`SELECT agemin, agemax, name, gender FROM agegroup WHERE agegroupid = ?`).get(prelimAgegroupId) as
+        { agemin: number | null; agemax: number | null; name: string | null; gender: number | null } | undefined
+    : undefined
+
+  if (prelimAg) {
+    const matched = db.prepare(
+      `SELECT agegroupid FROM agegroup WHERE swimeventid = ? AND agemin IS ? AND agemax IS ? ORDER BY sortcode LIMIT 1`
+    ).get(finalEventId, prelimAg.agemin, prelimAg.agemax) as { agegroupid: number } | undefined
+    if (matched) return matched.agegroupid
+  }
+
+  const anyFinalAg = db.prepare(
+    `SELECT agegroupid FROM agegroup WHERE swimeventid = ? ORDER BY sortcode LIMIT 1`
+  ).get(finalEventId) as { agegroupid: number } | undefined
+  if (anyFinalAg) return anyFinalAg.agegroupid
+
+  if (!prelimAg) return null
+
+  // Final event has no agegroup rows at all — create one from the prelim's category
+  const newId = nextId('agegroup', 'agegroupid')
+  db.prepare(
+    `INSERT INTO agegroup (agegroupid, swimeventid, name, agemin, agemax, gender, heatcount, sortcode,
+       useformedals, useforscoring, allofficial, agebytotal, forceprelim, seedwithtsonly)
+     VALUES (?, ?, ?, ?, ?, ?, 2, 0, 'T','T','T','F','F','F')`
+  ).run(newId, finalEventId, prelimAg.name ?? '', prelimAg.agemin, prelimAg.agemax, prelimAg.gender)
+  return newId
+}
+
+/** Set qualification status for an athlete (or relay team) in a final event */
 export function setQualification(
   finalEventId: number,
   athleteId: number,
@@ -2669,6 +2814,11 @@ export function setQualification(
   noAdvance: boolean = false,
 ): void {
   const db = getLocalDb()
+
+  if (eventIsRelay(db, finalEventId)) {
+    setQualificationRelay(db, finalEventId, athleteId, qualCode, noAdvance)
+    return
+  }
 
   // Check if a swimresult row exists for this athlete on the final event
   const existing = db.prepare(
@@ -2686,19 +2836,14 @@ export function setQualification(
         `SELECT preveventid FROM swimevent WHERE swimeventid = ?`
       ).get(finalEventId) as { preveventid: number | null } | undefined
 
-      let agId: number | null = null
+      let prelimAgId: number | null = null
       if (evRow?.preveventid) {
         const pRes = db.prepare(
           `SELECT agegroupid FROM swimresult WHERE swimeventid = ? AND athleteid = ?`
         ).get(evRow.preveventid, athleteId) as { agegroupid: number | null } | undefined
-        agId = pRes?.agegroupid ?? null
+        prelimAgId = pRes?.agegroupid ?? null
       }
-      if (!agId) {
-        const fAg = db.prepare(
-          `SELECT agegroupid FROM agegroup WHERE swimeventid = ? ORDER BY sortcode LIMIT 1`
-        ).get(finalEventId) as { agegroupid: number } | undefined
-        agId = fAg?.agegroupid ?? null
-      }
+      const agId = resolveFinalAgeGroupId(db, finalEventId, prelimAgId)
 
       db.prepare(
         `UPDATE swimresult SET qualcode = ?, noadvance = ?, agegroupid = ? WHERE swimresultid = ?`
@@ -2716,28 +2861,69 @@ export function setQualification(
     ).get(finalEventId) as { preveventid: number | null } | undefined
 
     let entryTime: number | null = null
-    let agegroupId: number | null = null
+    let prelimAgId: number | null = null
     if (finalEvent?.preveventid) {
       const prelimResult = db.prepare(
         `SELECT swimtime, agegroupid FROM swimresult WHERE swimeventid = ? AND athleteid = ?`
       ).get(finalEvent.preveventid, athleteId) as { swimtime: number | null; agegroupid: number | null } | undefined
       entryTime = prelimResult?.swimtime ?? null
-      agegroupId = prelimResult?.agegroupid ?? null
+      prelimAgId = prelimResult?.agegroupid ?? null
     }
 
-    // If no agegroupid from prelim, try to get it from the final event's own age groups
-    if (!agegroupId) {
-      const finalAg = db.prepare(
-        `SELECT agegroupid FROM agegroup WHERE swimeventid = ? ORDER BY sortcode LIMIT 1`
-      ).get(finalEventId) as { agegroupid: number } | undefined
-      agegroupId = finalAg?.agegroupid ?? null
-    }
+    const agegroupId = resolveFinalAgeGroupId(db, finalEventId, prelimAgId)
 
     const id = nextId('swimresult', 'swimresultid')
     db.prepare(
       `INSERT INTO swimresult (swimresultid, athleteid, swimeventid, entrytime, qualcode, noadvance, agegroupid, usetimetype)
        VALUES (?, ?, ?, ?, ?, ?, ?, 0)`
     ).run(id, athleteId, finalEventId, entryTime, qualCode || null, noAdvance ? 'T' : 'F', agegroupId)
+  }
+}
+
+/** setQualification() relay branch. `prelimRelayId` is the relay row on the PRELIM
+ *  event (as returned by getFinalCandidatesRelay). The corresponding final-round
+ *  team is identified by (clubid, teamnumber) — matching Splash's own scheme — and
+ *  created (with its roster copied from relayposition) the first time it qualifies. */
+function setQualificationRelay(
+  db: ReturnType<typeof getLocalDb>,
+  finalEventId: number,
+  prelimRelayId: number,
+  qualCode: string | null,
+  noAdvance: boolean,
+): void {
+  const prelim = db.prepare(
+    `SELECT clubid, teamnumber, name, swimtime, agegroupid FROM relay WHERE relayid = ?`
+  ).get(prelimRelayId) as { clubid: number | null; teamnumber: number | null; name: string | null; swimtime: number | null; agegroupid: number | null } | undefined
+  if (!prelim) return
+
+  const existing = db.prepare(
+    `SELECT relayid FROM relay WHERE swimeventid = ? AND clubid IS ? AND teamnumber IS ?`
+  ).get(finalEventId, prelim.clubid, prelim.teamnumber) as { relayid: number } | undefined
+
+  if (existing) {
+    db.prepare(
+      `UPDATE relay SET qualcode = ?, noadvance = ? WHERE relayid = ?`
+    ).run(qualCode || null, noAdvance ? 'T' : 'F', existing.relayid)
+    return
+  }
+
+  const agegroupId = resolveFinalAgeGroupId(db, finalEventId, prelim.agegroupid)
+
+  const relayId = nextId('relay', 'relayid')
+  db.prepare(
+    `INSERT INTO relay (relayid, clubid, swimeventid, agegroupid, teamnumber, name, entrytime, qualcode, noadvance, usetimetype)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`
+  ).run(relayId, prelim.clubid, finalEventId, agegroupId, prelim.teamnumber, prelim.name, prelim.swimtime, qualCode || null, noAdvance ? 'T' : 'F')
+
+  // Copy the roster so the final-round team has its members from the start
+  const members = db.prepare(
+    `SELECT relaynumber, athleteid FROM relayposition WHERE relayid = ?`
+  ).all(prelimRelayId) as Array<{ relaynumber: number; athleteid: number | null }>
+  const insertMember = db.prepare(
+    `INSERT INTO relayposition (relayid, relaynumber, athleteid) VALUES (?, ?, ?)`
+  )
+  for (const m of members) {
+    insertMember.run(relayId, m.relaynumber, m.athleteid)
   }
 }
 
@@ -2814,9 +3000,11 @@ export function autoQualify(finalEventId: number): { counts: Record<string, numb
 export function clearFinalSeeding(finalEventId: number): void {
   const db = getLocalDb()
   db.prepare(`DELETE FROM heat WHERE swimeventid = ?`).run(finalEventId)
-  db.prepare(
-    `UPDATE swimresult SET heatid = NULL, lane = NULL WHERE swimeventid = ?`
-  ).run(finalEventId)
+  if (eventIsRelay(db, finalEventId)) {
+    db.prepare(`UPDATE relay SET heatid = NULL, lane = NULL WHERE swimeventid = ?`).run(finalEventId)
+  } else {
+    db.prepare(`UPDATE swimresult SET heatid = NULL, lane = NULL WHERE swimeventid = ?`).run(finalEventId)
+  }
 }
 
 /** Seed finals: create heats from qualified athletes using pyramid seeding (center-out) */
@@ -2860,6 +3048,8 @@ export function seedFinals(finalEventId: number): { ok: boolean; heatsCreated: n
   ).get(finalEventId) as { heatcount: number | null } | undefined
   const heatCount = hcRow?.heatcount ?? 1
 
+  const isRelay = eventIsRelay(db, finalEventId)
+
   // Clear existing heats
   clearFinalSeeding(finalEventId)
 
@@ -2888,11 +3078,15 @@ export function seedFinals(finalEventId: number): { ok: boolean; heatsCreated: n
     const letter = swimOrder[swimIdx]
     const heatNumber = swimIdx + 1 // heat 1 is swum first
 
-    const qualified = db.prepare(`
-      SELECT swimresultid, entrytime FROM swimresult
-      WHERE swimeventid = ? AND qualcode = ?
-      ORDER BY CASE WHEN entrytime IS NULL THEN 1 ELSE 0 END, entrytime ASC
-    `).all(finalEventId, letter) as Array<{ swimresultid: number; entrytime: number | null }>
+    const qualified = db.prepare(
+      isRelay
+        ? `SELECT relayid AS swimresultid, entrytime FROM relay
+           WHERE swimeventid = ? AND qualcode = ?
+           ORDER BY CASE WHEN entrytime IS NULL THEN 1 ELSE 0 END, entrytime ASC`
+        : `SELECT swimresultid, entrytime FROM swimresult
+           WHERE swimeventid = ? AND qualcode = ?
+           ORDER BY CASE WHEN entrytime IS NULL THEN 1 ELSE 0 END, entrytime ASC`
+    ).all(finalEventId, letter) as Array<{ swimresultid: number; entrytime: number | null }>
 
     if (qualified.length === 0) continue
 
@@ -2910,12 +3104,16 @@ export function seedFinals(finalEventId: number): { ok: boolean; heatsCreated: n
       overflow += qualified.length - capacity
     }
 
+    const updateEntry = db.prepare(
+      isRelay
+        ? `UPDATE relay SET heatid = ?, lane = ? WHERE relayid = ?`
+        : `UPDATE swimresult SET heatid = ?, lane = ? WHERE swimresultid = ?`
+    )
+
     if (isBeachMeet5) {
       // Beach: sequential numbering (no lanes)
       for (let i = 0; i < maxAssign; i++) {
-        db.prepare(
-          `UPDATE swimresult SET heatid = ?, lane = ? WHERE swimresultid = ?`
-        ).run(heatId, i + 1, qualified[i].swimresultid)
+        updateEntry.run(heatId, i + 1, qualified[i].swimresultid)
         assigned++
       }
     } else {
@@ -2923,9 +3121,7 @@ export function seedFinals(finalEventId: number): { ok: boolean; heatsCreated: n
       const laneOrder = customLaneOrder ?? buildCenterOutLanes(laneMin, laneMax)
       for (let i = 0; i < maxAssign; i++) {
         const lane = laneOrder[i]
-        db.prepare(
-          `UPDATE swimresult SET heatid = ?, lane = ? WHERE swimresultid = ?`
-        ).run(heatId, lane, qualified[i].swimresultid)
+        updateEntry.run(heatId, lane, qualified[i].swimresultid)
         assigned++
       }
     }
@@ -3268,33 +3464,18 @@ export interface ResultsListEvent {
 export function getResultsList(selectedEventIds: number[], injectedDb?: ReturnType<typeof getLocalDb>): ResultsListEvent[] {
   if (selectedEventIds.length === 0) return []
   const db = injectedDb ?? getLocalDb()
-  const { clause, params } = inClause(selectedEventIds)
 
-  const rows = db.prepare(`
-    SELECT r.swimeventid AS eventId, r.agegroupid AS agegroupId,
-           ag.agemin AS ageMin, ag.agemax AS ageMax, ag.sortcode AS sortcode,
-           a.athleteid AS athleteId, a.lastname AS lastName, a.firstname AS firstName, a.birthdate,
-           COALESCE(c.shortname, c.code, c.name, '') AS clubName,
-           r.swimtime
-    FROM swimresult r
-    JOIN athlete a ON r.athleteid = a.athleteid
-    JOIN heat h ON r.heatid = h.heatid
-    LEFT JOIN club c ON a.clubid = c.clubid
-    LEFT JOIN agegroup ag ON ag.agegroupid = r.agegroupid
-    WHERE r.swimeventid IN (${clause})
-      AND r.swimtime IS NOT NULL AND r.swimtime > 0
-      AND (r.resultstatus IS NULL OR r.resultstatus = 0)
-      AND h.racestatus = 5
-    ORDER BY r.swimeventid, ag.sortcode, r.swimtime ASC
-  `).all(...params) as Array<{
-    eventId: number; agegroupId: number | null; ageMin: number | null; ageMax: number | null; sortcode: number | null
-    athleteId: number; lastName: string | null; firstName: string | null; birthdate: string | number | null
-    clubName: string; swimtime: number
-  }>
+  const relayEventIds = selectedEventIds.filter(id => eventIsRelay(db, id))
+  const individualEventIds = selectedEventIds.filter(id => !relayEventIds.includes(id))
 
   const events = new Map<number, Map<number, ResultsListAgeGroup>>()
-  for (const r of rows) {
-    if (r.agegroupId == null) continue
+
+  function addRow(r: {
+    eventId: number; agegroupId: number | null; ageMin: number | null; ageMax: number | null
+    athleteId: number; lastName: string; firstName: string; birthYear: number
+    clubName: string; swimtime: number
+  }): void {
+    if (r.agegroupId == null) return
     let ageGroups = events.get(r.eventId)
     if (!ageGroups) { ageGroups = new Map(); events.set(r.eventId, ageGroups) }
     let ag = ageGroups.get(r.agegroupId)
@@ -3304,12 +3485,93 @@ export function getResultsList(selectedEventIds: number[], injectedDb?: ReturnTy
     }
     ag.athletes.push({
       athleteId: r.athleteId,
-      lastName: r.lastName ?? '',
-      firstName: r.firstName ?? '',
-      birthYear: parseBirthYear(r.birthdate),
-      clubName: r.clubName ?? '',
+      lastName: r.lastName,
+      firstName: r.firstName,
+      birthYear: r.birthYear,
+      clubName: r.clubName,
       swimtime: r.swimtime,
     })
+  }
+
+  if (individualEventIds.length > 0) {
+    const { clause, params } = inClause(individualEventIds)
+    const rows = db.prepare(`
+      SELECT r.swimeventid AS eventId, r.agegroupid AS agegroupId,
+             ag.agemin AS ageMin, ag.agemax AS ageMax, ag.sortcode AS sortcode,
+             a.athleteid AS athleteId, a.lastname AS lastName, a.firstname AS firstName, a.birthdate,
+             COALESCE(c.shortname, c.code, c.name, '') AS clubName,
+             r.swimtime
+      FROM swimresult r
+      JOIN athlete a ON r.athleteid = a.athleteid
+      JOIN heat h ON r.heatid = h.heatid
+      LEFT JOIN club c ON a.clubid = c.clubid
+      LEFT JOIN agegroup ag ON ag.agegroupid = r.agegroupid
+      WHERE r.swimeventid IN (${clause})
+        AND r.swimtime IS NOT NULL AND r.swimtime > 0
+        AND (r.resultstatus IS NULL OR r.resultstatus = 0)
+        AND h.racestatus = 5
+      ORDER BY r.swimeventid, ag.sortcode, r.swimtime ASC
+    `).all(...params) as Array<{
+      eventId: number; agegroupId: number | null; ageMin: number | null; ageMax: number | null; sortcode: number | null
+      athleteId: number; lastName: string | null; firstName: string | null; birthdate: string | number | null
+      clubName: string; swimtime: number
+    }>
+    for (const r of rows) {
+      addRow({
+        eventId: r.eventId, agegroupId: r.agegroupId, ageMin: r.ageMin, ageMax: r.ageMax,
+        athleteId: r.athleteId, lastName: r.lastName ?? '', firstName: r.firstName ?? '',
+        birthYear: parseBirthYear(r.birthdate), clubName: r.clubName ?? '', swimtime: r.swimtime,
+      })
+    }
+  }
+
+  if (relayEventIds.length > 0) {
+    const { clause, params } = inClause(relayEventIds)
+    const rows = db.prepare(`
+      SELECT r.relayid AS relayId, r.swimeventid AS eventId, r.agegroupid AS agegroupId,
+             ag.agemin AS ageMin, ag.agemax AS ageMax, ag.sortcode AS sortcode,
+             r.name AS teamName,
+             COALESCE(c.shortname, c.code, c.name, '') AS clubName,
+             r.swimtime
+      FROM relay r
+      JOIN heat h ON r.heatid = h.heatid
+      LEFT JOIN club c ON r.clubid = c.clubid
+      LEFT JOIN agegroup ag ON ag.agegroupid = r.agegroupid
+      WHERE r.swimeventid IN (${clause})
+        AND r.swimtime IS NOT NULL AND r.swimtime > 0
+        AND (r.resultstatus IS NULL OR r.resultstatus = 0)
+        AND h.racestatus = 5
+      ORDER BY r.swimeventid, ag.sortcode, r.swimtime ASC
+    `).all(...params) as Array<{
+      relayId: number; eventId: number; agegroupId: number | null; ageMin: number | null; ageMax: number | null; sortcode: number | null
+      teamName: string | null; clubName: string; swimtime: number
+    }>
+
+    const relayIds = rows.map(r => r.relayId)
+    const membersByRelay = new Map<number, string[]>()
+    if (relayIds.length > 0) {
+      const { clause: mClause, params: mParams } = inClause(relayIds)
+      const memberRows = db.prepare(`
+        SELECT rp.relayid, a.lastname
+        FROM relayposition rp
+        LEFT JOIN athlete a ON rp.athleteid = a.athleteid
+        WHERE rp.relayid IN (${mClause})
+        ORDER BY rp.relayid, rp.relaynumber
+      `).all(...mParams) as Array<{ relayid: number; lastname: string | null }>
+      for (const m of memberRows) {
+        if (!membersByRelay.has(m.relayid)) membersByRelay.set(m.relayid, [])
+        if (m.lastname) membersByRelay.get(m.relayid)!.push(m.lastname)
+      }
+    }
+
+    for (const r of rows) {
+      const teamName = r.teamName || membersByRelay.get(r.relayId)?.join('/') || ''
+      addRow({
+        eventId: r.eventId, agegroupId: r.agegroupId, ageMin: r.ageMin, ageMax: r.ageMax,
+        athleteId: r.relayId, lastName: teamName, firstName: '',
+        birthYear: 0, clubName: r.clubName ?? '', swimtime: r.swimtime,
+      })
+    }
   }
 
   return [...events.entries()].map(([eventId, ageGroups]) => ({
@@ -3383,23 +3645,38 @@ export function getPointStandings(selectedEventIds: number[], injectedDb?: Retur
     // An event can host multiple age groups under the same swimeventid, so results
     // must be scoped to the age group matching this category, not the whole event.
     for (const { eventId, agegroupId } of filteredEvents) {
-      const results = db.prepare(`
-        SELECT r.athleteid, r.swimtime, r.resultstatus,
-               COALESCE(c.name, c.code, '') AS clubname,
-               COALESCE(c.code, '') AS clubcode
-        FROM swimresult r
-        JOIN athlete a ON r.athleteid = a.athleteid
-        JOIN heat h ON r.heatid = h.heatid
-        LEFT JOIN club c ON a.clubid = c.clubid
-        WHERE r.swimeventid = ?
-          AND r.agegroupid = ?
-          AND r.swimtime IS NOT NULL
-          AND r.swimtime > 0
-          AND (r.resultstatus IS NULL OR r.resultstatus = 0)
-          AND h.racestatus = 5
-        ORDER BY r.swimtime ASC
-      `).all(eventId, agegroupId) as Array<{
-        athleteid: number; swimtime: number; resultstatus: number | null
+      // Relay results live in `relay` (clubid direct, no athlete), not `swimresult`.
+      const results = db.prepare(
+        eventIsRelay(db, eventId)
+          ? `SELECT r.swimtime, r.resultstatus,
+                    COALESCE(c.name, c.code, '') AS clubname,
+                    COALESCE(c.code, '') AS clubcode
+             FROM relay r
+             JOIN heat h ON r.heatid = h.heatid
+             LEFT JOIN club c ON r.clubid = c.clubid
+             WHERE r.swimeventid = ?
+               AND r.agegroupid = ?
+               AND r.swimtime IS NOT NULL
+               AND r.swimtime > 0
+               AND (r.resultstatus IS NULL OR r.resultstatus = 0)
+               AND h.racestatus = 5
+             ORDER BY r.swimtime ASC`
+          : `SELECT r.swimtime, r.resultstatus,
+                    COALESCE(c.name, c.code, '') AS clubname,
+                    COALESCE(c.code, '') AS clubcode
+             FROM swimresult r
+             JOIN athlete a ON r.athleteid = a.athleteid
+             JOIN heat h ON r.heatid = h.heatid
+             LEFT JOIN club c ON a.clubid = c.clubid
+             WHERE r.swimeventid = ?
+               AND r.agegroupid = ?
+               AND r.swimtime IS NOT NULL
+               AND r.swimtime > 0
+               AND (r.resultstatus IS NULL OR r.resultstatus = 0)
+               AND h.racestatus = 5
+             ORDER BY r.swimtime ASC`
+      ).all(eventId, agegroupId) as Array<{
+        swimtime: number; resultstatus: number | null
         clubname: string; clubcode: string
       }>
 

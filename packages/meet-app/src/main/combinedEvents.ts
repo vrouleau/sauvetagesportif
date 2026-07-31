@@ -135,6 +135,9 @@ export function queryEventsWithAgeGroups(db: Database.Database): EventWithAgeGro
 
   const distanceFilter = isBeach ? '' : 'AND ss.distance >= 25'
 
+  // Relay events are included too (needed for club point standings, per combined-events
+  // rules) — getCombinedResults (per-athlete) naturally ignores them since relay teams
+  // never get a swimresult row; getPointStandings (per-club) branches on eventIsRelay().
   return db
     .prepare(
       `SELECT e.swimeventid, ag.agegroupid, e.eventnumber, e.gender AS eventgender, e.internalevent,
@@ -143,7 +146,7 @@ export function queryEventsWithAgeGroups(db: Database.Database): EventWithAgeGro
        FROM swimevent e
        JOIN agegroup ag ON ag.swimeventid = e.swimeventid
        JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid
-       WHERE ss.relaycount = 1
+       WHERE 1=1
          ${distanceFilter}
          AND (e.internalevent IS NULL OR e.internalevent = 'F')
          AND e.eventnumber IS NOT NULL
