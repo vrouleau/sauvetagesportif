@@ -1384,11 +1384,24 @@ function ContextMenu({
   onAction: (action: MenuAction) => void
 }) {
   const { t } = useLang()
+  const menuRef = useRef<HTMLDivElement>(null)
+  const [pos, setPos] = useState({ left: x, top: y, visible: false })
+
+  useEffect(() => {
+    const el = menuRef.current
+    if (!el) return
+    const { offsetWidth: w, offsetHeight: h } = el
+    const margin = 4
+    const left = x + w > window.innerWidth - margin ? Math.max(margin, window.innerWidth - margin - w) : x
+    const top = y + h > window.innerHeight - margin ? Math.max(margin, y - h) : y
+    setPos({ left, top, visible: true })
+  }, [x, y])
 
   const style: CSSProperties = {
     position: 'fixed',
-    left: x,
-    top: y,
+    left: pos.left,
+    top: pos.top,
+    visibility: pos.visible ? 'visible' : 'hidden',
     zIndex: 1000,
   }
 
@@ -1422,6 +1435,7 @@ function ContextMenu({
 
   return (
     <div
+      ref={menuRef}
       style={style}
       className="bg-white border border-gray-300 shadow-xl py-1 min-w-[280px]"
       onClick={(e) => e.stopPropagation()}
