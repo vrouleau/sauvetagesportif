@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.3.48] - 2026-07-31
+
+### Other
+
+- Fix intermittent unclickable text fields on Electron window focus (`50822e9`)
+- Keep events context menu within viewport bounds (`0a048c2`)
+- Add PostgreSQL backend-parity, concurrency, and Splash schema-contract tests (`e9bbb6a`)
+- Fix prelim/final event numbering, scan disambiguation, and combined-events scoring (`214ac15`)
+- Support relay teams in Finals qualification and reports (`87bf903`)
+
 ## [0.3.47] - 2026-07-30
 
 ### Other
