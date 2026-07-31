@@ -1984,13 +1984,29 @@ function createWindow(): void {
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
-    // On Windows, show() doesn't always leave the renderer's own focus state
-    // in sync with the OS-level window focus (seen as: the window looks
-    // active, but the very first click into a field does nothing until the
-    // user switches to another window and back). Force it explicitly.
-    mainWindow.focus()
-    mainWindow.webContents.focus()
     quantum = new QuantumBridge(mainWindow.webContents)
+  })
+
+  // On Windows, a focus() called right after show() can lose a race against
+  // the OS still mapping the window (most visible when launched from a
+  // script/dev process rather than double-clicking the exe) and gets
+  // silently ignored by the foreground-lock heuristic: the window looks
+  // active, but never actually receives real input focus, so the very first
+  // click into a field does nothing until the user switches to another
+  // window and back. Doing this off the 'show' event (fires once the OS has
+  // actually shown it) plus a short delay, and briefly toggling alwaysOnTop
+  // to force Windows to hand over foreground focus, has proven more reliable
+  // than a synchronous focus() call — though as an OS-level race, it's not
+  // guaranteed 100% (~10% failure rate observed even with the plain
+  // focus()-after-show() version this replaces).
+  mainWindow.on('show', () => {
+    setTimeout(() => {
+      if (mainWindow.isDestroyed()) return
+      mainWindow.setAlwaysOnTop(true)
+      mainWindow.focus()
+      mainWindow.setAlwaysOnTop(false)
+      mainWindow.webContents.focus()
+    }, 200)
   })
 
   // Same resync, for whenever the window regains OS focus later (e.g. after

@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.49] - 2026-07-31
+
+### Other
+
+- Show club PIN to organizer on invite page (`36fe077`)
+
 ## [0.3.48] - 2026-07-31
 
 ### Other
