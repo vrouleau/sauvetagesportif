@@ -22,6 +22,7 @@ import { regeneratePointScores } from './pointScores'
 import { getDb as getActiveDb, isPgConnected, closeDb as closeActiveDb } from './connectionManager'
 import type { DbBackend } from './dbBackend'
 import { livePush, type LiveResultPayload } from './livePush'
+import { msToDisplay, displayToMs } from '@shared/logic/timeFormat'
 
 // ── Database access (delegates to connectionManager) ──────────────────────────
 
@@ -58,29 +59,7 @@ export function closeLocalDb(): void {
 
 // ── Time helpers ──────────────────────────────────────────────────────────────
 // DB stores times as integer milliseconds.  Display format: "M:SS.cc" or "SS.cc"
-
-export function msToDisplay(ms: number | null | undefined): string | undefined {
-  if (ms == null || ms === 0) return undefined
-  // Treat max-int sentinel (2147483647) and unreasonably large values as "no time"
-  if (ms >= 2147483647 || ms < 0) return undefined
-  const totalCs = Math.round(ms / 10)
-  const cs = totalCs % 100
-  const totalSec = Math.floor(totalCs / 100)
-  const sec = totalSec % 60
-  const min = Math.floor(totalSec / 60)
-  if (min > 0) return `${min}:${String(sec).padStart(2, '0')}.${String(cs).padStart(2, '0')}`
-  return `${sec}.${String(cs).padStart(2, '0')}`
-}
-
-export function displayToMs(t: string | undefined): number | null {
-  if (!t || t === 'NT') return null
-  const parts = t.split(':')
-  let secs: number
-  if (parts.length === 3) secs = parseFloat(parts[0]) * 3600 + parseFloat(parts[1]) * 60 + parseFloat(parts[2])
-  else if (parts.length === 2) secs = parseFloat(parts[0]) * 60 + parseFloat(parts[1])
-  else secs = parseFloat(parts[0])
-  return isNaN(secs) ? null : Math.round(secs * 1000)
-}
+// msToDisplay/displayToMs now live in shared-ui/src/logic/timeFormat.ts (imported above).
 
 // ── Decode helpers ─────────────────────────────────────────────────────────────
 

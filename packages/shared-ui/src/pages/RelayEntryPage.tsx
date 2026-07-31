@@ -20,6 +20,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useLang } from '../context/LangContext'
 import { useRegistrationApi } from '../context/RegistrationApiContext'
 import type { RelayPageData, RelayEventGroup, RelayTeam, EligibleAthlete, Club } from '../data/api'
+import { isAgeCodeAllowedOnTeam, wouldMissNativeAnchor } from '../logic/relayRules'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -54,36 +55,10 @@ interface FlatRelayEvent {
 
 // ─── RelayEventCard ───────────────────────────────────────────────────────────
 
-// A team is anchored to the event's own age category (`nativeCode`, e.g. "Open"
-// for an Open relay event) — members must be from that exact category, or the
-// single adjacent-younger category (swim-up). `order` is the meet's age category
-// codes sorted youngest → oldest.
-function isAgeCodeAllowedOnTeam(candidateCode: string, nativeCode: string, order: string[]): boolean {
-  if (candidateCode === nativeCode) return true
-  const ni = order.indexOf(nativeCode)
-  const ci = order.indexOf(candidateCode)
-  if (ni === -1 || ci === -1) return true // unknown code, don't block
-  return ci === ni - 1
-}
-
-// A relay team needs at least this many members from the event's own exact
-// ("native") category — the rest may swim up from the adjacent-younger category.
-const REQUIRED_NATIVE_COUNT = 2
-
-// Would assigning `candidateCode` to this position make it impossible for the
-// team to end up with at least REQUIRED_NATIVE_COUNT native-category members,
-// given how many positions remain to fill after this one?
-function wouldMissNativeAnchor(
-  otherAssignedCodes: string[],
-  candidateCode: string,
-  nativeCode: string,
-  remainingAfterThis: number
-): boolean {
-  const nativeSoFar = otherAssignedCodes.filter(c => c === nativeCode).length
-    + (candidateCode === nativeCode ? 1 : 0)
-  const maxPossibleNative = nativeSoFar + remainingAfterThis
-  return maxPossibleNative < REQUIRED_NATIVE_COUNT
-}
+// isAgeCodeAllowedOnTeam / wouldMissNativeAnchor (imported above, shared with meet-app's
+// src/main/index.ts) implement the age-composition rule: a team is anchored to the event's
+// own age category (`nativeCode`, e.g. "Open" for an Open relay event) — members must be from
+// that exact category, or the single adjacent-younger category (swim-up).
 
 function RelayEventCard({
   event,

@@ -17,6 +17,7 @@
 // along with Sauvetage Sportif. If not, see <https://www.gnu.org/licenses/>.
 
 import { defineConfig } from 'vitest/config'
+import { resolve } from 'path'
 
 export default defineConfig({
   test: {
@@ -28,6 +29,7 @@ export default defineConfig({
     alias: {
       // Mock electron imports for unit tests
       electron: './tests/mocks/electron.ts',
+      '@shared': resolve(__dirname, '../shared-ui/src'),
     },
   },
 })

@@ -19,70 +19,9 @@
 import { useState, useEffect, useRef } from 'react'
 import { useLang } from '../context/LangContext'
 import type { RegistrationData, RegistrationStyle } from '../data/api'
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function msToTime(ms: number | null | undefined): string {
-  if (!ms) return ''
-  const m = Math.floor(ms / 60000)
-  const s = Math.floor((ms % 60000) / 1000)
-  const cs = Math.floor((ms % 1000) / 10)
-  return `${m}:${s.toString().padStart(2, '0')}.${cs.toString().padStart(2, '0')}`
-}
-
-function parseTime(str: string): number | null | undefined {
-  if (!str || str.trim().toLowerCase() === 'nt') return null
-  const s = str.trim()
-  let match = s.match(/^(\d+):(\d+)\.(\d+)$/)
-  if (match) return parseInt(match[1]) * 60000 + parseInt(match[2]) * 1000 + parseInt(match[3]) * 10
-  match = s.match(/^(\d+)\.(\d+)$/)
-  if (match) return parseInt(match[1]) * 1000 + parseInt(match[2]) * 10
-  return undefined
-}
-
-const AGE_CODE_ORDER = ['10-', '11-12', '13-14', '15-18', 'Open', 'Masters']
-
-// ─── TimeInput ────────────────────────────────────────────────────────────────
-
-function TimeInput({ defaultValue, onSave }: { defaultValue: string; onSave: (v: string) => void }) {
-  const [value, setValue] = useState(defaultValue || '')
-  const [error, setError] = useState(false)
-
-  function normalize(str: string): string | null {
-    if (!str || str.trim().toLowerCase() === 'nt') return ''
-    const s = str.trim()
-    if (/^\d+:\d{2}\.\d{2}$/.test(s) || /^\d+\.\d{2}$/.test(s)) return s
-    if (/^\d{3,6}$/.test(s)) {
-      const padded = s.padStart(6, '0')
-      const min = parseInt(padded.slice(0, -4)) || 0
-      const sec = parseInt(padded.slice(-4, -2))
-      const cs = parseInt(padded.slice(-2))
-      if (sec >= 60 || cs >= 100) return null
-      if (min > 0) return `${min}:${sec.toString().padStart(2, '0')}.${cs.toString().padStart(2, '0')}`
-      return `${sec}.${cs.toString().padStart(2, '0')}`
-    }
-    return null
-  }
-
-  return (
-    <input
-      className={`border border-gray-300 px-1 py-0.5 rounded text-xs w-20 font-mono ${error ? 'border-red-500 bg-red-50' : ''}`}
-      placeholder="m:ss.cc"
-      value={value}
-      onChange={e => { setValue(e.target.value); setError(false) }}
-      onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-      onBlur={e => {
-        const v = e.target.value
-        if (!v || v.trim().toLowerCase() === 'nt') { onSave(''); return }
-        const norm = normalize(v)
-        if (norm === null) { setError(true); return }
-        setValue(norm)
-        setError(false)
-        onSave(norm)
-      }}
-    />
-  )
-}
+import { formatEntryTime as msToTime, parseEntryTime as parseTime } from '../logic/timeFormat'
+import { filterCategoriesAroundSuggestion, computeAvailableCategories } from '../logic/ageGroupCode'
+import TimeInput from './TimeInput'
 
 // ─── RegistrationPanel ────────────────────────────────────────────────────────
 
@@ -123,25 +62,13 @@ export default function RegistrationPanel({
   }, [athleteId, individual_events, relay_events, suggested_age_code])
 
   // Compute available and dropdown categories
-  const availableCategories = (() => {
-    const set = new Set<string>()
-    for (const style of [...individual_events, ...relay_events]) {
-      for (const c of style.categories) set.add(c.age_code)
-    }
-    return AGE_CODE_ORDER.filter(c => set.has(c))
-  })()
+  const availableCategories = computeAvailableCategories([...individual_events, ...relay_events])
 
-  const dropdownCategories = (() => {
-    const preferred = category || suggested_age_code
-    const naturalIdx = AGE_CODE_ORDER.indexOf(suggested_age_code)
-    if (naturalIdx < 0) return availableCategories
-    const allowed = new Set<string>()
-    for (let i = Math.max(0, naturalIdx - 1); i <= Math.min(AGE_CODE_ORDER.length - 1, naturalIdx + 1); i++) {
-      allowed.add(AGE_CODE_ORDER[i])
-    }
-    if (preferred) allowed.add(preferred)
-    return availableCategories.filter(c => allowed.has(c))
-  })()
+  const dropdownCategories = filterCategoriesAroundSuggestion(
+    availableCategories,
+    suggested_age_code,
+    category || suggested_age_code
+  )
 
   // If preferred category isn't available in the dropdown, fall back to the closest one
   const activeCategory = (() => {

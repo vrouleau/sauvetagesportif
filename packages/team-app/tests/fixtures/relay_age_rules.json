@@ -1,0 +1,25 @@
+{
+  "_comment": "Shared fixture for the relay age-composition rule, implemented independently in TS (shared-ui/src/logic/relayRules.ts, used by meet-app and RelayEntryPage.tsx) and Python (team-app/backend/app/routers/api.py: _age_code_allowed_on_team / _would_miss_native_anchor). Both implementations' test suites iterate this file so drift becomes a test failure. order matches Python's fixed _AGE_CODE_ORDER — the TS functions take an order array as a parameter (built per-meet at the call site), but these cases stick to the canonical bracket codes so both languages test the same inputs.",
+  "order": ["10-", "11-12", "13-14", "15-18", "Open", "Masters"],
+  "isAgeCodeAllowedOnTeam": [
+    { "candidateCode": "11-12", "nativeCode": "11-12", "expected": true, "note": "exact match always allowed" },
+    { "candidateCode": "10-", "nativeCode": "11-12", "expected": true, "note": "adjacent-younger (swim-up) allowed" },
+    { "candidateCode": "13-14", "nativeCode": "11-12", "expected": false, "note": "adjacent-older never allowed" },
+    { "candidateCode": "10-", "nativeCode": "13-14", "expected": false, "note": "two brackets younger, not adjacent" },
+    { "candidateCode": "Unknown", "nativeCode": "11-12", "expected": true, "note": "code not in order never blocks" },
+    { "candidateCode": "11-12", "nativeCode": "Unknown", "expected": true, "note": "native code not in order never blocks" },
+    { "candidateCode": "Open", "nativeCode": "Masters", "expected": true, "note": "adjacent-younger at the top of the order" },
+    { "candidateCode": "15-18", "nativeCode": "Masters", "expected": false, "note": "not adjacent to Masters" },
+    { "candidateCode": "10-", "nativeCode": "10-", "expected": true, "note": "youngest bracket, exact match" },
+    { "candidateCode": "11-12", "nativeCode": "10-", "expected": false, "note": "older candidate on younger team, never allowed" }
+  ],
+  "wouldMissNativeAnchor": [
+    { "otherAssignedCodes": [], "candidateCode": "11-12", "nativeCode": "11-12", "remainingAfterThis": 2, "expected": false, "note": "native candidate, plenty of room left" },
+    { "otherAssignedCodes": [], "candidateCode": "10-", "nativeCode": "11-12", "remainingAfterThis": 2, "expected": false, "note": "swim-up candidate, still 2 slots that could be native" },
+    { "otherAssignedCodes": ["10-", "10-"], "candidateCode": "10-", "nativeCode": "11-12", "remainingAfterThis": 0, "expected": true, "note": "last slot, zero native members total" },
+    { "otherAssignedCodes": ["11-12"], "candidateCode": "10-", "nativeCode": "11-12", "remainingAfterThis": 0, "expected": true, "note": "last slot, only 1 native member total (need 2)" },
+    { "otherAssignedCodes": ["11-12"], "candidateCode": "11-12", "nativeCode": "11-12", "remainingAfterThis": 0, "expected": false, "note": "last slot, exactly 2 native members total" },
+    { "otherAssignedCodes": ["11-12", "10-"], "candidateCode": "10-", "nativeCode": "11-12", "remainingAfterThis": 0, "expected": true, "note": "only 1 native member total" },
+    { "otherAssignedCodes": ["11-12"], "candidateCode": "10-", "nativeCode": "11-12", "remainingAfterThis": 1, "expected": false, "note": "1 native so far, 1 slot left that could still make it 2" }
+  ]
+}

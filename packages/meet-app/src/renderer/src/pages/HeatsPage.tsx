@@ -19,6 +19,7 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { type HeatListEvent, type HeatListSession, type Heat, type LaneEntry } from '../data/mockData'
 import { useLang } from '@shared/context/LangContext'
+import { parseLooseTimeInput } from '@shared/logic/timeFormat'
 
 interface HeatState {
   [heatId: number]: LaneEntry[]
@@ -449,106 +450,9 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
     return time
   }
 
-  // ── Time parsing helpers ───────────────────────────────────────────────────
-  // Accepts:
-  //   "1:32.45" → as-is
-  //   "45.00" → as-is
-  //   "4500" → "45.00"
-  //   "13245" → "1:32.45"
-  //   "1:32.06 1:31.82" or "1:32.06,1:31.82" → average → "1:31.94"
-
-  function parseSingleTime(raw: string): string | null {
-    const s = raw.trim()
-    if (!s) return null
-
-    // Normalize: treat "1:42:98" as "1:42.98" (user may use : instead of . for centiseconds)
-    let normalized = s
-    const colonCount = (s.match(/:/g) || []).length
-    if (colonCount === 2) {
-      // Replace last colon with dot: "1:42:98" → "1:42.98"
-      const lastColon = s.lastIndexOf(':')
-      normalized = s.substring(0, lastColon) + '.' + s.substring(lastColon + 1)
-    }
-
-    // Already formatted: contains ":" or "."
-    if (normalized.includes(':') || normalized.includes('.')) {
-      // Validate and normalize format
-      const m1 = normalized.match(/^(\d{1,2}):(\d{1,2})\.(\d{1,2})$/) // M:SS.cc
-      if (m1) {
-        const [, min, sec, cs] = m1
-        return `${parseInt(min)}:${sec.padStart(2, '0')}.${cs.padEnd(2, '0').slice(0, 2)}`
-      }
-      const m2 = normalized.match(/^(\d{1,2}):(\d{1,2})$/) // M:SS
-      if (m2) {
-        const [, min, sec] = m2
-        return `${parseInt(min)}:${sec.padStart(2, '0')}.00`
-      }
-      const m3 = normalized.match(/^(\d{1,3})\.(\d{1,2})$/) // SS.cc
-      if (m3) {
-        const [, sec, cs] = m3
-        const s2 = parseInt(sec)
-        const min = Math.floor(s2 / 60)
-        const rem = s2 % 60
-        if (min > 0) return `${min}:${String(rem).padStart(2, '0')}.${cs.padEnd(2, '0').slice(0, 2)}`
-        return `${rem}.${cs.padEnd(2, '0').slice(0, 2)}`
-      }
-      // Fallback: return as-is if it looks reasonable
-      return normalized
-    }
-
-    // Pure integer: interpret based on magnitude
-    // < 100: treat as whole seconds (e.g. "35" → 35.00)
-    // >= 100: interpret digit positions as [M...]SS CC (e.g. "135" → 1.35, "14567" → 1:45.67)
-    const n = parseInt(s, 10)
-    if (isNaN(n) || n <= 0) return null
-
-    if (n < 100) {
-      // Whole seconds
-      const min = Math.floor(n / 60)
-      const sec = n % 60
-      if (min > 0) return `${min}:${String(sec).padStart(2, '0')}.00`
-      return `${sec}.00`
-    }
-
-    const cs = n % 100
-    const rest = Math.floor(n / 100)
-    const sec = rest % 100
-    const min = Math.floor(rest / 100)
-
-    if (sec >= 60) {
-      // If seconds >= 60, reinterpret: carry into minutes
-      const totalSec = min * 100 + sec  // treat as raw seconds
-      const realMin = Math.floor(totalSec / 60)
-      const realSec = totalSec % 60
-      return `${realMin}:${String(realSec).padStart(2, '0')}.${String(cs).padStart(2, '0')}`
-    }
-
-    if (min > 0) return `${min}:${String(sec).padStart(2, '0')}.${String(cs).padStart(2, '0')}`
-    return `${sec}.${String(cs).padStart(2, '0')}`
-  }
-
-  function timeToCs(t: string): number {
-    // Convert "M:SS.cc" or "SS.cc" to centiseconds
-    const parts = t.split(':')
-    let secs: number
-    if (parts.length === 2) {
-      const [minStr, rest] = parts
-      secs = parseInt(minStr, 10) * 60 + parseFloat(rest)
-    } else {
-      secs = parseFloat(parts[0])
-    }
-    return Math.round(secs * 100)
-  }
-
-  function csToTime(cs: number): string {
-    const totalCs = Math.round(cs)
-    const centis = totalCs % 100
-    const totalSec = Math.floor(totalCs / 100)
-    const sec = totalSec % 60
-    const min = Math.floor(totalSec / 60)
-    if (min > 0) return `${min}:${String(sec).padStart(2, '0')}.${String(centis).padStart(2, '0')}`
-    return `${sec}.${String(centis).padStart(2, '0')}`
-  }
+  // ── Time parsing ────────────────────────────────────────────────────────────
+  // parseSingleTime/parseLooseTimeInput (imported) live in shared-ui/src/logic/timeFormat.ts.
+  // Beach mode (integer position, not a time) is page-specific and handled here.
 
   function parseTimeInput(raw: string): string | null {
     const trimmed = raw.trim()
@@ -561,26 +465,7 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
       return String(n)
     }
 
-    // Split by spaces or commas to detect multiple times
-    const parts = trimmed.split(/[\s,]+/).filter(Boolean)
-
-    if (parts.length === 1) {
-      return parseSingleTime(parts[0])
-    }
-
-    // Multiple times: parse each, average them
-    const parsed: string[] = []
-    for (const p of parts) {
-      const t = parseSingleTime(p)
-      if (t) parsed.push(t)
-    }
-    if (parsed.length === 0) return null
-    if (parsed.length === 1) return parsed[0]
-
-    // Average in centiseconds
-    const totalCs = parsed.reduce((sum, t) => sum + timeToCs(t), 0)
-    const avgCs = totalCs / parsed.length
-    return csToTime(avgCs)
+    return parseLooseTimeInput(trimmed)
   }
 
   // ── Edit handlers ──────────────────────────────────────────────────────────

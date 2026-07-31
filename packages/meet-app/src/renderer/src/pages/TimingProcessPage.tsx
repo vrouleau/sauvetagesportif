@@ -27,6 +27,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { parseLooseTimeToMs } from '@shared/logic/timeFormat'
 
 type ScanStatus = 'unprocessed' | 'recognized' | 'validated' | 'error'
 
@@ -401,33 +402,9 @@ export default function TimingProcessPage() {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+// parseTimeInput used to be a bespoke variant of the same loose time parsing
+// HeatsPage.tsx has; both now share shared-ui/src/logic/timeFormat.ts.
 
 function parseTimeInput(str: string): number | null {
-  // Already formatted: M:SS.HH
-  const full = str.match(/^(\d):(\d{2})\.(\d{2})$/)
-  if (full) {
-    const [, min, sec, hh] = full
-    return (parseInt(min, 10) * 60 + parseInt(sec, 10)) * 1000 + parseInt(hh, 10) * 10
-  }
-  // SS.HH
-  const short = str.match(/^(\d{1,2})\.(\d{2})$/)
-  if (short) {
-    const [, sec, hh] = short
-    return parseInt(sec, 10) * 1000 + parseInt(hh, 10) * 10
-  }
-  // Raw digits: < 100 = whole seconds, >= 100 = MSSCC or SSCC
-  const n = parseInt(str, 10)
-  if (!isNaN(n) && n > 0) {
-    if (n < 100) {
-      // Whole seconds (e.g. "35" → 35000ms)
-      return n * 1000
-    }
-    const cc = n % 100
-    const rest = Math.floor(n / 100)
-    const ss = rest % 100
-    const mm = Math.floor(rest / 100)
-    const totalMs = (mm * 60 + ss) * 1000 + cc * 10
-    if (totalMs > 0) return totalMs
-  }
-  return null
+  return parseLooseTimeToMs(str)
 }

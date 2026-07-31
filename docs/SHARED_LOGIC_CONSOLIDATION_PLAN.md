@@ -1,6 +1,17 @@
 # Plan: Consolidate Duplicated Business Logic into shared-ui
 
-**Status:** Investigation complete, execution not started.
+**Status:** Executed. Cases 1, 2, 3 (bonus dedup), and 4 landed as pure-function
+modules under `shared-ui/src/logic/` (`relayRules.ts`, `ageGroupCode.ts`,
+`timeFormat.ts`), imported from both apps via the new `main`-process `@shared`
+alias. Case 5 (SERC scoring) got the lighter treatment the plan called for —
+each language's formula was extracted into its own standalone, fixture-testable
+function, without merging (still Python vs JS in the same app). Cross-language
+drift protection: `tests/fixtures/relay_age_rules.json` and
+`tests/fixtures/serc_scoring.json`, iterated by both the TS and Python test
+suites. Known gap: `team-app/frontend` has no JS test runner configured, so
+`computeSercTotal()` (`sercScoring.js`) isn't automatically checked against the
+fixture the way `compute_serc_total()` (Python) is — only the Python side runs
+in CI today.
 **Origin:** Triggered by noticing relay-team validation rules (swim-up/adjacency,
 "native anchor" count, mixed-gender quota) were implemented three times
 independently — once in team-app's Python backend, once in meet-app's TS main

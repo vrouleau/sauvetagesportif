@@ -82,6 +82,8 @@ import {
 } from './connectionManager'
 import type { PgConnectionConfig } from './pgBackend'
 import { livePush } from './livePush'
+import { ageGroupCodeFor } from '@shared/logic/ageGroupCode'
+import { isAgeCodeAllowedOnTeam, wouldMissNativeAnchor, REQUIRED_NATIVE_COUNT } from '@shared/logic/relayRules'
 
 let quantum: QuantumBridge | null = null
 
@@ -304,30 +306,10 @@ ipcMain.handle('db:get-dsq-items', () => {
   }
 })
 
-// Mirrors ageCodeFromGroup() in registrationApiElectron.ts — used to resolve the specific
-// age-group bracket the renderer's category dropdown asked for, so a user's explicit category
-// choice (e.g. "Open" vs "15-18" on the same event) is honored instead of silently overridden.
-function ageGroupCodeFor(name: string | null, agemin: number | null, agemax: number | null): string {
-  if (name) {
-    if (/10/.test(name) && /under|moins|-/.test(name.toLowerCase())) return '10-'
-    if (/11.*12/.test(name)) return '11-12'
-    if (/13.*14/.test(name)) return '13-14'
-    if (/15.*18/.test(name)) return '15-18'
-    if (/master/i.test(name)) return 'Masters'
-  }
-  if (agemin != null && agemax != null) {
-    if (agemax <= 10) return '10-'
-    if (agemin === 11 && agemax === 12) return '11-12'
-    if (agemin === 13 && agemax === 14) return '13-14'
-    if (agemin === 15 && agemax <= 18) return '15-18'
-    if (agemin >= 19) return 'Open'
-  }
-  if (agemin != null && (agemax == null || agemax < 0 || agemax >= 99)) {
-    if (agemin >= 19) return 'Open'
-    if (agemin >= 15) return '15-18'
-  }
-  return 'Open'
-}
+// ageGroupCodeFor is shared with registrationApiElectron.ts via shared-ui/src/logic/ageGroupCode.ts
+// (imported above) — used to resolve the specific age-group bracket the renderer's category
+// dropdown asked for, so a user's explicit category choice (e.g. "Open" vs "15-18" on the same
+// event) is honored instead of silently overridden.
 
 ipcMain.handle('db:register', (_event, data: { athlete_id: number; event_id: number; entry_time_ms: number | null; age_code: string }) => {
   const db = getLocalDb()
@@ -540,41 +522,8 @@ function getEventNativeAgeCode(db: ReturnType<typeof getLocalDb>, swimeventid: n
   return codes.size === 1 ? Array.from(codes)[0] : null
 }
 
-/**
- * Is `candidateCode` allowed on a team anchored to `nativeCode`? Members must be
- * from the event's exact own category, or the single adjacent-younger one (swim-up).
- * `order` is ageCategoryOrder-shaped (youngest → oldest); unknown codes never block.
- */
-function isAgeCodeAllowedOnTeam(candidateCode: string, nativeCode: string, order: string[]): boolean {
-  if (candidateCode === nativeCode) return true
-  const ni = order.indexOf(nativeCode)
-  const ci = order.indexOf(candidateCode)
-  if (ni === -1 || ci === -1) return true
-  return ci === ni - 1
-}
-
-/**
- * A relay team needs at least this many members from the event's own exact
- * ("native") category — the rest may swim up from the adjacent-younger category.
- */
-const REQUIRED_NATIVE_COUNT = 2
-
-/**
- * Would assigning `candidateCode` to this position make it impossible for the
- * team to end up with at least REQUIRED_NATIVE_COUNT native-category members,
- * given how many positions remain to fill after this one?
- */
-function wouldMissNativeAnchor(
-  otherAssignedCodes: string[],
-  candidateCode: string,
-  nativeCode: string,
-  remainingAfterThis: number
-): boolean {
-  const nativeSoFar = otherAssignedCodes.filter(c => c === nativeCode).length
-    + (candidateCode === nativeCode ? 1 : 0)
-  const maxPossibleNative = nativeSoFar + remainingAfterThis
-  return maxPossibleNative < REQUIRED_NATIVE_COUNT
-}
+// isAgeCodeAllowedOnTeam / wouldMissNativeAnchor / REQUIRED_NATIVE_COUNT are shared with
+// RelayEntryPage.tsx via shared-ui/src/logic/relayRules.ts (imported above).
 
 ipcMain.handle('db:get-clubs', () => {
   const db = getLocalDb()
