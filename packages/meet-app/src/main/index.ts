@@ -1984,7 +1984,19 @@ function createWindow(): void {
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
+    // On Windows, show() doesn't always leave the renderer's own focus state
+    // in sync with the OS-level window focus (seen as: the window looks
+    // active, but the very first click into a field does nothing until the
+    // user switches to another window and back). Force it explicitly.
+    mainWindow.focus()
+    mainWindow.webContents.focus()
     quantum = new QuantumBridge(mainWindow.webContents)
+  })
+
+  // Same resync, for whenever the window regains OS focus later (e.g. after
+  // alt-tabbing away and back, or after a native dialog closes).
+  mainWindow.on('focus', () => {
+    mainWindow.webContents.focus()
   })
 
   // ── Native application menu ─────────────────────────────────────────────────
