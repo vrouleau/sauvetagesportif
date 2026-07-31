@@ -36,6 +36,14 @@ const { Pool, types } = require('pg')
 types.setTypeParser(1114, (val) => val) // timestamp → raw string
 types.setTypeParser(1184, (val) => val) // timestamptz → raw string
 
+// PG OID 20 = int8/bigint. node-pg returns this as a STRING by default (to
+// avoid silent precision loss past Number.MAX_SAFE_INTEGER), but every bigint
+// this app ever sees is a COUNT(*)/row id well under that range, and
+// better-sqlite3 already returns these as plain numbers — parse it the same
+// way here so backend-parity code (e.g. `=== 0` / arithmetic on COUNT(*))
+// doesn't silently break only on the PG backend.
+types.setTypeParser(20, (val) => parseInt(val, 10))
+
 let pool = null
 
 function getPool(config) {

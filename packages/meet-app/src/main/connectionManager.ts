@@ -89,6 +89,11 @@ export async function connectToPg(config: PgConnectionConfig): Promise<void> {
       options VARCHAR(5),
       sortcode SMALLINT
     )`)
+    // name_en is our own addition (bilingual DSQ codes) — Splash's own dsqitem
+    // table doesn't have it, so CREATE TABLE IF NOT EXISTS above is a no-op
+    // when connecting to a database Splash already created. Backfill the
+    // column on the fly so we stay cross-compatible either way.
+    testBackend.exec(`ALTER TABLE dsqitem ADD COLUMN IF NOT EXISTS name_en VARCHAR(250)`)
     // If table is empty, seed from config (same as "Create Meet" does for SQLite)
     const count = testBackend.prepare(`SELECT COUNT(*) AS c FROM dsqitem`).get() as { c: number }
     if (count.c === 0) {

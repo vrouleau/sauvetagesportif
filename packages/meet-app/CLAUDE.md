@@ -36,6 +36,67 @@ npm test
 Test files in `tests/`:
 - `heat-generation.test.ts` — 28 tests
 - `gbin.test.ts`, `lenex.test.ts`, `schema.test.ts`, `smb.test.ts`, `meetvalues.test.ts`, `timing-scan.test.ts`
+- `concurrency.test.ts` — multi-station PG concurrency (see below)
+- `splash-schema-contract.test.ts` — diffs our schema against a real captured Splash-on-Postgres schema (see below)
+
+### PostgreSQL backend testing (schema/data cross-compatibility)
+
+The app has two DB backends (`connectionManager.ts` → `SqliteBackend` / `PgBackend`, both implementing `DbBackend`). The **hard requirement** is that a shared PostgreSQL server can be hit concurrently by multiple SauvetageMeet stations, and by real Splash Meet Manager, without behavior drift or corruption. Two test layers cover this:
+
+**Backend parity** — `schema.test.ts`, `heat-generation.test.ts`, and `combined-events.test.ts` run every test against *both* backends via `describe.each(['sqlite','pg'])`. This catches anything that behaves differently on PG (e.g. `inClause()`'s PG-vs-SQLite branch in `db.ts`, `pgBackend.ts`'s placeholder rewriting/row normalization — running this suite is what caught that Postgres returns `COUNT(*)` as a string, not a number, now fixed in `pgWorker.js`'s type parsers).
+
+**Multi-station concurrency** — `concurrency.test.ts` runs two independent connections against one real Postgres database to reproduce races two real stations would hit. **Confirmed concurrency model: only one station ever changes event structure** (heat generation, event/agegroup edits, beach-number assignment) during a meet; multiple stations *do* concurrently enter results (timing) and read/generate reports. So this suite only covers concurrent results-entry and report reads — it deliberately does not test concurrent heat generation or beach-number assignment, since those never run from more than one station. It uses raw `pg` `Client`s rather than two `PgBackend` instances — see the file's top comment for why (`PgBackend` blocks synchronously per call, so two instances driven from the same test process can never truly overlap).
+
+Note: an earlier version of this suite *did* test concurrent heat-id allocation (`db.ts:1902`/`:2140`, `SELECT MAX(heatid)+1` then INSERT, no locking) and concurrent late beach-number assignment (`beachNumber.ts:347-356`, same MAX+1 pattern) — both reproduced real duplicate-id races against a live Postgres container. Those tests were removed as out of scope once the single-station-for-event-structure model was confirmed, but the underlying MAX+1-without-locking pattern in both functions is still there; it would need a locking strategy (`SELECT ... FOR UPDATE`, an advisory lock, or a real sequence) if that assumption ever changes.
+
+**Running the PG-backed tests locally:**
+```bash
+# WSL terminal, once:
+cd packages/meet-app
+docker compose -f docker-compose.postgres.yml up -d
+```
+Then `npm test` from Windows or WSL — `tests/helpers.ts`'s `isPgTestAvailable()` probes `localhost:5432` (override via `TEST_PG_HOST`/`TEST_PG_PORT`/`TEST_PG_USER`/`TEST_PG_PASSWORD`) and the PG-backed suites **skip themselves with a console warning** if no server is reachable, so `npm test` still passes with no Docker running. CI always has a Postgres service (see `.github/workflows/ci.yml`), so these run on every PR.
+
+**Alternative: native Windows Postgres (no WSL, for testing against real Splash Meet Manager)**
+
+Real Splash runs on Windows and needs to reach the DB directly — if WSL2→Windows port forwarding isn't working (seen 2026-07-31: Windows' Host Network Service held a phantom reservation on port 5432, invisible to `netstat` but blocking real binds — a `netstat`/`Test-NetConnection` mismatch and a stuck `SYN_SENT` on an unrelated, previously-working WSL-forwarded port were the tells; a real Windows reboot would likely clear it, `wsl --shutdown` alone did not), a portable (no installer, no admin rights, no Windows service) Postgres works around it entirely:
+
+- Binaries: `%UserProfile%\pgsql-portable\pgsql` (extracted from EDB's official Windows "binaries" zip, not the installer)
+- Data dir: `%UserProfile%\pgsql-portable\data`, port **5433** (5432 was avoided — that's the port with the phantom reservation above)
+- Role/database: `meetmgr` / `meetmgr` / db `meetmgr` (superuser), matching the project's usual convention
+- Start: `& "$env:UserProfile\pgsql-portable\pgsql\bin\pg_ctl.exe" -D "$env:UserProfile\pgsql-portable\data" -l "$env:UserProfile\pgsql-portable\server.log" -o "-p 5433" start`
+- Stop: same command with `stop` instead of `start`
+- Point meet-app tests at it: `TEST_PG_PORT=5433 npm test` (rest of the env vars default to matching `meetmgr`/`meetmgr`)
+- Point Splash or meet-app's "Connect to PostgreSQL" dialog at `127.0.0.1:5433`, user `meetmgr`, password `meetmgr`
+
+Each test run creates and drops its own throwaway database (`meetapp_test_<random>`) against that server — never a fixed shared one — so parallel test files/CI runs don't collide.
+
+**Fixture generator bug found and fixed via this setup (2026-07-31):** `scripts/generate-fixture-smb.ts` was passing `swimstyle.uniqueid: 0` (literal zero) instead of `null`. Splash treats a real `0` as "maps to catalog slot 0" in its own compiled-in base style table (slot 0 there is an unrelated yards-based IM event) rather than "no catalog mapping" — every custom lifesaving style got silently blended with that wrong entry, crashing Splash's Results tree (`TFModulResult.HeatNode`, null pointer) when clicked. Fixed by emitting `null` there so GBIN's null-disambiguation-flag encoding marks it correctly. General lesson for anything touching `.smb`/GBIN encoding: `0` and `null` are not interchangeable for optional integer fields once Splash's own null-handling is involved — check `smb.ts`'s null-sentinel logic (`docs/GBIN_FORMAT.md`) before defaulting an optional field to `0`.
+
+Also confirmed clean (same session): a three-stage LENEX import (meet structure, then entries, then results, via `packages/team-app/tests/fixtures/{meet_template,test_results}.lxf`) into the same Splash-Postgres setup — a second, independent Splash code path from the `.smb` restore — worked with no crashes and correct Results view rendering.
+
+**Two more real bugs found and fixed, testing meet-app's own `exportLenexResults` output (not the team-app fixture) against Splash:**
+1. `<ATHLETE birthdate="...">` was writing the raw internal value (an OLE-Automation-date string like `"42883.166666666664"`) instead of an ISO date — Splash showed nonsense (or, once partially masked, wildly wrong ages). Fixed by routing it through `parseOleDate()` (now exported from `db.ts`) before writing the attribute.
+2. `exportLenexResults` never wrote a `<AGEDATE>` element at all (unlike `exportMeetLenex`, which did) — LENEX's age-category calculations need it, and its total absence made Splash compute ages against some internal sentinel reference date (observed: exactly `1000 − birthYear`, i.e. Splash's fallback reference year is `1000`). Fixed by factoring the date-computation logic both functions need into a shared `computeAgeDate(mv)` helper and calling it from both — the duplication between the two functions is exactly how the gap happened in the first place (one got fixed/written correctly, the other didn't).
+
+**Not a bug — confirmed expected behavior:** after both fixes, Splash imported the results correctly (times, status, athlete/club data all landed), but with no heat/lane placement — confirmed via Postgres statement logging that Splash's own `INSERT INTO SWIMRESULT` never includes `HEATID`/`LANE` columns at all when importing via its results-import action, regardless of what `heatid`/`lane` attributes our exported `<RESULT>` elements carry. This is intentional on Splash's side: **`exportLenexResults` produces a historical per-athlete-per-event results record (time + status), not a heat/lane seeding file** — Splash (correctly) doesn't try to graft an external system's internal heat numbering onto its own. Heat/lane placement is regenerated wherever the data currently lives, not carried through LENEX.
+
+**Not a bug either:** the fixture's small name pool (~13 first/last names cycled across 150 athletes over 10 clubs) produces athletes that coincidentally share a full name far more often than a real competition would — each is still a distinct `athleteid` with its own birthdate/club/license, and Splash (like our own code) distinguishes athletes by ID, never by name. Looks like duplication in a quick visual scan; isn't one.
+
+**Regression coverage added for the four bugs above** (`tests/lenex.test.ts`, "LENEX exporter" describe block) — these don't need Splash or Postgres to run, they're deterministic output-format checks: `exportLenexResults` writes an ISO birthdate not a raw OLE double, writes `<AGEDATE>` (both from `MEETVALUES.AGEDATE` and the current-year fallback), `exportMeetLenex` does too (regression guard for `computeAgeDate` staying shared), and a full export→import round-trip confirms `swimtime`/`resultstatus`/`heatid`/`lane` survive. Verified each one actually catches its bug by temporarily reverting the fix and confirming the test fails.
+
+**Follow-up audit (2026-07-31): does the birthdate bug affect team-app too, and are there other OLE/ISO gaps?** `exportLenexResults` is the actual production path for step 5 of the meet lifecycle (meet-app → team-app, see "Meet lifecycle" in `packages/team-app/CLAUDE.md`), not just a Splash-testing artifact, so this mattered beyond Splash compatibility:
+- **team-app's import doesn't crash on a malformed birthdate — it silently drops it.** `lxf_to_team.py`'s `_parse_date` (and `historical_import.py`'s equivalent) wrap the parse in `try/except ValueError: return None`. A raw OLE-double string never raises; it just becomes `None` — new members get no birthdate (breaks next season's age category), existing members (matched by license) never get birthdate updated at all, and nothing surfaces an error anywhere. Our fix stops this going forward; any *already-archived* historical meets from before the fix may have null birthdates worth a spot-check if that matters.
+- **Found and fixed a second, identical-class bug**: `exportMeetLenex`'s session date (`lenex.ts` ~line 1248) was `sess.startdate ? sess.startdate.slice(0, 10) : ageDate` — `swimsession.startdate` is the same dual-format (ISO or raw-OLE-double) column as `athlete.birthdate`, and `.slice(0,10)` silently produces garbage whenever the DB came from an `.smb` restore (which never converts it — confirmed in `smb.ts`). Fixed to `parseOleDate(sess.startdate) ?? ageDate`, matching the same pattern already used correctly for the same column in `db.ts:765`. Regression test added (`tests/lenex.test.ts`, "writes an ISO-formatted session date").
+- **team-app's own LENEX export is correct** — `export.py`/`export_entries.py` use proper `.date()`/`.strftime()` calls, no reverse-direction bug.
+- **`importLenex`'s read path and `smb.ts`'s GBIN encode/decode are correct** — the dual-format column is handled consistently by every other reader (`parseOleDate`/`parseBirthYear`/`parseBirthDate` in `db.ts` all branch on `/^\d{4}-/` first, OLE-double fallback second).
+- **Not fixed, lower confidence, team-app-side, separate from this bug:** `exportLenexResults` never writes a `startdate`/session `date` at all (unlike `exportMeetLenex`, which does since the fix above) — `lxf_to_team.py` looks for exactly those attributes to set `meets.mindate`/`maxdate`/`results.eventdate`, so they end up NULL for results imports specifically. Whether this actually matters is unclear: `best_times_v2.py` computes an 18-month cutoff that (per the audit) may not actually be applied in the query that uses it — unconfirmed, would need a closer look at `best_times_v2.py` if this turns out to matter in practice.
+
+**Splash schema contract (Layer 3)** — `splash-schema-contract.test.ts` diffs `schema.ts`'s `SCHEMA_DDL` against `tests/fixtures/splash-schema.csv`, a real `information_schema.columns` dump captured 2026-07-31 from an actual Splash Meet Manager instance connected via ODBC DSN to a fresh Postgres database (not our own reverse-engineering of the format — the genuine article). It fails on any column Splash has that we don't (silent data loss / crash reading a real Splash-created DB), and on any column we have that Splash doesn't unless it's on the `KNOWN_EXTRA_COLUMNS` allowlist in the test file (currently just `dsqitem.name_en` — our own bilingual-DSQ addition, intentionally backfilled onto pre-existing Splash tables via `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` in `connectionManager.ts`). This is what caught `agegroup.afinal8lanes` (a real Splash column we were missing, now added) in the same session the fixture was captured.
+
+Regenerating the fixture (only needed if Splash's own schema changes): connect real Splash to a fresh empty Postgres via its ODBC DSN — just opening the connection makes Splash create its full ~34-table schema — then dump with the `psql` command in the test file's header comment.
+
+**Operational finding, not a bug**: restoring an `.smb` backup directly into a Splash-Postgres connection that has never been opened (i.e. an empty database with zero tables) crashes Splash with a generic "database contains wrong data" error. The fix is procedural, not code: let Splash connect to the target Postgres database first (which makes it auto-create its schema), *then* restore the `.smb` into it. Confirmed 2026-07-31 — same `fixture_pool.smb`, same DSN, crashed against a schema-less database and restored cleanly once Splash had initialized its own tables first.
 
 ### Key utility: `msToDisplay(ms)`
 Converts integer milliseconds to display format (`M:SS.cc` or `SS.cc`). Returns `undefined` for `null`, `0`, negative values, and max-int sentinel (2147483647) — all treated as "no time" (NT).
@@ -350,15 +411,15 @@ times once finals have been swum.
 Injects random swim times into all `swimresult` rows that have no time yet. Useful for end-to-end testing of the results export flow without running a real competition.
 
 - **Script**: `scripts/simulate_results.bat` (calls `scripts/simulate_results.py`)
-- **Default DB**: `%APPDATA%\SauvetageMeet\meet.db`
+- **Default DB**: auto-detects `%APPDATA%\SauvetageMeet-Dev\meet.db` (unpackaged, i.e. `npm run dev` — matches `app.setName()` in `src/main/index.ts`) vs. `%APPDATA%\SauvetageMeet\meet.db` (packaged build). **If both exist, the script refuses to guess and asks for an explicit path** — silently running against the wrong one used to look identical to a real "0 results, nothing to simulate" run (bit us for real once: `npm run dev` writes to `-Dev`, but the old hardcoded default pointed at the non-`-Dev` path).
 - **Logic**: `swimtime = entrytime ± 5%` (random if NT: 30–180s), 5% DSQ
 - **Side effect**: marks affected heats as official (`racestatus=5`)
 - **Idempotent**: only fills rows where `swimtime` is NULL or 0 — safe to re-run after generating finals
 
 ```bash
-# Default path
+# Default path (auto-detected)
 scripts\simulate_results.bat
 
-# Custom path
+# Custom path (required if both packaged and dev databases exist)
 scripts\simulate_results.bat "C:\path\to\meet.db"
 ```

@@ -162,7 +162,7 @@ const OLE_EPOCH_MS = Date.UTC(1899, 11, 30) // month is 0-indexed
  * Parse an OLE Automation date (or ISO date string) into a YYYY-MM-DD string.
  * Returns undefined if the value is null, zero, or the null sentinel.
  */
-function parseOleDate(d: string | number | null): string | undefined {
+export function parseOleDate(d: string | number | null): string | undefined {
   if (d == null) return undefined
 
   if (typeof d === 'number') {

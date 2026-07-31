@@ -16,23 +16,72 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with Sauvetage Sportif. If not, see <https://www.gnu.org/licenses/>.
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import Database from 'better-sqlite3'
-import { createTestDb, seedMeet } from './helpers'
-import { generateHeats } from '../src/main/db'
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest'
+import {
+  createTestDb, createPgTestDb, isPgTestAvailable, seedMeet, resetTestDb,
+  type TestBackendKind,
+} from './helpers'
+import type { DbBackend } from '../src/main/dbBackend'
 
-describe('Heat generation', () => {
-  let db: Database.Database
-  let cleanup: () => void
+// db.ts's inClause() branches on the connectionManager's *global* isPgConnected()
+// state (not on the db instance passed in), and connectionManager.ts itself
+// imports Electron's `app`/`safeStorage`, which don't exist under plain
+// Vitest/Node. Replacing it with this tiny mock sidesteps both problems: it
+// lets the 'pg' branch below flip on the real PG code path in db.ts, and
+// keeps the 'sqlite' branch behaving exactly as it always has (isPgConnected
+// defaults to false).
+const { pgState } = vi.hoisted(() => ({ pgState: { connected: false } }))
+vi.mock('../src/main/connectionManager', () => ({
+  isPgConnected: () => pgState.connected,
+  getDb: () => { throw new Error('getLocalDb() should not be called — tests inject db explicitly') },
+  closeDb: () => {},
+}))
+
+const { generateHeats } = await import('../src/main/db')
+
+const pgAvailable = await isPgTestAvailable()
+const BACKENDS: TestBackendKind[] = pgAvailable ? ['sqlite', 'pg'] : ['sqlite']
+if (!pgAvailable) {
+  console.warn(
+    '[heat-generation.test.ts] Postgres not reachable — skipping PG-backend tests. ' +
+    'Start it with: docker compose -f packages/meet-app/docker-compose.postgres.yml up -d'
+  )
+}
+
+describe.each(BACKENDS)('Heat generation [%s]', (kind) => {
+  let db: DbBackend
+  let dropPgDb: (() => Promise<void>) | undefined
+
+  beforeAll(async () => {
+    pgState.connected = kind === 'pg'
+    if (kind === 'pg') {
+      const h = await createPgTestDb()
+      db = h.db
+      dropPgDb = h.cleanup
+    }
+  })
+
+  afterAll(async () => {
+    if (kind === 'pg' && dropPgDb) await dropPgDb()
+    pgState.connected = false
+  })
+
+  let cleanupSqlite: (() => void) | undefined
 
   beforeEach(() => {
-    const t = createTestDb()
-    db = t.db
-    cleanup = t.cleanup
+    if (kind === 'sqlite') {
+      const t = createTestDb()
+      db = t.db as unknown as DbBackend
+      cleanupSqlite = t.cleanup
+    } else {
+      resetTestDb(db)
+    }
     seedMeet(db)
   })
 
-  afterEach(() => cleanup())
+  afterEach(() => {
+    if (kind === 'sqlite') cleanupSqlite?.()
+  })
 
   // ── Helper functions ──────────────────────────────────────────────────────
 

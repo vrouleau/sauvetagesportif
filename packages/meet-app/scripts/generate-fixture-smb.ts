@@ -464,10 +464,15 @@ function buildSmb(meetType: 'POOL' | 'BEACH'): Buffer {
   ]
 
   // ── SWIMSTYLE ───────────────────────────────────────────────────────────
+  // uniqueid must be null, not 0 — Splash treats a real 0 as "this style maps
+  // to catalog slot 0" (its own compiled-in base style table), not "no
+  // catalog mapping". A literal 0 here caused every custom lifesaving style
+  // to get silently blended with whatever Splash's slot 0 actually is
+  // (observed: "100y 4 nages"), crashing the Results tree on click.
   const swimstyleRows = styles.map((s, i) => ({
     swimstyleid: s.id, code: '', distance: s.distance,
     name: s.name, relaycount: (s as any).relay || 1,
-    stroke: s.stroke, sortcode: i + 1, technique: 0, uniqueid: 0,
+    stroke: s.stroke, sortcode: i + 1, technique: 0, uniqueid: null,
   }))
 
   // ── SWIMSESSION ────────────────────────────────────────────────────────

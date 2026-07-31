@@ -21,163 +21,25 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { randomBytes } from 'crypto'
 import { unlinkSync } from 'fs'
+import { Pool } from 'pg'
+import { PgBackend, type PgConnectionConfig } from '../src/main/pgBackend'
+import { SCHEMA_DDL, runSchemaInit } from '../src/main/schema'
+import type { DbBackend } from '../src/main/dbBackend'
 
 /**
  * Create a temporary SQLite database with the meet schema initialized.
  * Returns the db instance and a cleanup function.
  *
- * Schema matches the full SCHEMA_DDL from src/main/db.ts so that SMB
- * save/restore (which queries all columns) works correctly in tests.
+ * Schema comes from src/main/schema.ts's SCHEMA_DDL — the SAME DDL the app
+ * runs in production for a fresh local SQLite database — so this fixture
+ * can never drift out of sync with what the app actually creates.
  */
 export function createTestDb(): { db: Database.Database; cleanup: () => void; path: string } {
   const dbPath = join(tmpdir(), `sauvetagemeet-test-${randomBytes(4).toString('hex')}.db`)
   const db = new Database(dbPath)
   db.pragma('journal_mode = WAL')
   db.pragma('foreign_keys = ON')
-
-  // Full schema — must include every column referenced by SMB_TABLES in smb.ts
-  const SCHEMA = [
-    `CREATE TABLE IF NOT EXISTS bsglobal (name TEXT NOT NULL DEFAULT '' PRIMARY KEY, data TEXT)`,
-    `CREATE TABLE IF NOT EXISTS swimstyle (
-      swimstyleid INTEGER PRIMARY KEY,
-      code TEXT, distance INTEGER, name TEXT, relaycount INTEGER,
-      stroke INTEGER, sortcode INTEGER, technique INTEGER, uniqueid INTEGER
-    )`,
-    `CREATE TABLE IF NOT EXISTS club (
-      clubid INTEGER PRIMARY KEY,
-      bonuspoints INTEGER, clubtype INTEGER, code TEXT, contactname TEXT,
-      contactinternet TEXT, contactcity TEXT, contactcountry TEXT, contactemail TEXT,
-      contactfax TEXT, contactphone TEXT, contactstate TEXT, contactstreet TEXT,
-      contactstreet2 TEXT, contactzip TEXT, externalid TEXT, longcode TEXT,
-      entryclubid INTEGER, entryemails TEXT, name TEXT, nameen TEXT, nation TEXT,
-      region TEXT, shortname TEXT, shortnameen TEXT, swrid INTEGER, teamnumber INTEGER
-    )`,
-    `CREATE TABLE IF NOT EXISTS swimsession (
-      swimsessionid INTEGER PRIMARY KEY,
-      course INTEGER, daytime TEXT, endtime TEXT, feeathlete REAL,
-      following TEXT DEFAULT 'F', lanemin INTEGER, lanemax INTEGER,
-      lanesbyplace TEXT, maxentriesathlete INTEGER, maxentriesrelay INTEGER,
-      name TEXT, officialmeeting TEXT, poolglobal TEXT DEFAULT 'F',
-      pooltype INTEGER, remarks TEXT, remarksjury TEXT,
-      roundtotenths TEXT DEFAULT 'F', sessionnumber INTEGER, startdate TEXT,
-      timing INTEGER, tlmeeting TEXT, touchpadmode INTEGER,
-      warmupfrom TEXT, warmupuntil TEXT
-    )`,
-    `CREATE TABLE IF NOT EXISTS athlete (
-      athleteid INTEGER PRIMARY KEY,
-      clubid INTEGER REFERENCES club(clubid),
-      firstname TEXT, firstname_upper TEXT, gender INTEGER, lastname TEXT,
-      lastname_upper TEXT, nameprefix TEXT, birthdate TEXT, domicile TEXT,
-      externalid TEXT, firstnameen TEXT, handicapex TEXT, handicaps INTEGER,
-      handicapsb INTEGER, handicapsm INTEGER, lastnameen TEXT, license TEXT,
-      nation TEXT, sdmsid INTEGER, status INTEGER, swimlevel TEXT,
-      swrid INTEGER, swrhashkey INTEGER, clubcode2 TEXT, coachname TEXT,
-      schoolyear TEXT, middlename TEXT, middlenameen TEXT
-    )`,
-    `CREATE TABLE IF NOT EXISTS swimevent (
-      swimeventid INTEGER PRIMARY KEY,
-      comment TEXT, daytime TEXT, duration TEXT, entrytimeconversion INTEGER,
-      entrytimepercent INTEGER, eventnumber INTEGER, externalid TEXT,
-      fee REAL, finalorder INTEGER, gender INTEGER, lanemax INTEGER,
-      lytentrylist INTEGER, lytstartlist INTEGER, lytresult2column INTEGER,
-      lytresult2split INTEGER, lytresult4split INTEGER, lytresultnosplit INTEGER,
-      lytresulthtml INTEGER, masters TEXT DEFAULT 'F', maxentries INTEGER,
-      pfineignore TEXT DEFAULT 'F', preveventid INTEGER, qualbyplace INTEGER,
-      round INTEGER, seedbonuslast TEXT DEFAULT 'F', seedexhlast TEXT DEFAULT 'F',
-      seedlateentrylast TEXT DEFAULT 'F', seedingglobal TEXT DEFAULT 'F',
-      singleheats INTEGER, sortcode INTEGER, splashmecanedit TEXT DEFAULT 'F',
-      sponsor TEXT, swimsessionid INTEGER REFERENCES swimsession(swimsessionid) ON DELETE CASCADE,
-      swimstyleid INTEGER REFERENCES swimstyle(swimstyleid),
-      twoperlane TEXT DEFAULT 'F', roundname TEXT,
-      combineagegroups TEXT DEFAULT 'F', roundone TEXT, internalevent TEXT DEFAULT 'F'
-    )`,
-    `CREATE TABLE IF NOT EXISTS agegroup (
-      agegroupid INTEGER PRIMARY KEY,
-      agebytotal TEXT DEFAULT 'F', agemax INTEGER, agemax2 INTEGER,
-      agemin INTEGER, agemin2 INTEGER, allofficial TEXT DEFAULT 'F',
-      athletestatuses INTEGER, clubids TEXT, code TEXT, externalid TEXT,
-      fastheatcount INTEGER, forceprelim TEXT DEFAULT 'F', gender INTEGER,
-      handicaps TEXT, heatcount INTEGER, heatqualipriority TEXT,
-      levelmax TEXT, levelmin TEXT, name TEXT, nationality TEXT,
-      nationregions TEXT, resultcount INTEGER, scoretype INTEGER,
-      seedwithtsonly TEXT DEFAULT 'F', sortcode INTEGER,
-      swimeventid INTEGER REFERENCES swimevent(swimeventid) ON DELETE CASCADE,
-      swimlevels TEXT, useformedals TEXT DEFAULT 'F',
-      useforscoring TEXT DEFAULT 'F', winnertitle TEXT,
-      foreigncount INTEGER, finalseedtype INTEGER
-    )`,
-    `CREATE TABLE IF NOT EXISTS heat (
-      heatid INTEGER PRIMARY KEY,
-      agegroupid INTEGER, agegrouporder INTEGER, daytime TEXT,
-      finalcode TEXT, heatnumber INTEGER, racestatus INTEGER,
-      remarks TEXT, sortcode INTEGER,
-      swimeventid INTEGER REFERENCES swimevent(swimeventid) ON DELETE CASCADE,
-      name TEXT, seedeventid INTEGER, code TEXT,
-      reservecount INTEGER, foreigncount INTEGER
-    )`,
-    `CREATE TABLE IF NOT EXISTS swimresult (
-      swimresultid INTEGER PRIMARY KEY,
-      athleteid INTEGER REFERENCES athlete(athleteid),
-      swrabestid INTEGER, swrabesttime INTEGER, swrsbestid INTEGER, swrsbesttime INTEGER,
-      agegroupid INTEGER, backuptime1 INTEGER, backuptime2 INTEGER, backuptime3 INTEGER,
-      bonusentry TEXT DEFAULT 'F', comment TEXT, dsqitemid INTEGER,
-      dsqdaytime TEXT, dsqnotified TEXT DEFAULT 'F', dsqnumber INTEGER,
-      entrycourse INTEGER, entrytime INTEGER, finalfix TEXT DEFAULT 'F',
-      finishjudge INTEGER, heatid INTEGER,
-      infocode TEXT, lane INTEGER, lateentry TEXT DEFAULT 'F',
-      mpoints INTEGER, padtime INTEGER, qtcity TEXT, qtcourse INTEGER,
-      qtdate TEXT, qtname TEXT, qtnation TEXT, qttime INTEGER,
-      qualcode TEXT, reactiontime INTEGER, resultstatus INTEGER,
-      swimeventid INTEGER REFERENCES swimevent(swimeventid) ON DELETE CASCADE,
-      swimtime INTEGER, usetimetype INTEGER DEFAULT 0,
-      dsqofficialid INTEGER, reservecode TEXT, noadvance TEXT DEFAULT 'F',
-      officialsplits TEXT, qttiming INTEGER
-    )`,
-    `CREATE TABLE IF NOT EXISTS split (
-      swimresultid INTEGER NOT NULL REFERENCES swimresult(swimresultid) ON DELETE CASCADE,
-      distance INTEGER NOT NULL,
-      swimtime INTEGER,
-      PRIMARY KEY (swimresultid, distance)
-    )`,
-    `CREATE TABLE IF NOT EXISTS dsqitem (
-      dsqitemid INTEGER PRIMARY KEY,
-      code TEXT,
-      lenexcode TEXT,
-      name TEXT,
-      name_en TEXT,
-      options TEXT,
-      sortcode INTEGER
-    )`,
-    `CREATE TABLE IF NOT EXISTS relay (
-      relayid INTEGER PRIMARY KEY,
-      clubid INTEGER REFERENCES club(clubid),
-      swimeventid INTEGER REFERENCES swimevent(swimeventid) ON DELETE CASCADE,
-      agegroupid INTEGER, heatid INTEGER, lane INTEGER, name TEXT,
-      gender INTEGER, athletes INTEGER, relaycode INTEGER, teamnumber INTEGER,
-      agemin INTEGER, agemax INTEGER, agetotal INTEGER,
-      entrytime INTEGER, entrycourse INTEGER, swimtime INTEGER,
-      reactiontime INTEGER, resultstatus INTEGER, dsqitemid INTEGER,
-      dsqdaytime TEXT, dsqnotified TEXT DEFAULT 'F', dsqnumber INTEGER,
-      dsqofficialid INTEGER, padtime INTEGER,
-      backuptime1 INTEGER, backuptime2 INTEGER, backuptime3 INTEGER,
-      usetimetype INTEGER, qualcode TEXT, infocode TEXT, reservecode TEXT,
-      comment TEXT, mpoints INTEGER, finalfix TEXT DEFAULT 'F',
-      lateentry TEXT DEFAULT 'F', bonusentry TEXT DEFAULT 'F',
-      noadvance TEXT DEFAULT 'F', finishjudge INTEGER,
-      officialsplits TEXT, qttiming INTEGER, qttime INTEGER,
-      qtdate TEXT, qtcity TEXT, qtname TEXT, qtnation TEXT, qtcourse INTEGER
-    )`,
-    `CREATE TABLE IF NOT EXISTS relayposition (
-      relayid INTEGER REFERENCES relay(relayid) ON DELETE CASCADE,
-      relaynumber INTEGER,
-      athleteid INTEGER REFERENCES athlete(athleteid),
-      reactiontime INTEGER, resultstatus INTEGER,
-      qttiming INTEGER, qttime INTEGER, qtdate TEXT,
-      qtcity TEXT, qtname TEXT, qtnation TEXT, qtcourse INTEGER,
-      qtislap TEXT DEFAULT 'F'
-    )`,
-  ]
-  for (const ddl of SCHEMA) db.exec(ddl)
+  for (const ddl of SCHEMA_DDL) db.exec(ddl)
 
   return {
     db,
@@ -186,8 +48,123 @@ export function createTestDb(): { db: Database.Database; cleanup: () => void; pa
   }
 }
 
-/** Seed a basic meet structure into the test DB. */
-export function seedMeet(db: Database.Database) {
+// ── PostgreSQL backend (for backend-parity and concurrency tests) ────────────
+//
+// A real Postgres server is required — see packages/meet-app/docker-compose.postgres.yml.
+// Tests using this should always check isPgTestAvailable() first and skip
+// gracefully (via a top-level `await` + conditional describe.each) when the
+// container isn't running, so `npm test` still passes on a machine with no
+// Docker/Postgres set up.
+
+export type TestBackendKind = 'sqlite' | 'pg'
+
+function getPgTestConnectionConfig(): PgConnectionConfig {
+  return {
+    host: process.env.TEST_PG_HOST || 'localhost',
+    port: Number(process.env.TEST_PG_PORT) || 5432,
+    database: process.env.TEST_PG_DATABASE || 'postgres',
+    user: process.env.TEST_PG_USER || 'meetmgr',
+    password: process.env.TEST_PG_PASSWORD || 'meetmgr',
+  }
+}
+
+let pgAvailableCache: boolean | null = null
+
+/** Probe the configured Postgres server. Result is cached for the life of the test file. */
+export async function isPgTestAvailable(): Promise<boolean> {
+  if (pgAvailableCache !== null) return pgAvailableCache
+  const cfg = getPgTestConnectionConfig()
+  const pool = new Pool({ ...cfg, max: 1, connectionTimeoutMillis: 2000 })
+  try {
+    const client = await pool.connect()
+    await client.query('SELECT 1')
+    client.release()
+    pgAvailableCache = true
+  } catch {
+    pgAvailableCache = false
+  } finally {
+    await pool.end()
+  }
+  return pgAvailableCache
+}
+
+/**
+ * Create a throwaway Postgres database (schema from SCHEMA_DDL) and return a
+ * real PgBackend connected to it. Each call gets its own database so parallel
+ * vitest workers/files never collide.
+ */
+export async function createPgTestDb(): Promise<{ db: PgBackend; cleanup: () => Promise<void>; databaseName: string }> {
+  const cfg = getPgTestConnectionConfig()
+  const dbName = `meetapp_test_${randomBytes(6).toString('hex')}`
+
+  const adminPool = new Pool({ ...cfg, max: 1 })
+  await adminPool.query(`CREATE DATABASE ${dbName}`)
+  await adminPool.end()
+
+  const backend = new PgBackend({ ...cfg, database: dbName })
+  runSchemaInit(backend)
+
+  return {
+    db: backend,
+    databaseName: dbName,
+    cleanup: async () => {
+      backend.close()
+      const dropPool = new Pool({ ...cfg, max: 1 })
+      try {
+        // WITH (FORCE) disconnects any lingering sessions first (PG 13+) —
+        // backend.close() tears down asynchronously so a plain DROP can race it.
+        await dropPool.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`)
+      } finally {
+        await dropPool.end()
+      }
+    },
+  }
+}
+
+/** Open a second independent connection to an already-created test database (simulates a second station). */
+export function connectSecondPgStation(databaseName: string): PgBackend {
+  const cfg = getPgTestConnectionConfig()
+  return new PgBackend({ ...cfg, database: databaseName })
+}
+
+/** Tables in child→parent order — safe to DELETE without violating foreign keys. */
+const TABLES_DELETE_ORDER = [
+  'relaysplit', 'relayposition', 'relay',
+  'split', 'swimresult', 'heat', 'agegroup', 'swimevent',
+  'athlete', 'swimsession', 'club', 'swimstyle', 'dsqitem', 'bsglobal',
+]
+
+/** Clear all rows from every app table, keeping the schema. Works on either backend. */
+export function resetTestDb(db: DbBackend): void {
+  for (const table of TABLES_DELETE_ORDER) db.exec(`DELETE FROM ${table}`)
+}
+
+/** List column names for a table — backend-aware (PRAGMA on SQLite, information_schema on PG). */
+export function getTableColumns(db: DbBackend, kind: TestBackendKind, table: string): string[] {
+  if (kind === 'sqlite') {
+    const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>
+    return cols.map(c => c.name)
+  }
+  const cols = db.prepare(
+    `SELECT column_name AS name FROM information_schema.columns WHERE table_name = ? ORDER BY column_name`
+  ).all(table) as Array<{ name: string }>
+  return cols.map(c => c.name)
+}
+
+/** List table names present in the database — backend-aware. */
+export function listTableNames(db: DbBackend, kind: TestBackendKind): string[] {
+  if (kind === 'sqlite') {
+    const rows = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' ORDER BY name`).all() as Array<{ name: string }>
+    return rows.map(r => r.name)
+  }
+  const rows = db.prepare(
+    `SELECT tablename AS name FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename`
+  ).all() as Array<{ name: string }>
+  return rows.map(r => r.name)
+}
+
+/** Seed a basic meet structure into the test DB. Works on either backend. */
+export function seedMeet(db: Database.Database | DbBackend) {
   db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount, stroke) VALUES (1, 100, 'Freestyle', 1, 1)`)
   db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount, stroke) VALUES (2, 200, 'Backstroke', 1, 2)`)
   db.exec(`INSERT INTO swimsession (swimsessionid, sessionnumber, name, course) VALUES (1, 1, 'Session 1', 1)`)

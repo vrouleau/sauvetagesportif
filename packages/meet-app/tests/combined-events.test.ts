@@ -16,19 +16,32 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with Sauvetage Sportif. If not, see <https://www.gnu.org/licenses/>.
 
-import { describe, it, expect, beforeAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest'
 import { mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createTestDb } from './helpers'
 import {
-  queryEventsWithAgeGroups,
-  findMatchingEvents,
-  regenerateCombinedEvents,
-  resolveToFinal,
-  type CategoryConfig,
-} from '../src/main/combinedEvents'
-import { getCombinedResults } from '../src/main/db'
+  createTestDb, createPgTestDb, isPgTestAvailable, resetTestDb,
+  type TestBackendKind,
+} from './helpers'
+import type { DbBackend } from '../src/main/dbBackend'
+import type { CategoryConfig } from '../src/main/combinedEvents'
+
+// See heat-generation.test.ts for why connectionManager needs mocking here:
+// db.ts's inClause() reads the *global* isPgConnected() state, and the real
+// connectionManager.ts imports Electron's app/safeStorage which don't exist
+// under plain Vitest/Node.
+const { pgState } = vi.hoisted(() => ({ pgState: { connected: false } }))
+vi.mock('../src/main/connectionManager', () => ({
+  isPgConnected: () => pgState.connected,
+  getDb: () => { throw new Error('getLocalDb() should not be called — tests inject db explicitly') },
+  closeDb: () => {},
+}))
+
+const {
+  queryEventsWithAgeGroups, findMatchingEvents, regenerateCombinedEvents, resolveToFinal,
+} = await import('../src/main/combinedEvents')
+const { getCombinedResults } = await import('../src/main/db')
 
 beforeAll(() => {
   const userData = join(tmpdir(), 'sauvetagemeet-test-combined-events')
@@ -36,13 +49,22 @@ beforeAll(() => {
   process.env.TEST_USER_DATA = userData
 })
 
+const pgAvailable = await isPgTestAvailable()
+const BACKENDS: TestBackendKind[] = pgAvailable ? ['sqlite', 'pg'] : ['sqlite']
+if (!pgAvailable) {
+  console.warn(
+    '[combined-events.test.ts] Postgres not reachable — skipping PG-backend tests. ' +
+    'Start it with: docker compose -f packages/meet-app/docker-compose.postgres.yml up -d'
+  )
+}
+
 /**
  * Reproduces the "Résultat combiné" grouping bug: a single swimeventid hosting
  * two age groups (e.g. 11-12 and 19+) must be split by agegroupid so that each
  * combined-events category only pulls the results for its own age bracket,
  * not every age group swimming under that event.
  */
-function seedSharedEvent(db: ReturnType<typeof createTestDb>['db']) {
+function seedSharedEvent(db: DbBackend) {
   db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount) VALUES (1, 100, 'Freestyle', 1)`)
   db.exec(`INSERT INTO swimsession (swimsessionid, sessionnumber, name, course) VALUES (1, 1, 'Session 1', 1)`)
   // One swimevent shared by two age groups (11-12 girls, 19+ women)
@@ -69,7 +91,7 @@ function seedSharedEvent(db: ReturnType<typeof createTestDb>['db']) {
  * Splash actually prints are computed from the final's results whenever one
  * exists — verified athlete-by-athlete against CanadienMai2026_S40.mdb.
  */
-function seedPrelimFinalPair(db: ReturnType<typeof createTestDb>['db']) {
+function seedPrelimFinalPair(db: DbBackend) {
   db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount) VALUES (1, 100, 'Freestyle', 1)`)
   db.exec(`INSERT INTO swimsession (swimsessionid, sessionnumber, name, course) VALUES (1, 1, 'Session 1', 1)`)
 
@@ -111,10 +133,41 @@ const cat19plus: CategoryConfig = {
   sortbyresfirst: 'F', finalusetype: '2', isSpecialNoEvents: false,
 }
 
-describe('combinedEvents age-group scoping', () => {
-  it('findMatchingEvents keeps distinct agegroupIds for the same swimeventid', () => {
-    const { db, cleanup } = createTestDb()
-    try {
+describe.each(BACKENDS)('combinedEvents [%s]', (kind) => {
+  let db: DbBackend
+  let dropPgDb: (() => Promise<void>) | undefined
+  let cleanupSqlite: (() => void) | undefined
+
+  beforeAll(async () => {
+    pgState.connected = kind === 'pg'
+    if (kind === 'pg') {
+      const h = await createPgTestDb()
+      db = h.db
+      dropPgDb = h.cleanup
+    }
+  })
+
+  afterAll(async () => {
+    if (kind === 'pg' && dropPgDb) await dropPgDb()
+    pgState.connected = false
+  })
+
+  beforeEach(() => {
+    if (kind === 'sqlite') {
+      const t = createTestDb()
+      db = t.db as unknown as DbBackend
+      cleanupSqlite = t.cleanup
+    } else {
+      resetTestDb(db)
+    }
+  })
+
+  afterEach(() => {
+    if (kind === 'sqlite') cleanupSqlite?.()
+  })
+
+  describe('age-group scoping', () => {
+    it('findMatchingEvents keeps distinct agegroupIds for the same swimeventid', () => {
       seedSharedEvent(db)
       const events = queryEventsWithAgeGroups(db)
 
@@ -123,50 +176,30 @@ describe('combinedEvents age-group scoping', () => {
 
       expect(matched1112).toEqual([{ eventId: 1, agegroupId: 10 }])
       expect(matched19plus).toEqual([{ eventId: 1, agegroupId: 20 }])
-    } finally {
-      cleanup()
-    }
-  })
+    })
 
-  it('regenerateCombinedEvents emits agegroupid on each EVENT so categories do not merge', () => {
-    const { db, cleanup } = createTestDb()
-    try {
+    it('regenerateCombinedEvents emits agegroupid on each EVENT so categories do not merge', () => {
       seedSharedEvent(db)
       regenerateCombinedEvents(db)
 
       const row = db.prepare(`SELECT data FROM bsglobal WHERE name = 'COMBINEDEVENTS'`).get() as { data: string }
       expect(row.data).toContain('eventid="1" agegroupid="10"')
       expect(row.data).toContain('eventid="1" agegroupid="20"')
-    } finally {
-      cleanup()
-    }
+    })
   })
-})
 
-describe('combinedEvents prelim/final resolution', () => {
-  it('resolveToFinal resolves a prelim event+agegroup to its final counterpart', () => {
-    const { db, cleanup } = createTestDb()
-    try {
+  describe('prelim/final resolution', () => {
+    it('resolveToFinal resolves a prelim event+agegroup to its final counterpart', () => {
       seedPrelimFinalPair(db)
       expect(resolveToFinal(db, 100, 101)).toEqual({ eventId: 200, agegroupId: 201 })
-    } finally {
-      cleanup()
-    }
-  })
+    })
 
-  it('resolveToFinal falls back to the prelim when no final exists', () => {
-    const { db, cleanup } = createTestDb()
-    try {
+    it('resolveToFinal falls back to the prelim when no final exists', () => {
       seedSharedEvent(db)
       expect(resolveToFinal(db, 1, 10)).toEqual({ eventId: 1, agegroupId: 10 })
-    } finally {
-      cleanup()
-    }
-  })
+    })
 
-  it('getCombinedResults scores off the FINAL placement, not the prelim heat time', () => {
-    const { db, cleanup } = createTestDb()
-    try {
+    it('getCombinedResults scores off the FINAL placement, not the prelim heat time', () => {
       seedPrelimFinalPair(db)
       // Select the PRELIM event (id 100) — the row a user actually ticks in the report tree
       const categories = getCombinedResults([100], db)
@@ -176,8 +209,6 @@ describe('combinedEvents prelim/final resolution', () => {
       // combined-events points must reflect the final placement.
       expect(cat!.athletes[0].firstName).toBe('A')
       expect(cat!.athletes[0].totalPoints).toBeGreaterThan(cat!.athletes[1].totalPoints)
-    } finally {
-      cleanup()
-    }
+    })
   })
 })

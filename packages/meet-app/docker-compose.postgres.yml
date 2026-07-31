@@ -1,0 +1,48 @@
+# Standalone PostgreSQL container for meet-app's PG-backend test suite and for
+# manually capturing a real Splash-Meet-Manager-on-Postgres fixture.
+#
+# Usage (WSL terminal):
+#   cd packages/meet-app
+#   docker compose -f docker-compose.postgres.yml up -d
+#
+# Reachable from Windows (SauvetageMeet's "Connect to PostgreSQL" dialog, and
+# real Splash Meet Manager if pointed at the same server) at localhost:5432,
+# thanks to WSL2's automatic localhost port forwarding.
+#
+# NOTE: as of 2026-07-31, WSL2→Windows port forwarding was found broken in
+# this dev environment for BOTH this container and team-app's own port 8001
+# (a previously-working, unrelated container) — confirmed via SYN_SENT hangs
+# in Windows netstat with no LISTEN entry ever appearing, even after
+# `wsl --shutdown` + restart. So this is a host/WSL networking issue, not
+# something specific to this compose file — don't re-attempt a
+# network_mode/port-mapping workaround here without first re-confirming
+# whether 8001 (or another known-good WSL-forwarded port) works again.
+#
+# Credentials match team-app's docker-compose.postgres.yml convention
+# (packages/team-app) — this is a separate container/volume, so it never
+# collides with the team-app dev or test stacks.
+#
+# Test runs (npm test) default to connecting to this same instance and
+# create/drop their own throwaway databases per run — see tests/helpers.ts.
+# Override host/port/credentials via TEST_PG_HOST / TEST_PG_PORT /
+# TEST_PG_USER / TEST_PG_PASSWORD if needed.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: meetmgr
+      POSTGRES_PASSWORD: meetmgr
+      POSTGRES_DB: meetmgr
+    ports:
+      - "5432:5432"
+    volumes:
+      - meetapp_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U meetmgr"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  meetapp_pgdata:

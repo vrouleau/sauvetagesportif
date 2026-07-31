@@ -1,0 +1,467 @@
+table_name,column_name,data_type,character_maximum_length,is_nullable
+agegroup,agegroupid,integer,,NO
+agegroup,agebytotal,character,1,YES
+agegroup,agemax,smallint,,YES
+agegroup,agemax2,smallint,,YES
+agegroup,agemin,smallint,,YES
+agegroup,agemin2,smallint,,YES
+agegroup,allofficial,character,1,YES
+agegroup,athletestatuses,integer,,YES
+agegroup,clubids,character varying,1024,YES
+agegroup,code,character varying,10,YES
+agegroup,externalid,character varying,40,YES
+agegroup,fastheatcount,smallint,,YES
+agegroup,forceprelim,character,1,YES
+agegroup,gender,smallint,,YES
+agegroup,handicaps,character varying,100,YES
+agegroup,heatcount,smallint,,YES
+agegroup,heatqualipriority,character varying,50,YES
+agegroup,levelmax,character varying,5,YES
+agegroup,levelmin,character varying,5,YES
+agegroup,name,character varying,50,YES
+agegroup,nationality,character varying,3,YES
+agegroup,nationregions,character varying,1024,YES
+agegroup,resultcount,smallint,,YES
+agegroup,scoretype,smallint,,YES
+agegroup,seedwithtsonly,character,1,YES
+agegroup,sortcode,integer,,YES
+agegroup,swimeventid,integer,,YES
+agegroup,swimlevels,character varying,255,YES
+agegroup,useformedals,character,1,YES
+agegroup,useforscoring,character,1,YES
+agegroup,winnertitle,character varying,100,YES
+agegroup,foreigncount,smallint,,YES
+agegroup,finalseedtype,smallint,,YES
+agegroup,afinal8lanes,character,1,YES
+athlete,athleteid,integer,,NO
+athlete,clubid,integer,,YES
+athlete,firstname,character varying,30,YES
+athlete,firstname_upper,character varying,5,YES
+athlete,gender,smallint,,YES
+athlete,lastname,character varying,50,YES
+athlete,lastname_upper,character varying,10,YES
+athlete,nameprefix,character varying,20,YES
+athlete,birthdate,timestamp without time zone,,YES
+athlete,domicile,character varying,50,YES
+athlete,externalid,character varying,40,YES
+athlete,firstnameen,character varying,30,YES
+athlete,handicapex,character varying,20,YES
+athlete,handicaps,smallint,,YES
+athlete,handicapsb,smallint,,YES
+athlete,handicapsm,smallint,,YES
+athlete,lastnameen,character varying,50,YES
+athlete,license,character varying,20,YES
+athlete,nation,character varying,3,YES
+athlete,sdmsid,integer,,YES
+athlete,status,integer,,YES
+athlete,swimlevel,character varying,10,YES
+athlete,swrid,integer,,YES
+athlete,swrhashkey,integer,,YES
+athlete,clubcode2,character varying,10,YES
+athlete,coachname,character varying,80,YES
+athlete,schoolyear,character varying,10,YES
+athlete,middlename,character varying,50,YES
+athlete,middlenameen,character varying,50,YES
+biography,biographyid,integer,,NO
+biography,xmldata,text,,YES
+biography,imageformat,smallint,,YES
+biography,picture,bytea,,YES
+bsglobal,name,character varying,50,NO
+bsglobal,data,text,,YES
+bsmessage,bsmessageid,integer,,NO
+bsmessage,created,timestamp without time zone,,YES
+bsmessage,data,character varying,2048,YES
+bspicture,bspictureid,integer,,NO
+bspicture,code,character varying,100,YES
+bspicture,comment,character varying,255,YES
+bspicture,imageformat,integer,,YES
+bspicture,picture,bytea,,YES
+bspicture,height,integer,,YES
+bspicture,width,integer,,YES
+bsswkatalogitem,bsswkatalogitemid,integer,,NO
+bsswkatalogitem,code,character varying,10,YES
+bsswkatalogitem,itemid,smallint,,YES
+bsswkatalogitem,katalogid,integer,,YES
+bsswkatalogitem,lenexcode,character varying,10,YES
+bsswkatalogitem,name,character varying,250,YES
+bsswkatalogitem,sortcode,smallint,,YES
+club,clubid,integer,,NO
+club,bonuspoints,integer,,YES
+club,clubtype,smallint,,YES
+club,code,character varying,10,YES
+club,contactname,character varying,50,YES
+club,contactinternet,character varying,150,YES
+club,contactcity,character varying,30,YES
+club,contactcountry,character varying,2,YES
+club,contactemail,character varying,50,YES
+club,contactfax,character varying,20,YES
+club,contactphone,character varying,20,YES
+club,contactstate,character varying,5,YES
+club,contactstreet,character varying,50,YES
+club,contactstreet2,character varying,50,YES
+club,contactzip,character varying,10,YES
+club,externalid,character varying,40,YES
+club,longcode,character varying,20,YES
+club,entryclubid,integer,,YES
+club,entryemails,character varying,255,YES
+club,name,character varying,80,YES
+club,nameen,character varying,80,YES
+club,nation,character varying,3,YES
+club,region,character varying,10,YES
+club,shortname,character varying,30,YES
+club,shortnameen,character varying,30,YES
+club,swrid,integer,,YES
+club,teamnumber,smallint,,YES
+coach,coachid,integer,,NO
+coach,clubid,integer,,YES
+coach,firstname,character varying,30,YES
+coach,firstname_upper,character varying,5,YES
+coach,gender,smallint,,YES
+coach,lastname,character varying,50,YES
+coach,lastname_upper,character varying,10,YES
+coach,nameprefix,character varying,20,YES
+coach,contactcity,character varying,30,YES
+coach,contactcountry,character varying,2,YES
+coach,contactemail,character varying,50,YES
+coach,contactfax,character varying,20,YES
+coach,contactphone,character varying,20,YES
+coach,contactstate,character varying,5,YES
+coach,contactstreet,character varying,50,YES
+coach,contactstreet2,character varying,50,YES
+coach,contactzip,character varying,10,YES
+coach,coachtype,smallint,,YES
+coach,license,character varying,20,YES
+coach,nation,character varying,3,YES
+dsqitem,dsqitemid,integer,,NO
+dsqitem,code,character varying,10,YES
+dsqitem,lenexcode,character varying,10,YES
+dsqitem,name,character varying,250,YES
+dsqitem,options,character varying,5,YES
+dsqitem,sortcode,smallint,,YES
+eventrecord,eventrecordid,integer,,NO
+eventrecord,swimeventid,integer,,YES
+eventrecord,listid,integer,,YES
+eventrecord,comment,character varying,50,YES
+eventrecord,fine,double precision,,YES
+eventrecord,marker,character varying,8,YES
+eventrecord,onresultlist,character,1,YES
+eventrecord,onstartlist,character,1,YES
+eventrecord,sortcode,integer,,YES
+heat,heatid,integer,,NO
+heat,agegroupid,integer,,YES
+heat,agegrouporder,integer,,YES
+heat,daytime,timestamp without time zone,,YES
+heat,finalcode,character varying,2,YES
+heat,heatnumber,smallint,,YES
+heat,racestatus,smallint,,YES
+heat,remarks,text,,YES
+heat,sortcode,integer,,YES
+heat,swimeventid,integer,,YES
+heat,name,character varying,50,YES
+heat,seedeventid,integer,,YES
+heat,code,character varying,10,YES
+heat,reservecount,smallint,,YES
+heat,foreigncount,smallint,,YES
+judge,judgeid,integer,,NO
+judge,judgenumber,smallint,,YES
+judge,officialid,integer,,YES
+judge,judgerole,smallint,,YES
+judge,remarks,character varying,100,YES
+judge,sortcode,integer,,YES
+judge,swimsessionid,integer,,YES
+official,officialid,integer,,NO
+official,clubid,integer,,YES
+official,firstname,character varying,30,YES
+official,firstname_upper,character varying,5,YES
+official,gender,smallint,,YES
+official,lastname,character varying,50,YES
+official,lastname_upper,character varying,10,YES
+official,nameprefix,character varying,20,YES
+official,contactcity,character varying,30,YES
+official,contactcountry,character varying,2,YES
+official,contactemail,character varying,50,YES
+official,contactfax,character varying,20,YES
+official,contactphone,character varying,20,YES
+official,contactstate,character varying,5,YES
+official,contactstreet,character varying,50,YES
+official,contactstreet2,character varying,50,YES
+official,contactzip,character varying,10,YES
+official,grade,character varying,20,YES
+official,license,character varying,20,YES
+record,recordid,integer,,NO
+record,recordlistid,integer,,YES
+record,recordagegroupid,integer,,YES
+record,agegroup,integer,,YES
+record,birthdate,timestamp without time zone,,YES
+record,clubcode,character varying,10,YES
+record,clubname,character varying,80,YES
+record,clubnation,character varying,3,YES
+record,course,smallint,,YES
+record,firstname,character varying,30,YES
+record,gender,smallint,,YES
+record,handicap,smallint,,YES
+record,lastname,character varying,50,YES
+record,meetcity,character varying,30,YES
+record,meetdate,timestamp without time zone,,YES
+record,meetname,character varying,100,YES
+record,meetnation,character varying,3,YES
+record,nameprefix,character varying,20,YES
+record,resultid,integer,,YES
+record,swimeventid,integer,,YES
+record,swimstyleid,integer,,YES
+record,swimtime,integer,,YES
+recordagegroup,recordagegroupid,integer,,NO
+recordagegroup,agemax,smallint,,YES
+recordagegroup,agemin,smallint,,YES
+recordagegroup,agetype,smallint,,YES
+recordlist,recordlistid,integer,,NO
+recordlist,agegroups,character varying,255,YES
+recordlist,code,character varying,20,YES
+recordlist,lenexcode,character varying,20,YES
+recordlist,name,character varying,100,YES
+recordlist,nationregion,character varying,20,YES
+recordlist,shortname,character varying,40,YES
+recordlist,sortcode,integer,,YES
+recordlist,splashmecode,character varying,10,YES
+recordlist,updatemode,smallint,,YES
+recordlist,agecacltype,smallint,,YES
+recordlistagegroup,recordlistid,integer,,YES
+recordlistagegroup,recordagegroupid,integer,,YES
+recordposition,birthdate,timestamp without time zone,,YES
+recordposition,firstname,character varying,30,YES
+recordposition,gender,smallint,,YES
+recordposition,lastname,character varying,50,YES
+recordposition,nameprefix,character varying,20,YES
+recordposition,recordid,integer,,YES
+recordposition,relaynumber,smallint,,YES
+recordsplit,recordid,integer,,NO
+recordsplit,distance,smallint,,NO
+recordsplit,swimtime,integer,,YES
+relay,relayid,integer,,NO
+relay,agemax,smallint,,YES
+relay,agemin,smallint,,YES
+relay,agetotal,smallint,,YES
+relay,athletes,integer,,YES
+relay,clubid,integer,,YES
+relay,gender,smallint,,YES
+relay,name,character varying,100,YES
+relay,relaycode,integer,,YES
+relay,teamnumber,smallint,,YES
+relay,agegroupid,integer,,YES
+relay,backuptime1,integer,,YES
+relay,backuptime2,integer,,YES
+relay,backuptime3,integer,,YES
+relay,bonusentry,character,1,YES
+relay,comment,character varying,250,YES
+relay,dsqitemid,integer,,YES
+relay,dsqdaytime,timestamp without time zone,,YES
+relay,dsqnotified,character,1,YES
+relay,dsqnumber,smallint,,YES
+relay,entrycourse,smallint,,YES
+relay,entrytime,integer,,YES
+relay,finalfix,character,1,YES
+relay,finishjudge,smallint,,YES
+relay,heatid,integer,,YES
+relay,infocode,character varying,5,YES
+relay,lane,smallint,,YES
+relay,lateentry,character,1,YES
+relay,mpoints,smallint,,YES
+relay,padtime,integer,,YES
+relay,qtcity,character varying,30,YES
+relay,qtcourse,smallint,,YES
+relay,qtdate,timestamp without time zone,,YES
+relay,qtname,character varying,100,YES
+relay,qtnation,character varying,3,YES
+relay,qttime,integer,,YES
+relay,qualcode,character varying,2,YES
+relay,reactiontime,smallint,,YES
+relay,resultstatus,smallint,,YES
+relay,swimeventid,integer,,YES
+relay,swimtime,integer,,YES
+relay,usetimetype,smallint,,YES
+relay,dsqofficialid,integer,,YES
+relay,reservecode,character varying,20,YES
+relay,noadvance,character,1,YES
+relay,officialsplits,character varying,100,YES
+relay,qttiming,smallint,,YES
+relayposition,athleteid,integer,,YES
+relayposition,qtcity,character varying,30,YES
+relayposition,qtcourse,smallint,,YES
+relayposition,qtdate,timestamp without time zone,,YES
+relayposition,qtname,character varying,100,YES
+relayposition,qtnation,character varying,3,YES
+relayposition,qttime,integer,,YES
+relayposition,qtislap,character,1,YES
+relayposition,reactiontime,smallint,,YES
+relayposition,relayid,integer,,YES
+relayposition,relaynumber,smallint,,YES
+relayposition,resultstatus,smallint,,YES
+relayposition,qttiming,smallint,,YES
+relaysplit,relayid,integer,,NO
+relaysplit,distance,smallint,,NO
+relaysplit,swimtime,integer,,YES
+resultplace,agegroupid,integer,,NO
+resultplace,fjeffective,smallint,,YES
+resultplace,place,smallint,,YES
+resultplace,resultid,integer,,YES
+resultplace,sortcode,smallint,,NO
+resultpointscore,resultid,integer,,YES
+resultpointscore,pointscoreid,integer,,YES
+splashmemessage,splashmemessageid,integer,,NO
+splashmemessage,data,text,,YES
+splashmemessage,destination,integer,,YES
+splashmemessage,email,character varying,60,YES
+splashmemessage,handled,character,1,YES
+splashmemessage,modified,timestamp without time zone,,YES
+splashmemessage,typ,smallint,,YES
+splashmemessage,swrid,integer,,YES
+split,swimresultid,integer,,NO
+split,distance,smallint,,NO
+split,swimtime,integer,,YES
+swimevent,swimeventid,integer,,NO
+swimevent,comment,text,,YES
+swimevent,daytime,timestamp without time zone,,YES
+swimevent,duration,timestamp without time zone,,YES
+swimevent,entrytimeconversion,smallint,,YES
+swimevent,entrytimepercent,smallint,,YES
+swimevent,eventnumber,smallint,,YES
+swimevent,externalid,character varying,40,YES
+swimevent,fee,double precision,,YES
+swimevent,finalorder,smallint,,YES
+swimevent,gender,smallint,,YES
+swimevent,lanemax,smallint,,YES
+swimevent,lytentrylist,integer,,YES
+swimevent,lytstartlist,integer,,YES
+swimevent,lytresult2column,integer,,YES
+swimevent,lytresult2split,integer,,YES
+swimevent,lytresult4split,integer,,YES
+swimevent,lytresultnosplit,integer,,YES
+swimevent,lytresulthtml,integer,,YES
+swimevent,masters,character,1,YES
+swimevent,maxentries,smallint,,YES
+swimevent,pfineignore,character,1,YES
+swimevent,preveventid,integer,,YES
+swimevent,qualbyplace,smallint,,YES
+swimevent,round,smallint,,YES
+swimevent,seedbonuslast,character,1,YES
+swimevent,seedexhlast,character,1,YES
+swimevent,seedlateentrylast,character,1,YES
+swimevent,seedingglobal,character,1,YES
+swimevent,singleheats,smallint,,YES
+swimevent,sortcode,integer,,YES
+swimevent,splashmecanedit,character,1,YES
+swimevent,sponsor,character varying,50,YES
+swimevent,swimsessionid,integer,,YES
+swimevent,swimstyleid,integer,,YES
+swimevent,twoperlane,character,1,YES
+swimevent,roundname,character varying,50,YES
+swimevent,combineagegroups,character,1,YES
+swimevent,roundone,character varying,20,YES
+swimevent,internalevent,character,1,YES
+swimresult,swimresultid,integer,,NO
+swimresult,athleteid,integer,,YES
+swimresult,swrabestid,integer,,YES
+swimresult,swrabesttime,integer,,YES
+swimresult,swrsbestid,integer,,YES
+swimresult,swrsbesttime,integer,,YES
+swimresult,agegroupid,integer,,YES
+swimresult,backuptime1,integer,,YES
+swimresult,backuptime2,integer,,YES
+swimresult,backuptime3,integer,,YES
+swimresult,bonusentry,character,1,YES
+swimresult,comment,character varying,250,YES
+swimresult,dsqitemid,integer,,YES
+swimresult,dsqdaytime,timestamp without time zone,,YES
+swimresult,dsqnotified,character,1,YES
+swimresult,dsqnumber,smallint,,YES
+swimresult,entrycourse,smallint,,YES
+swimresult,entrytime,integer,,YES
+swimresult,finalfix,character,1,YES
+swimresult,finishjudge,smallint,,YES
+swimresult,heatid,integer,,YES
+swimresult,infocode,character varying,5,YES
+swimresult,lane,smallint,,YES
+swimresult,lateentry,character,1,YES
+swimresult,mpoints,smallint,,YES
+swimresult,padtime,integer,,YES
+swimresult,qtcity,character varying,30,YES
+swimresult,qtcourse,smallint,,YES
+swimresult,qtdate,timestamp without time zone,,YES
+swimresult,qtname,character varying,100,YES
+swimresult,qtnation,character varying,3,YES
+swimresult,qttime,integer,,YES
+swimresult,qualcode,character varying,2,YES
+swimresult,reactiontime,smallint,,YES
+swimresult,resultstatus,smallint,,YES
+swimresult,swimeventid,integer,,YES
+swimresult,swimtime,integer,,YES
+swimresult,usetimetype,smallint,,YES
+swimresult,dsqofficialid,integer,,YES
+swimresult,reservecode,character varying,20,YES
+swimresult,noadvance,character,1,YES
+swimresult,officialsplits,character varying,100,YES
+swimresult,qttiming,smallint,,YES
+swimsession,swimsessionid,integer,,NO
+swimsession,course,smallint,,YES
+swimsession,daytime,timestamp without time zone,,YES
+swimsession,endtime,timestamp without time zone,,YES
+swimsession,feeathlete,double precision,,YES
+swimsession,following,character,1,YES
+swimsession,lanemin,smallint,,YES
+swimsession,lanemax,smallint,,YES
+swimsession,lanesbyplace,character varying,100,YES
+swimsession,maxentriesathlete,smallint,,YES
+swimsession,maxentriesrelay,smallint,,YES
+swimsession,name,character varying,100,YES
+swimsession,officialmeeting,timestamp without time zone,,YES
+swimsession,poolglobal,character,1,YES
+swimsession,pooltype,smallint,,YES
+swimsession,remarks,text,,YES
+swimsession,remarksjury,text,,YES
+swimsession,roundtotenths,character,1,YES
+swimsession,sessionnumber,smallint,,YES
+swimsession,startdate,timestamp without time zone,,YES
+swimsession,timing,smallint,,YES
+swimsession,tlmeeting,timestamp without time zone,,YES
+swimsession,touchpadmode,smallint,,YES
+swimsession,warmupfrom,timestamp without time zone,,YES
+swimsession,warmupuntil,timestamp without time zone,,YES
+swimstyle,swimstyleid,integer,,NO
+swimstyle,code,character varying,10,YES
+swimstyle,distance,smallint,,YES
+swimstyle,name,character varying,50,YES
+swimstyle,relaycount,smallint,,YES
+swimstyle,stroke,smallint,,YES
+swimstyle,sortcode,integer,,YES
+swimstyle,technique,smallint,,YES
+swimstyle,uniqueid,smallint,,YES
+timestandard,timestandardlistid,integer,,NO
+timestandard,swimstyleid,integer,,NO
+timestandard,swimtime,integer,,YES
+timestandardlist,timestandardlistid,integer,,NO
+timestandardlist,agemax,smallint,,YES
+timestandardlist,agemin,smallint,,YES
+timestandardlist,code,character varying,5,YES
+timestandardlist,course,smallint,,YES
+timestandardlist,gender,smallint,,YES
+timestandardlist,handicap,smallint,,YES
+timestandardlist,name,character varying,50,YES
+timestandardlist,nation,character varying,3,YES
+timestandardlist,standardtype,smallint,,YES
+timestandardlist,tslgroup,integer,,YES
+timingdata,timingdataid,integer,,NO
+timingdata,datatype,smallint,,YES
+timingdata,dnsbits,character varying,3,YES
+timingdata,eventnumber,smallint,,YES
+timingdata,eventnumberex,character varying,8,YES
+timingdata,heatid,smallint,,YES
+timingdata,heatnumber,smallint,,YES
+timingdata,heatnumberex,smallint,,YES
+timingdata,instancenumber,smallint,,YES
+timingdata,lane,smallint,,YES
+timingdata,lap,smallint,,YES
+timingdata,modified,timestamp without time zone,,YES
+timingdata,place,smallint,,YES
+timingdata,swimsessionid,integer,,YES
+timingdata,swimtime,integer,,YES
+(465 rows)

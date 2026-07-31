@@ -19,9 +19,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { createTestDb } from './helpers'
 import { join } from 'path'
-import { existsSync } from 'fs'
+import { existsSync, unlinkSync } from 'fs'
+import { tmpdir } from 'os'
+import { randomBytes } from 'crypto'
 import type Database from 'better-sqlite3'
-import { importLenex } from '../src/main/lenex'
+import { importLenex, exportLenexResults, exportMeetLenex, readZipEntries } from '../src/main/lenex'
 
 // Use the test fixture from team-app if available
 const FIXTURE_PATH = join(__dirname, '../../team-app/tests/fixtures/meet_template.lxf')
@@ -109,5 +111,117 @@ describe('LENEX importer', () => {
       `SELECT COUNT(*) as c FROM swimevent WHERE swimsessionid NOT IN (SELECT swimsessionid FROM swimsession)`
     ).get() as { c: number }
     expect(orphans.c).toBe(0)
+  })
+})
+
+// ── LENEX exporter — regression coverage for real bugs found testing against ──
+// ── actual Splash Meet Manager (2026-07-31, see CLAUDE.md) ────────────────────
+
+const OLE_EPOCH_MS = Date.UTC(1899, 11, 30)
+function dateToOle(y: number, m: number, d: number): number {
+  return (Date.UTC(y, m - 1, d) - OLE_EPOCH_MS) / 86400000
+}
+
+function tmpLxfPath(): string {
+  return join(tmpdir(), `lenex-export-test-${randomBytes(4).toString('hex')}.lxf`)
+}
+
+/** Read a .lxf's XML content back out (it's a ZIP with a single .lef entry). */
+function readLefXml(filePath: string): string {
+  const entries = readZipEntries(filePath)
+  const lefName = [...entries.keys()].find(n => n.endsWith('.lef'))!
+  return entries.get(lefName)!.toString('utf8')
+}
+
+/** Seed a minimal meet with one club, one athlete, one validated heat + result. */
+function seedResultsFixture(db: Database.Database, birthdateOle: number) {
+  db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount, stroke) VALUES (1, 100, 'Freestyle', 1, 1)`)
+  db.exec(`INSERT INTO swimsession (swimsessionid, sessionnumber, name, course) VALUES (1, 1, 'Session 1', 1)`)
+  db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, sortcode, internalevent) VALUES (1, 1, 1, 1, 1, 1, 'F')`)
+  db.exec(`INSERT INTO agegroup (agegroupid, swimeventid, name, agemin, agemax, gender, sortcode) VALUES (1, 1, 'Open', 18, NULL, 1, 1)`)
+  db.exec(`INSERT INTO club (clubid, code, name, nation) VALUES (1, 'TST', 'Test Club', 'CAN')`)
+  db.prepare(
+    `INSERT INTO athlete (athleteid, clubid, firstname, lastname, gender, birthdate, nation) VALUES (1, 1, 'Jane', 'Doe', 2, ?, 'CAN')`
+  ).run(String(birthdateOle))
+  db.exec(`INSERT INTO heat (heatid, swimeventid, heatnumber, racestatus) VALUES (1, 1, 1, 5)`) // 5 = official/validated
+  db.exec(`INSERT INTO swimresult (swimresultid, athleteid, swimeventid, agegroupid, heatid, lane, entrytime, swimtime, resultstatus) VALUES (1, 1, 1, 1, 1, 4, 60000, 58500, NULL)`)
+}
+
+describe('LENEX exporter', () => {
+  let db: Database.Database
+  let cleanup: () => void
+  let outPath: string
+
+  beforeEach(() => {
+    const t = createTestDb()
+    db = t.db
+    cleanup = t.cleanup
+    outPath = tmpLxfPath()
+  })
+
+  afterEach(() => {
+    cleanup()
+    try { unlinkSync(outPath) } catch { /* not written this test */ }
+  })
+
+  it('exportLenexResults writes an ISO-formatted birthdate, not a raw OLE double', () => {
+    seedResultsFixture(db, dateToOle(2014, 7, 3))
+    exportLenexResults(outPath, db)
+    const xml = readLefXml(outPath)
+    expect(xml).toContain('birthdate="2014-07-03"')
+    expect(xml).not.toMatch(/birthdate="\d+\.\d+"/)
+  })
+
+  it('exportLenexResults writes an AGEDATE element from MEETVALUES.AGEDATE', () => {
+    seedResultsFixture(db, dateToOle(2014, 7, 3))
+    db.exec(`INSERT INTO bsglobal (name, data) VALUES ('MEETVALUES', 'AGEDATE=D;20261231000000000')`)
+    exportLenexResults(outPath, db)
+    const xml = readLefXml(outPath)
+    expect(xml).toContain('<AGEDATE value="2026-12-31" type="DATE" />')
+  })
+
+  it('exportLenexResults falls back to Dec 31 of the current year when AGEDATE is not set', () => {
+    seedResultsFixture(db, dateToOle(2014, 7, 3))
+    exportLenexResults(outPath, db)
+    const xml = readLefXml(outPath)
+    expect(xml).toContain(`<AGEDATE value="${new Date().getFullYear()}-12-31" type="DATE" />`)
+  })
+
+  it('exportMeetLenex also writes a correct AGEDATE (regression guard for the shared computeAgeDate helper)', () => {
+    seedResultsFixture(db, dateToOle(2014, 7, 3))
+    db.exec(`INSERT INTO bsglobal (name, data) VALUES ('MEETVALUES', 'AGEDATE=D;20261231000000000')`)
+    exportMeetLenex(outPath, db)
+    const xml = readLefXml(outPath)
+    expect(xml).toContain('<AGEDATE value="2026-12-31" type="DATE" />')
+  })
+
+  it('exportMeetLenex writes an ISO-formatted session date, not a raw OLE double (e.g. after an .smb restore)', () => {
+    seedResultsFixture(db, dateToOle(2014, 7, 3))
+    db.prepare(`UPDATE swimsession SET startdate=? WHERE swimsessionid=1`).run(String(dateToOle(2026, 6, 14)))
+    exportMeetLenex(outPath, db)
+    const xml = readLefXml(outPath)
+    expect(xml).toContain('date="2026-06-14"')
+    expect(xml).not.toMatch(/date="\d+\.\d+"/)
+  })
+
+  it('round-trips swimtime/resultstatus/reactiontime through importLenex (was silently dropped before)', () => {
+    seedResultsFixture(db, dateToOle(2014, 7, 3))
+    db.prepare(`UPDATE swimresult SET resultstatus=3 WHERE swimresultid=1`).run() // DSQ
+    exportLenexResults(outPath, db)
+
+    const { db: freshDb, cleanup: freshCleanup } = createTestDb()
+    try {
+      const summary = importLenex(outPath, freshDb)
+      expect(summary.results).toBeGreaterThan(0)
+      const row = freshDb.prepare(`SELECT swimtime, resultstatus, heatid, lane FROM swimresult LIMIT 1`).get() as {
+        swimtime: number | null; resultstatus: number | null; heatid: number | null; lane: number | null
+      }
+      expect(row.swimtime).toBe(58500)
+      expect(row.resultstatus).toBe(3)
+      expect(row.heatid).not.toBeNull()
+      expect(row.lane).toBe(4)
+    } finally {
+      freshCleanup()
+    }
   })
 })

@@ -24,7 +24,12 @@ For each swimresult row without a swimtime:
 - Sets racestatus=5 (official) on affected heats
 
 Usage: python simulate_results.py [path_to_meet.db]
-Default: %APPDATA%/SauvetageMeet/meet.db
+Default: auto-detects between the packaged app's data dir
+(%APPDATA%/SauvetageMeet/meet.db) and the `npm run dev` data dir
+(%APPDATA%/SauvetageMeet-Dev/meet.db) — see main.py's app.setName() in
+src/main/index.ts, which uses "-Dev" only when unpackaged. If both exist,
+you must pass the path explicitly; this script won't guess, since silently
+running against the wrong one looks identical to a real "0 results" run.
 """
 
 import os
@@ -33,11 +38,29 @@ import sqlite3
 import sys
 
 
+def _default_db_path() -> str:
+    appdata = os.environ.get("APPDATA", "")
+    prod = os.path.join(appdata, "SauvetageMeet", "meet.db")
+    dev = os.path.join(appdata, "SauvetageMeet-Dev", "meet.db")
+    prod_exists = os.path.exists(prod)
+    dev_exists = os.path.exists(dev)
+
+    if prod_exists and dev_exists:
+        print("ERROR: Both a packaged-app database and a `npm run dev` database exist:")
+        print(f"  {prod}")
+        print(f"  {dev}")
+        print("Pass the path explicitly: simulate_results.bat <path_to_meet.db>")
+        sys.exit(1)
+    if dev_exists:
+        return dev
+    return prod
+
+
 def main():
     if len(sys.argv) > 1:
         db_path = sys.argv[1]
     else:
-        db_path = os.path.join(os.environ.get("APPDATA", ""), "SauvetageMeet", "meet.db")
+        db_path = _default_db_path()
 
     if not os.path.exists(db_path):
         print(f"ERROR: Database not found: {db_path}")

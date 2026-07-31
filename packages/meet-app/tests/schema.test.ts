@@ -19,15 +19,50 @@
 /**
  * Schema integrity tests — verify that all query functions work against
  * a freshly created database (catches missing columns in schema DDL).
+ *
+ * Runs against BOTH backends (SQLite + PostgreSQL) so a column/type that only
+ * exists — or only gets read back correctly — on one backend fails loudly
+ * here instead of at a meet. The PG half is skipped automatically if no
+ * Postgres server is reachable (see packages/meet-app/docker-compose.postgres.yml).
  */
 import { describe, it, expect } from 'vitest'
-import { createTestDb } from './helpers'
+import {
+  createTestDb, createPgTestDb, isPgTestAvailable,
+  getTableColumns, listTableNames,
+  type TestBackendKind,
+} from './helpers'
+import type { DbBackend } from '../src/main/dbBackend'
 
-describe('Schema integrity', () => {
-  it('athlete table has all columns used by getAthletes query', () => {
-    const { db, cleanup } = createTestDb()
-    try {
-      // This is the exact query from db.ts getAthletes()
+const pgAvailable = await isPgTestAvailable()
+const BACKENDS: TestBackendKind[] = pgAvailable ? ['sqlite', 'pg'] : ['sqlite']
+if (!pgAvailable) {
+  console.warn(
+    '[schema.test.ts] Postgres not reachable — skipping PG-backend schema tests. ' +
+    'Start it with: docker compose -f packages/meet-app/docker-compose.postgres.yml up -d'
+  )
+}
+
+describe.each(BACKENDS)('Schema integrity [%s]', (kind) => {
+  async function withDb(fn: (db: DbBackend) => void | Promise<void>) {
+    if (kind === 'sqlite') {
+      const { db, cleanup } = createTestDb()
+      try {
+        await fn(db as unknown as DbBackend)
+      } finally {
+        cleanup()
+      }
+    } else {
+      const { db, cleanup } = await createPgTestDb()
+      try {
+        await fn(db)
+      } finally {
+        await cleanup()
+      }
+    }
+  }
+
+  it('athlete table has all columns used by getAthletes query', async () => {
+    await withDb((db) => {
       const stmt = db.prepare(`
         SELECT a.athleteid, a.firstname, a.lastname, a.birthdate, a.gender, a.nation, a.license, a.domicile,
                a.handicapex, c.code AS clubcode, c.name AS clubname
@@ -37,15 +72,11 @@ describe('Schema integrity', () => {
       `)
       const rows = stmt.all()
       expect(rows).toEqual([])
-    } finally {
-      cleanup()
-    }
+    })
   })
 
-  it('athlete table has all columns used by saveAthlete query', () => {
-    const { db, cleanup } = createTestDb()
-    try {
-      // Insert a club first
+  it('athlete table has all columns used by saveAthlete query', async () => {
+    await withDb((db) => {
       db.prepare(`INSERT INTO club (clubid, code, name, nation) VALUES (1, 'TST', 'Test Club', 'CAN')`).run()
       // This is the exact UPDATE from db.ts saveAthlete()
       db.prepare(`
@@ -62,79 +93,58 @@ describe('Schema integrity', () => {
       const row = db.prepare(`SELECT * FROM athlete WHERE athleteid = 1`).get() as any
       expect(row.firstname).toBe('Jane')
       expect(row.domicile).toBe('')
-    } finally {
-      cleanup()
-    }
+    })
   })
 
-  it('swimresult table has dsqitemid column', () => {
-    const { db, cleanup } = createTestDb()
-    try {
-      const cols = db.prepare(`PRAGMA table_info(swimresult)`).all() as Array<{ name: string }>
-      const colNames = cols.map(c => c.name)
+  it('swimresult table has dsqitemid column', async () => {
+    await withDb((db) => {
+      const colNames = getTableColumns(db, kind, 'swimresult')
       expect(colNames).toContain('dsqitemid')
       expect(colNames).toContain('dsqofficialid')
       expect(colNames).toContain('noadvance')
-    } finally {
-      cleanup()
-    }
+    })
   })
 
-  it('dsqitem table exists and has correct columns', () => {
-    const { db, cleanup } = createTestDb()
-    try {
-      const cols = db.prepare(`PRAGMA table_info(dsqitem)`).all() as Array<{ name: string }>
-      const colNames = cols.map(c => c.name)
+  it('dsqitem table exists and has correct columns', async () => {
+    await withDb((db) => {
+      const colNames = getTableColumns(db, kind, 'dsqitem')
       expect(colNames).toContain('dsqitemid')
       expect(colNames).toContain('code')
       expect(colNames).toContain('name')
       expect(colNames).toContain('name_en')
       expect(colNames).toContain('sortcode')
-    } finally {
-      cleanup()
-    }
+    })
   })
 
-  it('bsglobal table can store and retrieve values', () => {
-    const { db, cleanup } = createTestDb()
-    try {
+  it('bsglobal table can store and retrieve values', async () => {
+    await withDb((db) => {
       db.prepare(`INSERT INTO bsglobal (name, data) VALUES (?, ?)`).run('TEST_KEY', 'test_value')
       const row = db.prepare(`SELECT data FROM bsglobal WHERE name = ?`).get('TEST_KEY') as { data: string }
       expect(row.data).toBe('test_value')
-    } finally {
-      cleanup()
-    }
+    })
   })
 
-  it('getMeetValues query works on fresh schema', () => {
-    const { db, cleanup } = createTestDb()
-    try {
+  it('getMeetValues query works on fresh schema', async () => {
+    await withDb((db) => {
       const row = db.prepare(`SELECT data FROM bsglobal WHERE name='MEETVALUES'`).get() as { data: string } | undefined
       expect(row).toBeUndefined() // No MEETVALUES yet, but query doesn't crash
-    } finally {
-      cleanup()
-    }
+    })
   })
 
-  it('heat list query works on fresh schema', () => {
-    const { db, cleanup } = createTestDb()
-    try {
+  it('heat list query works on fresh schema', async () => {
+    await withDb((db) => {
       const rows = db.prepare(`
         SELECT s.swimsessionid, s.sessionnumber, s.name, s.daytime, s.lanemin, s.lanemax
         FROM swimsession s
         ORDER BY s.sessionnumber
       `).all()
       expect(rows).toEqual([])
-    } finally {
-      cleanup()
-    }
+    })
   })
 
-  it('all tables from schema exist', () => {
-    const { db, cleanup } = createTestDb()
-    try {
-      const tables = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' ORDER BY name`).all() as Array<{ name: string }>
-      const tableNames = tables.map(t => t.name)
+  it('all tables from schema exist', async () => {
+    await withDb((db) => {
+      const tableNames = listTableNames(db, kind)
       expect(tableNames).toContain('bsglobal')
       expect(tableNames).toContain('swimstyle')
       expect(tableNames).toContain('club')
@@ -146,8 +156,6 @@ describe('Schema integrity', () => {
       expect(tableNames).toContain('swimresult')
       expect(tableNames).toContain('split')
       expect(tableNames).toContain('dsqitem')
-    } finally {
-      cleanup()
-    }
+    })
   })
 })

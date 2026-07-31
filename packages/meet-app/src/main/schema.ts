@@ -100,7 +100,8 @@ export const SCHEMA_DDL: string[] = [
     swimeventid INTEGER REFERENCES swimevent(swimeventid) ON DELETE CASCADE,
     swimlevels TEXT, useformedals TEXT DEFAULT 'F',
     useforscoring TEXT DEFAULT 'F', winnertitle TEXT,
-    foreigncount INTEGER, finalseedtype INTEGER
+    foreigncount INTEGER, finalseedtype INTEGER,
+    afinal8lanes TEXT DEFAULT 'F'
   )`,
   `CREATE TABLE IF NOT EXISTS heat (
     heatid INTEGER PRIMARY KEY,

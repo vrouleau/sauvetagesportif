@@ -11,6 +11,23 @@ jobs:
   meet-app-test:
     name: Meet App — Unit Tests
     runs-on: ubuntu-latest
+    services:
+      # Backs the PG-backend parity + concurrency tests (tests/helpers.ts,
+      # tests/concurrency.test.ts). Tests probe this at startup and skip
+      # gracefully if unreachable — see isPgTestAvailable() in tests/helpers.ts.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: meetmgr
+          POSTGRES_PASSWORD: meetmgr
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U meetmgr"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v5
 
@@ -28,6 +45,11 @@ jobs:
 
       - name: Run unit tests
         working-directory: packages/meet-app
+        env:
+          TEST_PG_HOST: localhost
+          TEST_PG_PORT: 5432
+          TEST_PG_USER: meetmgr
+          TEST_PG_PASSWORD: meetmgr
         run: npm test
 
   # ─── Meet App: Build ───────────────────────────────────────────────────────

@@ -21,11 +21,12 @@ import { inflateRawSync, deflateRawSync } from 'node:zlib'
 import Database from 'better-sqlite3'
 import { saveGeminiKeys } from './ocrGemini'
 import { generateBeachNumbers } from './beachNumber'
+import { parseOleDate } from './db'
 
 // ── ZIP reader ────────────────────────────────────────────────────────────────
 
 // Reads all local-file entries from a ZIP. Handles store (method 0) and deflate (method 8).
-function readZipEntries(filePath: string): Map<string, Buffer> {
+export function readZipEntries(filePath: string): Map<string, Buffer> {
   const buf = readFileSync(filePath)
   if (buf[0] !== 0x50 || buf[1] !== 0x4B || buf[2] !== 0x03 || buf[3] !== 0x04) {
     throw new Error('Not a valid ZIP/LXF file')
@@ -341,13 +342,14 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
          firstname=excluded.firstname, lastname=excluded.lastname, birthdate=excluded.birthdate,
          gender=excluded.gender, nation=excluded.nation, license=excluded.license, clubid=excluded.clubid`),
     upsertResult: db.prepare(
-      `INSERT INTO swimresult (swimresultid, athleteid, swimeventid, agegroupid, heatid, lane, entrytime, entrycourse, usetimetype)
-       VALUES (?,?,?,?,?,?,?,?,0)
+      `INSERT INTO swimresult (swimresultid, athleteid, swimeventid, agegroupid, heatid, lane, entrytime, entrycourse, swimtime, resultstatus, reactiontime, usetimetype)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,0)
        ON CONFLICT(swimresultid) DO UPDATE SET
          athleteid=excluded.athleteid, swimeventid=excluded.swimeventid,
          agegroupid=excluded.agegroupid,
          heatid=excluded.heatid, lane=excluded.lane, entrytime=excluded.entrytime,
-         entrycourse=excluded.entrycourse`),
+         entrycourse=excluded.entrycourse, swimtime=excluded.swimtime,
+         resultstatus=excluded.resultstatus, reactiontime=excluded.reactiontime`),
   }
 
   // ── Sessions → swimsession ─────────────────────────────────────────────
@@ -541,7 +543,8 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
         const resId = nextId('swimresult', 'swimresultid')
         try {
           stmts.upsertResult.run(
-            resId, athId, eventId, agegroupid, null, null, entrytime, entrycourse
+            resId, athId, eventId, agegroupid, null, null, entrytime, entrycourse,
+            null, null, null
           )
           summary.results++
         } catch (e) {
@@ -558,6 +561,9 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
         const entrytime = lenexTimeToMs(ra.entrytime)
         const agegroupid = parseInt(ra.agegroupid ?? '0', 10) || null
         const entrycourse = ra.entrycourse ? encodeCourse(ra.entrycourse) : null
+        const swimtime = lenexTimeToMs(ra.swimtime)
+        const reactiontime = lenexTimeToMs(ra.reactiontime)
+        const resultstatus = encodeResultStatus(ra.status)
         try {
           stmts.upsertResult.run(
             resId, athId,
@@ -566,7 +572,10 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
             parseInt(ra.heatid ?? '0', 10) || null,
             parseInt(ra.lane ?? '0', 10) || null,
             entrytime,
-            entrycourse
+            entrycourse,
+            swimtime,
+            resultstatus,
+            reactiontime
           )
           summary.results++
         } catch (e) {
@@ -712,6 +721,15 @@ function decodeResultStatus(s: number | null): string | null {
   }
 }
 
+function encodeResultStatus(s: string | undefined): number | null {
+  switch ((s ?? '').toUpperCase()) {
+    case 'DNS': return 1
+    case 'DNF': return 2
+    case 'DSQ': return 3
+    default: return null
+  }
+}
+
 // ── XML escaping ──────────────────────────────────────────────────────────────
 
 function escXml(s: string): string {
@@ -817,6 +835,23 @@ export interface ExportSummary {
 
 // ── Main export function ──────────────────────────────────────────────────────
 
+/**
+ * Age base date (LENEX <AGEDATE>) from MEETVALUES.AGEDATE (Splash format:
+ * YYYYMMDDHHMMSSMMM), falling back to Dec 31 of the current year. Shared by
+ * every LENEX export path so they can't drift apart the way exportMeetLenex
+ * and exportLenexResults once did — the latter omitted <AGEDATE> entirely,
+ * which made Splash fall back to its own internal sentinel reference date
+ * (observed: age computed against year 1000) instead of erroring loudly.
+ */
+function computeAgeDate(mv: Record<string, string>): string {
+  const raw = mv['AGEDATE'] || ''
+  if (raw.length >= 8) {
+    const y = raw.slice(0, 4), m = raw.slice(4, 6), d = raw.slice(6, 8)
+    return `${y}-${m}-${d}`
+  }
+  return `${new Date().getFullYear()}-12-31`
+}
+
 export function exportLenexResults(filePath: string, db: Database.Database): ExportSummary {
   const summary: ExportSummary = { sessions: 0, events: 0, clubs: 0, athletes: 0, results: 0 }
 
@@ -843,6 +878,7 @@ export function exportLenexResults(filePath: string, db: Database.Database): Exp
   const meetCity = g['MeetCity'] || mv['CITY'] || ''
   const meetNation = g['MeetNation'] || mv['NATION'] || ''
   const meetCourse = decodeCourse(parseInt(g['MeetCourse'] || mv['COURSE'] || '1', 10))
+  const ageDate = computeAgeDate(mv)
 
   // ── Sessions ────────────────────────────────────────────────────────────────
   const sessions = db.prepare(
@@ -966,6 +1002,7 @@ export function exportLenexResults(filePath: string, db: Database.Database): Exp
   lines.push('<LENEX version="3.0">')
   lines.push('  <MEETS>')
   lines.push(`    <MEET${attr('name', meetName)}${attr('city', meetCity)}${attr('nation', meetNation)}${attr('course', meetCourse)}>`)
+  lines.push(`      <AGEDATE value="${ageDate}" type="DATE" />`)
 
   // Sessions + Events + AgeGroups + Heats
   lines.push('      <SESSIONS>')
@@ -1026,7 +1063,7 @@ export function exportLenexResults(filePath: string, db: Database.Database): Exp
     lines.push('          <ATHLETES>')
 
     for (const ath of athletes) {
-      lines.push(`            <ATHLETE${attr('athleteid', ath.athleteid)}${attr('firstname', ath.firstname)}${attr('lastname', ath.lastname)}${attr('birthdate', ath.birthdate)}${attr('gender', decodeGender(ath.gender))}${attr('nation', ath.nation)}${attr('license', ath.license)}>`)
+      lines.push(`            <ATHLETE${attr('athleteid', ath.athleteid)}${attr('firstname', ath.firstname)}${attr('lastname', ath.lastname)}${attr('birthdate', parseOleDate(ath.birthdate))}${attr('gender', decodeGender(ath.gender))}${attr('nation', ath.nation)}${attr('license', ath.license)}>`)
       lines.push('              <RESULTS>')
 
       const athResults = athleteResults.get(ath.athleteid) ?? []
@@ -1166,14 +1203,7 @@ export function exportMeetLenex(filePath: string, db: Database.Database): MeetEx
   const meetNation = g['MeetNation'] || mv['NATION'] || ''
   const meetCourse = decodeCourse(parseInt(g['MeetCourse'] || mv['COURSE'] || '1', 10))
 
-  // Age base date from MEETVALUES or default to Dec 31 of current year
-  const ageDateRaw = mv['AGEDATE'] || ''
-  let ageDate = ''
-  if (ageDateRaw && ageDateRaw.length >= 8) {
-    const y = ageDateRaw.slice(0, 4), m = ageDateRaw.slice(4, 6), d = ageDateRaw.slice(6, 8)
-    ageDate = `${y}-${m}-${d}`
-  }
-  if (!ageDate) ageDate = `${new Date().getFullYear()}-12-31`
+  const ageDate = computeAgeDate(mv)
 
   const sessions = db.prepare(
     `SELECT swimsessionid, sessionnumber, name, course, startdate FROM swimsession ORDER BY sessionnumber`
@@ -1215,7 +1245,7 @@ export function exportMeetLenex(filePath: string, db: Database.Database): MeetEx
   lines.push('      <SESSIONS>')
 
   for (const sess of sessions) {
-    const sessDate = sess.startdate ? sess.startdate.slice(0, 10) : ageDate
+    const sessDate = parseOleDate(sess.startdate) ?? ageDate
     lines.push(`        <SESSION${attr('number', sess.sessionnumber)}${attr('name', sess.name)}${attr('date', sessDate)}${attr('course', decodeCourse(sess.course))}>`)
     lines.push('          <EVENTS>')
 
