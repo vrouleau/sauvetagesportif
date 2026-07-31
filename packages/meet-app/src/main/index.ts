@@ -1643,6 +1643,7 @@ let activeOcrEngine: OcrEngine | null = null
 
 ipcMain.handle('timing:save-scan', async (_event, data: {
   eventNumber: number
+  swimEventId: number
   heatNumber: number
   lane: number
   barcodeRaw: string
@@ -1659,6 +1660,7 @@ ipcMain.handle('timing:save-scan', async (_event, data: {
 
     const scanId = insertScan({
       eventNumber: data.eventNumber,
+      swimEventId: data.swimEventId,
       heatNumber: data.heatNumber,
       lane: data.lane,
       barcodeRaw: data.barcodeRaw,
@@ -1675,8 +1677,8 @@ ipcMain.handle('timing:get-unprocessed', () => {
   return getUnprocessedScans().map(scanToDto)
 })
 
-ipcMain.handle('timing:get-scans-for-heat', (_event, eventNumber: number, heatNumber: number) => {
-  return getScansForHeat(eventNumber, heatNumber).map(scanToDto)
+ipcMain.handle('timing:get-scans-for-heat', (_event, swimEventId: number, heatNumber: number) => {
+  return getScansForHeat(swimEventId, heatNumber).map(scanToDto)
 })
 
 ipcMain.handle('timing:get-scan-summary', () => {
@@ -1749,10 +1751,9 @@ ipcMain.handle('timing:validate-scan', (_event, scanId: number, time1: string, t
         SELECT sr.swimresultid
         FROM swimresult sr
         JOIN heat h ON sr.heatid = h.heatid
-        JOIN swimevent e ON h.swimeventid = e.swimeventid
-        WHERE e.eventnumber = ? AND h.heatnumber = ? AND sr.lane = ?
+        WHERE h.swimeventid = ? AND h.heatnumber = ? AND sr.lane = ?
         LIMIT 1
-      `).get(scan.eventNumber, scan.heatNumber, scan.lane) as { swimresultid: number } | undefined
+      `).get(scan.swimEventId, scan.heatNumber, scan.lane) as { swimresultid: number } | undefined
 
       if (row) {
         db.prepare(`
@@ -1781,9 +1782,9 @@ ipcMain.handle('timing:mark-error', (_event, scanId: number, _notes: string) => 
   }
 })
 
-ipcMain.handle('timing:commit-heat-results', async (_event, eventNumber: number, heatNumber: number) => {
+ipcMain.handle('timing:commit-heat-results', async (_event, swimEventId: number, heatNumber: number) => {
   try {
-    const scans = getValidatedScansForHeat(eventNumber, heatNumber)
+    const scans = getValidatedScansForHeat(swimEventId, heatNumber)
     if (scans.length === 0) {
       return { ok: false, error: 'No validated scans for this heat' }
     }
@@ -1804,10 +1805,9 @@ ipcMain.handle('timing:commit-heat-results', async (_event, eventNumber: number,
         SELECT sr.swimresultid
         FROM swimresult sr
         JOIN heat h ON sr.heatid = h.heatid
-        JOIN swimevent e ON h.swimeventid = e.swimeventid
-        WHERE e.eventnumber = ? AND h.heatnumber = ? AND sr.lane = ?
+        WHERE h.swimeventid = ? AND h.heatnumber = ? AND sr.lane = ?
         LIMIT 1
-      `).get(eventNumber, heatNumber, scan.lane) as { swimresultid: number } | undefined
+      `).get(swimEventId, heatNumber, scan.lane) as { swimresultid: number } | undefined
 
       if (row) {
         db.prepare(`
@@ -1928,7 +1928,7 @@ ipcMain.handle('timing:generate-sheets', async (_event, sessionId: number) => {
 
       // One strip per lane (both chronos on same strip)
       const pages = buildTimingSheetPages(
-        heat.eventnumber, eventName, heat.heatnumber, laneNumbers, undefined, athleteNames, clubCodes
+        heat.swimeventid, heat.eventnumber, eventName, heat.heatnumber, laneNumbers, undefined, athleteNames, clubCodes
       )
       allPages.push(...pages)
     }
@@ -1945,6 +1945,7 @@ function scanToDto(scan: ReturnType<typeof getScanById> & {}) {
   return {
     scanId: scan.scanId,
     eventNumber: scan.eventNumber,
+    swimEventId: scan.swimEventId,
     heatNumber: scan.heatNumber,
     lane: scan.lane,
     barcodeRaw: scan.barcodeRaw,

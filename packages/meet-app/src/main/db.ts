@@ -17,7 +17,7 @@
 // along with Sauvetage Sportif. If not, see <https://www.gnu.org/licenses/>.
 
 import { assignLateBeachNumber } from './beachNumber'
-import { regenerateCombinedEvents } from './combinedEvents'
+import { regenerateCombinedEvents, resolveToFinal } from './combinedEvents'
 import { regeneratePointScores } from './pointScores'
 import { getDb as getActiveDb, isPgConnected, closeDb as closeActiveDb } from './connectionManager'
 import type { DbBackend } from './dbBackend'
@@ -3243,7 +3243,11 @@ export function getCombinedResults(selectedEventIds: number[], injectedDb?: Retu
     const athletePoints = new Map<number, { totalPoints: number; eventCount: number }>()
     const athleteInfo = new Map<number, { lastName: string; firstName: string; birthdate: string | number | null; clubName: string }>()
 
-    for (const { eventId, agegroupId } of filteredEvents) {
+    for (const { eventId: prelimEventId, agegroupId: prelimAgegroupId } of filteredEvents) {
+      // If this event has been split into a Prelim + Final pair, score off the FINAL's
+      // results, not the prelim's heat times (see resolveToFinal doc comment).
+      const { eventId, agegroupId } = resolveToFinal(db, prelimEventId, prelimAgegroupId)
+
       // Get all valid results for this event's specific age group, ordered by time.
       // An event can host multiple age groups under the same swimeventid, so results
       // must be scoped to the age group matching this category, not the whole event.
@@ -3386,6 +3390,7 @@ export interface EntryByEventRow {
   eventId: number
   eventNumber: number
   eventName: string
+  phase: 'Finale' | 'Eliminatoire' | 'Finale directe'
   gender: number
   ageMin: number
   ageMax: number
@@ -3403,10 +3408,11 @@ export function getEntriesByEvent(selectedEventIds: number[]): EntryByEventRow[]
   if (selectedEventIds.length === 0) return []
   const db = getLocalDb()
   const { clause, params } = inClause(selectedEventIds)
-  return db.prepare(`
+  const rows = db.prepare(`
     SELECT e.swimeventid AS eventId,
            e.eventnumber AS eventNumber,
            ss.name AS eventName,
+           e.round,
            e.gender,
            ag.agemin AS ageMin,
            ag.agemax AS ageMax,
@@ -3429,7 +3435,9 @@ export function getEntriesByEvent(selectedEventIds: number[]): EntryByEventRow[]
     LEFT JOIN agegroup ag2 ON r.agegroupid = ag2.agegroupid
     WHERE r.swimeventid IN (${clause})
     ORDER BY e.sortcode, e.swimeventid, a.lastname COLLATE NOCASE, a.firstname COLLATE NOCASE
-  `).all(...params) as EntryByEventRow[]
+  `).all(...params) as Array<Omit<EntryByEventRow, 'phase'> & { round: number | null }>
+
+  return rows.map(({ round, ...row }) => ({ ...row, phase: decodePhase(round) }))
 }
 
 // ── Query: results list report ────────────────────────────────────────────────
@@ -3644,10 +3652,16 @@ export function getPointStandings(selectedEventIds: number[], injectedDb?: Retur
     // For each event's specific age group, compute places and award points to clubs.
     // An event can host multiple age groups under the same swimeventid, so results
     // must be scoped to the age group matching this category, not the whole event.
-    for (const { eventId, agegroupId } of filteredEvents) {
+    for (const { eventId: prelimEventId, agegroupId: prelimAgegroupId } of filteredEvents) {
+      // If this event has been split into a Prelim + Final pair, score off the FINAL's
+      // results, not the prelim's heat times (see resolveToFinal doc comment). Relay-ness
+      // is checked against the prelim id since it can't change between rounds.
+      const isRelay = eventIsRelay(db, prelimEventId)
+      const { eventId, agegroupId } = resolveToFinal(db, prelimEventId, prelimAgegroupId)
+
       // Relay results live in `relay` (clubid direct, no athlete), not `swimresult`.
       const results = db.prepare(
-        eventIsRelay(db, eventId)
+        isRelay
           ? `SELECT r.swimtime, r.resultstatus,
                     COALESCE(c.name, c.code, '') AS clubname,
                     COALESCE(c.code, '') AS clubcode

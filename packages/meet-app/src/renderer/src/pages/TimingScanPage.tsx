@@ -32,6 +32,7 @@ function timingApi() {
       timing?: {
         saveScan: (data: {
           eventNumber: number
+          swimEventId: number
           heatNumber: number
           lane: number
           barcodeRaw: string
@@ -161,10 +162,10 @@ export default function TimingScanPage() {
     lastBarcodeRef.current = raw
     lastBarcodeTimeRef.current = now
 
-    const match = raw.match(/^E(\d+)-H(\d+)-L(\d+)$/)
+    const match = raw.match(/^E(\d+)-U(\d+)-H(\d+)-L(\d+)$/)
     if (!match) return
 
-    const [, eventStr, heatStr, laneStr] = match
+    const [, eventStr, swimEventIdStr, heatStr, laneStr] = match
     const imageBase64 = captureFrame()
     if (!imageBase64) return
 
@@ -178,6 +179,7 @@ export default function TimingScanPage() {
     if (api) {
       const result = await api.saveScan({
         eventNumber: parseInt(eventStr, 10),
+        swimEventId: parseInt(swimEventIdStr, 10),
         heatNumber: parseInt(heatStr, 10),
         lane: parseInt(laneStr, 10),
         barcodeRaw: raw,

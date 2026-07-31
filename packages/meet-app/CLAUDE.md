@@ -104,6 +104,17 @@ src/renderer/src/
 | `file:export-meet-lenex` | Export meet structure as .lxf (sessions/events/agegroups, no athletes) — for team-app invitation setup |
 | `file:export-lenex-results` | Export results as .lxf (full athletes + times) — for team-app historical import |
 
+### Prelim/Final event numbering
+
+`handleConvertToFinal` (shared-ui `EventsPage.tsx`) splits a Timed Final into a
+Prelim + Final pair. The Final reuses the prelim's `eventnumber` (Splash
+convention — confirmed against a real Splash `.mdb`: prelim and final share
+`EventNumber` but have distinct `SwimEventID`s, differentiated by `round`).
+Do NOT mint a new event number for the final — that's what causes "Event 5"'s
+final to show up as an unrelated "Event 83". Because `eventnumber` can now be
+shared, timing-scan barcode matching keys on `swimeventid` instead — see
+"Barcode format" below.
+
 ### LXF round-trip details
 
 **Import (`importLenex`):**
@@ -269,7 +280,10 @@ Athletes in beach meets get a unique jersey/bib identifier stored in `athlete.na
 - Corner registration marks for future perspective correction
 
 ### Barcode format
-`E{n}-H{n}-L{n}` — e.g. `E5-H2-L3` = Event 5, Heat 2, Lane 3
+`E{eventNumber}-U{swimEventId}-H{heatNumber}-L{lane}` — e.g. `E5-U1496-H2-L3` = Event 5, Heat 2, Lane 3.
+`swimEventId` (the internal `swimevent` primary key) is what validate-scan actually
+matches on — it's always unique, unlike `eventNumber`, which a prelim and its final
+can share (see "Prelim/Final event numbering" below).
 
 ### Scan storage
 Separate SQLite: `{userData}/timing_scans.sqlite`
@@ -312,6 +326,18 @@ Auto-generated XML in `bsglobal` defining cumulative point standings per age/gen
 
 - **Implementation**: `src/main/combinedEvents.ts` — called from `db.ts` after event/agegroup CRUD
 - **Config**: `../../config/combined-events-config.json` (see `config/CLAUDE.md` at repo root)
+
+### Prelim/Final resolution
+
+`queryEventsWithAgeGroups` (and the COMBINEDEVENTS XML it feeds) intentionally references
+the **prelim's** event/agegroup ids — that's the stable "event slot" Splash's own export
+uses, and what the report UI's event tree lets the user select. But `getCombinedResults`
+and `getPointStandings` (`db.ts`) resolve each matched pair through `resolveToFinal()`
+before querying `swimresult`, so the actual points come from the **final's** placements
+when a final exists. Verified athlete-by-athlete against a real Splash `.mdb` for an
+actual competition (CanadienMai2026_S40): Splash's own combined-events totals reflect
+final results, not prelim heat times — scoring off the prelim would use stale/slower
+times once finals have been swum.
 
 ## Fixture data
 

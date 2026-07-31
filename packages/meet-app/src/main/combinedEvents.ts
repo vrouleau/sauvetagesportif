@@ -138,6 +138,12 @@ export function queryEventsWithAgeGroups(db: Database.Database): EventWithAgeGro
   // Relay events are included too (needed for club point standings, per combined-events
   // rules) — getCombinedResults (per-athlete) naturally ignores them since relay teams
   // never get a swimresult row; getPointStandings (per-club) branches on eventIsRelay().
+  //
+  // This intentionally returns the PRELIM's own swimeventid/agegroupid (not the final's)
+  // — it's the stable "event slot" that exists whether or not a final has been created
+  // yet, matches what Splash's own COMBINEDEVENTS XML references, and matches what the
+  // report UI's event tree lets the user select. Resolving to the final's actual results
+  // happens later, at query time — see resolveToFinal() below.
   return db
     .prepare(
       `SELECT e.swimeventid, ag.agegroupid, e.eventnumber, e.gender AS eventgender, e.internalevent,
@@ -154,6 +160,52 @@ export function queryEventsWithAgeGroups(db: Database.Database): EventWithAgeGro
        ORDER BY e.eventnumber, ag.sortcode`
     )
     .all() as EventWithAgeGroup[]
+}
+
+// ── Prelim → Final Resolution ──────────────────────────────────────────────────
+
+/**
+ * Resolves a (prelim eventId, agegroupId) pair to the FINAL's swimeventid/agegroupid
+ * when one exists, falling back to the prelim's own pair otherwise.
+ *
+ * Verified against a real Splash .mdb for an actual competition (CanadienMai2026_S40):
+ * when an event has been split into Prelim + Final, Splash's own combined-events point
+ * totals are computed from the FINAL's placements, not the prelim's heat times — scoring
+ * off the prelim would use slower/irrelevant times once finals have been swum. Splash's
+ * COMBINEDEVENTS XML itself always references the prelim as the stable "event slot" (it's
+ * the one that exists before any final is created), so this resolution has to happen at
+ * query time rather than when the category-to-event list is built.
+ */
+export function resolveToFinal(
+  db: Database.Database,
+  eventId: number,
+  agegroupId: number
+): { eventId: number; agegroupId: number } {
+  const finalEvent = db.prepare(
+    `SELECT swimeventid FROM swimevent WHERE preveventid = ?`
+  ).get(eventId) as { swimeventid: number } | undefined
+  if (!finalEvent) return { eventId, agegroupId }
+
+  const prelimAg = db.prepare(
+    `SELECT agemin, agemax, gender FROM agegroup WHERE agegroupid = ?`
+  ).get(agegroupId) as { agemin: number | null; agemax: number | null; gender: number | null } | undefined
+  if (!prelimAg) return { eventId, agegroupId }
+
+  // Match the final's own age group by (agemin, agemax, gender) — treating -1/99 as the
+  // same "no upper limit" sentinel, since they're used interchangeably (see CLAUDE.md).
+  const finalAg = db.prepare(
+    `SELECT agegroupid FROM agegroup
+     WHERE swimeventid = ?
+       AND agemin = ?
+       AND gender = ?
+       AND (agemax = ? OR (COALESCE(agemax, -1) IN (-1, 99) AND COALESCE(?, -1) IN (-1, 99)))`
+  ).get(finalEvent.swimeventid, prelimAg.agemin, prelimAg.gender, prelimAg.agemax, prelimAg.agemax) as { agegroupid: number } | undefined
+
+  // If the final's age-group brackets don't line up with the prelim's, fall back to the
+  // prelim rather than guess — better to under-score than to silently mix brackets.
+  if (!finalAg) return { eventId, agegroupId }
+
+  return { eventId: finalEvent.swimeventid, agegroupId: finalAg.agegroupid }
 }
 
 // ── Event Matching ────────────────────────────────────────────────────────────

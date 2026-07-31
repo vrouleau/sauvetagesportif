@@ -255,13 +255,13 @@ const api = {
   },
   timing: {
     saveScan: (data: {
-      eventNumber: number; heatNumber: number; lane: number;
+      eventNumber: number; swimEventId: number; heatNumber: number; lane: number;
       barcodeRaw: string; imageBase64: string
     }) => ipcRenderer.invoke('timing:save-scan', data),
     getUnprocessed: () =>
       ipcRenderer.invoke('timing:get-unprocessed'),
-    getScansForHeat: (eventNumber: number, heatNumber: number) =>
-      ipcRenderer.invoke('timing:get-scans-for-heat', eventNumber, heatNumber),
+    getScansForHeat: (swimEventId: number, heatNumber: number) =>
+      ipcRenderer.invoke('timing:get-scans-for-heat', swimEventId, heatNumber),
     getScanSummary: () =>
       ipcRenderer.invoke('timing:get-scan-summary'),
     getScansForProcessing: (filter: string) =>
@@ -272,8 +272,8 @@ const api = {
       ipcRenderer.invoke('timing:validate-scan', scanId, time1, timeMs1, time2, timeMs2),
     markError: (scanId: number, notes: string) =>
       ipcRenderer.invoke('timing:mark-error', scanId, notes),
-    commitHeatResults: (eventNumber: number, heatNumber: number) =>
-      ipcRenderer.invoke('timing:commit-heat-results', eventNumber, heatNumber),
+    commitHeatResults: (swimEventId: number, heatNumber: number) =>
+      ipcRenderer.invoke('timing:commit-heat-results', swimEventId, heatNumber),
     generateSheets: (sessionId: number) =>
       ipcRenderer.invoke('timing:generate-sheets', sessionId),
     saveDebugImage: (imageBase64: string) =>

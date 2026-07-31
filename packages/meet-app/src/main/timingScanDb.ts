@@ -35,6 +35,7 @@ export type ScanStatus = 'unprocessed' | 'recognized' | 'validated' | 'error'
 export interface TimingScan {
   scanId: number
   eventNumber: number
+  swimEventId: number
   heatNumber: number
   lane: number
   barcodeRaw: string
@@ -55,7 +56,7 @@ export interface TimingScan {
 }
 
 /** Data needed to insert a new scan */
-export type NewScan = Pick<TimingScan, 'eventNumber' | 'heatNumber' | 'lane' | 'barcodeRaw' | 'imageBlob' | 'scannedAt'>
+export type NewScan = Pick<TimingScan, 'eventNumber' | 'swimEventId' | 'heatNumber' | 'lane' | 'barcodeRaw' | 'imageBlob' | 'scannedAt'>
 
 // ── Database initialization ───────────────────────────────────────────────────
 
@@ -63,6 +64,7 @@ const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS timing_scan (
   scan_id         INTEGER PRIMARY KEY AUTOINCREMENT,
   event_number    INTEGER NOT NULL,
+  swim_event_id   INTEGER NOT NULL,
   heat_number     INTEGER NOT NULL,
   lane            INTEGER NOT NULL,
   barcode_raw     TEXT NOT NULL,
@@ -86,7 +88,7 @@ CREATE INDEX IF NOT EXISTS ix_timing_scan_status
   ON timing_scan (status);
 
 CREATE INDEX IF NOT EXISTS ix_timing_scan_event_heat
-  ON timing_scan (event_number, heat_number, lane);
+  ON timing_scan (swim_event_id, heat_number, lane);
 `
 
 /**
@@ -100,11 +102,13 @@ export function getScanDb(): Database.Database {
   scanDb = new Database(dbPath)
   scanDb.pragma('journal_mode = WAL')
 
-  // Check if the table exists with the old schema (has judge_number column)
-  // If so, drop it and recreate with the new schema
+  // Check if the table exists with an old schema (has judge_number, or is missing
+  // swim_event_id). If so, drop it and recreate with the new schema — scans are
+  // local working data, not the source of truth, so this is safe to reset.
   const tableInfo = scanDb.prepare("PRAGMA table_info(timing_scan)").all() as Array<{ name: string }>
   const hasJudgeNumber = tableInfo.some((col) => col.name === 'judge_number')
-  if (hasJudgeNumber) {
+  const hasSwimEventId = tableInfo.some((col) => col.name === 'swim_event_id')
+  if (hasJudgeNumber || (tableInfo.length > 0 && !hasSwimEventId)) {
     scanDb.exec('DROP TABLE IF EXISTS timing_scan')
   }
 
@@ -126,11 +130,12 @@ export function closeScanDb(): void {
 export function insertScan(scan: NewScan): number {
   const db = getScanDb()
   const stmt = db.prepare(`
-    INSERT INTO timing_scan (event_number, heat_number, lane, barcode_raw, image_blob, scanned_at)
-    VALUES (@eventNumber, @heatNumber, @lane, @barcodeRaw, @imageBlob, @scannedAt)
+    INSERT INTO timing_scan (event_number, swim_event_id, heat_number, lane, barcode_raw, image_blob, scanned_at)
+    VALUES (@eventNumber, @swimEventId, @heatNumber, @lane, @barcodeRaw, @imageBlob, @scannedAt)
   `)
   const result = stmt.run({
     eventNumber: scan.eventNumber,
+    swimEventId: scan.swimEventId,
     heatNumber: scan.heatNumber,
     lane: scan.lane,
     barcodeRaw: scan.barcodeRaw,
@@ -154,14 +159,15 @@ export function getUnprocessedScans(): TimingScan[] {
   return getScansByStatus('unprocessed')
 }
 
-/** Get scans for a specific event/heat */
-export function getScansForHeat(eventNumber: number, heatNumber: number): TimingScan[] {
+/** Get scans for a specific event/heat (keyed by swimEventId — unique even when
+ * a prelim and its final share the same human-facing event number) */
+export function getScansForHeat(swimEventId: number, heatNumber: number): TimingScan[] {
   const db = getScanDb()
   const rows = db.prepare(`
     SELECT * FROM timing_scan
-    WHERE event_number = ? AND heat_number = ?
+    WHERE swim_event_id = ? AND heat_number = ?
     ORDER BY lane
-  `).all(eventNumber, heatNumber) as RawScanRow[]
+  `).all(swimEventId, heatNumber) as RawScanRow[]
   return rows.map(mapRow)
 }
 
@@ -252,14 +258,14 @@ export function getScanSummary(): Record<ScanStatus, number> {
   return summary
 }
 
-/** Get all validated scans for a heat */
-export function getValidatedScansForHeat(eventNumber: number, heatNumber: number): TimingScan[] {
+/** Get all validated scans for a heat (keyed by swimEventId — see getScansForHeat) */
+export function getValidatedScansForHeat(swimEventId: number, heatNumber: number): TimingScan[] {
   const db = getScanDb()
   const rows = db.prepare(`
     SELECT * FROM timing_scan
-    WHERE event_number = ? AND heat_number = ? AND status = 'validated'
+    WHERE swim_event_id = ? AND heat_number = ? AND status = 'validated'
     ORDER BY lane
-  `).all(eventNumber, heatNumber) as RawScanRow[]
+  `).all(swimEventId, heatNumber) as RawScanRow[]
   return rows.map(mapRow)
 }
 
@@ -268,6 +274,7 @@ export function getValidatedScansForHeat(eventNumber: number, heatNumber: number
 interface RawScanRow {
   scan_id: number
   event_number: number
+  swim_event_id: number
   heat_number: number
   lane: number
   barcode_raw: string
@@ -291,6 +298,7 @@ function mapRow(row: RawScanRow): TimingScan {
   return {
     scanId: row.scan_id,
     eventNumber: row.event_number,
+    swimEventId: row.swim_event_id,
     heatNumber: row.heat_number,
     lane: row.lane,
     barcodeRaw: row.barcode_raw,

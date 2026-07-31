@@ -49,12 +49,25 @@ interface ReportEventSection {
   eventId: number
   eventNumber: number
   eventName: string     // style name only
+  phase: 'Finale' | 'Eliminatoire' | 'Finale directe'
   gender: 'M' | 'F' | 'X'
   ageMin: number
   ageMax: number | null
   sessionDate: string   // YYYY-MM-DD
   scheduledTime: string // HH:MM or ''
   heats: HeatListEventRow['heats']
+}
+
+/**
+ * Short phase tag appended to event headers. Prelim and final can share the
+ * same event number (Splash convention), so once a Timed Final has been split
+ * into a Prelim + Final pair, reports need this to tell the two sections apart.
+ * Omitted for single-round (Timed Final) events since there's no ambiguity.
+ */
+function phaseTag(phase: 'Finale' | 'Eliminatoire' | 'Finale directe'): string {
+  if (phase === 'Eliminatoire') return '&nbsp;(&Eacute;lim.)'
+  if (phase === 'Finale') return '&nbsp;(Finale)'
+  return ''
 }
 
 type ReportType = 'heatList' | 'startList' | 'combinedResults' | 'beachNumbers' | 'entriesByEvent' | 'pointStandings' | 'resultsList'
@@ -126,7 +139,7 @@ function generatePdfHtml(
     let html = `<div class="ev">
 <table width="100%" cellspacing="0" cellpadding="0" border="0">
 <tr valign="top">
-  <td width="25%">Epreuve ${s.eventNumber}<br>${dateTimeStr}</td>
+  <td width="25%">Epreuve ${s.eventNumber}${phaseTag(s.phase)}<br>${dateTimeStr}</td>
   <td width="50%" align="center">${centerName}<br><br></td>
   <td width="25%" align="right">${ageRange}<br>Liste des s&eacute;ries</td>
 </tr>
@@ -204,6 +217,7 @@ const STARTLIST_ROWS_PER_PAGE = 36
 interface StartListLaneEvent {
   eventNumber: number
   eventName: string
+  phase: 'Finale' | 'Eliminatoire' | 'Finale directe'
   gender: 'M' | 'F' | 'X'
   ageMin: number
   ageMax: number | null
@@ -258,6 +272,7 @@ function buildLaneData(
       events.push({
         eventNumber: section.eventNumber,
         eventName: section.eventName,
+        phase: section.phase,
         gender: section.gender,
         ageMin: section.ageMin,
         ageMax: section.ageMax,
@@ -407,7 +422,7 @@ function generateStartListPdfHtml(
       html += `<div class="sl-event">
 <table width="100%" cellspacing="0" cellpadding="0" border="0">
 <tr>
-  <td width="15%"><b>&Eacute;pr. ${ev.eventNumber}</b></td>
+  <td width="15%"><b>&Eacute;pr. ${ev.eventNumber}${phaseTag(ev.phase)}</b></td>
   <td width="55%"><b>${evLabel}</b></td>
   <td width="30%" align="right"><em class="f8">${ageRange}</em></td>
 </tr>
@@ -652,6 +667,7 @@ interface EntryByEventReportRow {
   eventId: number
   eventNumber: number
   eventName: string
+  phase: 'Finale' | 'Eliminatoire' | 'Finale directe'
   gender: number
   ageMin: number
   ageMax: number
@@ -684,13 +700,14 @@ function decodeGenderNum(g: number): 'M' | 'F' | 'X' {
 
 function generateEntriesByEventPdfHtml(rows: EntryByEventReportRow[], isBeach: boolean): string {
   // Group rows by event
-  const events = new Map<number, { eventNumber: number; eventName: string; gender: number; ageMin: number; ageMax: number; entries: EntryByEventReportRow[] }>()
+  const events = new Map<number, { eventNumber: number; eventName: string; phase: 'Finale' | 'Eliminatoire' | 'Finale directe'; gender: number; ageMin: number; ageMax: number; entries: EntryByEventReportRow[] }>()
 
   for (const row of rows) {
     if (!events.has(row.eventId)) {
       events.set(row.eventId, {
         eventNumber: row.eventNumber,
         eventName: row.eventName,
+        phase: row.phase,
         gender: row.gender,
         ageMin: row.ageMin,
         ageMax: row.ageMax,
@@ -715,7 +732,7 @@ function generateEntriesByEventPdfHtml(rows: EntryByEventReportRow[], isBeach: b
     html += `<div class="ev">
 <table width="100%" cellspacing="0" cellpadding="0" border="0">
 <tr valign="top">
-  <td width="15%"><b>&Eacute;preuve ${ev.eventNumber}</b></td>
+  <td width="15%"><b>&Eacute;preuve ${ev.eventNumber}${phaseTag(ev.phase)}</b></td>
   <td width="55%" align="center"><b>${centerName}</b></td>
   <td width="30%" align="right"><em class="f8">${ageRange}</em></td>
 </tr>
@@ -947,7 +964,7 @@ function generateResultsListPdfHtml(
     html += `<div class="ev">
 <table width="100%" cellspacing="0" cellpadding="0" border="0">
 <tr valign="top">
-  <td width="25%">Epreuve ${s.eventNumber}<br>${dateTimeStr}</td>
+  <td width="25%">Epreuve ${s.eventNumber}${phaseTag(s.phase)}<br>${dateTimeStr}</td>
   <td width="50%" align="center">${centerName}<br><br></td>
   <td width="25%" align="right">${ageRange}<br>Liste des r&eacute;sultats</td>
 </tr>
@@ -1045,7 +1062,7 @@ function generateHeatListHtml(
       ? `${esc(s.eventName)}`
       : `${esc(prefix)},&nbsp;${esc(s.eventName)}`
     const age = esc(formatAgeRange(s.ageMin, s.ageMax))
-    return `<a href=#ref${i + 1}>N°&nbsp;${s.eventNumber}.&nbsp;${fullName}&nbsp;&nbsp;${age}</a>`
+    return `<a href=#ref${i + 1}>N°&nbsp;${s.eventNumber}${phaseTag(s.phase)}.&nbsp;${fullName}&nbsp;&nbsp;${age}</a>`
   }
 
   const tocHtml = `<table width=100% border=0 cellspacing=0 cellpadding=0><tr valign=top>
@@ -1091,7 +1108,7 @@ function generateHeatListHtml(
     // Event header
     html += `<table width=100% border=0 cellspacing=0 cellpadding=0>
 <tr valign=top>
-<td width=25%>Epreuve ${s.eventNumber}<br>${dateTimeStr}</td>
+<td width=25%>Epreuve ${s.eventNumber}${phaseTag(s.phase)}<br>${dateTimeStr}</td>
 <td align=center width=50%>${centerName}<br><br></td>
 <td align=right width=25%>${ageRange}<br>Liste des s&eacute;ries</td>
 </tr>
@@ -1388,6 +1405,7 @@ export default function ReportPage({ refreshKey = 0, meetType = 'POOL' }: { refr
           eventId: ev.id,
           eventNumber: ev.number,
           eventName: ev.nameFr,
+          phase: ev.phase,
           gender: ev.gender,
           ageMin: ag?.minAge ?? 0,
           ageMax: ag?.maxAge ?? null,

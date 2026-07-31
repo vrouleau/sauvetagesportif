@@ -31,37 +31,48 @@ import { parseTimeToMs, formatMsToTime, assembleTimeString } from '../src/main/o
 
 describe('Barcode encoding/decoding', () => {
   it('encodes a barcode correctly', () => {
-    expect(encodeBarcode(5, 2, 3)).toBe('E5-H2-L3')
-    expect(encodeBarcode(12, 1, 6)).toBe('E12-H1-L6')
+    expect(encodeBarcode(5, 1496, 2, 3)).toBe('E5-U1496-H2-L3')
+    expect(encodeBarcode(12, 1067, 1, 6)).toBe('E12-U1067-H1-L6')
   })
 
   it('decodes a valid barcode', () => {
-    const result = decodeBarcode('E5-H2-L3')
-    expect(result).toEqual({ eventNumber: 5, heatNumber: 2, lane: 3 })
+    const result = decodeBarcode('E5-U1496-H2-L3')
+    expect(result).toEqual({ eventNumber: 5, swimEventId: 1496, heatNumber: 2, lane: 3 })
   })
 
   it('decodes multi-digit numbers', () => {
-    const result = decodeBarcode('E12-H3-L10')
-    expect(result).toEqual({ eventNumber: 12, heatNumber: 3, lane: 10 })
+    const result = decodeBarcode('E12-U1067-H3-L10')
+    expect(result).toEqual({ eventNumber: 12, swimEventId: 1067, heatNumber: 3, lane: 10 })
+  })
+
+  it('disambiguates a prelim and final sharing the same event number', () => {
+    // Splash convention: prelim and final can share the human event number,
+    // but the barcode's swimEventId (internal primary key) is always unique.
+    const prelim = decodeBarcode('E5-U1072-H1-L3')
+    const final = decodeBarcode('E5-U1496-H1-L3')
+    expect(prelim?.eventNumber).toBe(final?.eventNumber)
+    expect(prelim?.swimEventId).not.toBe(final?.swimEventId)
   })
 
   it('returns null for invalid format', () => {
     expect(decodeBarcode('invalid')).toBeNull()
     expect(decodeBarcode('E1-H1')).toBeNull()
     expect(decodeBarcode('E1-H1-L0-J1')).toBeNull() // old format
+    expect(decodeBarcode('E1-H1-L3')).toBeNull() // pre-swimEventId format
     expect(decodeBarcode('')).toBeNull()
   })
 
   it('roundtrips encode/decode', () => {
-    const encoded = encodeBarcode(7, 4, 5)
+    const encoded = encodeBarcode(7, 1145, 4, 5)
     const decoded = decodeBarcode(encoded)
-    expect(decoded).toEqual({ eventNumber: 7, heatNumber: 4, lane: 5 })
+    expect(decoded).toEqual({ eventNumber: 7, swimEventId: 1145, heatNumber: 4, lane: 5 })
   })
 
   it('rejects invalid inputs', () => {
-    expect(() => encodeBarcode(0, 1, 1)).toThrow()
-    expect(() => encodeBarcode(1, 0, 1)).toThrow()
-    expect(() => encodeBarcode(1, 1, 0)).toThrow()
+    expect(() => encodeBarcode(0, 1, 1, 1)).toThrow()
+    expect(() => encodeBarcode(1, 0, 1, 1)).toThrow()
+    expect(() => encodeBarcode(1, 1, 0, 1)).toThrow()
+    expect(() => encodeBarcode(1, 1, 1, 0)).toThrow()
   })
 })
 

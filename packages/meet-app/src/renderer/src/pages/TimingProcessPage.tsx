@@ -33,6 +33,7 @@ type ScanStatus = 'unprocessed' | 'recognized' | 'validated' | 'error'
 interface ScanRecord {
   scanId: number
   eventNumber: number
+  swimEventId: number
   heatNumber: number
   lane: number
   barcodeRaw: string

@@ -34,6 +34,7 @@ import { encodeBarcode } from './timingBarcode'
 
 export interface TimingSheetLane {
   eventNumber: number
+  swimEventId: number
   eventName: string
   heatNumber: number
   lane: number
@@ -51,6 +52,7 @@ export interface TimingSheetPage {
  * Each strip has both judges' time boxes (no separate judge sheets needed).
  */
 export function buildTimingSheetPages(
+  swimEventId: number,
   eventNumber: number,
   eventName: string,
   heatNumber: number,
@@ -64,6 +66,7 @@ export function buildTimingSheetPages(
     const chunk = lanes.slice(i, i + 3)
     const strips: TimingSheetLane[] = chunk.map((lane) => ({
       eventNumber,
+      swimEventId,
       eventName,
       heatNumber,
       lane,
@@ -151,7 +154,7 @@ export function generateTimingSheetsHtml(pages: TimingSheetPage[]): string {
   const pagesHtml = pages.map((page) => {
     const stripsHtml = page.strips.map((strip) => {
       // Barcode encodes lane with judge=1 (the strip covers both judges, barcode identifies the lane)
-      const barcodeValue = encodeBarcode(strip.eventNumber, strip.heatNumber, strip.lane, 1)
+      const barcodeValue = encodeBarcode(strip.eventNumber, strip.swimEventId, strip.heatNumber, strip.lane, 1)
       const barcodeSvg = generateCode128Svg(barcodeValue)
       return `
         <div class="strip">

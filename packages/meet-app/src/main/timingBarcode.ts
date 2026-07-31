@@ -19,14 +19,21 @@
 /**
  * Timing sheet barcode encoding/decoding.
  *
- * Format: E{eventNumber}-H{heatNumber}-L{lane}
- * Example: "E5-H2-L3" → Event 5, Heat 2, Lane 3
+ * Format: E{eventNumber}-U{swimEventId}-H{heatNumber}-L{lane}
+ * Example: "E5-U1496-H2-L3" → Event 5, Heat 2, Lane 3
+ *
+ * `eventNumber` is the human-facing event number shown on programs and can be
+ * shared between a prelim and its final (Splash convention). `swimEventId` is
+ * the internal swimevent primary key, which is always unique — it's what
+ * matching/lookups use so a prelim and its final heat 1 lane 3 can never be
+ * confused with each other even though they show the same event number.
  *
  * Each strip has both chronos' time entries, so no judge identifier needed.
  */
 
 export interface BarcodeData {
   eventNumber: number
+  swimEventId: number
   heatNumber: number
   lane: number
 }
@@ -36,14 +43,16 @@ export interface BarcodeData {
  */
 export function encodeBarcode(
   eventNumber: number,
+  swimEventId: number,
   heatNumber: number,
   lane: number,
   _judgeNumber?: number // kept for API compat, ignored
 ): string {
   if (eventNumber < 1) throw new Error(`Invalid eventNumber: ${eventNumber}`)
+  if (swimEventId < 1) throw new Error(`Invalid swimEventId: ${swimEventId}`)
   if (heatNumber < 1) throw new Error(`Invalid heatNumber: ${heatNumber}`)
   if (lane < 1) throw new Error(`Invalid lane: ${lane}`)
-  return `E${eventNumber}-H${heatNumber}-L${lane}`
+  return `E${eventNumber}-U${swimEventId}-H${heatNumber}-L${lane}`
 }
 
 /**
@@ -51,11 +60,12 @@ export function encodeBarcode(
  * Returns null if the string doesn't match the expected format.
  */
 export function decodeBarcode(raw: string): BarcodeData | null {
-  const match = raw.match(/^E(\d+)-H(\d+)-L(\d+)$/)
+  const match = raw.match(/^E(\d+)-U(\d+)-H(\d+)-L(\d+)$/)
   if (!match) return null
-  const [, eventStr, heatStr, laneStr] = match
+  const [, eventStr, swimEventIdStr, heatStr, laneStr] = match
   return {
     eventNumber: parseInt(eventStr, 10),
+    swimEventId: parseInt(swimEventIdStr, 10),
     heatNumber: parseInt(heatStr, 10),
     lane: parseInt(laneStr, 10),
   }

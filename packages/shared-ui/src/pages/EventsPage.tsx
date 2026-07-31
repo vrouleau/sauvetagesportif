@@ -529,12 +529,12 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
       // 1. Convert original event: TIM → PRE (Eliminatoire)
       await api.updateEvent(event.id, { round: 1 })  // ROUND_PRE = 1
 
-      // 2. Create the Final event in the finals session
-      const allNums = localSessions.flatMap((s) => s.events.map((e) => e.number))
-      const finalNum = Math.max(...allNums, 0) + 1
+      // 2. Create the Final event in the finals session, keeping the prelim's event
+      // number (Splash convention: prelim and final share the same event number,
+      // differentiated by round — not by a new number).
       const result = await api.createEvent(
         finalsSession.id,
-        finalNum,
+        event.number,
         event.gender,
         event.distance,
         'Finale',
