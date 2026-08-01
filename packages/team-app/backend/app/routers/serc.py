@@ -286,27 +286,16 @@ def get_results(db: Session = Depends(get_db)):
         }
 
     def calc_team_draw(team_id: int, draw: int) -> float:
-        total = 0.0
-        for field in ("assessment", "control", "communication", "search", "teamwork"):
-            raw = score_map.get((draw, team_id, "overall", field), 0) or 0
-            total += raw * overall_factors.get(field, 1)
-        total += score_map.get((draw, team_id, "overall", "rough"), 0) or 0
+        def section_scores(section: str, fields: tuple[str, ...]) -> dict[str, float]:
+            return {f: score_map.get((draw, team_id, section, f), 0) or 0 for f in (*fields, "rough")}
 
+        scores = {"overall": section_scores("overall", ("assessment", "control", "communication", "search", "teamwork"))}
         if config.has_bystander:
-            for field in ("approach", "info", "directions", "monitoring", "encouragement"):
-                raw = score_map.get((draw, team_id, "bystander", field), 0) or 0
-                total += raw * bystander_factors.get(field, 1)
-            total += score_map.get((draw, team_id, "bystander", "rough"), 0) or 0
-
+            scores["bystander"] = section_scores("bystander", ("approach", "info", "directions", "monitoring", "encouragement"))
         for vi in range(config.num_victims):
-            vf = victim_factors[vi] if vi < len(victim_factors) else {}
-            section = f"victim_{vi}"
-            for field in ("approach", "rescue", "control", "landing", "care"):
-                raw = score_map.get((draw, team_id, section, field), 0) or 0
-                total += raw * vf.get(field, 1)
-            total += score_map.get((draw, team_id, section, "rough"), 0) or 0
+            scores[f"victim_{vi}"] = section_scores(f"victim_{vi}", ("approach", "rescue", "control", "landing", "care"))
 
-        return round(total, 2)
+        return compute_serc_total(scores, overall_factors, bystander_factors, victim_factors, config.has_bystander, config.num_victims)
 
     # Per-draw results
     draw_results = []
@@ -335,6 +324,46 @@ def get_results(db: Session = Depends(get_db)):
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+def compute_serc_total(
+    scores: dict[str, dict[str, float]],
+    overall_factors: dict[str, float],
+    bystander_factors: dict[str, float],
+    victim_factors: list[dict[str, float]],
+    has_bystander: bool,
+    num_victims: int,
+) -> float:
+    """Weighted-total formula for one team's SERC scores: sum of raw_score *
+    factor across overall/bystander/victim sections, plus a flat "rough
+    handling" add per section, rounded to 2 decimals.
+
+    `scores` is `{section: {field: value}}` — the same shape the frontend
+    keeps per team (see calcTotal() in frontend/src/pages/Serc.jsx, which
+    can't share this module across the Python/JS boundary but implements the
+    identical formula; kept in sync via the fixture in
+    tests/fixtures/serc_scoring.json, see docs/SHARED_LOGIC_CONSOLIDATION_PLAN.md).
+    """
+    total = 0.0
+    overall = scores.get("overall", {})
+    for field in ("assessment", "control", "communication", "search", "teamwork"):
+        total += (overall.get(field) or 0) * overall_factors.get(field, 1)
+    total += overall.get("rough") or 0
+
+    if has_bystander:
+        bystander = scores.get("bystander", {})
+        for field in ("approach", "info", "directions", "monitoring", "encouragement"):
+            total += (bystander.get(field) or 0) * bystander_factors.get(field, 1)
+        total += bystander.get("rough") or 0
+
+    for vi in range(num_victims):
+        vf = victim_factors[vi] if vi < len(victim_factors) else {}
+        victim = scores.get(f"victim_{vi}", {})
+        for field in ("approach", "rescue", "control", "landing", "care"):
+            total += (victim.get(field) or 0) * vf.get(field, 1)
+        total += victim.get("rough") or 0
+
+    return round(total, 2)
+
 
 def _get_config(db: Session) -> SercConfig | None:
     return db.query(SercConfig).order_by(SercConfig.id.desc()).first()

@@ -24,6 +24,11 @@ import { copyFileSync, mkdirSync, existsSync } from 'fs'
 
 export default defineConfig({
   main: {
+    resolve: {
+      alias: {
+        '@shared': resolve('../shared-ui/src')
+      }
+    },
     plugins: [
       externalizeDepsPlugin(),
       {

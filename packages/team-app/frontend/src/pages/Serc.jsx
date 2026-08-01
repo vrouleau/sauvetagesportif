@@ -32,6 +32,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useLang } from '../i18n'
 import { QRCodeSVG } from 'qrcode.react'
 import api from '../api'
+import { computeSercTotal } from '../sercScoring'
 
 // ─── Factor Catalog ───────────────────────────────────────────────────────────
 // Descriptive labels from the XLSX "Drop Down Info" sheet.
@@ -462,26 +463,12 @@ function ScoringPage({ teams, config, lang }) {
 
   function calcTotal(teamId) {
     const ts = scores[String(teamId)] || {}
-    const of = config?.overall_factors || {}
-    const bf = config?.bystander_factors || {}
-    const vfs = config?.victim_factors || []
-    let total = 0
-    for (const f of ['assessment', 'control', 'communication', 'search', 'teamwork'])
-      total += (ts.overall?.[f] || 0) * (of[f] || 1)
-    total += ts.overall?.rough || 0
-    if (config?.has_bystander) {
-      for (const f of ['approach', 'info', 'directions', 'monitoring', 'encouragement'])
-        total += (ts.bystander?.[f] || 0) * (bf[f] || 1)
-      total += ts.bystander?.rough || 0
-    }
-    for (let i = 0; i < (config?.num_victims || 9); i++) {
-      const vs = ts[`victim_${i}`] || {}
-      const vf = vfs[i] || {}
-      for (const f of ['approach', 'rescue', 'control', 'landing', 'care'])
-        total += (vs[f] || 0) * (vf[f] || 1)
-      total += vs.rough || 0
-    }
-    return Math.round(total * 100) / 100
+    return computeSercTotal(
+      ts,
+      { overall: config?.overall_factors || {}, bystander: config?.bystander_factors || {}, victims: config?.victim_factors || [] },
+      !!config?.has_bystander,
+      config?.num_victims || 9
+    )
   }
 
   // Tab navigation: move down within the same column

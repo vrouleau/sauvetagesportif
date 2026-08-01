@@ -26,6 +26,8 @@
  * - Registration data is built from sessions/events/agegroups + athlete entries
  */
 import type { RegistrationAPI, Club, AthleteListItem, RegistrationData, RegistrationStyle, RelayPageData } from '@shared/data/api'
+import { displayToMs } from '@shared/logic/timeFormat'
+import { ageGroupCodeFor } from '@shared/logic/ageGroupCode'
 
 // Track the last athlete ID for unregister (which only receives registrationId/eventId)
 let _lastAthleteId = 0
@@ -80,39 +82,6 @@ interface LocalSwimStyle {
   stroke: number
   name: string
   relaycount: number
-}
-
-function displayToMs(t: string | undefined): number | null {
-  if (!t || t === 'NT') return null
-  const m = t.match(/^(\d+):(\d{2})\.(\d{2})$/)
-  if (m) return parseInt(m[1]) * 60000 + parseInt(m[2]) * 1000 + parseInt(m[3]) * 10
-  const m2 = t.match(/^(\d+)\.(\d{2})$/)
-  if (m2) return parseInt(m2[1]) * 1000 + parseInt(m2[2]) * 10
-  return null
-}
-
-function ageCodeFromGroup(name: string, minAge?: number, maxAge?: number | null): string {
-  // Try name-based matching first
-  if (name) {
-    if (/10/.test(name) && /under|moins|-/.test(name.toLowerCase())) return '10-'
-    if (/11.*12/.test(name)) return '11-12'
-    if (/13.*14/.test(name)) return '13-14'
-    if (/15.*18/.test(name)) return '15-18'
-    if (/master/i.test(name)) return 'Masters'
-  }
-  // Fall back to numeric age range
-  if (minAge != null && maxAge != null) {
-    if (maxAge <= 10) return '10-'
-    if (minAge === 11 && maxAge === 12) return '11-12'
-    if (minAge === 13 && maxAge === 14) return '13-14'
-    if (minAge === 15 && maxAge <= 18) return '15-18'
-    if (minAge >= 19) return 'Open'
-  }
-  if (minAge != null && (maxAge == null || maxAge === -1 || maxAge >= 99)) {
-    if (minAge >= 19) return 'Open'
-    if (minAge >= 15) return '15-18'
-  }
-  return 'Open'
 }
 
 function calcAge(birthDate: string): number {
@@ -236,7 +205,7 @@ export const registrationApiElectron: RegistrationAPI = {
         const style = styleMap.get(styleUid)!
 
         for (const ag of event.ageGroups) {
-          const ageCode = ageCodeFromGroup(ag.name, ag.minAge, ag.maxAge)
+          const ageCode = ageGroupCodeFor(ag.name, ag.minAge, ag.maxAge)
           // Check if athlete is registered for this event, in this specific age group.
           // An event can host multiple age-group brackets (e.g. "15-18" and "Open"), so
           // matching by eventId alone would mark every bracket as registered.

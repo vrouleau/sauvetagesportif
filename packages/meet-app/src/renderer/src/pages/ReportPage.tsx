@@ -17,6 +17,7 @@
 // along with Sauvetage Sportif. If not, see <https://www.gnu.org/licenses/>.
 
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
+import { msToDisplay as msToDisplayShared } from '@shared/logic/timeFormat'
 import type { HeatListSession, HeatListEvent, Session, AgeGroup } from '../data/mockData'
 
 // Local aliases matching the IPC return shapes (structurally compatible)
@@ -682,14 +683,7 @@ interface EntryByEventReportRow {
 }
 
 function msToDisplay(ms: number | null): string {
-  if (ms == null || ms <= 0) return 'NT'
-  const totalSecs = ms / 1000
-  const mins = Math.floor(totalSecs / 60)
-  const secs = totalSecs - mins * 60
-  if (mins > 0) {
-    return `${mins}:${secs < 10 ? '0' : ''}${secs.toFixed(2)}`
-  }
-  return secs.toFixed(2)
+  return msToDisplayShared(ms, { noTimeText: 'NT' })!
 }
 
 function decodeGenderNum(g: number): 'M' | 'F' | 'X' {

@@ -1,0 +1,65 @@
+{
+  "_comment": "Shared fixture for the SERC weighted-total formula, implemented independently in Python (team-app/backend/app/routers/serc.py: compute_serc_total) and JS (team-app/frontend/src/sercScoring.js: computeSercTotal) — can't share a module across the language boundary, so both test suites iterate this file so drift becomes a test failure. See docs/SHARED_LOGIC_CONSOLIDATION_PLAN.md.",
+  "cases": [
+    {
+      "note": "overall section only, no bystander, no victims",
+      "scores": { "overall": { "assessment": 8, "control": 7, "communication": 6, "search": 9, "teamwork": 5, "rough": 0 } },
+      "overallFactors": { "assessment": 1, "control": 1, "communication": 1.25, "search": 1.5, "teamwork": 1 },
+      "bystanderFactors": {},
+      "victimFactors": [],
+      "hasBystander": false,
+      "numVictims": 0,
+      "expectedTotal": 41.0
+    },
+    {
+      "note": "overall + bystander, including a negative 'rough handling' flat add",
+      "scores": {
+        "overall": { "assessment": 5, "control": 5, "communication": 5, "search": 5, "teamwork": 5, "rough": 0 },
+        "bystander": { "approach": 6, "info": 7, "directions": 8, "monitoring": 5, "encouragement": 4, "rough": -10 }
+      },
+      "overallFactors": { "assessment": 1, "control": 1, "communication": 1, "search": 1, "teamwork": 1 },
+      "bystanderFactors": { "approach": 1, "info": 1, "directions": 1, "monitoring": 1, "encouragement": 1 },
+      "victimFactors": [],
+      "hasBystander": true,
+      "numVictims": 0,
+      "expectedTotal": 45.0
+    },
+    {
+      "note": "two victims with per-victim factor sets and a positive rough add on one",
+      "scores": {
+        "overall": { "assessment": 0, "control": 0, "communication": 0, "search": 0, "teamwork": 0, "rough": 0 },
+        "victim_0": { "approach": 8, "rescue": 7, "control": 6, "landing": 5, "care": 9, "rough": 0 },
+        "victim_1": { "approach": 4, "rescue": 3, "control": 2, "landing": 1, "care": 0, "rough": 2 }
+      },
+      "overallFactors": {},
+      "bystanderFactors": {},
+      "victimFactors": [
+        { "approach": 1, "rescue": 1, "control": 1, "landing": 1, "care": 1 },
+        { "approach": 2, "rescue": 2, "control": 2, "landing": 2, "care": 2 }
+      ],
+      "hasBystander": false,
+      "numVictims": 2,
+      "expectedTotal": 57.0
+    },
+    {
+      "note": "missing score fields and missing factor entries both default sensibly (0 and 1 respectively)",
+      "scores": { "overall": { "assessment": 10 } },
+      "overallFactors": {},
+      "bystanderFactors": {},
+      "victimFactors": [],
+      "hasBystander": false,
+      "numVictims": 0,
+      "expectedTotal": 10.0
+    },
+    {
+      "note": "fractional factor forces rounding to 2 decimals",
+      "scores": { "overall": { "assessment": 1, "control": 1, "communication": 1, "search": 1, "teamwork": 1, "rough": 0 } },
+      "overallFactors": { "assessment": 1, "control": 1, "communication": 1, "search": 1, "teamwork": 0.333 },
+      "bystanderFactors": {},
+      "victimFactors": [],
+      "hasBystander": false,
+      "numVictims": 0,
+      "expectedTotal": 4.33
+    }
+  ]
+}

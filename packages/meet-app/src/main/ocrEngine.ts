@@ -20,6 +20,8 @@
  * OCR Engine interface and time parsing utilities.
  */
 
+import { displayToMs } from '@shared/logic/timeFormat'
+
 /** Abstract OCR engine interface */
 export interface OcrEngine {
   readonly name: string
@@ -38,19 +40,9 @@ export interface OcrEngine {
  *   "2:01.00" → 121000
  */
 export function parseTimeToMs(timeStr: string): number {
-  const full = timeStr.match(/^(\d):(\d{2})\.(\d{2})$/)
-  if (full) {
-    const [, min, sec, hundredths] = full
-    return (parseInt(min, 10) * 60 + parseInt(sec, 10)) * 1000 + parseInt(hundredths, 10) * 10
-  }
-
-  const short = timeStr.match(/^(\d{2})\.(\d{2})$/)
-  if (short) {
-    const [, sec, hundredths] = short
-    return parseInt(sec, 10) * 1000 + parseInt(hundredths, 10) * 10
-  }
-
-  throw new Error(`Invalid time format: "${timeStr}". Expected M:SS.HH or SS.HH`)
+  const valid = /^\d:\d{2}\.\d{2}$/.test(timeStr) || /^\d{2}\.\d{2}$/.test(timeStr)
+  if (!valid) throw new Error(`Invalid time format: "${timeStr}". Expected M:SS.HH or SS.HH`)
+  return displayToMs(timeStr)!
 }
 
 /**

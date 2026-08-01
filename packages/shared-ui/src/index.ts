@@ -38,9 +38,15 @@ export { default as CascadeTree } from './components/CascadeTree'
 export { default as AthleteDetailPanel } from './components/AthleteDetailPanel'
 export { default as RegistrationPanel } from './components/RegistrationPanel'
 export { default as AddAthleteDialog } from './components/AddAthleteDialog'
+export { default as TimeInput } from './components/TimeInput'
 
 // Utilities
 export { filterAthletes, computeVisibleExpansion } from './utils/filterAthletes'
+
+// Logic (pure functions, no React/DOM — safe to import from meet-app's main process too)
+export { msToDisplay, displayToMs, timeToCs, csToTime, parseSingleTime, parseLooseTimeInput, parseLooseTimeToMs, formatEntryTime, parseEntryTime } from './logic/timeFormat'
+export { AGE_CODE_ORDER, ageGroupCodeFor, filterCategoriesAroundSuggestion, computeAvailableCategories } from './logic/ageGroupCode'
+export { REQUIRED_NATIVE_COUNT, isAgeCodeAllowedOnTeam, wouldMissNativeAnchor } from './logic/relayRules'
 
 // i18n
 export { translations, type Lang, type T } from './i18n'
