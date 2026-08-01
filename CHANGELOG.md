@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.50] - 2026-08-01
+
+### Other
+
+- Fix entries-by-event report: include relay teams, order by event number (`3d76bf9`)
+- Fix flaky relay gender-balance test and CI missing backend deps (`a2ddc7f`)
+- Untrack .claude/settings.json (local permission allowlist) (`8760442`)
+- Fix shared-ui CI test failures (`9a84951`)
+- Merge branch 'claude/python-engine-electron-meet-roir3i' into main (`7ae8003`)
+- Consolidate duplicated business logic into shared-ui/src/logic (`4a8ec29`)
+- Document plan to consolidate duplicated business logic into shared-ui (`f166244`)
+
 ## [0.3.49] - 2026-07-31
 
 ### Other
