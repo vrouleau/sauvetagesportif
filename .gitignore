@@ -7,6 +7,7 @@ out/
 *.db-shm
 *.tsbuildinfo
 .kiro/
+.claude/settings.json
 
 env
 .env
