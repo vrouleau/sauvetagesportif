@@ -680,6 +680,7 @@ interface EntryByEventReportRow {
   entryTime: number | null
   beachNumber: string | null
   ageGroupName: string
+  isRelay: boolean
 }
 
 function msToDisplay(ms: number | null): string {
@@ -747,14 +748,15 @@ function generateEntriesByEventPdfHtml(rows: EntryByEventReportRow[], isBeach: b
     for (let i = 0; i < ev.entries.length; i++) {
       const e = ev.entries[i]
       const birthYear = parseBirthYearEntry(e.birthdate)
-      const age = birthYear > 0 ? meetYear - birthYear : '?'
+      const age = e.isRelay ? '' : (birthYear > 0 ? meetYear - birthYear : '?')
       const entryTimeStr = isBeach ? '' : msToDisplay(e.entryTime)
       const beachNum = isBeach && e.beachNumber ? esc(e.beachNumber) : ''
+      const name = e.isRelay ? esc(e.lastName) : esc(e.lastName + ', ' + e.firstName)
 
       html += `<tr>
   <td align="right">${i + 1}.</td>
   ${isBeach ? `<td>${beachNum}</td>` : ''}
-  <td><b>${esc(e.lastName + ', ' + e.firstName)}</b></td>
+  <td><b>${name}</b></td>
   <td>${age}</td>
   <td>${esc(e.ageGroupName ?? '')}</td>
   <td>${esc(e.clubName)}</td>

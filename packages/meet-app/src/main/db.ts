@@ -3381,40 +3381,114 @@ export interface EntryByEventRow {
   entryTime: number | null
   beachNumber: string | null
   ageGroupName: string
+  isRelay: boolean
 }
 
 export function getEntriesByEvent(selectedEventIds: number[]): EntryByEventRow[] {
   if (selectedEventIds.length === 0) return []
   const db = getLocalDb()
-  const { clause, params } = inClause(selectedEventIds)
-  const rows = db.prepare(`
-    SELECT e.swimeventid AS eventId,
-           e.eventnumber AS eventNumber,
-           ss.name AS eventName,
-           e.round,
-           e.gender,
-           ag.agemin AS ageMin,
-           ag.agemax AS ageMax,
-           a.lastname AS lastName,
-           a.firstname AS firstName,
-           a.birthdate,
-           COALESCE(c.name, c.code, '') AS clubName,
-           COALESCE(c.code, '') AS clubCode,
-           r.entrytime AS entryTime,
-           a.nameprefix AS beachNumber,
-           COALESCE(NULLIF(ag2.name, ''), CASE WHEN ag2.agemin IS NOT NULL THEN CAST(ag2.agemin AS TEXT) || '-' || COALESCE(CAST(ag2.agemax AS TEXT), '+') END, '') AS ageGroupName
-    FROM swimresult r
-    JOIN athlete a ON r.athleteid = a.athleteid
-    JOIN swimevent e ON r.swimeventid = e.swimeventid
-    LEFT JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid
-    LEFT JOIN club c ON a.clubid = c.clubid
-    LEFT JOIN agegroup ag ON ag.swimeventid = e.swimeventid AND ag.agegroupid = (
-      SELECT MIN(ag3.agegroupid) FROM agegroup ag3 WHERE ag3.swimeventid = e.swimeventid
-    )
-    LEFT JOIN agegroup ag2 ON r.agegroupid = ag2.agegroupid
-    WHERE r.swimeventid IN (${clause})
-    ORDER BY e.sortcode, e.swimeventid, a.lastname COLLATE NOCASE, a.firstname COLLATE NOCASE
-  `).all(...params) as Array<Omit<EntryByEventRow, 'phase'> & { round: number | null }>
+
+  const relayEventIds = selectedEventIds.filter(id => eventIsRelay(db, id))
+  const individualEventIds = selectedEventIds.filter(id => !relayEventIds.includes(id))
+
+  const rows: Array<Omit<EntryByEventRow, 'phase'> & { round: number | null }> = []
+
+  if (individualEventIds.length > 0) {
+    const { clause, params } = inClause(individualEventIds)
+    const individualRows = db.prepare(`
+      SELECT e.swimeventid AS eventId,
+             e.eventnumber AS eventNumber,
+             ss.name AS eventName,
+             e.round,
+             e.gender,
+             ag.agemin AS ageMin,
+             ag.agemax AS ageMax,
+             a.lastname AS lastName,
+             a.firstname AS firstName,
+             a.birthdate,
+             COALESCE(c.name, c.code, '') AS clubName,
+             COALESCE(c.code, '') AS clubCode,
+             r.entrytime AS entryTime,
+             a.nameprefix AS beachNumber,
+             COALESCE(NULLIF(ag2.name, ''), CASE WHEN ag2.agemin IS NOT NULL THEN CAST(ag2.agemin AS TEXT) || '-' || COALESCE(CAST(ag2.agemax AS TEXT), '+') END, '') AS ageGroupName,
+             0 AS isRelay
+      FROM swimresult r
+      JOIN athlete a ON r.athleteid = a.athleteid
+      JOIN swimevent e ON r.swimeventid = e.swimeventid
+      LEFT JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid
+      LEFT JOIN club c ON a.clubid = c.clubid
+      LEFT JOIN agegroup ag ON ag.swimeventid = e.swimeventid AND ag.agegroupid = (
+        SELECT MIN(ag3.agegroupid) FROM agegroup ag3 WHERE ag3.swimeventid = e.swimeventid
+      )
+      LEFT JOIN agegroup ag2 ON r.agegroupid = ag2.agegroupid
+      WHERE r.swimeventid IN (${clause})
+      ORDER BY a.lastname COLLATE NOCASE, a.firstname COLLATE NOCASE
+    `).all(...params) as Array<Omit<EntryByEventRow, 'phase' | 'isRelay'> & { round: number | null; isRelay: number }>
+    rows.push(...individualRows.map(r => ({ ...r, isRelay: !!r.isRelay })))
+  }
+
+  if (relayEventIds.length > 0) {
+    const { clause, params } = inClause(relayEventIds)
+    const relayRows = db.prepare(`
+      SELECT r.relayid AS relayId,
+             e.swimeventid AS eventId,
+             e.eventnumber AS eventNumber,
+             ss.name AS eventName,
+             e.round,
+             e.gender,
+             ag.agemin AS ageMin,
+             ag.agemax AS ageMax,
+             r.name AS teamName,
+             COALESCE(c.name, c.code, '') AS clubName,
+             COALESCE(c.code, '') AS clubCode,
+             r.entrytime AS entryTime,
+             COALESCE(NULLIF(ag2.name, ''), CASE WHEN ag2.agemin IS NOT NULL THEN CAST(ag2.agemin AS TEXT) || '-' || COALESCE(CAST(ag2.agemax AS TEXT), '+') END, '') AS ageGroupName
+      FROM relay r
+      JOIN swimevent e ON r.swimeventid = e.swimeventid
+      LEFT JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid
+      LEFT JOIN club c ON r.clubid = c.clubid
+      LEFT JOIN agegroup ag ON ag.swimeventid = e.swimeventid AND ag.agegroupid = (
+        SELECT MIN(ag3.agegroupid) FROM agegroup ag3 WHERE ag3.swimeventid = e.swimeventid
+      )
+      LEFT JOIN agegroup ag2 ON r.agegroupid = ag2.agegroupid
+      WHERE r.swimeventid IN (${clause})
+      ORDER BY COALESCE(c.name, c.code, ''), r.relayid
+    `).all(...params) as Array<{
+      relayId: number; eventId: number; eventNumber: number; eventName: string; round: number | null
+      gender: number; ageMin: number; ageMax: number; teamName: string | null
+      clubName: string; clubCode: string; entryTime: number | null; ageGroupName: string
+    }>
+
+    const relayIds = relayRows.map(r => r.relayId)
+    const membersByRelay = new Map<number, string[]>()
+    if (relayIds.length > 0) {
+      const { clause: mClause, params: mParams } = inClause(relayIds)
+      const memberRows = db.prepare(`
+        SELECT rp.relayid, a.lastname
+        FROM relayposition rp
+        LEFT JOIN athlete a ON rp.athleteid = a.athleteid
+        WHERE rp.relayid IN (${mClause})
+        ORDER BY rp.relayid, rp.relaynumber
+      `).all(...mParams) as Array<{ relayid: number; lastname: string | null }>
+      for (const m of memberRows) {
+        if (!membersByRelay.has(m.relayid)) membersByRelay.set(m.relayid, [])
+        if (m.lastname) membersByRelay.get(m.relayid)!.push(m.lastname)
+      }
+    }
+
+    for (const r of relayRows) {
+      const teamName = r.teamName || membersByRelay.get(r.relayId)?.join('/') || `Team ${r.relayId}`
+      rows.push({
+        eventId: r.eventId, eventNumber: r.eventNumber, eventName: r.eventName, round: r.round,
+        gender: r.gender, ageMin: r.ageMin, ageMax: r.ageMax,
+        lastName: teamName, firstName: '', birthdate: null,
+        clubName: r.clubName, clubCode: r.clubCode, entryTime: r.entryTime,
+        beachNumber: null, ageGroupName: r.ageGroupName, isRelay: true,
+      })
+    }
+  }
+
+  rows.sort((a, b) => a.eventNumber - b.eventNumber || (a.round ?? 0) - (b.round ?? 0))
 
   return rows.map(({ round, ...row }) => ({ ...row, phase: decodePhase(round) }))
 }
