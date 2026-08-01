@@ -214,7 +214,7 @@ describe('RelayEntryPage - Property 1: Eligible Athlete Gender Filtering', () =>
   it('filtered list only contains athletes matching the event gender; mixed includes all', () => {
     fc.assert(
       fc.property(
-        fc.array(eligibleAthleteArb, { minLength: 0, maxLength: 30 }),
+        fc.uniqueArray(eligibleAthleteArb, { minLength: 0, maxLength: 30, selector: a => a.id }),
         eventGenderArb,
         (athletes, eventGender) => {
           const filtered = filterAthletesByGender(athletes, eventGender)
@@ -796,7 +796,7 @@ describe('RelayEntryPage - Property 10: Mixed Event Gender Balance Filtering', (
     fc.assert(
       fc.property(
         relaycountArb,
-        fc.array(eligibleAthleteArb, { minLength: 4, maxLength: 20 }),
+        fc.uniqueArray(eligibleAthleteArb, { minLength: 4, maxLength: 20, selector: a => a.id }),
         (relaycount, athletes) => {
           const maxPerGender = relaycount / 2
 
@@ -824,7 +824,7 @@ describe('RelayEntryPage - Property 10: Mixed Event Gender Balance Filtering', (
   it('when both genders have room, no gender restriction is applied', () => {
     fc.assert(
       fc.property(
-        fc.array(eligibleAthleteArb, { minLength: 4, maxLength: 20 }),
+        fc.uniqueArray(eligibleAthleteArb, { minLength: 4, maxLength: 20, selector: a => a.id }),
         (athletes) => {
           const relaycount = 4
           // Only 1 man assigned — both genders still have room
@@ -845,7 +845,7 @@ describe('RelayEntryPage - Property 10: Mixed Event Gender Balance Filtering', (
   it('empty team has no gender restriction', () => {
     fc.assert(
       fc.property(
-        fc.array(eligibleAthleteArb, { minLength: 1, maxLength: 10 }),
+        fc.uniqueArray(eligibleAthleteArb, { minLength: 1, maxLength: 10, selector: a => a.id }),
         fc.constantFrom(2, 4),
         (athletes, relaycount) => {
           const teamMembers: Array<{ position: number; athleteId: number | null }> = []
