@@ -600,7 +600,7 @@ describe('RelayEntryPage - Property 8: Closure Date Enforcement for Coach Role',
 
     // Generate a closure date and a current date relative to it
     const datesArb = fc.tuple(
-      fc.date({ min: new Date(2020, 0, 1), max: new Date(2030, 11, 31) }), // closure date
+      fc.date({ min: new Date(2020, 0, 1), max: new Date(2030, 11, 31), noInvalidDate: true }), // closure date
       fc.integer({ min: -30, max: 30 }) // days offset from closure
     ).map(([closure, offset]) => {
       const current = new Date(closure)
