@@ -32,6 +32,7 @@ import {
   type TestBackendKind,
 } from './helpers'
 import type { DbBackend } from '../src/main/dbBackend'
+import { runColumnBackfills } from '../src/main/schema'
 
 const pgAvailable = await isPgTestAvailable()
 const BACKENDS: TestBackendKind[] = pgAvailable ? ['sqlite', 'pg'] : ['sqlite']
@@ -156,6 +157,29 @@ describe.each(BACKENDS)('Schema integrity [%s]', (kind) => {
       expect(tableNames).toContain('swimresult')
       expect(tableNames).toContain('split')
       expect(tableNames).toContain('dsqitem')
+    })
+  })
+
+  it('backfills agegroup.afinal8lanes onto a database that predates the column', async () => {
+    // CREATE TABLE IF NOT EXISTS never adds a column to an already-existing table, so a column
+    // added to SCHEMA_DDL after real databases already existed silently never reaches them — bit
+    // us twice (dsqitem.name_en, then agegroup.afinal8lanes causing "no such column:
+    // afinal8lanes" exporting a .smb from an existing meet-app database). runColumnBackfills()
+    // exists specifically to close this gap generically; this simulates the "old" pre-column
+    // database directly rather than relying on the current schema already having the column.
+    await withDb((db) => {
+      db.exec(`DROP TABLE agegroup`)
+      db.exec(`CREATE TABLE agegroup (
+        agegroupid INTEGER PRIMARY KEY,
+        swimeventid INTEGER,
+        agemin INTEGER, agemax INTEGER, gender INTEGER
+      )`)
+      db.prepare(`INSERT INTO agegroup (agegroupid, swimeventid, agemin, agemax, gender) VALUES (1, 1, 10, 12, 1)`).run()
+
+      runColumnBackfills(db)
+
+      const row = db.prepare(`SELECT afinal8lanes FROM agegroup WHERE agegroupid = 1`).get() as { afinal8lanes: string | null }
+      expect(row.afinal8lanes).toBe('F')
     })
   })
 })

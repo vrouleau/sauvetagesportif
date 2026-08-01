@@ -29,7 +29,7 @@ import { readFileSync, writeFileSync, existsSync, unlinkSync } from 'fs'
 import type { DbBackend } from './dbBackend'
 import { SqliteBackend } from './sqliteBackend'
 import { PgBackend, type PgConnectionConfig } from './pgBackend'
-import { runSchemaInit } from './schema'
+import { runSchemaInit, runColumnBackfills } from './schema'
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
@@ -78,6 +78,11 @@ export async function connectToPg(config: PgConnectionConfig): Promise<void> {
   activeBackend = testBackend
   activeConfig = config
 
+  // Backfill any columns meet-app's own schema added after this database might have been
+  // created by an earlier version of meet-app itself (not a real Splash instance — Splash's own
+  // native schema already has these). No-op/harmless if the table doesn't exist yet either.
+  runColumnBackfills(testBackend)
+
   // Ensure dsqitem table exists on PG (safe: IF NOT EXISTS, compatible with Splash)
   try {
     testBackend.exec(`CREATE TABLE IF NOT EXISTS dsqitem (
@@ -123,6 +128,25 @@ export async function connectToPg(config: PgConnectionConfig): Promise<void> {
     }
   } catch {
     // Ignore — table may already exist with slightly different DDL
+  }
+
+  // Auto-detect MEET_TYPE if this database was populated by something other than our own
+  // importLenex (e.g. a real Splash instance connected to this same live database and did the
+  // import/heat-generation itself) — importLenex's own auto-detect (see lenex.ts) only runs
+  // during our own import, so it never fires in that scenario and MEET_TYPE stays unset, which
+  // makes the app fall back to its POOL default even for a beach meet. Same inference: any
+  // swimstyleid >= 600 means beach.
+  try {
+    const existingType = testBackend.prepare(`SELECT data FROM bsglobal WHERE name = 'MEET_TYPE'`).get() as { data: string } | undefined
+    if (!existingType) {
+      const beachStyle = testBackend.prepare(`SELECT 1 FROM swimstyle WHERE swimstyleid >= 600 LIMIT 1`).get()
+      const detectedType = beachStyle ? 'BEACH' : 'POOL'
+      testBackend.prepare(
+        `INSERT INTO bsglobal (name, data) VALUES ('MEET_TYPE', ?) ON CONFLICT(name) DO UPDATE SET data=excluded.data`
+      ).run(detectedType)
+    }
+  } catch {
+    // Ignore — bsglobal/swimstyle may not exist yet on a genuinely empty database
   }
 
   // Persist the connection config

@@ -79,9 +79,12 @@ function DsqSearchDropdown({ items, value, onChange, disabled, eventType }: {
 
   const isDisabled = disabled || !items || items.length === 0
 
-  // Filter items by event type (INDIVIDUAL or RELAY) based on the options field
+  // Filter items by event type (INDIVIDUAL or RELAY) based on the options field.
+  // dsqitem.options is now seeded as a compact code ("I"/"R"/"IR" — see compactDsqOptions in
+  // index.ts, needed because Postgres enforces VARCHAR(5) on this column) but older meets seeded
+  // before that fix may still have the long form ("INDIVIDUAL,RELAY") persisted — match both.
   const typeFiltered = !isDisabled && eventType
-    ? items.filter(d => !d.options || d.options.includes(eventType))
+    ? items.filter(d => !d.options || d.options.includes(eventType) || d.options.includes(eventType.charAt(0)))
     : (items || [])
 
   // Further filter by keyboard search

@@ -222,9 +222,32 @@ export const SCHEMA_DDL: string[] = [
   `CREATE INDEX IF NOT EXISTS ix_relayposition_relay ON relayposition (relayid)`,
 ]
 
+/**
+ * Columns added to SCHEMA_DDL after databases already existed. `CREATE TABLE IF NOT EXISTS` is a
+ * no-op once the table exists, so it never backfills a newly added column onto an existing
+ * database (SQLite dev databases, or a Postgres database meet-app itself created before the
+ * column was added — not one a real Splash instance created, since Splash's own native schema
+ * already has these columns). Bit us once already with dsqitem.name_en (backfilled only for
+ * Postgres, in connectionManager.ts's connectToPg) and again with agegroup.afinal8lanes (not
+ * backfilled anywhere, causing "no such column: afinal8lanes" on `.smb` export against an
+ * existing meet-app database). ADD COLUMN has no portable IF NOT EXISTS across SQLite versions,
+ * so each is wrapped to ignore a "column already exists" failure rather than relying on that.
+ */
+const COLUMN_BACKFILLS: Array<{ table: string; ddl: string }> = [
+  { table: 'agegroup', ddl: `ALTER TABLE agegroup ADD COLUMN afinal8lanes TEXT DEFAULT 'F'` },
+]
+
+/** Backfill columns added to SCHEMA_DDL after databases already existed (see COLUMN_BACKFILLS). */
+export function runColumnBackfills(backend: DbBackend): void {
+  for (const { ddl } of COLUMN_BACKFILLS) {
+    try { backend.exec(ddl) } catch { /* column already exists */ }
+  }
+}
+
 /** Run schema DDL on a backend (SQLite or PG). */
 export function runSchemaInit(backend: DbBackend): void {
   for (const ddl of SCHEMA_DDL) {
     backend.exec(ddl)
   }
+  runColumnBackfills(backend)
 }

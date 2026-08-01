@@ -16,7 +16,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with Sauvetage Sportif. If not, see <https://www.gnu.org/licenses/>.
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createTestDb, seedMeet } from './helpers'
 import { join } from 'path'
 import { tmpdir } from 'os'
@@ -25,7 +25,7 @@ import { unlinkSync, existsSync } from 'fs'
 import type Database from 'better-sqlite3'
 
 // Import the SMB functions directly
-import { saveSMB, restoreSMB } from '../src/main/smb'
+import { saveSMB, restoreSMB, readZipEntries, decodeGbin } from '../src/main/smb'
 
 describe('SMB save/restore', () => {
   let db: Database.Database
@@ -112,10 +112,12 @@ describe('SMB save/restore', () => {
   })
 
   it('handles empty database gracefully', () => {
-    // No data seeded — save should still work
+    // No data seeded — save should still work. RECORDAGEGROUP's single sentinel row
+    // (see saveSMB's `tableName === 'recordagegroup'` case) is always present regardless
+    // of content, so an otherwise-empty database still produces exactly 1 row.
     const result = saveSMB(smbPath, db)
     expect(existsSync(smbPath)).toBe(true)
-    expect(result.rows).toBe(0)
+    expect(result.rows).toBe(1)
   })
 
   it('normalizes Splash MDB round encoding on restore', () => {
@@ -154,5 +156,150 @@ describe('SMB save/restore', () => {
 
     const finEvent = db.prepare('SELECT round FROM swimevent WHERE swimeventid=300').get() as { round: number }
     expect(finEvent.round).toBe(4)  // Restored to canonical FIN
+  })
+
+  it('rewrites dsqitem.options to the safe default instead of overflowing OPTIONS;S;5', () => {
+    // Our own dsqitem.options stores a human-readable tag list (see config/dsq-codes.json),
+    // consumed by scripts/generate_dsq_xml.py — but that overflows Splash's real 5-char
+    // OPTIONS gbin column and breaks restore into real Splash. saveSMB must rewrite it.
+    db.prepare(
+      `INSERT INTO dsqitem (dsqitemid, code, lenexcode, name, options, sortcode) VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(4001, '1', '1', 'Test DSQ', 'INDIVIDUAL,RELAY', 1)
+
+    saveSMB(smbPath, db)
+
+    db.exec('DELETE FROM dsqitem')
+    restoreSMB(smbPath, db)
+
+    const row = db.prepare('SELECT options FROM dsqitem WHERE dsqitemid=4001').get() as { options: string }
+    expect(row.options).toBe('00000')
+  })
+
+  it('round-trips RELAY.athletes/relaycode values that overflow a 16-bit field', () => {
+    // Real Splash (≥11.84174) declares these I;32, not I;16 — a 16-bit encode throws
+    // (Buffer.writeInt16LE range error) once a value exceeds 32767.
+    db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount, stroke) VALUES (1, 100, 'Freestyle Relay', 4, 1)`)
+    db.exec(`INSERT INTO swimsession (swimsessionid, sessionnumber, name, course) VALUES (1, 1, 'Session 1', 1)`)
+    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode) VALUES (100, 1, 1, 10, 2, 5, 1)`)
+    db.exec(`INSERT INTO club (clubid, code, name) VALUES (1, 'CLB', 'Club')`)
+    db.prepare(
+      `INSERT INTO relay (relayid, clubid, swimeventid, athletes, relaycode) VALUES (?, ?, ?, ?, ?)`
+    ).run(1, 1, 100, 40000, 99999)
+
+    expect(() => saveSMB(smbPath, db)).not.toThrow()
+
+    db.exec('DELETE FROM relay')
+    restoreSMB(smbPath, db)
+
+    const row = db.prepare('SELECT athletes, relaycode FROM relay WHERE relayid=1').get() as { athletes: number; relaycode: number }
+    expect(row.athletes).toBe(40000)
+    expect(row.relaycode).toBe(99999)
+  })
+
+  it('truncates an oversized S field with a warning instead of corrupting the gbin layout', () => {
+    db.prepare(
+      `INSERT INTO dsqitem (dsqitemid, code, lenexcode, name, options, sortcode) VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(4002, '2', 'AVERYLONGLENEXCODETHATOVERFLOWS', 'Test DSQ 2', 'RELAY', 2)
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    saveSMB(smbPath, db)
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('DSQITEM.LENEXCODE'))
+    warnSpy.mockRestore()
+
+    db.exec('DELETE FROM dsqitem')
+    restoreSMB(smbPath, db)
+
+    const row = db.prepare('SELECT lenexcode FROM dsqitem WHERE dsqitemid=4002').get() as { lenexcode: string }
+    expect(row.lenexcode).toBe('AVERYLONGL') // clamped to LENEXCODE;S;10 (byte length)
+  })
+
+  it('includes relaysplit in save/restore (previously silently dropped)', () => {
+    db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount, stroke) VALUES (1, 100, 'Freestyle Relay', 4, 1)`)
+    db.exec(`INSERT INTO swimsession (swimsessionid, sessionnumber, name, course) VALUES (1, 1, 'Session 1', 1)`)
+    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode) VALUES (100, 1, 1, 10, 2, 5, 1)`)
+    db.exec(`INSERT INTO club (clubid, code, name) VALUES (1, 'CLB', 'Club')`)
+    db.exec(`INSERT INTO relay (relayid, clubid, swimeventid) VALUES (1, 1, 100)`)
+    db.prepare(`INSERT INTO relaysplit (relayid, distance, swimtime) VALUES (?, ?, ?)`).run(1, 25, 15230)
+
+    saveSMB(smbPath, db)
+
+    db.exec('DELETE FROM relaysplit')
+    restoreSMB(smbPath, db)
+
+    const row = db.prepare('SELECT swimtime FROM relaysplit WHERE relayid=1 AND distance=25').get() as { swimtime: number } | undefined
+    expect(row?.swimtime).toBe(15230)
+  })
+
+  it('backfills a NULL heat.agegroupid from its members before export (beach cross-age-group heats)', () => {
+    // Beach heat generation pools entries across every age group in an event, so
+    // heat.agegroupid is legitimately NULL in our own DB (see generateHeatsBeach, db.ts).
+    // Real Splash crashes viewing a heat whose AGEGROUPID FK is null — saveSMB must
+    // backfill a real value drawn from the heat's own members for export only.
+    db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount, stroke) VALUES (1, 100, 'Beach Flags', 1, 1)`)
+    db.exec(`INSERT INTO swimsession (swimsessionid, sessionnumber, name, course) VALUES (1, 1, 'Session 1', 1)`)
+    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode) VALUES (100, 1, 1, 10, 3, 5, 1)`)
+    db.exec(`INSERT INTO agegroup (agegroupid, swimeventid, agemin, agemax, gender, sortcode) VALUES (500, 100, 10, 12, 3, 1)`)
+    db.exec(`INSERT INTO club (clubid, code, name) VALUES (1, 'CLB', 'Club')`)
+    db.exec(`INSERT INTO athlete (athleteid, clubid, firstname, lastname) VALUES (1, 1, 'A', 'B')`)
+    // Heat with no agegroupid (beach's cross-age-group pooling)
+    db.exec(`INSERT INTO heat (heatid, swimeventid, heatnumber, racestatus, sortcode) VALUES (1, 100, 1, 4, 100)`)
+    db.exec(`INSERT INTO swimresult (swimresultid, athleteid, swimeventid, heatid, agegroupid) VALUES (1, 1, 100, 1, 500)`)
+
+    saveSMB(smbPath, db)
+
+    db.exec('DELETE FROM heat')
+    restoreSMB(smbPath, db)
+
+    const row = db.prepare('SELECT agegroupid FROM heat WHERE heatid=1').get() as { agegroupid: number | null }
+    expect(row.agegroupid).toBe(500)
+  })
+
+  it('exports RECORDLIST/RECORDAGEGROUP etc as present-but-empty gbin files, not omitted entirely', () => {
+    // Real Splash apparently requires these record-checking tables to at least exist (even with
+    // 0 rows) in a restored file — omitting them entirely crashed Splash's Results module with an
+    // access violation the moment any heat was viewed, even with zero results entered. We have no
+    // records-tracking feature, so these are always empty, but must be genuinely present.
+    seedMeet(db)
+    saveSMB(smbPath, db)
+
+    const zipEntries = readZipEntries(smbPath)
+    for (const t of ['RECORDLIST', 'RECORDAGEGROUP', 'RECORDLISTAGEGROUP', 'RECORD', 'RECORDSPLIT', 'RECORDPOSITION']) {
+      expect(zipEntries.has(`${t}-0001.gbin`)).toBe(true)
+    }
+
+    // Restore must not error even though these tables have no backing table in our own schema
+    expect(() => restoreSMB(smbPath, db)).not.toThrow()
+  })
+
+  it('remaps racestatus 4 (our "seeded, not validated") to Splash\'s own 2 on export, and back on restore', () => {
+    // Confirmed by directly sampling three real, populated Splash competition databases via
+    // Microsoft.ACE.OLEDB.12.0: real Splash never writes racestatus=4 for this state — it uses 2.
+    // Writing 4 (our own internal encoding, see decodeHeatStatus()/validateHeat() in db.ts) into a
+    // real Splash-format .smb was the actual cause of an access violation opening any heat in
+    // Splash's Results module (THeat.VerifyStatus/UpdateStatus — the code that interprets this
+    // field). 5 (validated) already matches Splash's own encoding and is untouched.
+    db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount, stroke) VALUES (1, 100, 'Freestyle', 1, 1)`)
+    db.exec(`INSERT INTO swimsession (swimsessionid, sessionnumber, name, course) VALUES (1, 1, 'Session 1', 1)`)
+    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode) VALUES (100, 1, 1, 10, 2, 5, 1)`)
+    db.exec(`INSERT INTO heat (heatid, swimeventid, heatnumber, racestatus, sortcode) VALUES (1, 100, 1, 4, 100)`)
+    db.exec(`INSERT INTO heat (heatid, swimeventid, heatnumber, racestatus, sortcode) VALUES (2, 100, 2, 5, 200)`)
+
+    saveSMB(smbPath, db)
+
+    const zipEntries = readZipEntries(smbPath)
+    const gbin = zipEntries.get('HEAT-0001.gbin')!
+    const { rows: exportedRows } = decodeGbin(gbin)
+    const exported1 = exportedRows.find((r) => r.heatid === 1) as { racestatus: number }
+    const exported2 = exportedRows.find((r) => r.heatid === 2) as { racestatus: number }
+    expect(exported1.racestatus).toBe(2)  // 4 → Splash's 2
+    expect(exported2.racestatus).toBe(5)  // 5 unchanged
+
+    db.exec('DELETE FROM heat')
+    restoreSMB(smbPath, db)
+
+    const restored1 = db.prepare('SELECT racestatus FROM heat WHERE heatid=1').get() as { racestatus: number }
+    const restored2 = db.prepare('SELECT racestatus FROM heat WHERE heatid=2').get() as { racestatus: number }
+    expect(restored1.racestatus).toBe(4)  // round-trips back to our canonical 4
+    expect(restored2.racestatus).toBe(5)
   })
 })

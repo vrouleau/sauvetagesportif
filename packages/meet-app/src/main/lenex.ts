@@ -113,7 +113,15 @@ function encodeStroke(s: string | undefined): number {
   switch ((s ?? '').toUpperCase()) {
     case 'FREE': return 1; case 'BACK': return 2; case 'BREAST': return 3
     case 'FLY': return 4; case 'MEDLEY': return 5; case 'RELAY': return 6
-    default: return 1
+    // Our meet templates (config/template_pool.lxf, template_beach.lxf) never set a <SWIMSTYLE
+    // stroke="..."> attribute — every event we ever import is a custom lifesaving discipline, not
+    // a FINA-catalog stroke. Real Splash's own LXF importer represents exactly this case with
+    // STROKE=0 (never a real stroke code) — confirmed by decoding a genuine Splash-native export
+    // of this same LXF (see docs/SMB_SCHEMA_AUDIT_2026-08-01.md). Previously defaulted to 1 (FREE),
+    // which falsely claimed every custom style was Freestyle — a (stroke=1, technique=null)
+    // combination Splash's own data never produces, and the leading suspect for a Results-module
+    // access violation opening any heat in a restored .smb.
+    default: return 0
   }
 }
 
@@ -204,10 +212,10 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
       const liveSecret = keys['live_push_secret'] ?? ''
       const liveUrl = keys['live_url'] ?? ''
       if (liveSecret) {
-        db.prepare(`INSERT OR REPLACE INTO bsglobal (name, data) VALUES (?, ?)`).run('LIVE_PUSH_SECRET', liveSecret)
+        db.prepare(`INSERT INTO bsglobal (name, data) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET data=excluded.data`).run('LIVE_PUSH_SECRET', liveSecret)
       }
       if (liveUrl) {
-        db.prepare(`INSERT OR REPLACE INTO bsglobal (name, data) VALUES (?, ?)`).run('LIVE_URL', liveUrl)
+        db.prepare(`INSERT INTO bsglobal (name, data) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET data=excluded.data`).run('LIVE_URL', liveUrl)
       }
     } catch {
       summary.errors.push('Warning: .keys entry present but could not be parsed')
@@ -302,9 +310,9 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
       `INSERT INTO swimsession (swimsessionid, sessionnumber, name, course, following, poolglobal, roundtotenths)
        VALUES (?,?,?,1,'F','F','F')`),
     upsertStyle: db.prepare(
-      `INSERT INTO swimstyle (swimstyleid, distance, relaycount, stroke, name)
-       VALUES (?,?,?,?,?)
-       ON CONFLICT(swimstyleid) DO UPDATE SET distance=excluded.distance, relaycount=excluded.relaycount, stroke=excluded.stroke, name=excluded.name`),
+      `INSERT INTO swimstyle (swimstyleid, distance, relaycount, stroke, name, technique, code)
+       VALUES (?,?,?,?,?,?,?)
+       ON CONFLICT(swimstyleid) DO UPDATE SET distance=excluded.distance, relaycount=excluded.relaycount, stroke=excluded.stroke, name=excluded.name, technique=excluded.technique, code=excluded.code`),
     upsertEvent: db.prepare(
       `INSERT INTO swimevent
          (swimeventid, swimsessionid, eventnumber, gender, round, swimstyleid, sortcode,
@@ -397,10 +405,16 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
       const relaycount = parseInt(sa.relaycount ?? '1', 10)
       const strokeCode = encodeStroke(sa.stroke)
       const styleName = sa.name ?? ''
+      // strokeCode 0 = not a real FINA-catalog stroke (see encodeStroke) — matches real Splash's
+      // own convention for a custom/unrecognized style: TECHNIQUE=0 (not null) and a CODE of
+      // "ID{swimstyleid}" (not blank). Both null/blank in our own data is a state Splash's own
+      // exports never produce and was the leading suspect for a Results-module crash.
+      const techniqueCode = strokeCode === 0 ? 0 : null
+      const codeValue = strokeCode === 0 ? `ID${styleId}` : null
 
       if (styleId) {
         try {
-          stmts.upsertStyle.run(styleId, distance, relaycount, strokeCode, styleName)
+          stmts.upsertStyle.run(styleId, distance, relaycount, strokeCode, styleName, techniqueCode, codeValue)
         } catch (e) {
           summary.errors.push(`Swimstyle ${styleId}: ${e}`)
         }
@@ -630,8 +644,13 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
             const posAthleteId = parseInt(pa.athleteid ?? '0', 10)
             if (!posNumber || !posAthleteId) continue
             try {
+              // 'OR IGNORE' was a no-op here even on SQLite — relayposition has no unique
+              // constraint on (relayid, relaynumber) or any other column combo (schema.ts), and
+              // relayId is always a freshly minted id from nextId() just above, so there's never
+              // an actual conflict to ignore within one import. Plain INSERT is Postgres-valid
+              // and behaves identically to the old SQLite-only syntax.
               db.prepare(
-                `INSERT OR IGNORE INTO relayposition (relayid, relaynumber, athleteid) VALUES (?, ?, ?)`
+                `INSERT INTO relayposition (relayid, relaynumber, athleteid) VALUES (?, ?, ?)`
               ).run(relayId, posNumber, posAthleteId)
             } catch (e2) {
               summary.errors.push(`RelayPosition relay=${relayId} pos=${posNumber}: ${e2}`)
@@ -748,7 +767,7 @@ function attr(name: string, value: string | number | null | undefined): string {
 
 // ── ZIP writer (minimal, single-entry) ────────────────────────────────────────
 
-function writeZipSingleEntry(filePath: string, entryName: string, content: string): void {
+export function writeZipSingleEntry(filePath: string, entryName: string, content: string): void {
   const data = Buffer.from(content, 'utf8')
   const compressed = deflateRawSync(data)
   const nameBytes = Buffer.from(entryName, 'utf8')

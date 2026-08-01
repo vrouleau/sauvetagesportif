@@ -57,7 +57,15 @@ export interface ColDef {
 // Tables to include in SMB backup (order matters for FK dependencies).
 // Column definitions must match the gbin header format that Splash expects.
 // The column ORDER here defines the binary layout in the gbin file.
-const SMB_TABLES: { name: string; cols: ColDef[] }[] = [
+// `stub: true` tables have no backing table in our own schema (we don't have a records-tracking
+// feature) — they're exported as genuinely-present-but-empty gbin files instead of omitted
+// entirely. See the RECORDLIST/RECORDAGEGROUP bug writeup in docs/SMB_SCHEMA_AUDIT_2026-08-01.md:
+// omitting them (the previous behavior) produced a working `.smb` file, but real Splash's Results
+// module apparently doesn't tolerate a *missing* record-checking table the way it tolerates an
+// empty one — it crashed with an access violation (nil dereference) the moment any heat was
+// viewed, even with zero results entered. saveSMB/restoreSMB special-case `stub` tables: always
+// export 0 rows without querying our DB, and never attempt to read/write our DB for them on restore.
+const SMB_TABLES: { name: string; cols: ColDef[]; stub?: boolean }[] = [
   {
     name: 'BSGLOBAL', cols: [
       { name: 'NAME', type: 'S', size: 50 },
@@ -259,6 +267,83 @@ const SMB_TABLES: { name: string; cols: ColDef[] }[] = [
       { name: 'WINNERTITLE', type: 'S', size: 100 },
       { name: 'FOREIGNCOUNT', type: 'I', size: 16 },
       { name: 'FINALSEEDTYPE', type: 'I', size: 16 },
+      { name: 'AFINAL8LANES', type: 'S', size: 1 }, // real Splash column, found missing via full schema diff against splashmeet.smb (docs/SMB_SCHEMA_AUDIT_2026-08-01.md)
+    ]
+  },
+  // Real column defs captured from a populated Splash mdb via GetSchema("Columns")
+  // (see docs/SMB_SCHEMA_AUDIT_2026-08-01.md methodology) — we have no records-tracking
+  // feature, so these always export 0 rows (see `stub` comment above SMB_TABLES).
+  {
+    name: 'RECORDLIST', stub: true, cols: [
+      { name: 'RECORDLISTID', type: 'I', size: 32 },
+      { name: 'CODE', type: 'S', size: 20 },
+      { name: 'LENEXCODE', type: 'S', size: 20 },
+      { name: 'NAME', type: 'S', size: 100 },
+      { name: 'SHORTNAME', type: 'S', size: 40 },
+      { name: 'SPLASHMECODE', type: 'S', size: 10 },
+      { name: 'NATIONREGION', type: 'S', size: 20 },
+      { name: 'AGEGROUPS', type: 'S', size: 255 },
+      { name: 'AGECACLTYPE', type: 'I', size: 16 },
+      { name: 'UPDATEMODE', type: 'I', size: 16 },
+      { name: 'SORTCODE', type: 'I', size: 32 },
+    ]
+  },
+  {
+    name: 'RECORDAGEGROUP', stub: true, cols: [
+      { name: 'RECORDAGEGROUPID', type: 'I', size: 32 },
+      { name: 'AGEMIN', type: 'I', size: 16 },
+      { name: 'AGEMAX', type: 'I', size: 16 },
+      { name: 'AGETYPE', type: 'I', size: 16 },
+    ]
+  },
+  {
+    name: 'RECORDLISTAGEGROUP', stub: true, cols: [
+      { name: 'RECORDLISTID', type: 'I', size: 32 },
+      { name: 'RECORDAGEGROUPID', type: 'I', size: 32 },
+    ]
+  },
+  {
+    name: 'RECORD', stub: true, cols: [
+      { name: 'RECORDID', type: 'I', size: 32 },
+      { name: 'RECORDLISTID', type: 'I', size: 32 },
+      { name: 'RECORDAGEGROUPID', type: 'I', size: 32 },
+      { name: 'SWIMEVENTID', type: 'I', size: 32 },
+      { name: 'SWIMSTYLEID', type: 'I', size: 32 },
+      { name: 'RESULTID', type: 'I', size: 32 },
+      { name: 'SWIMTIME', type: 'I', size: 32 },
+      { name: 'COURSE', type: 'I', size: 16 },
+      { name: 'GENDER', type: 'I', size: 16 },
+      { name: 'AGEGROUP', type: 'I', size: 32 },
+      { name: 'HANDICAP', type: 'I', size: 16 },
+      { name: 'FIRSTNAME', type: 'S', size: 30 },
+      { name: 'LASTNAME', type: 'S', size: 50 },
+      { name: 'NAMEPREFIX', type: 'S', size: 20 },
+      { name: 'BIRTHDATE', type: 'D', size: 32 },
+      { name: 'CLUBCODE', type: 'S', size: 10 },
+      { name: 'CLUBNAME', type: 'S', size: 80 },
+      { name: 'CLUBNATION', type: 'S', size: 3 },
+      { name: 'MEETNAME', type: 'S', size: 100 },
+      { name: 'MEETCITY', type: 'S', size: 30 },
+      { name: 'MEETNATION', type: 'S', size: 3 },
+      { name: 'MEETDATE', type: 'D', size: 32 },
+    ]
+  },
+  {
+    name: 'RECORDSPLIT', stub: true, cols: [
+      { name: 'RECORDID', type: 'I', size: 32 },
+      { name: 'DISTANCE', type: 'I', size: 16 },
+      { name: 'SWIMTIME', type: 'I', size: 32 },
+    ]
+  },
+  {
+    name: 'RECORDPOSITION', stub: true, cols: [
+      { name: 'RECORDID', type: 'I', size: 32 },
+      { name: 'RELAYNUMBER', type: 'I', size: 16 },
+      { name: 'FIRSTNAME', type: 'S', size: 30 },
+      { name: 'LASTNAME', type: 'S', size: 50 },
+      { name: 'NAMEPREFIX', type: 'S', size: 20 },
+      { name: 'GENDER', type: 'I', size: 16 },
+      { name: 'BIRTHDATE', type: 'D', size: 32 },
     ]
   },
   {
@@ -341,7 +426,7 @@ const SMB_TABLES: { name: string; cols: ColDef[] }[] = [
       { name: 'AGEMAX', type: 'I', size: 16 },
       { name: 'AGEMIN', type: 'I', size: 16 },
       { name: 'AGETOTAL', type: 'I', size: 16 },
-      { name: 'ATHLETES', type: 'I', size: 16 },
+      { name: 'ATHLETES', type: 'I', size: 32 }, // real Splash ≥11.84174 uses I;32, not I;16 (see docs/SMB_SCHEMA_AUDIT_2026-08-01.md)
       { name: 'BACKUPTIME1', type: 'I', size: 32 },
       { name: 'BACKUPTIME2', type: 'I', size: 32 },
       { name: 'BACKUPTIME3', type: 'I', size: 32 },
@@ -376,13 +461,20 @@ const SMB_TABLES: { name: string; cols: ColDef[] }[] = [
       { name: 'QTTIMING', type: 'I', size: 16 },
       { name: 'QUALCODE', type: 'S', size: 2 },
       { name: 'REACTIONTIME', type: 'I', size: 16 },
-      { name: 'RELAYCODE', type: 'I', size: 16 },
+      { name: 'RELAYCODE', type: 'I', size: 32 }, // real Splash ≥11.84174 uses I;32, not I;16 (see docs/SMB_SCHEMA_AUDIT_2026-08-01.md)
       { name: 'RESERVECODE', type: 'S', size: 20 },
       { name: 'RESULTSTATUS', type: 'I', size: 16 },
       { name: 'SWIMEVENTID', type: 'I', size: 32 },
       { name: 'SWIMTIME', type: 'I', size: 32 },
       { name: 'TEAMNUMBER', type: 'I', size: 16 },
       { name: 'USETIMETYPE', type: 'I', size: 16 },
+    ]
+  },
+  {
+    name: 'RELAYSPLIT', cols: [
+      { name: 'RELAYID', type: 'I', size: 32 },
+      { name: 'DISTANCE', type: 'I', size: 16 },
+      { name: 'SWIMTIME', type: 'I', size: 32 },
     ]
   },
   {
@@ -442,7 +534,17 @@ export function encodeGbin(tableDef: { name: string; cols: ColDef[] }, rows: Rec
         }
       } else if (col.type === 'S') {
         const strVal = val != null ? String(val) : ''
-        const strBuf = Buffer.from(strVal, 'utf8')
+        let strBuf = Buffer.from(strVal, 'utf8')
+        // Splash's Access/Jet columns are fixed-width; a value longer than the declared
+        // column size overflows on restore ("field is too small") instead of failing here.
+        // Clamp defensively and log loud, so a bad config/data value fails fast in dev.
+        if (strBuf.length > col.size) {
+          console.warn(
+            `[smb] ${tableDef.name}.${col.name} value exceeds declared size ${col.size} ` +
+            `(got ${strBuf.length} bytes) — truncating: ${JSON.stringify(strVal)}`
+          )
+          strBuf = Buffer.from(strBuf.subarray(0, col.size))
+        }
         const lenBuf = Buffer.alloc(2)
         lenBuf.writeUInt16LE(strBuf.length)
         chunks.push(lenBuf)
@@ -673,7 +775,7 @@ export function createZip(entries: ZipEntry[]): Buffer {
   return Buffer.concat([...localHeaders, centralDir, eocd])
 }
 
-function readZipEntries(filePath: string): Map<string, Buffer> {
+export function readZipEntries(filePath: string): Map<string, Buffer> {
   const buf = readFileSync(filePath)
   const entries = new Map<string, Buffer>()
   let offset = 0
@@ -727,7 +829,16 @@ export function saveSMB(filePath: string, db: Database.Database): { tables: numb
   for (const tableDef of SMB_TABLES) {
     const tableName = tableDef.name.toLowerCase()
     const colNames = tableDef.cols.map(c => c.name.toLowerCase()).join(', ')
-    let rows = db.prepare(`SELECT ${colNames} FROM ${tableName}`).all() as Record<string, unknown>[]
+    // stub tables have no backing table in our schema — always export empty (see comment above SMB_TABLES)
+    let rows = tableDef.stub ? [] : db.prepare(`SELECT ${colNames} FROM ${tableName}`).all() as Record<string, unknown>[]
+
+    // RECORDAGEGROUP is the one stub table real Splash always populates even with zero configured
+    // records: every real, populated Splash database sampled had exactly one row
+    // {recordagegroupid:0, agemax:-1, agemin:-1, agetype:0} — a default/no-restriction sentinel
+    // entry, not just "table present but genuinely empty" like the other five RECORD* stubs.
+    if (tableName === 'recordagegroup') {
+      rows = [{ recordagegroupid: 0, agemax: -1, agemin: -1, agetype: 0 }]
+    }
 
     // Reverse-map canonical round encoding → Splash MDB encoding for SWIMEVENT
     // so that Splash can read the exported SMB correctly.
@@ -743,6 +854,79 @@ export function saveSMB(filePath: string, db: Database.Database): { tables: numb
         else if (round === 5) newRow = { ...newRow, round: 1 }   // TIM → MDB 1
         return newRow
       })
+    }
+
+    // dsqitem.options holds our own human-readable applies-to tag (e.g. "INDIVIDUAL,RELAY"),
+    // used by dsqitem's own DSQITEMS-XML consumer (scripts/generate_dsq_xml.py). Real Splash's
+    // OPTIONS;S;5 gbin column is an opaque numeric code (observed values: "80600", "00000", …)
+    // whose digit encoding isn't reverse-engineered yet — writing our tag text there overflows
+    // the 5-char field and Access rejects the whole restore. Until the encoding is known, write
+    // the confirmed-safe default (matches real "no options set" rows) instead of the tag text.
+    // See docs/SMB_SCHEMA_AUDIT_2026-08-01.md.
+    if (tableName === 'dsqitem') {
+      rows = rows.map(row => ({ ...row, options: '00000' }))
+    }
+
+    // Beach heats (generateHeatsBeach in db.ts) intentionally pool entries across every age
+    // group in an event, so heat.agegroupid is left NULL — our own UI never reads it (heat
+    // membership scoping lives on each swimresult/relay row instead). Real Splash's Results
+    // module has no such concept: every heat belongs to exactly one age group, and its heat
+    // view (THeat.VerifyStatus/UpdateStatus) dereferences that age group unconditionally —
+    // a NULL FK there crashes Splash with an access violation the moment the heat is opened.
+    // Backfill with any real, valid agegroupid drawn from the heat's own members purely for
+    // Splash-side compatibility; it doesn't feed back into our own data or heat-generation
+    // logic, and doesn't change what heat membership actually means in this app.
+    if (tableName === 'heat') {
+      const fallbackFromResult = db.prepare(
+        `SELECT MIN(agegroupid) AS agegroupid FROM swimresult WHERE heatid = ? AND agegroupid IS NOT NULL`
+      )
+      const fallbackFromRelay = db.prepare(
+        `SELECT MIN(agegroupid) AS agegroupid FROM relay WHERE heatid = ? AND agegroupid IS NOT NULL`
+      )
+      rows = rows.map(row => {
+        if (row['agegroupid'] != null) return row
+        const heatId = row['heatid']
+        let ag = (fallbackFromResult.get(heatId) as { agegroupid: number | null } | undefined)?.agegroupid
+        if (ag == null) {
+          ag = (fallbackFromRelay.get(heatId) as { agegroupid: number | null } | undefined)?.agegroupid
+        }
+        return ag != null ? { ...row, agegroupid: ag } : row
+      })
+
+      // Reverse-map canonical racestatus → Splash's own encoding, same pattern as the swimevent
+      // round remap above. We only ever write 4 (generated/seeded, not yet validated) or 5
+      // (validated/locked, see validateHeat()/invalidateHeat() in db.ts) — 5 happens to already
+      // match Splash, but Splash's own generator never writes 4 for the equivalent "seeded, not
+      // yet official" state; three real, populated Splash competition databases sampled directly
+      // via Microsoft.ACE.OLEDB.12.0 all used {2, 5} exclusively, never 4 — confirmed the actual
+      // root cause of the Results-module access violation (THeat.VerifyStatus/UpdateStatus, which
+      // exists specifically to interpret this field) after three other hypotheses were each
+      // individually ruled out by a bit-for-bit-identical crash following their fixes. See
+      // docs/SMB_SCHEMA_AUDIT_2026-08-01.md.
+      rows = rows.map(row => row['racestatus'] === 4 ? { ...row, racestatus: 2 } : row)
+    }
+
+    // Beach meets have no real pool "course" (LCM/SCY/SCM) — our own meet-config UI only ever
+    // offers those three, so BSGLOBAL.MeetCourse/MEETVALUES.COURSE always default to 1 (LCM) even
+    // for a beach meet. A real Splash-native import of this exact same beach entries LXF used
+    // COURSE=7, not 1 — single real sample, not independently reverse-engineered, but it's the
+    // best evidence available short of a full Splash course-enum dump. See
+    // docs/SMB_SCHEMA_AUDIT_2026-08-01.md.
+    if (tableName === 'bsglobal') {
+      const meetType = rows.find(r => r['name'] === 'MEET_TYPE')?.['data']
+      if (meetType === 'BEACH') {
+        let sawMeetCourse = false
+        rows = rows.map(row => {
+          if (row['name'] === 'MeetCourse') { sawMeetCourse = true; return { ...row, data: '7' } }
+          if (row['name'] === 'MEETVALUES' && typeof row['data'] === 'string') {
+            const lines = row['data'].split(/\r?\n/).filter(l => l.length > 0 && !l.startsWith('COURSE='))
+            lines.push('COURSE=I;7')
+            return { ...row, data: lines.join('\r\n') }
+          }
+          return row
+        })
+        if (!sawMeetCourse) rows = [...rows, { name: 'MeetCourse', data: '7' }]
+      }
     }
 
     recordCounts[tableDef.name] = rows.length
@@ -816,14 +1000,19 @@ export function restoreSMB(filePath: string, db: Database.Database): { tables: n
     try { db.exec('SET session_replication_role = replica') } catch { /* ignore */ }
   }
   try {
-    // Clear existing data (reverse FK order)
+    // Clear existing data (reverse FK order). Skip stub tables — no backing table in our schema.
     const reversed = [...SMB_TABLES].reverse()
     for (const tableDef of reversed) {
+      if (tableDef.stub) continue
       db.prepare(`DELETE FROM ${tableDef.name.toLowerCase()}`).run()
     }
 
     // Import each table
     for (const tableDef of SMB_TABLES) {
+      if (tableDef.stub) {
+        tableDetail.push(`${tableDef.name}: skipped (no local table)`)
+        continue
+      }
       const fileName = `${tableDef.name}-0001.gbin`
       const gbinData = zipEntries.get(fileName)
       if (!gbinData) {
@@ -892,6 +1081,14 @@ export function restoreSMB(filePath: string, db: Database.Database): { tables: n
     // Our canonical:   1=Prelim,     2=Semi,   4=Final, 5=TimedFinal
     // Detect MDB encoding by presence of round=9 or round=11 (never used in canonical)
     normalizeRoundEncoding(db)
+
+    // ── Post-import normalization: Splash racestatus encoding → canonical ──
+    // Splash writes 2 for "generated/seeded, not yet officially validated" (confirmed against
+    // three real, populated Splash competition databases via Microsoft.ACE.OLEDB.12.0 — see
+    // docs/SMB_SCHEMA_AUDIT_2026-08-01.md); our own canonical encoding uses 4 for that same state
+    // (decodeHeatStatus() in db.ts, validateHeat()/invalidateHeat()). 5 (validated) already matches
+    // in both encodings, so only 2→4 needs converting — symmetric with saveSMB's export-side 4→2.
+    db.prepare(`UPDATE heat SET racestatus = 4 WHERE racestatus = 2`).run()
   } finally {
     if (typeof db.pragma === 'function') {
       db.pragma('foreign_keys = ON')

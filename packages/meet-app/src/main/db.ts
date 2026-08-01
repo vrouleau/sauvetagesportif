@@ -3422,7 +3422,7 @@ export function getEntriesByEvent(selectedEventIds: number[]): EntryByEventRow[]
       )
       LEFT JOIN agegroup ag2 ON r.agegroupid = ag2.agegroupid
       WHERE r.swimeventid IN (${clause})
-      ORDER BY a.lastname COLLATE NOCASE, a.firstname COLLATE NOCASE
+      ORDER BY LOWER(a.lastname), LOWER(a.firstname)
     `).all(...params) as Array<Omit<EntryByEventRow, 'phase' | 'isRelay'> & { round: number | null; isRelay: number }>
     rows.push(...individualRows.map(r => ({ ...r, isRelay: !!r.isRelay })))
   }

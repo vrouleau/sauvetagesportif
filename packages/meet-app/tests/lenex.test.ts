@@ -23,7 +23,7 @@ import { existsSync, unlinkSync } from 'fs'
 import { tmpdir } from 'os'
 import { randomBytes } from 'crypto'
 import type Database from 'better-sqlite3'
-import { importLenex, exportLenexResults, exportMeetLenex, readZipEntries } from '../src/main/lenex'
+import { importLenex, exportLenexResults, exportMeetLenex, readZipEntries, writeZipSingleEntry } from '../src/main/lenex'
 
 // Use the test fixture from team-app if available
 const FIXTURE_PATH = join(__dirname, '../../team-app/tests/fixtures/meet_template.lxf')
@@ -59,6 +59,44 @@ describe('LENEX importer', () => {
     const styles = db.prepare('SELECT COUNT(*) as c FROM swimstyle').get() as { c: number }
     expect(styles.c).toBeGreaterThan(0)
     expect(summary.events).toBeGreaterThan(0)
+  })
+
+  it('imports a custom (non-FINA-catalog) style as stroke=0/technique=0/code=ID{id}, matching real Splash', () => {
+    // Our own meet templates (config/template_pool.lxf, template_beach.lxf) never set a
+    // <SWIMSTYLE stroke="..."> attribute — every style we ever import is a custom lifesaving
+    // discipline, not a real FINA stroke. Confirmed via a real Splash-native import of the same
+    // entries LXF (docs/SMB_SCHEMA_AUDIT_2026-08-01.md): Splash represents this as
+    // stroke=0/technique=0/code="ID{swimstyleid}" — never stroke=1 (Freestyle) with technique=null,
+    // which is what this importer used to write, and a state genuine Splash data never contains.
+    const lxfPath = join(tmpdir(), `test-custom-style-${randomBytes(4).toString('hex')}.lxf`)
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<LENEX version="3.0">
+  <MEETS>
+    <MEET name="Test Meet" city="Test City" nation="CAN" course="LCM">
+      <SESSIONS>
+        <SESSION number="1" name="Session 1">
+          <EVENTS>
+            <EVENT eventid="1" number="1" gender="M" round="TIM">
+              <SWIMSTYLE swimstyleid="601" distance="16" relaycount="1" name="Drapeau Sur Plage" />
+            </EVENT>
+          </EVENTS>
+        </SESSION>
+      </SESSIONS>
+    </MEET>
+  </MEETS>
+</LENEX>`
+    writeZipSingleEntry(lxfPath, 'meet.lef', xml)
+
+    try {
+      importLenex(lxfPath, db)
+      const style = db.prepare('SELECT stroke, technique, code FROM swimstyle WHERE swimstyleid=601').get() as
+        { stroke: number | null; technique: number | null; code: string | null }
+      expect(style.stroke).toBe(0)
+      expect(style.technique).toBe(0)
+      expect(style.code).toBe('ID601')
+    } finally {
+      try { unlinkSync(lxfPath) } catch {}
+    }
   })
 
   it('imports age groups', function () {

@@ -112,7 +112,7 @@ export class LivePushModule {
       this.enabled = enabledFlag !== 'F'  // default to enabled if not explicitly disabled
       if (!enabledFlag || enabledFlag === '') {
         // Write LIVE_ENABLED=T to bsglobal
-        db.prepare(`INSERT OR REPLACE INTO bsglobal (name, data) VALUES (?, ?)`).run('LIVE_ENABLED', 'T')
+        db.prepare(`INSERT INTO bsglobal (name, data) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET data=excluded.data`).run('LIVE_ENABLED', 'T')
       }
     } else {
       this.enabled = false

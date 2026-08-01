@@ -23,11 +23,12 @@
  * - Unit tests for sequence numbering: **Validates: Requirements 3.1, 3.2, 3.4, 3.5**
  * - Unit tests for late arrival: **Validates: Requirements 5.1, 5.2, 5.3, 5.4, 5.5**
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from 'vitest'
 import * as fc from 'fast-check'
-import { createTestDb } from './helpers'
+import { createTestDb, createPgTestDb, isPgTestAvailable, resetTestDb, type TestBackendKind } from './helpers'
 import { generateBeachNumbers, assignLateBeachNumber } from '../src/main/beachNumber'
 import type Database from 'better-sqlite3'
+import type { DbBackend } from '../src/main/dbBackend'
 
 // ── Shared Helpers ────────────────────────────────────────────────────────────
 
@@ -1038,5 +1039,92 @@ describe('Beach relay heat generation', () => {
     }
     const swimresultCount = (db.prepare(`SELECT COUNT(*) as c FROM swimresult WHERE swimeventid=1`).get() as { c: number }).c
     expect(swimresultCount).toBe(0)
+  })
+})
+
+// ── PostgreSQL backend parity ───────────────────────────────────────────────
+//
+// generateBeachNumbers()/assignLateBeachNumber() had no PG-backend coverage at all until this
+// block — which is exactly how a real bug shipped: `SELECT DISTINCT ... ORDER BY UPPER(c.code)`
+// (ORDER BY expression not in the SELECT list — SQLite tolerates this, Postgres rejects it) and
+// `COLLATE NOCASE` (SQLite-only syntax, not valid Postgres) both passed every SQLite test but
+// crashed real usage the moment a beach meet's entries were imported against a shared Postgres
+// backend. Fixed in beachNumber.ts; this suite would have caught it. Skipped automatically if no
+// Postgres server is reachable.
+const pgAvailable = await isPgTestAvailable()
+const BACKENDS: TestBackendKind[] = pgAvailable ? ['sqlite', 'pg'] : ['sqlite']
+if (!pgAvailable) {
+  console.warn(
+    '[beach-number.test.ts] Postgres not reachable — skipping PG-backend tests. ' +
+    'Start it with: docker compose -f packages/meet-app/docker-compose.postgres.yml up -d'
+  )
+}
+
+describe.each(BACKENDS)('Beach number generation backend parity [%s]', (kind) => {
+  let db: DbBackend
+  let dropPgDb: (() => Promise<void>) | undefined
+  let cleanupSqlite: (() => void) | undefined
+
+  beforeAll(async () => {
+    if (kind === 'pg') {
+      const h = await createPgTestDb()
+      db = h.db
+      dropPgDb = h.cleanup
+    }
+  })
+
+  afterAll(async () => {
+    if (kind === 'pg' && dropPgDb) await dropPgDb()
+  })
+
+  beforeEach(() => {
+    if (kind === 'sqlite') {
+      const t = createTestDb()
+      db = t.db as unknown as DbBackend
+      cleanupSqlite = t.cleanup
+    } else {
+      resetTestDb(db)
+    }
+    // Minimal beach-meet seed: two clubs, several athletes each, spread across two age
+    // groups/genders so generateBeachNumbers exercises real category grouping + sorting.
+    db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount, stroke) VALUES (601, 16, 'Drapeau Sur Plage', 1, 0)`)
+    db.exec(`INSERT INTO swimsession (swimsessionid, sessionnumber, name, course) VALUES (1, 1, 'Session 1', 1)`)
+    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode) VALUES (100, 1, 601, 1, 1, 5, 1)`)
+    db.exec(`INSERT INTO agegroup (agegroupid, swimeventid, agemin, agemax, gender, sortcode) VALUES (200, 100, 10, 12, 1, 1)`)
+    db.exec(`INSERT INTO agegroup (agegroupid, swimeventid, agemin, agemax, gender, sortcode) VALUES (201, 100, 13, 14, 2, 2)`)
+    db.exec(`INSERT INTO club (clubid, code, name) VALUES (1, 'zeta', 'Zeta Club')`)
+    db.exec(`INSERT INTO club (clubid, code, name) VALUES (2, 'alpha', 'Alpha Club')`)
+    const athletes: Array<[number, number, string, string, number]> = [
+      [1, 1, 'Zed', 'Adams', 200], [2, 1, 'Yves', 'Baker', 200], [3, 1, 'Xena', 'Clark', 201],
+      [4, 2, 'Ann', 'Davis', 200], [5, 2, 'Bob', 'Evans', 201],
+    ]
+    for (const [athleteId, clubId, firstname, lastname, agegroupId] of athletes) {
+      db.exec(`INSERT INTO athlete (athleteid, clubid, firstname, lastname) VALUES (${athleteId}, ${clubId}, '${firstname}', '${lastname}')`)
+      db.exec(`INSERT INTO swimresult (swimresultid, athleteid, swimeventid, agegroupid) VALUES (${athleteId}, ${athleteId}, 100, ${agegroupId})`)
+    }
+  })
+
+  afterEach(() => {
+    if (kind === 'sqlite') cleanupSqlite?.()
+  })
+
+  it('generateBeachNumbers runs without a SQL error and assigns valid beach numbers', () => {
+    const result = generateBeachNumbers(db as unknown as Database.Database)
+    expect(result.errors).toEqual([])
+    expect(result.assigned).toBe(5)
+
+    const rows = db.prepare(`SELECT athleteid, nameprefix FROM athlete ORDER BY athleteid`).all() as
+      Array<{ athleteid: number; nameprefix: string | null }>
+    for (const row of rows) {
+      expect(row.nameprefix).toMatch(/^[A-Z]\d{3}$/)
+    }
+  })
+
+  it('assignLateBeachNumber runs without a SQL error for a late arrival', () => {
+    db.exec(`INSERT INTO athlete (athleteid, clubid, firstname, lastname) VALUES (6, 1, 'Cara', 'Late')`)
+    db.exec(`INSERT INTO swimresult (swimresultid, athleteid, swimeventid, agegroupid) VALUES (6, 6, 100, 200)`)
+
+    const beachNumber = assignLateBeachNumber(db as unknown as Database.Database, 6)
+    expect(beachNumber).toMatch(/^[A-Z]\d{3}$/)
   })
 })

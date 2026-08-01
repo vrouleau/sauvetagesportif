@@ -73,11 +73,11 @@ export function generateBeachNumbers(db: Database.Database): BeachNumberResult {
 
   // Step 2: Query clubs with registered athletes, sorted by UPPER(code) for determinism
   const clubs = db.prepare(`
-    SELECT DISTINCT c.clubid, c.code, c.name
+    SELECT DISTINCT c.clubid, c.code, c.name, UPPER(c.code) AS code_upper
     FROM club c
     JOIN athlete a ON a.clubid = c.clubid
     JOIN swimresult r ON r.athleteid = a.athleteid
-    ORDER BY UPPER(c.code)
+    ORDER BY code_upper
   `).all() as Array<{ clubid: number; code: string; name: string }>
 
   // Step 3: Assign club letters
@@ -126,14 +126,19 @@ export function generateBeachNumbers(db: Database.Database): BeachNumberResult {
     if (!letter) continue // skipped due to letter exhaustion
 
     // Query distinct athletes with their category info for this club
+    // Not DISTINCT: an athlete can legitimately appear once per swimresult (multiple events/age
+    // groups) — the loop below already dedupes by athleteid, keeping the first row encountered
+    // in this deterministic order. SQLite's COLLATE NOCASE has no Postgres equivalent; plain
+    // lastname/firstname ordering is enough here since this only picks which duplicate row wins
+    // the dedup (final display order is re-sorted with proper locale comparison below).
     const athletes = db.prepare(`
-      SELECT DISTINCT a.athleteid, a.lastname, a.firstname,
+      SELECT a.athleteid, a.lastname, a.firstname,
              ag.agemin, ag.agemax, ag.gender AS ag_gender
       FROM athlete a
       JOIN swimresult r ON r.athleteid = a.athleteid
       LEFT JOIN agegroup ag ON r.agegroupid = ag.agegroupid
       WHERE a.clubid = ?
-      ORDER BY ag.agemin, ag.agemax, ag.gender, a.lastname COLLATE NOCASE, a.firstname COLLATE NOCASE
+      ORDER BY ag.agemin, ag.agemax, ag.gender, a.lastname, a.firstname
     `).all(club.clubid) as Array<{
       athleteid: number; lastname: string; firstname: string
       agemin: number | null; agemax: number | null; ag_gender: number | null
