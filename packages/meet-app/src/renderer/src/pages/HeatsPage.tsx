@@ -72,6 +72,7 @@ function DsqSearchDropdown({ items, value, onChange, disabled, eventType }: {
 }) {
   const [search, setSearch] = useState('')
   const [isOpen, setIsOpen] = useState(false)
+  const [openUpward, setOpenUpward] = useState(false)
   const [highlightIndex, setHighlightIndex] = useState(0)
   const containerRef = useRef<HTMLDivElement>(null)
   const dsqInputRef = useRef<HTMLInputElement>(null)
@@ -129,11 +130,24 @@ function DsqSearchDropdown({ items, value, onChange, disabled, eventType }: {
     setSearch('')
   }
 
+  // Dropdown is ~max-h-48 (192px) + margin; open upward if there isn't room below
+  // the input but there is above, so the list doesn't run off the bottom of the window.
+  const DROPDOWN_HEIGHT_ESTIMATE = 200
+  function openDropdown() {
+    const rect = containerRef.current?.getBoundingClientRect()
+    if (rect) {
+      const spaceBelow = window.innerHeight - rect.bottom
+      const spaceAbove = rect.top
+      setOpenUpward(spaceBelow < DROPDOWN_HEIGHT_ESTIMATE && spaceAbove > spaceBelow)
+    }
+    setIsOpen(true)
+  }
+
   function handleKeyDown(e: React.KeyboardEvent) {
     if (!isOpen) {
       if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ') {
         e.preventDefault()
-        setIsOpen(true)
+        openDropdown()
         setHighlightIndex(0)
       }
       return
@@ -170,7 +184,7 @@ function DsqSearchDropdown({ items, value, onChange, disabled, eventType }: {
         className="w-full border border-gray-300 px-1 py-0.5 bg-white text-xs rounded h-6"
         placeholder={displayValue || '— Sélectionner un code DQ —'}
         value={isOpen ? search : displayValue}
-        onFocus={() => { setIsOpen(true); setSearch(''); setHighlightIndex(0) }}
+        onFocus={() => { openDropdown(); setSearch(''); setHighlightIndex(0) }}
         onChange={(e) => { setSearch(e.target.value); setHighlightIndex(0) }}
         onKeyDown={handleKeyDown}
         aria-expanded={isOpen}
@@ -191,7 +205,9 @@ function DsqSearchDropdown({ items, value, onChange, disabled, eventType }: {
         <ul
           ref={listRef}
           role="listbox"
-          className="absolute z-50 left-0 right-0 top-full mt-0.5 max-h-48 overflow-y-auto bg-white border border-gray-300 rounded shadow-lg text-xs"
+          className={`absolute z-50 left-0 right-0 max-h-48 overflow-y-auto bg-white border border-gray-300 rounded shadow-lg text-xs ${
+            openUpward ? 'bottom-full mb-0.5' : 'top-full mt-0.5'
+          }`}
         >
           {filteredItems.length === 0 ? (
             <li className="px-2 py-1 text-gray-400 italic">Aucun résultat</li>
