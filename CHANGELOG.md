@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.3.51] - 2026-08-02
+
+### Other
+
+- Highlight incomplete relay teams and warn on the page header (`2b3f978`)
+- Fix relay LXF export collapsing all teams of a style onto one event (`5a16d8b`)
+- Fix beach heat row display ignoring per-event maxentries override (`4ee78d5`)
+- Fix session lane save and session/event panel not refreshing on selection (`603d675`)
+- Fix Splash .smb compatibility gaps and SQLite/Postgres portability bugs (`488ac55`)
+
 ## [0.3.50] - 2026-08-01
 
 ### Other
