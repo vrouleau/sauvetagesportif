@@ -994,8 +994,9 @@ ipcMain.handle('db:set-relay-team-member', (_event, teamId: number, position: nu
 
     const isSERC = eventInfo?.swimstyleid === 530
     const eventGenderVal = eventInfo?.eventGender ?? 0
-    // gender 3 = mixed (X)
-    if (!isSERC && eventGenderVal === 3) {
+    // gender 1=M, 2=F; anything else (0 or 3) is mixed (X) — don't assume mixed is
+    // always encoded as 3, some data (Splash-native imports, see api.py's MDB fixup) uses 0
+    if (!isSERC && eventGenderVal !== 1 && eventGenderVal !== 2) {
       const rc = eventInfo?.relaycount ?? 4
       const maxPerGender = Math.floor(rc / 2)
 
