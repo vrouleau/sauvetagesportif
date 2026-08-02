@@ -1325,6 +1325,7 @@ def set_closure_date(data: ClosureDateUpdate, db: Session = Depends(get_db)):
 def list_clubs(request: Request, db: Session = Depends(get_db)):
     from sqlalchemy import func, distinct
     from ..invoices import _club_line_items, _meet_fees
+    from ..models_team import Relay, RelayPos
 
     pin = request.headers.get("X-Club-Pin", "")
     role, _ = _resolve_role(pin, db)
@@ -1345,6 +1346,26 @@ def list_clubs(request: Request, db: Session = Depends(get_db)):
         .all()
     )
 
+    # Pre-compute incomplete relay team counts per club (a team is complete once
+    # every position up to its style's relaycount has an assigned athlete)
+    relay_style_counts = dict(db.query(SwimStyle.swimstyleid, SwimStyle.relaycount).all())
+    filled_position_counts = dict(
+        db.query(RelayPos.relaysid, func.count(distinct(RelayPos.numb)))
+        .filter(RelayPos.membersid.isnot(None))
+        .group_by(RelayPos.relaysid)
+        .all()
+    )
+    incomplete_relay_counts: dict[int, int] = {}
+    for relaysid, clubsid, stylesid in (
+        db.query(Relay.relaysid, Relay.clubsid, Relay.stylesid)
+        .filter(Relay.clubsid.isnot(None))
+        .all()
+    ):
+        needed = relay_style_counts.get(stylesid) or 1
+        filled = filled_position_counts.get(relaysid, 0)
+        if filled < needed:
+            incomplete_relay_counts[clubsid] = incomplete_relay_counts.get(clubsid, 0) + 1
+
     meet_fees = _meet_fees(db)
     result = []
     for c in clubs:
@@ -1352,7 +1373,8 @@ def list_clubs(request: Request, db: Session = Depends(get_db)):
                 "athlete_count": athlete_counts.get(c.clubsid, 0),
                 "registered_athlete_count": reg_counts.get(c.clubsid, 0),
                 "invite_send_count": c.invite_send_count or 0,
-                "stripe_send_count": c.stripe_send_count or 0}
+                "stripe_send_count": c.stripe_send_count or 0,
+                "incomplete_relay_count": incomplete_relay_counts.get(c.clubsid, 0)}
         items = _club_line_items(db, c, meet_fees)
         item["total_fees_cents"] = sum(it["unit_cents"] * it["qty"] for it in items)
         if role in ("admin", "organizer"):
