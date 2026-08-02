@@ -399,7 +399,7 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
   // Build full lane list (laneMin to laneMax) with entries or empty slots
   const laneMin = isBeach ? 1 : (selectedSession?.laneMin ?? 1)
   const laneMax = isBeach
-    ? (selectedEvent?.distance || 16)
+    ? (selectedEvent?.maxEntries ?? selectedEvent?.distance ?? 16)
     : (selectedSession?.laneMax ?? 8)
   const allLanes: Array<{ lane: number; entry: LaneEntry | null }> = []
   for (let l = laneMin; l <= laneMax; l++) {

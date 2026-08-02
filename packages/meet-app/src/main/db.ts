@@ -287,6 +287,7 @@ export interface HeatListEventRow {
   nameEn: string
   gender: 'M' | 'F' | 'X'
   distance: number
+  maxEntries?: number | null
   phase: 'Finale' | 'Eliminatoire' | 'Finale directe'
   isAdmin?: boolean
   scheduledTime?: string
@@ -402,7 +403,7 @@ export async function getHeatListSessions(): Promise<HeatListSessionRow[]> {
 
   const events = db.prepare(`
     SELECT e.swimeventid, e.swimsessionid, e.eventnumber, e.gender, e.round, e.sortcode, e.daytime, e.internalevent,
-           e.roundname, e.comment, e.swimstyleid,
+           e.roundname, e.comment, e.swimstyleid, e.maxentries,
            ss.distance, ss.stroke, ss.name AS stylename, ss.relaycount
     FROM swimevent e
     LEFT JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid
@@ -413,7 +414,7 @@ export async function getHeatListSessions(): Promise<HeatListSessionRow[]> {
     round: number | null; sortcode: number | null; daytime: string | number | null
     internalevent: string | null; distance: number | null; stroke: number | null
     stylename: string | null; roundname: string | null; comment: string | null; swimstyleid: number | null
-    relaycount: number | null
+    relaycount: number | null; maxentries: number | null
   }>
 
   if (events.length === 0) return sessions.map(s => ({
@@ -618,6 +619,7 @@ export async function getHeatListSessions(): Promise<HeatListSessionRow[]> {
       nameEn: name,
       gender: decodeGender(e.gender),
       distance: e.distance ?? 0,
+      maxEntries: e.maxentries ?? null,
       phase: decodePhase(e.round),
       isAdmin: isAdm,
       scheduledTime: formatDaytime(e.daytime),

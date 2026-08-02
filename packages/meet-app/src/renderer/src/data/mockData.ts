@@ -66,6 +66,7 @@ export interface HeatListEvent {
   nameEn: string
   gender: 'M' | 'F' | 'X'
   distance: number
+  maxEntries?: number | null
   phase: 'Finale' | 'Eliminatoire' | 'Finale directe'
   timingConnected?: boolean
   scheduledTime?: string
