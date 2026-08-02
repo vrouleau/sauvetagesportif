@@ -1472,14 +1472,14 @@ function PropertiesPanel({ selected, sessions, onUpdateSession, onUpdateEvent, o
 
   if (selected.type === 'session') {
     const s = selected.session
-    return <SessionPropertiesPanel session={s} onUpdate={(data) => onUpdateSession(s.id, data)} />
+    return <SessionPropertiesPanel key={s.id} session={s} onUpdate={(data) => onUpdateSession(s.id, data)} />
   }
 
   if (selected.type === 'event') {
     if (selected.event.isAdmin) {
-      return <PausePropertiesPanel event={selected.event} onUpdate={(data) => onUpdateEvent(selected.event.id, selected.event.sessionId, data)} />
+      return <PausePropertiesPanel key={selected.event.id} event={selected.event} onUpdate={(data) => onUpdateEvent(selected.event.id, selected.event.sessionId, data)} />
     }
-    return <EventPropertiesPanel event={selected.event} onUpdate={(data) => onUpdateEvent(selected.event.id, selected.event.sessionId, data)} />
+    return <EventPropertiesPanel key={selected.event.id} event={selected.event} onUpdate={(data) => onUpdateEvent(selected.event.id, selected.event.sessionId, data)} />
   }
 
   // Age group
