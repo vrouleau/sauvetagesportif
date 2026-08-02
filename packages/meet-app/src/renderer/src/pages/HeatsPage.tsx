@@ -529,29 +529,63 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
         return
       }
 
-      // Duplicate? Swap positions
+      // Duplicate? Overwriting a filled cell swaps the two positions; filling a
+      // previously empty cell instead cascades the contiguous run of positions
+      // from `pos` onward up by one, so inserting a missed result doesn't
+      // clobber whoever already held that number.
       const conflict = otherPositions.find(p => p.pos === pos)
       if (conflict) {
         const currentEntry = entries.find(e => e.lane === lane)
         const currentPos = currentEntry?.finalTime ?? null
-        // Swap: give the conflicting athlete our old position (or clear if we had none)
-        setHeatData((prev) => {
-          if (selectedHeatId === null) return prev
-          const updated = (prev[selectedHeatId] ?? []).map((e) => {
-            if (e.lane === lane) {
-              const next: LaneEntry = { ...e, finalTime: parsed || undefined, status: null }
-              saveEntryResult(next, next.finalTime, null, null, next.splitTimes)
-              return next
-            }
-            if (e.lane === conflict.lane) {
-              const next: LaneEntry = { ...e, finalTime: currentPos || undefined, status: null }
-              saveEntryResult(next, next.finalTime, null, null, next.splitTimes)
-              return next
-            }
-            return e
+
+        if (currentPos !== null) {
+          // Swap: give the conflicting athlete our old position
+          setHeatData((prev) => {
+            if (selectedHeatId === null) return prev
+            const updated = (prev[selectedHeatId] ?? []).map((e) => {
+              if (e.lane === lane) {
+                const next: LaneEntry = { ...e, finalTime: parsed || undefined, status: null }
+                saveEntryResult(next, next.finalTime, null, null, next.splitTimes)
+                return next
+              }
+              if (e.lane === conflict.lane) {
+                const next: LaneEntry = { ...e, finalTime: currentPos || undefined, status: null }
+                saveEntryResult(next, next.finalTime, null, null, next.splitTimes)
+                return next
+              }
+              return e
+            })
+            return { ...prev, [selectedHeatId]: updated }
           })
-          return { ...prev, [selectedHeatId]: updated }
-        })
+        } else {
+          // Cascade: shift the unbroken run of occupied positions starting at
+          // `pos` each up by one, stopping at the first gap or the end.
+          const shifts = new Map<number, number>()
+          let p = pos
+          while (true) {
+            const holder = otherPositions.find(op => op.pos === p)
+            if (!holder) break
+            shifts.set(holder.lane, p + 1)
+            p++
+          }
+          setHeatData((prev) => {
+            if (selectedHeatId === null) return prev
+            const updated = (prev[selectedHeatId] ?? []).map((e) => {
+              if (e.lane === lane) {
+                const next: LaneEntry = { ...e, finalTime: parsed || undefined, status: null }
+                saveEntryResult(next, next.finalTime, null, null, next.splitTimes)
+                return next
+              }
+              if (shifts.has(e.lane)) {
+                const next: LaneEntry = { ...e, finalTime: String(shifts.get(e.lane)), status: null }
+                saveEntryResult(next, next.finalTime, null, null, next.splitTimes)
+                return next
+              }
+              return e
+            })
+            return { ...prev, [selectedHeatId]: updated }
+          })
+        }
         setEditingLane(null)
         return
       }
