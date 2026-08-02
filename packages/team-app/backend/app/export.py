@@ -31,6 +31,7 @@ from .models import (
     SwimSession, gender_to_str, fee_dollars_to_cents,
 )
 from .models_team import TeamClub, Member, Relay, RelayPos
+from .models_team import gender_to_str as relay_gender_to_str
 from .best_times import get_best_time_date
 
 
@@ -42,6 +43,31 @@ def _ms_to_lenex(ms: int | None) -> str:
     s = (ms % 60000) // 1000
     cs = (ms % 1000) // 10
     return f"{h:02d}:{m:02d}:{s:02d}.{cs:02d}"
+
+
+def _find_relay_event(meet_struct, relay: Relay):
+    """Resolve the MeetEvent a relay team belongs to.
+
+    relay.eventnumb is the authoritative anchor — it's set from the actual
+    event's eventnumber at every relay-creation site, matching "team's
+    category = the event it was created under" (docs/RELAY_TEAM_RULES.md).
+    Matching by stylesid alone is ambiguous: a style can span several events
+    differing only by gender/age (e.g. an Open M and Open F event using the
+    same relay style), so that used to silently pick whichever one happened
+    to be first in session order for every relay of that style.
+    """
+    candidates = [
+        m_ev
+        for ses in meet_struct.sessions
+        for m_ev in ses.events
+        if m_ev.number == relay.eventnumb
+    ]
+    if len(candidates) > 1:
+        # Disambiguate same-number events (e.g. prelim/final sharing a number)
+        by_style = [m_ev for m_ev in candidates if m_ev.swimstyleid == relay.stylesid]
+        if by_style:
+            candidates = by_style
+    return candidates[0] if candidates else None
 
 
 def _agegroup_for_code(age_groups, age_code: str, masters: bool):
@@ -380,7 +406,7 @@ def generate_lxf(db: Session) -> bytes:
             if team_name:
                 relay_attrs["name"] = team_name
             if relay.gender:
-                relay_attrs["gender"] = gender_to_str(relay.gender)
+                relay_attrs["gender"] = relay_gender_to_str(relay.gender)
             if relay.minage is not None:
                 relay_attrs["agemin"] = str(relay.minage)
             if relay.maxage is not None:
@@ -404,14 +430,9 @@ def generate_lxf(db: Session) -> bytes:
             }
             if relay.entrytime:
                 relay_entry_attrs["entrytime"] = _ms_to_lenex(relay.entrytime)
-            # Find matching event by stylesid + gender + age range
-            for ses in meet_struct.sessions:
-                for m_ev in ses.events:
-                    if m_ev.swimstyleid == relay.stylesid:
-                        relay_entry_attrs["eventid"] = str(m_ev.eventid)
-                        break
-                if "eventid" in relay_entry_attrs:
-                    break
+            m_ev = _find_relay_event(meet_struct, relay)
+            if m_ev:
+                relay_entry_attrs["eventid"] = str(m_ev.eventid)
             entry_xml = ET.SubElement(relay_entries_xml, "ENTRY", relay_entry_attrs)
             # Also put RELAYPOSITIONS inside ENTRY (meet-app importer expects them here)
             if positions:
@@ -470,7 +491,7 @@ def generate_lxf(db: Session) -> bytes:
             if team_name:
                 relay_attrs["name"] = team_name
             if relay.gender:
-                relay_attrs["gender"] = gender_to_str(relay.gender)
+                relay_attrs["gender"] = relay_gender_to_str(relay.gender)
             if relay.minage is not None:
                 relay_attrs["agemin"] = str(relay.minage)
             if relay.maxage is not None:
@@ -493,13 +514,9 @@ def generate_lxf(db: Session) -> bytes:
             }
             if relay.entrytime:
                 relay_entry_attrs["entrytime"] = _ms_to_lenex(relay.entrytime)
-            for ses in meet_struct.sessions:
-                for m_ev in ses.events:
-                    if m_ev.swimstyleid == relay.stylesid:
-                        relay_entry_attrs["eventid"] = str(m_ev.eventid)
-                        break
-                if "eventid" in relay_entry_attrs:
-                    break
+            m_ev = _find_relay_event(meet_struct, relay)
+            if m_ev:
+                relay_entry_attrs["eventid"] = str(m_ev.eventid)
             entry_xml = ET.SubElement(relay_entries_xml, "ENTRY", relay_entry_attrs)
             # Also put RELAYPOSITIONS inside ENTRY (meet-app importer expects them here)
             if positions:
