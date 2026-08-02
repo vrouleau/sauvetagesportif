@@ -53,6 +53,14 @@ interface FlatRelayEvent {
   ageCodes: string[]  // all age codes for this event
 }
 
+// A team is complete once every position (1..relaycount) has an assigned athlete.
+function isTeamComplete(team: RelayTeam, relaycount: number): boolean {
+  const filledPositionCount = new Set(
+    team.members.filter(m => m.athleteId != null).map(m => m.position)
+  ).size
+  return filledPositionCount >= relaycount
+}
+
 // ─── RelayEventCard ───────────────────────────────────────────────────────────
 
 // isAgeCodeAllowedOnTeam / wouldMissNativeAnchor (imported above, shared with meet-app's
@@ -222,8 +230,14 @@ function RelayTeamRow({
     onMemberChange(team.id, position, athleteId)
   }, [team.id, onMemberChange])
 
+  // Highlighted so coaches can spot missing members at a glance.
+  const isComplete = useMemo(() => isTeamComplete(team, event.relaycount), [team, event.relaycount])
+
   return (
-    <div className="border border-gray-200 rounded px-3 py-2 bg-gray-50">
+    <div
+      className={`border rounded px-3 py-2 ${isComplete ? 'bg-gray-50 border-gray-200' : 'bg-amber-50 border-amber-300'}`}
+      title={isComplete ? undefined : t.relay.incompleteTeam}
+    >
       {/* Team header with team number, editable name, and delete button.
           No age-group label here — it's redundant with the event card's own
           age category shown in the header (a team always anchors to that). */}
@@ -583,6 +597,19 @@ export default function RelayEntryPage({ role, clubId, refreshKey }: RelayEntryP
     return [...pageData.ageCategories].sort((a, b) => a.ageMin - b.ageMin).map(c => c.ageCode)
   }, [pageData])
 
+  // Whether any team across any event is missing a member — surfaced next to the
+  // page title so coaches don't have to scroll through every event to notice.
+  const hasIncompleteTeams: boolean = useMemo(() => {
+    if (!pageData) return false
+    for (const event of flatEvents) {
+      for (const ac of event.ageCodes) {
+        const teams = pageData.teamsByEvent[`${event.eventId}-${ac}`] || []
+        if (teams.some(team => !isTeamComplete(team, event.relaycount))) return true
+      }
+    }
+    return false
+  }, [pageData, flatEvents])
+
   // ─── Loading state ──────────────────────────────────────────────────────────
   if (loading && !pageData) {
     return (
@@ -611,7 +638,14 @@ export default function RelayEntryPage({ role, clubId, refreshKey }: RelayEntryP
     <div className="flex flex-col h-full overflow-hidden">
       {/* Header */}
       <div className="px-4 py-3 bg-white border-b border-gray-300 shrink-0 flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-gray-800">{t.relay.pageTitle}</h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-sm font-semibold text-gray-800">{t.relay.pageTitle}</h2>
+          {hasIncompleteTeams && (
+            <span className="text-xs font-medium text-amber-700 bg-amber-100 border border-amber-300 rounded px-2 py-0.5">
+              {t.relay.incompleteTeamsWarning}
+            </span>
+          )}
+        </div>
 
         {/* Admin/organizer club filter */}
         {(role === 'admin' || role === 'organizer') && clubs.length > 0 && (

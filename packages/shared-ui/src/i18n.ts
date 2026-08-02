@@ -344,6 +344,8 @@ const fr = {
     noEligibleAthletes: 'Aucun athlète éligible',
     teamName: "Nom de l'équipe",
     selectClubToAdd: 'Sélectionnez un club pour ajouter une équipe',
+    incompleteTeam: 'Équipe incomplète — il manque des athlètes',
+    incompleteTeamsWarning: 'Équipes incomplètes',
     errors: {
       uniquenessViolation: 'Cet athlète est déjà assigné à une autre équipe pour cette épreuve',
       entriesClosed: 'Les inscriptions sont fermées',
@@ -679,6 +681,8 @@ const en = {
     noEligibleAthletes: 'No eligible athletes',
     teamName: 'Team name',
     selectClubToAdd: 'Select a club to add a team',
+    incompleteTeam: 'Incomplete team — missing athletes',
+    incompleteTeamsWarning: 'Incomplete teams',
     errors: {
       uniquenessViolation: 'This athlete is already assigned to another team for this event',
       entriesClosed: 'Entries are closed',
