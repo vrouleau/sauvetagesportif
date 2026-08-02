@@ -74,6 +74,7 @@ import {
   type ScanStatus,
 } from './timingScanDb'
 import { generateTimingSheetsHtml, buildTimingSheetPages } from './timingSheets'
+import { generatePositionSheetsHtml, type PositionSheetEvent, type PositionSheetHeat } from './positionSheets'
 import { type OcrEngine } from './ocrEngine'
 import { startGeminiBackground, setGeminiBackgroundEnabled, isGeminiBackgroundEnabled, resetGeminiAttempted } from './geminiBackground'
 import { GeminiOcrEngine, getCurrentGeminiTier, loadGeminiKeys, saveGeminiKeys } from './ocrGemini'
@@ -1910,6 +1911,51 @@ ipcMain.handle('timing:generate-sheets', async (_event, sessionId: number) => {
     }
 
     const html = generateTimingSheetsHtml(allPages)
+    return { ok: true, html }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+})
+
+ipcMain.handle('timing:generate-position-sheets', async (_event, sessionId: number) => {
+  try {
+    const genderLabel = (g: 'M' | 'F' | 'X'): string => (g === 'M' ? 'Masculin' : g === 'F' ? 'Féminin' : 'Mixte')
+
+    // Lowest member beach number for a relay team, so relay rows sort alongside individual ones
+    const sortKeyOf = (identifier: string): string => identifier.split('/')[0]
+
+    const sessions = await getHeatListSessions()
+    const session = sessions.find((s) => s.id === sessionId)
+    if (!session) return { ok: true, html: generatePositionSheetsHtml([]) }
+
+    const sheetEvents: PositionSheetEvent[] = []
+    for (const ev of session.events) {
+      if (ev.isAdmin) continue
+
+      const heats: PositionSheetHeat[] = []
+      for (const h of ev.heats) {
+        const identifiers = h.entries
+          .filter((e) => e.lane > 0)
+          .map((e) => (e.relayMembers && e.relayMembers.length > 0
+            ? e.relayMembers.filter((m) => m.beachNumber).map((m) => m.beachNumber!).join('/')
+            : e.beachNumber ?? ''))
+          .filter((id) => id !== '')
+          .sort((a, b) => sortKeyOf(a).localeCompare(sortKeyOf(b)))
+
+        if (identifiers.length === 0) continue
+        heats.push({ heatNumber: h.number, identifiers })
+      }
+
+      if (heats.length === 0) continue
+      sheetEvents.push({
+        eventNumber: ev.number,
+        eventName: ev.nameFr,
+        genderLabel: genderLabel(ev.gender),
+        heats,
+      })
+    }
+
+    const html = generatePositionSheetsHtml(sheetEvents)
     return { ok: true, html }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }

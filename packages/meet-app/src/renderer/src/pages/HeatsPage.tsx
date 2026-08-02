@@ -938,6 +938,26 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
     await reportApi.print(result.html, { line1: '', line2: '', today: '' })
   }
 
+  async function handlePrintPositionSheets() {
+    const api = (window as any).api?.timing
+    const reportApi = (window as any).api?.report
+    if (!api || !reportApi) return
+
+    const sessionId = selectedSession?.id ?? sessions[0]?.id
+    if (!sessionId) {
+      window.alert('Aucune session disponible.')
+      return
+    }
+
+    const result = await api.generatePositionSheets(sessionId)
+    if (!result.ok) {
+      window.alert(`Erreur: ${result.error}`)
+      return
+    }
+
+    await reportApi.print(result.html, { line1: '', line2: '', today: '' })
+  }
+
   // ── Quantum handlers ───────────────────────────────────────────────────────
 
   function handleConnectQuantum() {
@@ -1214,13 +1234,23 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
               </>
             )}
           </div>
-          <button
-            onClick={handlePrintTimingSheets}
-            className="border border-gray-400 bg-white hover:bg-purple-50 px-2 py-0.5 text-xs font-medium text-purple-700"
-            title="Imprimer les fiches de chronométrage pour la session"
-          >
-            🖨 Fiches chrono
-          </button>
+          {isBeach ? (
+            <button
+              onClick={handlePrintPositionSheets}
+              className="border border-gray-400 bg-white hover:bg-purple-50 px-2 py-0.5 text-xs font-medium text-purple-700"
+              title={lang === 'fr' ? 'Imprimer les fiches d\'entrée des positions pour la session' : 'Print position entry sheets for the session'}
+            >
+              🖨 {lang === 'fr' ? 'Fiches positions' : 'Position sheets'}
+            </button>
+          ) : (
+            <button
+              onClick={handlePrintTimingSheets}
+              className="border border-gray-400 bg-white hover:bg-purple-50 px-2 py-0.5 text-xs font-medium text-purple-700"
+              title="Imprimer les fiches de chronométrage pour la session"
+            >
+              🖨 Fiches chrono
+            </button>
+          )}
           {/* Call to Marshall — event selected, no times, not validated */}
           {selectedEvent && canCallToMarshall && (
             <button

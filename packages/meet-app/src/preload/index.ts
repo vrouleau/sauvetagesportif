@@ -276,6 +276,8 @@ const api = {
       ipcRenderer.invoke('timing:commit-heat-results', swimEventId, heatNumber),
     generateSheets: (sessionId: number) =>
       ipcRenderer.invoke('timing:generate-sheets', sessionId),
+    generatePositionSheets: (sessionId: number) =>
+      ipcRenderer.invoke('timing:generate-position-sheets', sessionId),
     saveDebugImage: (imageBase64: string) =>
       ipcRenderer.invoke('timing:save-debug-image', imageBase64),
     getGeminiKey: () =>
