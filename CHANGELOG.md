@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.3.52] - 2026-08-02
+
+### Other
+
+- Add beach position entry sheets for pen-and-paper result capture (`f1d5dc3`)
+- Show incomplete relay team count on organizer club list (`c7da94c`)
+- Cascade beach positions when filling an empty cell with a taken number (`c0ab9cd`)
+- Fix DSQ code dropdown opening off the bottom of the window (`7a49e18`)
+
 ## [0.3.51] - 2026-08-02
 
 ### Other
