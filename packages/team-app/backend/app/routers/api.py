@@ -2015,7 +2015,7 @@ def create_event(data: dict = Body(default={}), db: Session = Depends(get_db)):
 
     number = data.get("number", 1)
     gender_str = data.get("gender", "X")
-    gender_int = {"M": 1, "F": 2, "X": 0}.get(gender_str, 0)
+    gender_int = {"M": GENDER_M, "F": GENDER_F, "X": GENDER_MIXED}.get(gender_str, GENDER_MIXED)
     phase = data.get("phase", "Finale directe")
     round_int = {"Eliminatoire": 1, "Finale": 4, "Finale directe": 5}.get(phase, 5)
 
@@ -2191,7 +2191,7 @@ def create_age_group(data: dict = Body(default={}), db: Session = Depends(get_db
     min_age = data.get("minAge", 0)
     max_age = data.get("maxAge")
     gender_str = data.get("gender", "X")
-    gender_int = {"M": 1, "F": 2, "X": 0}.get(gender_str, 0)
+    gender_int = {"M": GENDER_M, "F": GENDER_F, "X": GENDER_MIXED}.get(gender_str, GENDER_MIXED)
 
     max_sort = db.query(func.max(AgeGroup.sortcode)).filter(
         AgeGroup.swimeventid == event_id
