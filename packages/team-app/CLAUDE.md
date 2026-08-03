@@ -138,7 +138,7 @@ The old dual-schema architecture (separate `club`/`athlete` tables + dual-write)
 - `meet_type` — `POOL` or `BEACH` for the *current* meet (also read as `MEET_TYPE`, the meet-app/`.smb` key name)
 
 `meet_type` is a **cached flag**, not an independent source of truth — the
-real signal is always the swimstyleid range (pool 501-540, beach 601-605).
+real signal is always the swimstyleid range (pool 500-531, beach 601-624).
 It's recomputed fresh on every `POST /api/upload/meet`, scanning only *that
 upload's own* events — deliberately not the SwimStyle catalog (see below),
 so a stale historical style can't misclassify a new upload. `POST

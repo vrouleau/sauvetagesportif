@@ -55,8 +55,8 @@ python3 -m pytest tests/ -v
 ```
 config/
   combined-events-config.json  — Shared category/points config (both apps)
-  template_pool.lxf            — Pool meet template (swimstyleids 501-540)
-  template_beach.lxf           — Beach meet template (swimstyleids 601-605)
+  template_pool.lxf            — Pool meet template (swimstyleids 500-531)
+  template_beach.lxf           — Beach meet template (swimstyleids 601-624)
 
 packages/
   shared-ui/src/
@@ -256,6 +256,6 @@ Athletes in beach meets get a unique jersey/bib number stored in `athlete.namepr
 ### ID ranges (no overlap between pool and beach)
 | Entity | Pool range | Beach range |
 |--------|-----------|-------------|
-| swimstyleid | 501-540 | 601-605 |
+| swimstyleid | 500-531 | 601-624 |
 | eventid | 1065-1234 | 6001-6105 |
 | agegroupid | 1066-1236 | 6002-6106 |
