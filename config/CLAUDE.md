@@ -2,7 +2,7 @@
 
 ## Combined Events (`combined-events-config.json`)
 
-Single source of truth for cumulative point standings. Shared by meet-app (TypeScript `src/main/combinedEvents.ts`) and team-app (Python `backend/app/combined_events.py`). Defines 10 categories for Canadian lifesaving with points scales and age/gender matching rules. **Editable at runtime without rebuild.**
+Single source of truth for cumulative point standings, consumed by meet-app (TypeScript `src/main/combinedEvents.ts`). Defines 10 categories for Canadian lifesaving with points scales and age/gender matching rules. **Editable at runtime without rebuild.** team-app had a Python port (`combined_events.py`) at one point; it was replaced (2026-06-16) and the replacement removed as dead code (2026-08-03) — see `packages/team-app/CLAUDE.md`'s "Combined Events" section. team-app has no implementation of this today.
 
 ### Event filtering (what gets included)
 - Individual events only (`relaycount = 1`)

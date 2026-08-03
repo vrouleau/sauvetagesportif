@@ -497,10 +497,6 @@ def _replace_current_meet_structure(db: Session, meet, content: bytes, filename:
     from ..events import _load_from_parsed
     count = _load_from_parsed(db, meet)
 
-    # Regenerate point scores after loading event structure
-    from ..point_scores import regenerate_point_scores
-    regenerate_point_scores(db)
-
     # Track metadata
     import json as _json
     for key, val in [("meet_filename", filename or "meet.lxf"),
@@ -523,9 +519,9 @@ def _replace_current_meet_structure(db: Session, meet, content: bytes, filename:
     )
     _set_config(db, "meet_type", "BEACH" if has_beach else "POOL")
 
-    # Sync meet identity into MEETVALUES blob for Splash SMB compatibility.
+    # Sync meet identity into MEETVALUES blob for Splash-format compatibility.
     # Individual bsglobal keys (meet_name, meet_course) are the canonical source;
-    # MEETVALUES is kept in sync for interop with the meet-app EventsPage and SMB export.
+    # MEETVALUES is kept in sync for interop with the meet-app EventsPage.
     if meet.meet_name:
         _update_meetvalue(db, "NAME", f"S;{meet.meet_name}")
     if meet.course:
@@ -577,501 +573,6 @@ async def upload_meet(file: UploadFile = File(...), force: bool = False, db: Ses
     count = _replace_current_meet_structure(db, meet, content, file.filename)
     db.commit()
     return {"events_loaded": count, "filename": file.filename}
-
-
-@router.post("/upload/meet-smb", dependencies=[Depends(require_admin)])
-async def upload_meet_smb(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    """Upload meet .smb — full database restore from a Splash Meet Backup (admin only)."""
-    content = await file.read()
-    if len(content) > 20 * 1024 * 1024:
-        raise HTTPException(413, "File too large (max 20MB)")
-
-    from ..smb import read_smb, D_NULL_SENTINEL
-    try:
-        tables = read_smb(content)
-    except Exception as e:
-        raise HTTPException(400, f"Invalid .smb file: {e}")
-
-    # OLE Automation epoch
-    OLE_EPOCH = datetime(1899, 12, 30)
-
-    def ole_to_datetime(val):
-        if val is None:
-            return None
-        if not isinstance(val, (int, float)):
-            return None
-        if val == D_NULL_SENTINEL or val == 0:
-            return None
-        int_part = int(val)
-        if int_part == -36522 or int_part == 0:
-            frac = abs(val) % 1
-            if frac == 0:
-                return None
-            total_minutes = round(frac * 24 * 60)
-            hours = total_minutes // 60
-            minutes = total_minutes % 60
-            return datetime(2000, 1, 1, hours, minutes, 0)
-        from datetime import timedelta
-        dt = OLE_EPOCH + timedelta(days=val)
-        if dt.year < 1900 or dt.year > 2100:
-            return None
-        return dt
-
-    def ole_to_date_only(val):
-        if val is None:
-            return None
-        if not isinstance(val, (int, float)):
-            return None
-        if val == D_NULL_SENTINEL or val == 0 or val <= 0:
-            return None
-        from datetime import timedelta
-        dt = OLE_EPOCH + timedelta(days=int(val))
-        if dt.year < 1900 or dt.year > 2100:
-            return None
-        return dt
-
-    # Wipe ALL data (full restore)
-    from ..models_team import Relay as RelayWipe, RelayPos as RelayPosWipe
-    db.query(RelayPosWipe).delete()
-    db.query(RelayWipe).delete()
-    db.query(Split).delete()
-    db.query(SwimResult).delete()
-    db.query(Heat).delete()
-    db.query(AgeGroup).delete()
-    db.query(SwimEvent).delete()
-    db.query(SwimSession).delete()
-    # Clear Team Manager event tables BEFORE swimstyle (FK dependency)
-    from ..models_team import Event as TeamEvent, Session as TeamSession, Meet as TeamMeet
-    db.query(TeamEvent).delete()
-    db.query(TeamSession).delete()
-    db.query(TeamMeet).delete()
-    db.query(SwimStyle).delete()
-    db.query(Member).delete()
-    db.query(TeamClub).delete()
-    db.query(BsGlobal).delete()
-    db.flush()
-
-    # ── Import BSGLOBAL ────────────────────────────────────────────────────
-    for row in tables.get("BSGLOBAL", []):
-        name = row.get("name")
-        if not name:
-            continue
-        db.add(BsGlobal(name=name, data=row.get("data") or ""))
-    db.flush()
-
-    # ── Import SWIMSTYLE ───────────────────────────────────────────────────
-    # Build a remap table: internal SMB swimstyleid → canonical uniqueid (5xx range)
-    # Splash uses internal auto-increment IDs in the MDB but exports using uniqueid
-    # in Lenex. We remap to uniqueid so our exports match Splash's Lenex output.
-    style_id_remap: dict[int, int] = {}  # old_id → new_id (uniqueid)
-    styles_imported = 0
-    for row in tables.get("SWIMSTYLE", []):
-        style_id = row.get("swimstyleid")
-        if style_id is None:
-            continue
-        uid = row.get("uniqueid")
-        # Remap if uniqueid exists and differs from swimstyleid
-        # (lifesaving styles have uid in 5xx range, generic swim styles have uid < 200)
-        canonical_id = style_id
-        if uid and uid != style_id and uid >= 500:
-            style_id_remap[style_id] = uid
-            canonical_id = uid
-        db.add(SwimStyle(
-            swimstyleid=canonical_id,
-            code=row.get("code"),
-            distance=row.get("distance"),
-            name=row.get("name"),
-            relaycount=row.get("relaycount"),
-            stroke=row.get("stroke"),
-            sortcode=row.get("sortcode"),
-            technique=row.get("technique"),
-            uniqueid=uid,
-        ))
-        styles_imported += 1
-    db.flush()
-
-    # ── Import CLUB ────────────────────────────────────────────────────────
-    clubs_imported = 0
-    for row in tables.get("CLUB", []):
-        cid = row.get("clubid")
-        if cid is None:
-            continue
-        pin = ''.join(secrets.choice(string.digits) for _ in range(6))
-        # Import into clubs table (TeamClub) for auth
-        db.add(TeamClub(
-            clubsid=cid,
-            code=row.get("code") or "",
-            name=row.get("name") or "",
-            nation=row.get("nation") or "CAN",
-            pin=pin,
-            email=row.get("contactemail") or "",
-        ))
-        clubs_imported += 1
-    db.flush()
-
-    # ── Import ATHLETE ─────────────────────────────────────────────────────
-    athletes_imported = 0
-    for row in tables.get("ATHLETE", []):
-        aid = row.get("athleteid")
-        if aid is None:
-            continue
-        birthdate = ole_to_date_only(row.get("birthdate"))
-        db.add(Member(
-            membersid=aid,
-            clubsid=row.get("clubid"),
-            firstname=row.get("firstname") or "",
-            lastname=row.get("lastname") or "",
-            gender=row.get("gender"),
-            birthdate=birthdate,
-            nation=row.get("nation") or "",
-            license=row.get("license") or "",
-        ))
-        athletes_imported += 1
-    db.flush()
-
-    # ── Import SWIMSESSION ────────────────────────────────────────────────
-    for row in tables.get("SWIMSESSION", []):
-        sid = row.get("swimsessionid")
-        if sid is None:
-            continue
-        db.add(SwimSession(
-            swimsessionid=sid,
-            sessionnumber=row.get("sessionnumber"),
-            name=row.get("name"),
-            course=row.get("course"),
-            daytime=ole_to_datetime(row.get("daytime")),
-            startdate=ole_to_date_only(row.get("startdate")),
-            endtime=ole_to_datetime(row.get("endtime")),
-            lanemin=row.get("lanemin"),
-            lanemax=row.get("lanemax"),
-            warmupfrom=ole_to_datetime(row.get("warmupfrom")),
-            warmupuntil=ole_to_datetime(row.get("warmupuntil")),
-            officialmeeting=ole_to_datetime(row.get("officialmeeting")),
-            tlmeeting=ole_to_datetime(row.get("tlmeeting")),
-        ))
-    db.flush()
-
-    # ── Import SWIMEVENT ──────────────────────────────────────────────────
-    events_imported = 0
-    for row in tables.get("SWIMEVENT", []):
-        eid = row.get("swimeventid")
-        session_id = row.get("swimsessionid")
-        if eid is None or session_id is None:
-            continue
-        style_id = row.get("swimstyleid")
-        # Remap swimstyleid to canonical uniqueid if available
-        if style_id and style_id in style_id_remap:
-            style_id = style_id_remap[style_id]
-        db.add(SwimEvent(
-            swimeventid=eid,
-            swimsessionid=session_id,
-            swimstyleid=style_id if style_id else None,
-            eventnumber=row.get("eventnumber"),
-            gender=row.get("gender"),
-            round=row.get("round"),
-            sortcode=row.get("sortcode"),
-            daytime=ole_to_datetime(row.get("daytime")),
-            duration=ole_to_datetime(row.get("duration")),
-            comment=row.get("comment"),
-            internalevent=row.get("internalevent"),
-            roundname=row.get("roundname"),
-            masters=row.get("masters"),
-            fee=row.get("fee"),
-            combineagegroups=row.get("combineagegroups"),
-            splashmecanedit=row.get("splashmecanedit"),
-            pfineignore=row.get("pfineignore"),
-            preveventid=row.get("preveventid"),
-            twoperlane=row.get("twoperlane"),
-        ))
-        events_imported += 1
-    db.flush()
-
-    # ── Normalize Splash MDB round encoding → canonical ──────────────────
-    # Splash MDB uses: 1=TimedFinal, 2=Prelim, 9=Final, 11=Break/Pause
-    # Our canonical:   1=Prelim(PRE), 2=Semi, 4=Final(FIN), 5=TimedFinal(TIM)
-    has_mdb_encoding = db.query(SwimEvent).filter(SwimEvent.round.in_([9, 11])).count() > 0
-    if has_mdb_encoding:
-        # Mark round=11 (Break/Pause) events as internal before remapping
-        for ev in db.query(SwimEvent).filter(SwimEvent.round == 11).all():
-            ev.internalevent = 'T'
-            ev.round = ROUND_TIM
-        db.flush()
-
-        for ev in db.query(SwimEvent).filter(SwimEvent.round == 1).all():
-            ev.round = -1
-        for ev in db.query(SwimEvent).filter(SwimEvent.round == 2).all():
-            ev.round = -2
-        for ev in db.query(SwimEvent).filter(SwimEvent.round == 9).all():
-            ev.round = -9
-        db.flush()
-        for ev in db.query(SwimEvent).filter(SwimEvent.round == -1).all():
-            ev.round = ROUND_TIM
-        for ev in db.query(SwimEvent).filter(SwimEvent.round == -2).all():
-            ev.round = ROUND_PRE
-        for ev in db.query(SwimEvent).filter(SwimEvent.round == -9).all():
-            ev.round = ROUND_FIN
-        db.flush()
-
-        # Fix PRE events with gender=0
-        pre_events = db.query(SwimEvent).filter(
-            SwimEvent.round == ROUND_PRE, SwimEvent.gender == 0,
-            SwimEvent.swimstyleid.isnot(None),
-        ).all()
-        for pre in pre_events:
-            tim = db.query(SwimEvent).filter(
-                SwimEvent.swimsessionid == pre.swimsessionid,
-                SwimEvent.swimstyleid == pre.swimstyleid,
-                SwimEvent.round == ROUND_TIM,
-                SwimEvent.sortcode == (pre.sortcode or 0) - 1,
-            ).first()
-            if tim and tim.gender and tim.gender != 0:
-                pre.gender = tim.gender
-                continue
-            fin = db.query(SwimEvent).filter(
-                SwimEvent.preveventid == pre.swimeventid,
-                SwimEvent.round == ROUND_FIN,
-            ).first()
-            if fin and fin.gender and fin.gender != 0:
-                pre.gender = fin.gender
-        db.flush()
-
-        # Fix PRE events with eventnumber=0
-        zero_num_prelims = (
-            db.query(SwimEvent)
-            .join(SwimSession, SwimEvent.swimsessionid == SwimSession.swimsessionid)
-            .filter(
-                SwimEvent.round == ROUND_PRE,
-                SwimEvent.swimstyleid.isnot(None),
-                ((SwimEvent.eventnumber == 0) | (SwimEvent.eventnumber.is_(None))),
-            )
-            .order_by(SwimSession.sessionnumber, SwimEvent.sortcode)
-            .all()
-        )
-        for seq, pre in enumerate(zero_num_prelims, start=1):
-            pre.eventnumber = seq
-        db.flush()
-
-    # ── Import AGEGROUP ───────────────────────────────────────────────────
-    agegroups_imported = 0
-    for row in tables.get("AGEGROUP", []):
-        agid = row.get("agegroupid")
-        event_id = row.get("swimeventid")
-        if agid is None or event_id is None:
-            continue
-        db.add(AgeGroup(
-            agegroupid=agid,
-            swimeventid=event_id,
-            name=row.get("name"),
-            code=row.get("code"),
-            agemin=row.get("agemin"),
-            agemax=row.get("agemax"),
-            gender=row.get("gender"),
-            heatcount=row.get("heatcount"),
-            sortcode=row.get("sortcode"),
-            useformedals=row.get("useformedals"),
-            useforscoring=row.get("useforscoring"),
-            finalseedtype=row.get("finalseedtype"),
-        ))
-        agegroups_imported += 1
-    db.flush()
-
-    # ── Import HEAT ───────────────────────────────────────────────────────
-    heats_imported = 0
-    for row in tables.get("HEAT", []):
-        hid = row.get("heatid")
-        if hid is None:
-            continue
-        db.add(Heat(
-            heatid=hid,
-            swimeventid=row.get("swimeventid"),
-            heatnumber=row.get("heatnumber"),
-            racestatus=row.get("racestatus"),
-            sortcode=row.get("sortcode"),
-        ))
-        heats_imported += 1
-    db.flush()
-
-    # ── Import SWIMRESULT ─────────────────────────────────────────────────
-    results_imported = 0
-    for row in tables.get("SWIMRESULT", []):
-        rid = row.get("swimresultid")
-        if rid is None:
-            continue
-        db.add(SwimResult(
-            swimresultid=rid,
-            athleteid=row.get("athleteid"),
-            swimeventid=row.get("swimeventid"),
-            agegroupid=row.get("agegroupid") or None,
-            heatid=row.get("heatid") or None,
-            lane=row.get("lane"),
-            entrytime=row.get("entrytime"),
-            swimtime=row.get("swimtime"),
-            entrycourse=row.get("entrycourse"),
-            backuptime1=row.get("backuptime1"),
-            backuptime2=row.get("backuptime2"),
-        ))
-        results_imported += 1
-    db.flush()
-
-    # ── Import SPLIT ──────────────────────────────────────────────────────
-    for row in tables.get("SPLIT", []):
-        rid = row.get("swimresultid")
-        if rid is None:
-            continue
-        db.add(Split(
-            swimresultid=rid,
-            distance=row.get("distance"),
-            swimtime=row.get("swimtime"),
-        ))
-    db.flush()
-
-    # ── Import RELAY ──────────────────────────────────────────────────────
-    from ..models_team import Relay, RelayPos
-    # Build event→(swimstyleid, eventnumber) lookup. eventnumber is needed so
-    # get_relay_teams can disambiguate events that share the same style+gender.
-    event_style_map: dict[int, int] = {}
-    event_number_map: dict[int, int] = {}
-    for ev in db.query(SwimEvent).filter(SwimEvent.swimstyleid.isnot(None)).all():
-        event_style_map[ev.swimeventid] = ev.swimstyleid
-        event_number_map[ev.swimeventid] = ev.eventnumber
-
-    relays_imported = 0
-    for row in tables.get("RELAY", []):
-        rid = row.get("relayid")
-        if rid is None:
-            continue
-        event_id = row.get("swimeventid")
-        style_id = event_style_map.get(event_id) if event_id else None
-        # Remap swimstyleid if needed (same remap as events)
-        if style_id and style_id in style_id_remap:
-            style_id = style_id_remap[style_id]
-        db.add(Relay(
-            relaysid=rid,
-            clubsid=row.get("clubid"),
-            stylesid=style_id,
-            teamnumb=row.get("teamnumber"),
-            gender=row.get("gender"),
-            minage=row.get("agemin"),
-            maxage=row.get("agemax"),
-            entrytime=row.get("entrytime"),
-            course=row.get("entrycourse"),
-            eventnumb=event_number_map.get(event_id) if event_id else None,
-        ))
-        relays_imported += 1
-    db.flush()
-
-    # ── Import RELAYPOSITION ──────────────────────────────────────────────
-    for row in tables.get("RELAYPOSITION", []):
-        rid = row.get("relayid")
-        pos_num = row.get("relaynumber")
-        athlete_id = row.get("athleteid")
-        if rid is None or pos_num is None:
-            continue
-        if athlete_id is None or athlete_id == 0:
-            continue
-        db.add(RelayPos(
-            relaysid=rid,
-            numb=pos_num,
-            membersid=athlete_id,
-        ))
-    db.flush()
-
-    # ── Extract meet metadata from MEETVALUES ─────────────────────────────
-    mv_row = db.query(BsGlobal).get("MEETVALUES")
-    if mv_row and mv_row.data:
-        mv = {}
-        for line in mv_row.data.replace("\\r", "").split("\n"):
-            line = line.strip("\r\n ")
-            eq = line.find("=")
-            if eq >= 0:
-                key = line[:eq]
-                val_part = line[eq + 1:]
-                # Format: TYPE;VALUE
-                semi = val_part.find(";")
-                if semi >= 0:
-                    mv[key] = val_part[semi + 1:]
-                else:
-                    mv[key] = val_part
-        if mv.get("NAME"):
-            _set_config(db, "meet_name", mv["NAME"])
-        if mv.get("COURSE"):
-            course_map = {"1": "LCM", "2": "SCY", "3": "SCM"}
-            _set_config(db, "meet_course", course_map.get(mv["COURSE"], "LCM"))
-        if mv.get("MASTERS"):
-            _set_config(db, "meet_masters", mv["MASTERS"])
-        if mv.get("NATION"):
-            _set_config(db, "meet_nation", mv["NATION"])
-        if mv.get("CITY"):
-            _set_config(db, "meet_city", mv["CITY"])
-        if mv.get("AGEDATE"):
-            # Convert YYYYMMDDHHMMSSMMM → YYYY-MM-DD
-            raw = mv["AGEDATE"]
-            if len(raw) >= 8:
-                _set_config(db, "age_base_date", f"{raw[:4]}-{raw[4:6]}-{raw[6:8]}")
-    db.flush()
-
-    # ── Create a Meet row in Team Manager schema (current meet) ───────────
-    from ..models_team import Meet as TeamMeet
-    from sqlalchemy import func
-    meet_name = _get_config(db, "meet_name") or "Current Meet"
-    meet_city = _get_config(db, "meet_city") or ""
-    course_str = _get_config(db, "meet_course") or "LCM"
-    course_int = {"LCM": 1, "SCY": 2, "SCM": 3}.get(course_str, 1)
-    next_meet_id = (db.query(func.max(TeamMeet.meetsid)).scalar() or 0) + 1
-    db.add(TeamMeet(
-        meetsid=next_meet_id,
-        name=meet_name,
-        place=meet_city,
-        course=course_int,
-        meetstate=0,  # planned (current)
-    ))
-    _set_config(db, "current_meetsid", str(next_meet_id))
-    db.flush()
-
-    # Set meetsid on all imported relays (they were imported before the meet was created)
-    db.query(Relay).filter(Relay.meetsid.is_(None)).update({"meetsid": next_meet_id}, synchronize_session=False)
-    db.flush()
-
-    # Regenerate point scores
-    from ..point_scores import regenerate_point_scores
-    regenerate_point_scores(db)
-
-    # Store the uploaded SMB for later download
-    smb_storage = MEET_STORAGE.parent / "meet.smb"
-    smb_storage.parent.mkdir(parents=True, exist_ok=True)
-    smb_storage.write_bytes(content)
-
-    # Restore admin PIN from env (since bsglobal was wiped)
-    _set_config(db, "admin_pin", _DEFAULT_ADMIN_PIN)
-
-    # Normalize meet_type: the meet-app stores it as MEET_TYPE, team-app reads meet_type
-    mt = _get_config(db, "MEET_TYPE")
-    if mt and not _get_config(db, "meet_type"):
-        _set_config(db, "meet_type", mt.upper())
-    # Auto-detect from swim style IDs if neither key is present
-    if not _get_config(db, "meet_type"):
-        has_beach = db.query(SwimStyle).filter(SwimStyle.swimstyleid >= 600).first() is not None
-        _set_config(db, "meet_type", "BEACH" if has_beach else "POOL")
-
-    db.commit()
-
-    # Reset sequences after explicit ID inserts (PostgreSQL only)
-    from sqlalchemy import text
-    if db.bind and db.bind.dialect.name == "postgresql":
-        db.execute(text("SELECT setval('clubs_clubsid_seq', GREATEST(COALESCE((SELECT MAX(clubsid) FROM clubs), 0), 1))"))
-        db.execute(text("SELECT setval('members_membersid_seq', GREATEST(COALESCE((SELECT MAX(membersid) FROM members), 0), 1))"))
-        db.commit()
-
-    return {
-        "events_loaded": events_imported,
-        "styles_loaded": styles_imported,
-        "agegroups_loaded": agegroups_imported,
-        "clubs_loaded": clubs_imported,
-        "athletes_loaded": athletes_imported,
-        "heats_loaded": heats_imported,
-        "results_loaded": results_imported,
-        "filename": file.filename,
-    }
 
 
 @router.post("/admin/new-meet", dependencies=[Depends(require_organizer_or_admin)])
@@ -1134,10 +635,6 @@ def create_new_meet(data: dict = Body(default={}), db: Session = Depends(get_db)
     db.query(TeamEvent).filter(TeamEvent.meetsid == new_meetsid).delete(synchronize_session=False)
     db.query(TeamSession).filter(TeamSession.meetsid == new_meetsid).delete(synchronize_session=False)
     db.flush()
-
-    # Regenerate point scores after loading event structure
-    from ..point_scores import regenerate_point_scores
-    regenerate_point_scores(db)
 
     # Store the template as the current meet file
     MEET_STORAGE.parent.mkdir(parents=True, exist_ok=True)
@@ -2962,8 +2459,7 @@ def flush_meet(db: Session = Depends(get_db)):
     db.query(SwimStyle).delete()
     for key in ("meet_filename", "meet_uploaded_at", "meet_name", "meet_course",
                 "meet_masters", "meet_currency", "meet_fees_json", "closure_date",
-                "organizer_club_id", "COMBINEDEVENTS", "current_meetsid",
-                "POINTSCORE", "POINTSCORES", "MEETVALUES",
+                "organizer_club_id", "current_meetsid", "MEETVALUES",
                 "meet_nation", "meet_city"):
         cfg = db.query(BsGlobal).get(key)
         if cfg:
@@ -2977,9 +2473,6 @@ def flush_meet(db: Session = Depends(get_db)):
     # Remove stored meet files
     if MEET_STORAGE.exists():
         MEET_STORAGE.unlink()
-    smb_path = MEET_STORAGE.parent / "meet.smb"
-    if smb_path.exists():
-        smb_path.unlink()
     # Reload pool template's swimstyle catalog only (no events — see _reload_pool_template)
     _reload_pool_template(db)
     db.commit()
@@ -3043,8 +2536,7 @@ def _reset_for_next_meet(db: Session) -> None:
     # Intentionally preserved: admin_pin, GEMINI_KEY_FREE, GEMINI_KEY_PAID, bt_* best-time keys.
     for key in ("meet_filename", "meet_uploaded_at", "meet_name", "meet_course",
                 "meet_masters", "meet_currency", "meet_fees_json", "closure_date",
-                "organizer_club_id", "COMBINEDEVENTS", "current_meetsid",
-                "POINTSCORE", "POINTSCORES", "MEETVALUES",
+                "organizer_club_id", "current_meetsid", "MEETVALUES",
                 "meet_nation", "meet_city"):
         cfg = db.query(BsGlobal).get(key)
         if cfg:
@@ -3064,9 +2556,6 @@ def _reset_for_next_meet(db: Session) -> None:
     # Remove stored meet files so startup doesn't re-load them
     if MEET_STORAGE.exists():
         MEET_STORAGE.unlink()
-    smb_path = MEET_STORAGE.parent / "meet.smb"
-    if smb_path.exists():
-        smb_path.unlink()
 
     # Reload pool template's swimstyle catalog only (no events — see _reload_pool_template)
     _reload_pool_template(db)
@@ -3404,22 +2893,6 @@ def export_entries_lxf(db: Session = Depends(get_db)):
         content=data,
         media_type="application/zip",
         headers={"Content-Disposition": "attachment; filename=entries.lxf"},
-    )
-
-
-@router.get("/export/meet-smb", dependencies=[Depends(require_admin)])
-def export_meet_smb(db: Session = Depends(get_db)):
-    """Generate and download an .smb from the current database state."""
-    from ..generate_smb import generate_smb_from_db
-    content = generate_smb_from_db(db)
-    # Derive filename from meet name if available
-    meet_name = _get_config(db, "meet_name") or "meet"
-    safe_name = "".join(c for c in meet_name if c.isalnum() or c in " _-").strip().replace(" ", "_")
-    filename = f"{safe_name or 'meet'}.smb"
-    return Response(
-        content=content,
-        media_type="application/octet-stream",
-        headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
 
 
@@ -3806,26 +3279,6 @@ async def import_results_lxf(request: Request, file: UploadFile = File(...), for
         did_reset = True
 
     return {"ok": True, **counts, "filename": file.filename, "reset": did_reset, "role": role}
-
-
-@router.post("/admin/import-meet-results", dependencies=[Depends(require_admin)])
-async def import_meet_results(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    """Import a meet-app .smb file as a historical meet with results.
-
-    Maps Meet Manager schema (CLUB, ATHLETE, SWIMRESULT) to Team Manager
-    schema (CLUBS, MEMBERS, RESULTS). Creates a new MEETS row.
-    """
-    content = await file.read()
-    if len(content) > 50 * 1024 * 1024:
-        raise HTTPException(413, "File too large (max 50MB)")
-
-    from ..smb_to_team import import_smb_as_meet
-    try:
-        counts = import_smb_as_meet(db, content)
-    except Exception as e:
-        raise HTTPException(400, f"SMB import failed: {e}")
-
-    return {"ok": True, **counts, "filename": file.filename}
 
 
 # ---------------------------------------------------------------------------

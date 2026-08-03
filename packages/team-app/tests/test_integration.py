@@ -38,9 +38,6 @@ from conftest import (
     export_bundle, export_lxf, export_registrations_lxf, export_meet_lxf,
 )
 
-SMB_FILE = Path(__file__).resolve().parent / "fixtures" / "meet.smb"
-
-
 # ---------------------------------------------------------------------------
 # Setup / smoke
 # ---------------------------------------------------------------------------
@@ -475,7 +472,6 @@ class TestExportEntries:
         lef_name = next(n for n in entries_zip.namelist() if n.endswith(".lef"))
         lef = entries_zip.read(lef_name).decode()
         # Export should contain at least the athletes from the original import
-        # (may contain more if SMB tests added additional athletes)
         assert lef.count("<ATHLETE ") >= 100
 
     def test_club_count_matches_import(self, entries_zip, uploaded):
@@ -509,12 +505,6 @@ class TestExportEntries:
         lef_name = next(n for n in z.namelist() if n.endswith(".lef"))
         lef = z.read(lef_name).decode()
         assert "<ENTRY " in lef, "Expected ENTRY elements after best-time upload"
-
-
-# ---------------------------------------------------------------------------
-# Meet SMB download (/export/meet-smb) — moved to end of file to avoid
-# disrupting session-scoped fixtures (full SMB restore wipes all data)
-# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
@@ -1236,13 +1226,6 @@ class TestSwimStyles:
 
 
 # ---------------------------------------------------------------------------
-# SMB upload round normalization
-# ---------------------------------------------------------------------------
-
-
-
-
-# ---------------------------------------------------------------------------
 # Gemini API Keys
 # ---------------------------------------------------------------------------
 
@@ -1307,31 +1290,6 @@ class TestGeminiKeys:
         data = r.json()
         assert data["freeKey"] == "***XXXX"  # unchanged
         assert data["paidKey"] == "***ZZZZ"  # updated
-
-    def test_keys_survive_smb_roundtrip(self, uploaded, admin_headers):
-        """Keys stored in BSGLOBAL should be included in SMB export."""
-        # Set keys
-        requests.post(f"{BASE_URL}/api/admin/gemini-keys",
-                      json={"freeKey": "AIzaSyRoundtripFree", "paidKey": "AIzaSyRoundtripPaid"},
-                      headers=admin_headers, timeout=10)
-
-        # Export SMB
-        r = requests.get(f"{BASE_URL}/api/export/meet-smb",
-                         headers=admin_headers, timeout=30)
-        if r.status_code == 404:
-            pytest.skip("SMB export endpoint not available")
-        r.raise_for_status()
-        smb_data = r.content
-        assert len(smb_data) > 0
-
-        # The SMB file should contain the GEMINI_KEY entries in BSGLOBAL
-        # (We can't easily parse the binary SMB here, but we verify the keys
-        # are in the DB which is what gets exported)
-        r = requests.get(f"{BASE_URL}/api/admin/gemini-keys",
-                         headers=admin_headers, timeout=10)
-        data = r.json()
-        assert data["hasFreeKey"] is True
-        assert data["hasPaidKey"] is True
 
     def test_requires_admin(self, uploaded):
         """Non-admin should not be able to access Gemini keys."""
@@ -1615,190 +1573,6 @@ class TestGeminiKeyLxfTransport:
 
 
 # ---------------------------------------------------------------------------
-# SMB upload → LXF export regression (destructive — runs last)
-#
-# These tests reproduce the exact failure mode: meet loaded via SMB has no
-# meet.lxf on disk, so both export endpoints used to crash or return 404/500.
-# ---------------------------------------------------------------------------
-
-class TestExportAfterSmbUpload:
-    """Verify export endpoints work when meet was loaded via SMB (no meet.lxf file).
-
-    Runs last because SMB upload wipes all existing meet data.
-    """
-
-    @pytest.fixture(scope="class")
-    def smb_loaded(self, admin_headers):
-        assert SMB_FILE.exists(), f"meet.smb not found at {SMB_FILE}"
-        with open(SMB_FILE, "rb") as f:
-            r = requests.post(
-                f"{BASE_URL}/api/upload/meet-smb",
-                files={"file": ("meet.smb", f, "application/octet-stream")},
-                headers=admin_headers,
-                timeout=60,
-            )
-        assert r.status_code == 200, f"SMB upload failed: {r.status_code} {r.text}"
-        return r.json()
-
-    def test_registrations_lxf_returns_200_after_smb(self, smb_loaded, admin_headers):
-        """Previously crashed with 500: FileNotFoundError meet.lxf not on disk."""
-        r = requests.get(f"{BASE_URL}/api/export/registrations-lxf",
-                         headers=admin_headers, timeout=30)
-        assert r.status_code == 200, \
-            f"Expected 200 after SMB upload, got {r.status_code}: {r.text}"
-
-    def test_registrations_lxf_has_sessions_after_smb(self, smb_loaded, admin_headers):
-        lxf = export_registrations_lxf(admin_headers)
-        lef = lxf.read(next(n for n in lxf.namelist() if n.endswith(".lef"))).decode()
-        assert "<SESSION " in lef, "No sessions in registrations-lxf after SMB load"
-        assert "<EVENT " in lef, "No events in registrations-lxf after SMB load"
-
-    def test_meet_lxf_returns_200_after_smb(self, smb_loaded, admin_headers):
-        """Previously returned 404: No meet .lxf available."""
-        r = requests.get(f"{BASE_URL}/api/export/meet-lxf",
-                         headers=admin_headers, timeout=30)
-        assert r.status_code == 200, \
-            f"Expected 200 after SMB upload, got {r.status_code}: {r.text}"
-
-    def test_meet_lxf_has_events_after_smb(self, smb_loaded, admin_headers):
-        lxf = export_meet_lxf(admin_headers)
-        lef = lxf.read(next(n for n in lxf.namelist() if n.endswith(".lef"))).decode()
-        events = re.findall(r'<EVENT [^>]*\beventid="(\d+)"', lef)
-        assert len(events) > 0, "No events in meet-lxf after SMB load"
-
-    def test_meet_lxf_events_have_swimstyle_after_smb(self, smb_loaded, admin_headers):
-        lxf = export_meet_lxf(admin_headers)
-        lef = lxf.read(next(n for n in lxf.namelist() if n.endswith(".lef"))).decode()
-        event_blocks = re.findall(r'<EVENT [^>]*>(.*?)</EVENT>', lef, re.DOTALL)
-        assert event_blocks, "No EVENT blocks found"
-        for block in event_blocks[:5]:
-            assert "<SWIMSTYLE " in block
-
-
-# ---------------------------------------------------------------------------
-# SMB tests (destructive — must run LAST since full restore wipes all data)
-# ---------------------------------------------------------------------------
-
-class TestExportMeetLxf:
-    """Test SMB upload + export. Runs last because full restore wipes DB."""
-
-    def test_returns_zip_content(self, uploaded, admin_headers):
-        with open(SMB_FILE, "rb") as f:
-            r = requests.post(
-                f"{BASE_URL}/api/upload/meet-smb",
-                files={"file": ("meet.smb", f, "application/octet-stream")},
-                headers=admin_headers,
-                timeout=60,
-            )
-        assert r.status_code == 200, f"smb upload: {r.status_code} {r.text}"
-
-        r = requests.get(f"{BASE_URL}/api/export/meet-smb",
-                         headers=admin_headers, timeout=30)
-        r.raise_for_status()
-        z = zipfile.ZipFile(BytesIO(r.content))
-        assert len(z.namelist()) > 0
-
-    def test_rejects_no_auth(self):
-        r = requests.get(f"{BASE_URL}/api/export/meet-smb", timeout=5)
-        assert r.status_code == 403
-
-    def test_rejects_coach(self, admin_headers):
-        r = requests.get(f"{BASE_URL}/api/clubs", headers=admin_headers, timeout=10)
-        r.raise_for_status()
-        clubs = r.json()
-        if clubs:
-            coach_headers = {"X-Club-Pin": clubs[0]["pin"]}
-            r = requests.get(f"{BASE_URL}/api/export/meet-smb",
-                             headers=coach_headers, timeout=5)
-            assert r.status_code == 403
-
-
-class TestSmbUploadNormalization:
-    """Verify that uploading a Splash-native SMB normalizes MDB round encoding.
-    Runs last because full restore wipes DB."""
-
-    @pytest.fixture(scope="class")
-    def smb_uploaded(self, admin_headers):
-        """Upload the Splash meet.smb and return the response."""
-        assert SMB_FILE.exists(), f"meet.smb not found at {SMB_FILE}"
-        with open(SMB_FILE, "rb") as f:
-            r = requests.post(
-                f"{BASE_URL}/api/upload/meet-smb",
-                files={"file": ("meet.smb", f, "application/octet-stream")},
-                headers=admin_headers,
-                timeout=60,
-            )
-        assert r.status_code == 200, f"SMB upload failed ({r.status_code}): {r.text}"
-        return r.json()
-
-    def test_smb_upload_succeeds(self, smb_uploaded):
-        assert smb_uploaded["events_loaded"] > 0
-
-    def test_tim_events_have_correct_phase(self, smb_uploaded, admin_headers):
-        r = requests.get(f"{BASE_URL}/api/sessions", headers=admin_headers, timeout=10)
-        r.raise_for_status()
-        sessions = r.json()
-        tim_events = [
-            ev for s in sessions for ev in s["events"]
-            if ev["phase"] == "Finale directe" and not ev["isAdmin"]
-        ]
-        assert len(tim_events) > 0, "Expected Timed Final events after SMB upload"
-
-    def test_pre_events_have_correct_phase(self, smb_uploaded, admin_headers):
-        r = requests.get(f"{BASE_URL}/api/sessions", headers=admin_headers, timeout=10)
-        r.raise_for_status()
-        sessions = r.json()
-        pre_events = [
-            ev for s in sessions for ev in s["events"]
-            if ev["phase"] == "Eliminatoire" and not ev["isAdmin"]
-        ]
-        assert len(pre_events) > 0, "Expected Prelim events after SMB upload"
-
-    def test_fin_events_have_correct_phase(self, smb_uploaded, admin_headers):
-        r = requests.get(f"{BASE_URL}/api/sessions", headers=admin_headers, timeout=10)
-        r.raise_for_status()
-        sessions = r.json()
-        fin_events = [
-            ev for s in sessions for ev in s["events"]
-            if ev["phase"] == "Finale" and not ev["isAdmin"]
-        ]
-        assert len(fin_events) > 0, "Expected Final events after SMB upload"
-
-    def test_no_events_have_unknown_round(self, smb_uploaded, admin_headers):
-        r = requests.get(f"{BASE_URL}/api/sessions", headers=admin_headers, timeout=10)
-        r.raise_for_status()
-        sessions = r.json()
-        valid_phases = {"Eliminatoire", "Finale", "Finale directe"}
-        for s in sessions:
-            for ev in s["events"]:
-                if not ev["isAdmin"]:
-                    assert ev["phase"] in valid_phases
-
-    def test_pre_events_have_valid_gender(self, smb_uploaded, admin_headers):
-        r = requests.get(f"{BASE_URL}/api/sessions", headers=admin_headers, timeout=10)
-        r.raise_for_status()
-        sessions = r.json()
-        pre_events = [
-            ev for s in sessions for ev in s["events"]
-            if ev["phase"] == "Eliminatoire" and not ev["isAdmin"]
-        ]
-        gendered = [ev for ev in pre_events if ev["gender"] in ("M", "F")]
-        assert len(gendered) > 0
-
-    def test_pre_events_have_nonzero_eventnumber(self, smb_uploaded, admin_headers):
-        r = requests.get(f"{BASE_URL}/api/sessions", headers=admin_headers, timeout=10)
-        r.raise_for_status()
-        sessions = r.json()
-        pre_events = [
-            ev for s in sessions for ev in s["events"]
-            if ev["phase"] == "Eliminatoire" and not ev["isAdmin"]
-        ]
-        assert len(pre_events) > 0
-        zero_num = [ev for ev in pre_events if ev["number"] == 0]
-        assert len(zero_num) == 0
-
-
-# ---------------------------------------------------------------------------
 # Live Notifications (DSQ push, Call to Marshall, Call to Scratch)
 # ---------------------------------------------------------------------------
 
@@ -1817,7 +1591,7 @@ class TestLiveNotifications:
 
     @pytest.fixture(autouse=True, scope="class")
     def _ensure_meet(self, admin_headers):
-        """Re-upload meet template so clubs exist after destructive SMB tests."""
+        """Re-upload meet template so clubs exist regardless of prior test state."""
         from pathlib import Path
         meet_path = Path(__file__).resolve().parent / "fixtures" / "meet_template.lxf"
         entries_path = Path(__file__).resolve().parent / "fixtures" / "test_entries.lxf"
@@ -1859,7 +1633,7 @@ class TestLiveNotifications:
 
     @pytest.fixture(scope="class")
     def live_clubs(self, live_secret, admin_headers) -> list[dict]:
-        """Fetch a fresh club list — SMB tests earlier in the session wipe clubs."""
+        """Fetch a fresh club list (post re-upload)."""
         r = requests.get(f"{BASE_URL}/api/clubs", headers=admin_headers, timeout=10)
         r.raise_for_status()
         return r.json()

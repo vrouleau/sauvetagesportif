@@ -24,9 +24,9 @@ Maps:
 - CLUBS/CLUB/ATHLETES/ATHLETE → CLUBS + MEMBERS (merge by license / club code)
 - ATHLETE/RESULTS/RESULT → RESULTS rows (only rows with swimtime or status)
 
-This is the LXF equivalent of smb_to_team.py, used after a competition:
-meet-app exports results via File → "Exporter les résultats LENEX…",
-and the team-app organizer imports it to record results as historical data.
+Used after a competition: meet-app exports results via File → "Exporter les
+résultats LENEX…", and the team-app organizer imports it to record results
+as historical data.
 """
 from __future__ import annotations
 

@@ -24,7 +24,7 @@ Partial reset — replaces the event structure but preserves club/organizer stat
 | Reset organizer_club_id | ✅ | ❌ |
 | Reset invite_send_count / stripe_send_count | ✅ | ❌ |
 | Reset age_base_date | ✅ (Dec 31 current year) | ✅ (from LXF) |
-| Remove stored meet.lxf / meet.smb files | ✅ | ❌ (replaces .lxf) |
+| Remove stored meet.lxf file | ✅ | ❌ (replaces .lxf) |
 | Regenerate club PINs | ❌ | ✅ |
 | Regenerate combined events | ❌ | ✅ |
 | Auto-detect meet_type (pool/beach) | ❌ | ✅ |

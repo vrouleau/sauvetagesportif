@@ -160,7 +160,7 @@ Web app for team registration before the competition.
 - **React frontend** with shared EventsPage from `shared-ui`
 - **Unified schema**: Team Manager tables (clubs, members, meets, results) + Meet Manager tables (swimresult.athleteid → members.membersid directly, no separate athlete/club tables)
 - **Features**: athlete registration, relay assignment, best times (from historical results), invoices (Stripe), email invitations, backup/restore (pg_dump with auto-scheduler)
-- **Historical meets**: import from Team.mdb, .smb, or results .lxf (from meet-app); best times computed across all results (18-month expiry); meets deduplicated by name on re-import
+- **Historical meets**: import from Team.mdb or results .lxf (from meet-app); best times computed across all results (18-month expiry); meets deduplicated by name on re-import
 - **Close-meet flow**: organizer imports results .lxf → archived as historical meet → current meet reset → all club PINs regenerated → organizer cleared → admin invites next organizer
 - **Data adapter**: `meetApi.js` wraps HTTP `fetch('/api/...')` → FastAPI backend
 
@@ -227,7 +227,7 @@ Replaces manual time entry from handwritten timing sheets with a camera-based wo
 - Two keys: free tier (15 req/min, 1500/day) + paid tier (fallback on rate limit)
 - Keys stored in `bsglobal` as `GEMINI_KEY_FREE` / `GEMINI_KEY_PAID`
 - Admin sets keys in team-app (Admin page → "Clés API Gemini")
-- Keys travel to meet-app via `.smb` export/import AND `.lxf` export (embedded as `.keys` dotfile)
+- Keys travel to meet-app via `.lxf` export (embedded as `.keys` dotfile)
 - Auto-fallback: free → paid on 429 → back to free after 60s
 - Background processing runs in main process (works on any page)
 - Toggle ON/OFF in Traitement page header

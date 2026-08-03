@@ -150,58 +150,6 @@ export default function Admin() {
             className="file:border file:border-gray-300 file:rounded file:px-2 file:py-0.5 file:text-xs file:bg-white file:cursor-pointer text-xs" />
         </Section>
 
-        {/* Upload SMB */}
-        <Section title={t.upload_smb} desc={t.upload_smb_desc}>
-          <input type="file" accept=".smb" onChange={async (e) => {
-            const file = e.target.files[0]
-            if (!file) return
-            if (!confirm(t.confirm_upload_smb)) { e.target.value = ''; return }
-            const fd = new FormData()
-            fd.append('file', file)
-            setMsg(lang === 'fr' ? 'Importation du .smb…' : 'Importing .smb...')
-            try {
-              const r = await api.post('/upload/meet-smb', fd)
-              const d = r.data
-              setMsg(`Done: ${d.events_loaded} events, ${d.styles_loaded} styles, ${d.agegroups_loaded} age groups`)
-              loadStatus()
-              window.dispatchEvent(new Event('meet-changed'))
-            } catch (err) {
-              setMsg(err.detail || err.message || 'Error')
-            }
-            e.target.value = ''
-          }}
-            className="file:border file:border-gray-300 file:rounded file:px-2 file:py-0.5 file:text-xs file:bg-white file:cursor-pointer text-xs" />
-        </Section>
-
-        {/* Download Meet (.smb) */}
-        <Section title={t.export_meet_smb} desc={t.export_meet_smb_desc}>
-          <button onClick={async () => {
-            setMsg(lang === 'fr' ? 'Génération…' : 'Generating...')
-            try {
-              const res = await fetch('/api/export/meet-smb', {
-                headers: { 'X-Club-Pin': localStorage.getItem('pin') || '' }
-              })
-              if (!res.ok) {
-                const err = await res.json().catch(() => ({ detail: res.statusText }))
-                setMsg(err.detail || 'Error')
-                return
-              }
-              const blob = await res.blob()
-              // Extract filename from Content-Disposition header
-              const cd = res.headers.get('Content-Disposition') || ''
-              const fnMatch = cd.match(/filename=([^;]+)/)
-              const filename = fnMatch ? fnMatch[1].trim() : 'meet.smb'
-              const url = URL.createObjectURL(blob)
-              const a = document.createElement('a')
-              a.href = url; a.download = filename; a.click()
-              URL.revokeObjectURL(url)
-              setMsg(lang === 'fr' ? '✓ Téléchargé' : '✓ Downloaded')
-            } catch (err) { setMsg(err.message || 'Error') }
-          }} className="px-3 py-1 bg-teal-600 text-white text-xs rounded hover:bg-teal-700">
-            {t.export_meet_smb}
-          </button>
-        </Section>
-
         {/* Change Admin PIN */}
         <Section title={t.change_admin_pin}>
           <form onSubmit={async e => {
@@ -401,7 +349,6 @@ function Section({ title, desc, children }) {
 function HistoricalMeetsSection() {
   const [meets, setMeets] = useState([])
   const [mdbUploading, setMdbUploading] = useState(false)
-  const [smbUploading, setSmbUploading] = useState(false)
   const [lxfUploading, setLxfUploading] = useState(false)
   const [msg, setMsg] = useState('')
   const { lang } = useLang()
@@ -442,22 +389,6 @@ function HistoricalMeetsSection() {
       loadMeets()
     } catch (err) { setMsg(err.detail || err.message || 'Error') }
     finally { setMdbUploading(false); e.target.value = '' }
-  }
-
-  async function importSmb(e) {
-    const file = e.target.files?.[0]
-    if (!file) return
-    setSmbUploading(true)
-    try {
-      const form = new FormData()
-      form.append('file', file)
-      const r = await api.post('/admin/import-meet-results', form)
-      setMsg(lang === 'fr'
-        ? `Importé: "${r.data.meet_name}" — ${r.data.members} athlètes, ${r.data.results} résultats`
-        : `Imported: "${r.data.meet_name}" — ${r.data.members} members, ${r.data.results} results`)
-      loadMeets()
-    } catch (err) { setMsg(err.detail || err.message || 'Error') }
-    finally { setSmbUploading(false); e.target.value = '' }
   }
 
   async function importLxf(e) {
@@ -536,10 +467,6 @@ function HistoricalMeetsSection() {
           <label className={`px-3 py-1 text-xs rounded cursor-pointer ${mdbUploading ? 'bg-gray-400' : 'bg-green-600 hover:bg-green-700'} text-white`}>
             {mdbUploading ? (lang === 'fr' ? 'Import…' : 'Importing…') : (lang === 'fr' ? 'Importer Team.mdb' : 'Import Team.mdb')}
             <input type="file" accept=".mdb" className="hidden" onChange={importMdb} disabled={mdbUploading} />
-          </label>
-          <label className={`px-3 py-1 text-xs rounded cursor-pointer ${smbUploading ? 'bg-gray-400' : 'bg-purple-600 hover:bg-purple-700'} text-white`}>
-            {smbUploading ? (lang === 'fr' ? 'Import…' : 'Importing…') : (lang === 'fr' ? 'Importer résultats .smb' : 'Import results .smb')}
-            <input type="file" accept=".smb" className="hidden" onChange={importSmb} disabled={smbUploading} />
           </label>
           <label className={`px-3 py-1 text-xs rounded cursor-pointer ${lxfUploading ? 'bg-gray-400' : 'bg-blue-600 hover:bg-blue-700'} text-white`}>
             {lxfUploading ? (lang === 'fr' ? 'Import…' : 'Importing…') : (lang === 'fr' ? 'Importer résultats .lxf' : 'Import results .lxf')}

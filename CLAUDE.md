@@ -198,7 +198,7 @@ RelayEntryPage.tsx
 - **team-app**: `upload_entries` also imports relay teams from LXF
 
 ### SMB Import/Export (relay)
-Both apps handle `relay`, `relayposition`, and `relaysplit` tables in SMB backup/restore.
+meet-app handles `relay`, `relayposition`, and `relaysplit` tables in its own SMB backup/restore (Splash interop). team-app has no `.smb` support — see [`docs/SMB_DEPRECATION_INVESTIGATION_2026-08-03.md`](docs/SMB_DEPRECATION_INVESTIGATION_2026-08-03.md).
 
 ## Beach Meets
 

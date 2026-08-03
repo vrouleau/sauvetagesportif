@@ -69,7 +69,7 @@ La liste des sauvegardes affiche toutes les sauvegardes stockées (manuelles et 
 ### Configurer les clés API Gemini
 
 1. Dans la section **Clés API Gemini**, entrer la clé gratuite et/ou payante
-2. Cliquer **Enregistrer** — ces clés voyagent avec l'export `.smb` vers SauvetageMeet
+2. Cliquer **Enregistrer** — ces clés voyagent avec l'export .lxf de la compétition vers SauvetageMeet
 
 ### Changer le NIP admin
 
@@ -99,11 +99,6 @@ La section **Compétitions historiques** permet d'importer les résultats de com
 
 1. Cliquer **Importer Team.mdb** et sélectionner la base Access existante
 2. Toutes les compétitions, membres et résultats sont importés
-
-### Importer résultats .smb
-
-1. Cliquer **Importer résultats .smb** et sélectionner un fichier de sauvegarde SauvetageMeet
-2. Le nom du meet, les athlètes et les résultats sont importés
 
 ### Importer résultats .lxf
 

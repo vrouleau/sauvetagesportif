@@ -154,7 +154,7 @@ sport — this bit us for real once already.
 
 ## Best times storage
 
-Best times are computed from the Team Manager `results` table via `best_times_v2.py` — SQL query across all historical results (18-month expiry). Fed by results upload and MDB/SMB import.
+Best times are computed from the Team Manager `results` table via `best_times_v2.py` — SQL query across all historical results (18-month expiry). Fed by results upload and MDB import.
 
 **Not updated for beach meets** (positions are not times). Pool styles use 5xx IDs, beach styles use 6xx — no collisions.
 
@@ -169,8 +169,6 @@ Best times are computed from the Team Manager `results` table via `best_times_v2
 | `POST /api/auth` | PIN authentication | Public |
 | `POST /api/upload/meet` | Upload meet .lxf (event structure) | Organizer/Admin |
 | `POST /api/upload/entries` | Upload entries/results .lxf (clubs + athletes + best times) | Admin |
-| `POST /api/upload/meet-smb` | Full database restore from .smb backup | Admin |
-| `GET /api/export/meet-smb` | Download full .smb backup | Admin |
 | `POST /api/admin/new-meet` | Create new meet from template (pool/beach) | Organizer/Admin |
 | `GET /api/export` | Export registrations as .lxf bundle (.zip) | Admin |
 | `GET /api/export/entries` | Export entries .lxf (clubs + athletes + best times) | Admin |
@@ -188,7 +186,6 @@ Best times are computed from the Team Manager `results` table via `best_times_v2
 | `POST /api/admin/import-mdb` | Import Splash Team Manager .mdb file | Admin |
 | `GET /api/admin/historical-meets` | List historical meets (Team Manager schema) | Admin |
 | `DELETE /api/admin/historical-meets/{id}` | Delete a historical meet | Admin |
-| `POST /api/admin/import-meet-results` | Import .smb as historical meet results | Admin |
 | `POST /api/import-results-lxf` | Import results .lxf as historical meet; organizer path also resets current meet + PINs + clears organizer | Organizer/Admin |
 | `GET /api/athletes` | Athlete list | Any authenticated |
 | `GET /api/admin/gemini-keys` | Get masked Gemini API keys | Admin |
@@ -227,9 +224,6 @@ Full CRUD management for relay team entries (events with `relaycount > 1`).
 ### LXF import
 `upload_entries` (seed.py) also imports relay teams from uploaded .lxf files.
 
-### SMB import/export
-`relay`, `relayposition`, `relaysplit` tables handled in SMB backup/restore.
-
 ## Source layout
 
 ```
@@ -241,7 +235,6 @@ backend/app/
   routers/api.py        — All API endpoints
   routers/serc.py       — SERC API (config, teams, scores, draw order, results)
   routers/serc_print.py — SERC printable judge sheets (bilingual, one page per team per section)
-  combined_events.py    — COMBINEDEVENTS XML generator (Python port)
   events.py             — LENEX meet structure parser
   best_times_v2.py      — Best times computed from Team Manager results table
   export.py             — LENEX export (registrations + Gemini key transport; session names + pause events included)
@@ -249,10 +242,8 @@ backend/app/
   invoices.py           — Stripe invoice generation
   seed.py               — Entries .lxf parser (clubs/athletes/HANDICAP into members table)
   mdb_import.py         — Splash Team Manager .mdb import (via mdbtools)
-  smb_to_team.py        — Import .smb as historical meet in Team Manager schema
   lxf_to_team.py        — Import results .lxf as historical meet (merges clubs/members/HANDICAP, upserts if same name)
   historical_import.py  — Import older results .lxf as historical meet (merges clubs/members/HANDICAP)
-  smb.py                — SMB file format handler (Splash Meet Backup)
 frontend/src/
   main.jsx              — React app, routing, EventsPage wrapper
   meetApi.js            — MeetAPI adapter (HTTP → FastAPI)
@@ -292,10 +283,14 @@ Full data flow between meet-app and team-app:
 
 ## Combined Events
 
-Auto-generated XML in `bsglobal` defining cumulative point standings per age/gender category.
-
-- **Implementation**: `backend/app/combined_events.py` — called from `api.py` after `upload_meet`
-- **Config**: `../../config/combined-events-config.json` (see `config/CLAUDE.md` at repo root)
+Meet-app only (`src/main/combinedEvents.ts`, see `packages/meet-app/CLAUDE.md`)
+— generates cumulative point-standings XML from `config/combined-events-config.json`
+in meet-app's own `bsglobal`. team-app had a Python port (`combined_events.py`)
+until 2026-06-16, when it was swapped for `point_scores.py` (a different,
+Splash-native `POINTSCORE` mechanism); that in turn was removed 2026-08-03 as
+dead code — nothing in team-app ever read either, and LXF export never
+carried `COMBINEDEVENTS`/`POINTSCORE` to meet-app. team-app currently has no
+combined-events implementation of its own, and doesn't need one.
 
 ## Backup & Restore (Admin page)
 

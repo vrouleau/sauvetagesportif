@@ -69,7 +69,7 @@ The backup list displays all stored backups (manual and automatic):
 ### Configure Gemini API Keys
 
 1. In the **Gemini API Keys** section, enter the free and/or paid key
-2. Click **Save** — these keys travel with the `.smb` export to SauvetageMeet
+2. Click **Save** — these keys travel with the meet .lxf export to SauvetageMeet
 
 ### Change Admin PIN
 
@@ -99,11 +99,6 @@ The **Historical Meets** section lets you import past competition results. These
 
 1. Click **Import Team.mdb** and select the legacy Access database
 2. All meets, members, and results are imported
-
-### Import results .smb
-
-1. Click **Import results .smb** and select a SauvetageMeet backup file
-2. The meet name, athletes, and results are imported
 
 ### Import results .lxf
 
