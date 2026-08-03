@@ -71,6 +71,8 @@ class MeetEvent:
 class MeetSession:
     number: int
     name: str
+    lanemin: int | None = None
+    lanemax: int | None = None
     events: list[MeetEvent] = field(default_factory=list)
 
 
@@ -131,9 +133,13 @@ def parse_meet_lxf(source) -> ParsedMeet:
                 meet.currency = cur
 
     for session_el in root.iter("SESSION"):
+        lanemin_attr = session_el.get("lanemin")
+        lanemax_attr = session_el.get("lanemax")
         ses = MeetSession(
             number=int(session_el.get("number", 0)),
             name=session_el.get("name", ""),
+            lanemin=int(lanemin_attr) if lanemin_attr else None,
+            lanemax=int(lanemax_attr) if lanemax_attr else None,
         )
         for event_el in session_el.iter("EVENT"):
             style_el = event_el.find("SWIMSTYLE")

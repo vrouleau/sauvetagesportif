@@ -304,11 +304,14 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
   // Prepared statements
   const stmts = {
     findSession: db.prepare(`SELECT swimsessionid FROM swimsession WHERE sessionnumber=?`),
-    updateSession: db.prepare(`UPDATE swimsession SET name=? WHERE swimsessionid=?`),
+    updateSession: db.prepare(
+      `UPDATE swimsession SET name=?,
+         lanemin=COALESCE(?, lanemin), lanemax=COALESCE(?, lanemax)
+       WHERE swimsessionid=?`),
     maxSessionId: db.prepare(`SELECT COALESCE(MAX(swimsessionid),0)+1 AS next FROM swimsession`),
     insertSession: db.prepare(
-      `INSERT INTO swimsession (swimsessionid, sessionnumber, name, course, following, poolglobal, roundtotenths)
-       VALUES (?,?,?,1,'F','F','F')`),
+      `INSERT INTO swimsession (swimsessionid, sessionnumber, name, course, following, poolglobal, roundtotenths, lanemin, lanemax)
+       VALUES (?,?,?,1,'F','F','F',?,?)`),
     upsertStyle: db.prepare(
       `INSERT INTO swimstyle (swimstyleid, distance, relaycount, stroke, name, technique, code)
        VALUES (?,?,?,?,?,?,?)
@@ -370,14 +373,16 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
     try {
       const existing = stmts.findSession.get(num) as { swimsessionid: number } | undefined
       const sessName = (a.name ?? '').slice(0, 100)
+      const laneMin = a.lanemin ? parseInt(a.lanemin, 10) : null
+      const laneMax = a.lanemax ? parseInt(a.lanemax, 10) : null
       if (existing) {
         swimsessionid = existing.swimsessionid
-        if (!skipEventStructure) stmts.updateSession.run(sessName, swimsessionid)
+        if (!skipEventStructure) stmts.updateSession.run(sessName, laneMin, laneMax, swimsessionid)
       } else {
         if (skipEventStructure) continue  // Don't create new sessions during entries import
         const r = stmts.maxSessionId.get() as { next: number }
         swimsessionid = r.next
-        stmts.insertSession.run(swimsessionid, num, sessName)
+        stmts.insertSession.run(swimsessionid, num, sessName, laneMin, laneMax)
       }
       summary.sessions++
     } catch (e) {
@@ -1225,8 +1230,8 @@ export function exportMeetLenex(filePath: string, db: Database.Database): MeetEx
   const ageDate = computeAgeDate(mv)
 
   const sessions = db.prepare(
-    `SELECT swimsessionid, sessionnumber, name, course, startdate FROM swimsession ORDER BY sessionnumber`
-  ).all() as Array<{ swimsessionid: number; sessionnumber: number; name: string | null; course: number | null; startdate: string | null }>
+    `SELECT swimsessionid, sessionnumber, name, course, startdate, lanemin, lanemax FROM swimsession ORDER BY sessionnumber`
+  ).all() as Array<{ swimsessionid: number; sessionnumber: number; name: string | null; course: number | null; startdate: string | null; lanemin: number | null; lanemax: number | null }>
 
   const events = db.prepare(
     `SELECT e.swimeventid, e.swimsessionid, e.eventnumber, e.gender, e.round, e.roundname,
@@ -1265,7 +1270,7 @@ export function exportMeetLenex(filePath: string, db: Database.Database): MeetEx
 
   for (const sess of sessions) {
     const sessDate = parseOleDate(sess.startdate) ?? ageDate
-    lines.push(`        <SESSION${attr('number', sess.sessionnumber)}${attr('name', sess.name)}${attr('date', sessDate)}${attr('course', decodeCourse(sess.course))}>`)
+    lines.push(`        <SESSION${attr('number', sess.sessionnumber)}${attr('name', sess.name)}${attr('date', sessDate)}${attr('course', decodeCourse(sess.course))}${attr('lanemin', sess.lanemin)}${attr('lanemax', sess.lanemax)}>`)
     lines.push('          <EVENTS>')
 
     const sessEvents = events.filter(e => e.swimsessionid === sess.swimsessionid)

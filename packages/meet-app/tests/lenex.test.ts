@@ -242,6 +242,77 @@ describe('LENEX exporter', () => {
     expect(xml).not.toMatch(/date="\d+\.\d+"/)
   })
 
+  it('exportMeetLenex writes session lanemin/lanemax when set (was silently dropped before)', () => {
+    seedResultsFixture(db, dateToOle(2014, 7, 3))
+    db.prepare(`UPDATE swimsession SET lanemin=1, lanemax=40 WHERE swimsessionid=1`).run()
+    exportMeetLenex(outPath, db)
+    const xml = readLefXml(outPath)
+    expect(xml).toContain('lanemin="1"')
+    expect(xml).toContain('lanemax="40"')
+  })
+
+  it('exportMeetLenex omits lanemin/lanemax attrs when unset (not a literal "null"/"0")', () => {
+    seedResultsFixture(db, dateToOle(2014, 7, 3))
+    exportMeetLenex(outPath, db)
+    const xml = readLefXml(outPath)
+    expect(xml).not.toMatch(/lanemin=/)
+    expect(xml).not.toMatch(/lanemax=/)
+  })
+
+  it('round-trips session lanemin/lanemax through importLenex → exportMeetLenex → importLenex (was silently dropped before)', () => {
+    seedResultsFixture(db, dateToOle(2014, 7, 3))
+    db.prepare(`UPDATE swimsession SET lanemin=1, lanemax=40 WHERE swimsessionid=1`).run()
+    exportMeetLenex(outPath, db)
+
+    const { db: freshDb, cleanup: freshCleanup } = createTestDb()
+    try {
+      importLenex(outPath, freshDb)
+      const row = freshDb.prepare(`SELECT lanemin, lanemax FROM swimsession WHERE sessionnumber=1`).get() as {
+        lanemin: number | null; lanemax: number | null
+      }
+      expect(row.lanemin).toBe(1)
+      expect(row.lanemax).toBe(40)
+    } finally {
+      freshCleanup()
+    }
+  })
+
+  it('re-importing a structure LXF without lanemin/lanemax does not clobber an existing session value', () => {
+    // Simulates: user sets lanemin/lanemax in meet-app, then re-imports an entries LXF from
+    // team-app that doesn't carry the attribute yet — the existing value must survive.
+    const lxfPath = join(tmpdir(), `test-session-nolane-${randomBytes(4).toString('hex')}.lxf`)
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<LENEX version="3.0">
+  <MEETS>
+    <MEET name="Test Meet" city="Test City" nation="CAN" course="LCM">
+      <SESSIONS>
+        <SESSION number="1" name="Session 1">
+          <EVENTS>
+            <EVENT eventid="1" number="1" gender="M" round="TIM">
+              <SWIMSTYLE swimstyleid="601" distance="16" relaycount="1" name="Drapeau Sur Plage" />
+            </EVENT>
+          </EVENTS>
+        </SESSION>
+      </SESSIONS>
+    </MEET>
+  </MEETS>
+</LENEX>`
+    writeZipSingleEntry(lxfPath, 'meet.lef', xml)
+
+    try {
+      importLenex(lxfPath, db)
+      db.prepare(`UPDATE swimsession SET lanemin=1, lanemax=40 WHERE sessionnumber=1`).run()
+      importLenex(lxfPath, db) // re-import same structure, no lanemin/lanemax attrs
+      const row = db.prepare(`SELECT lanemin, lanemax FROM swimsession WHERE sessionnumber=1`).get() as {
+        lanemin: number | null; lanemax: number | null
+      }
+      expect(row.lanemin).toBe(1)
+      expect(row.lanemax).toBe(40)
+    } finally {
+      try { unlinkSync(lxfPath) } catch {}
+    }
+  })
+
   it('round-trips swimtime/resultstatus/reactiontime through importLenex (was silently dropped before)', () => {
     seedResultsFixture(db, dateToOle(2014, 7, 3))
     db.prepare(`UPDATE swimresult SET resultstatus=3 WHERE swimresultid=1`).run() // DSQ

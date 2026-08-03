@@ -129,6 +129,8 @@ def _meet_struct_from_db(db: Session):
         parsed_sessions.append(MeetSession(
             number=ses.sessionnumber or ses.swimsessionid,
             name=ses.name or "",
+            lanemin=ses.lanemin,
+            lanemax=ses.lanemax,
             events=events,
         ))
 
@@ -214,12 +216,17 @@ def generate_lxf(db: Session) -> bytes:
     # Sessions + Events from meet structure
     sessions_xml = ET.SubElement(meet, "SESSIONS")
     for ses in meet_struct.sessions:
-        ses_xml = ET.SubElement(sessions_xml, "SESSION", {
+        ses_attrs = {
             "number": str(ses.number),
             "name": ses.name or "",
             "date": age_base_date,
             "course": meet_struct.course or "LCM",
-        })
+        }
+        if ses.lanemin is not None:
+            ses_attrs["lanemin"] = str(ses.lanemin)
+        if ses.lanemax is not None:
+            ses_attrs["lanemax"] = str(ses.lanemax)
+        ses_xml = ET.SubElement(sessions_xml, "SESSION", ses_attrs)
         evts_xml = ET.SubElement(ses_xml, "EVENTS")
         for idx, m_ev in enumerate(ses.events, start=1):
             ev_attrs: dict[str, str] = {
@@ -593,12 +600,17 @@ def generate_meet_lxf_from_db(db: Session) -> bytes:
             ses_date = ses.daytime.strftime("%Y-%m-%d")
         elif ses.startdate:
             ses_date = ses.startdate.strftime("%Y-%m-%d")
-        ses_xml = ET.SubElement(sessions_xml, "SESSION", {
+        ses_attrs = {
             "number": str(ses.sessionnumber or ses.swimsessionid),
             "name": ses.name or "",
             "date": ses_date,
             "course": meet_struct.course or "LCM",
-        })
+        }
+        if ses.lanemin is not None:
+            ses_attrs["lanemin"] = str(ses.lanemin)
+        if ses.lanemax is not None:
+            ses_attrs["lanemax"] = str(ses.lanemax)
+        ses_xml = ET.SubElement(sessions_xml, "SESSION", ses_attrs)
         evts_xml = ET.SubElement(ses_xml, "EVENTS")
         for ev in sorted(ses.events, key=lambda e: e.sortcode or e.eventnumber or 0):
             ev_attrs = {

@@ -68,6 +68,8 @@ def _load_from_parsed(db: Session, meet: ParsedMeet) -> int:
             sessionnumber=ses.number,
             name=ses.name,
             course=None,  # will be set from meet-level course if needed
+            lanemin=ses.lanemin,
+            lanemax=ses.lanemax,
         )
         db.add(session)
         db.flush()
