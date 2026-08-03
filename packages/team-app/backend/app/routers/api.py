@@ -2963,7 +2963,7 @@ def flush_meet(db: Session = Depends(get_db)):
     for key in ("meet_filename", "meet_uploaded_at", "meet_name", "meet_course",
                 "meet_masters", "meet_currency", "meet_fees_json", "closure_date",
                 "organizer_club_id", "COMBINEDEVENTS", "current_meetsid",
-                "POINTSCORES", "MEETVALUES",
+                "POINTSCORE", "POINTSCORES", "MEETVALUES",
                 "meet_nation", "meet_city"):
         cfg = db.query(BsGlobal).get(key)
         if cfg:
@@ -3044,7 +3044,7 @@ def _reset_for_next_meet(db: Session) -> None:
     for key in ("meet_filename", "meet_uploaded_at", "meet_name", "meet_course",
                 "meet_masters", "meet_currency", "meet_fees_json", "closure_date",
                 "organizer_club_id", "COMBINEDEVENTS", "current_meetsid",
-                "POINTSCORES", "MEETVALUES",
+                "POINTSCORE", "POINTSCORES", "MEETVALUES",
                 "meet_nation", "meet_city"):
         cfg = db.query(BsGlobal).get(key)
         if cfg:

@@ -28,7 +28,7 @@
  */
 
 import { app } from 'electron'
-import { existsSync, copyFileSync, readFileSync } from 'node:fs'
+import { existsSync, copyFileSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type Database from 'better-sqlite3'
 
@@ -47,8 +47,29 @@ export interface PointScoreAssignment {
   pointscoreid: number
 }
 
+export interface SplashAgeGroupRange {
+  from: number // -1 = no lower limit
+  to: number // -1 = no upper limit
+}
+
+export interface SplashPlacePoint {
+  position: number
+  individual: number
+  relay: number
+}
+
+export interface SplashPointScoreConfig {
+  pointscoreid: number
+  name: string
+  titleforprints?: string
+  attributes: Record<string, string>
+  ageGroups: SplashAgeGroupRange[]
+  placePoints: SplashPlacePoint[]
+}
+
 export interface PointScoresConfig {
   description?: string
+  splashPointScore: SplashPointScoreConfig
   definitions: PointScoreDefinition[]
   assignments: PointScoreAssignment[]
 }
@@ -83,13 +104,30 @@ export function loadPointScoresConfig(): PointScoresConfig {
   }
 
   const raw = readFileSync(configPath, 'utf-8')
+  let config: PointScoresConfig
   try {
-    return JSON.parse(raw) as PointScoresConfig
+    config = JSON.parse(raw) as PointScoresConfig
   } catch (e) {
     throw new Error(
       `Failed to parse point scores config at ${configPath}: ${(e as Error).message}`
     )
   }
+
+  // Self-heal: an existing userData copy predating `splashPointScore` (added when the
+  // BSGLOBAL export was fixed to use Splash's real POINTSCORE schema/key instead of an
+  // invented one) would otherwise crash every regeneratePointScores() call forever, since
+  // the copy-bundled-default-on-first-run logic above only fires when the file is fully
+  // absent. Patch in just the missing piece from the bundled default and persist it, leaving
+  // any user customization to `definitions`/`assignments` untouched.
+  if (!config.splashPointScore && existsSync(bundledConfigPath)) {
+    const bundled = JSON.parse(readFileSync(bundledConfigPath, 'utf-8')) as PointScoresConfig
+    config = { ...config, splashPointScore: bundled.splashPointScore }
+    if (configPath === userConfigPath) {
+      writeFileSync(userConfigPath, JSON.stringify(config, null, 2), 'utf-8')
+    }
+  }
+
+  return config
 }
 
 // ── XML Serialization ─────────────────────────────────────────────────────────
@@ -103,21 +141,42 @@ function escapeXml(str: string): string {
     .replace(/'/g, '&apos;')
 }
 
-export function buildPointScoresXml(definitions: PointScoreDefinition[]): string {
+/**
+ * Build the BSGLOBAL POINTSCORE XML (singular key — Splash's real, native points-standings
+ * config). Verified against 4 real Splash-native .mdb files: the wrapping element structure,
+ * <POINTSCORE> attribute set, and nested <AGEGROUPS>/<PLACEPOINTS> shape below all match what
+ * those files actually contain. Splash supports exactly one active config per meet, not a
+ * catalog of named scales — unlike the legacy `definitions`/`assignments` config below.
+ */
+export function buildSplashPointScoreXml(cfg: SplashPointScoreConfig): string {
   const lines: string[] = []
   lines.push('<?xml version="1.0" encoding="UTF-16"?>')
   lines.push('<POINTSCOREDEFINITION>')
   lines.push('  <POINTSCORES>')
 
-  for (const def of definitions) {
-    const pointsStr = def.points.join(',')
-    lines.push(
-      `    <POINTSCORE pointscoreid="${def.pointscoreid}" ` +
-      `name="${escapeXml(def.name)}" ` +
-      `points="${pointsStr}" />`
-    )
+  const attrParts = [
+    `pointscoreid="${cfg.pointscoreid}"`,
+    `name="${escapeXml(cfg.name)}"`,
+  ]
+  if (cfg.titleforprints) attrParts.push(`titleforprints="${escapeXml(cfg.titleforprints)}"`)
+  for (const [key, value] of Object.entries(cfg.attributes)) {
+    attrParts.push(`${key}="${escapeXml(value)}"`)
   }
+  lines.push(`    <POINTSCORE ${attrParts.join(' ')}>`)
 
+  lines.push('      <AGEGROUPS>')
+  for (const ag of cfg.ageGroups) {
+    lines.push(`        <AGEGROUP from="${ag.from}" to="${ag.to}" />`)
+  }
+  lines.push('      </AGEGROUPS>')
+
+  lines.push('      <PLACEPOINTS>')
+  for (const pp of cfg.placePoints) {
+    lines.push(`        <PLACEPOINT position="${pp.position}" individual="${pp.individual}" relay="${pp.relay}" />`)
+  }
+  lines.push('      </PLACEPOINTS>')
+
+  lines.push('    </POINTSCORE>')
   lines.push('  </POINTSCORES>')
   lines.push('</POINTSCOREDEFINITION>')
   return lines.join('\r\n')
@@ -152,7 +211,7 @@ export function applyPointScoreAssignments(
 // ── Main Orchestrator ─────────────────────────────────────────────────────────
 
 /**
- * Regenerate the POINTSCORES XML and write it to BSGLOBAL.
+ * Regenerate the POINTSCORE XML and write it to BSGLOBAL.
  * Also applies scoretype assignments to matching age groups.
  *
  * Call this when creating a meet from scratch or after age group mutations.
@@ -161,12 +220,16 @@ export function regeneratePointScores(db: Database.Database): void {
   // Step 1: Load config from external JSON file
   const config = loadPointScoresConfig()
 
-  // Step 2: Build XML from definitions
-  const xml = buildPointScoresXml(config.definitions)
+  // Step 2: Build the Splash-native XML from splashPointScore
+  const xml = buildSplashPointScoreXml(config.splashPointScore)
 
-  // Step 3: Upsert into BSGLOBAL
+  // Step 3: Upsert into BSGLOBAL under the real Splash key name (singular). Also drop any
+  // stale 'POINTSCORES' (plural) row from an earlier version of this app — that key was never
+  // real Splash schema, so restoring it into a live-shared Postgres database left Splash's own
+  // points-standings report with no config to find.
+  db.prepare(`DELETE FROM bsglobal WHERE name = 'POINTSCORES'`).run()
   db.prepare(
-    `INSERT INTO bsglobal (name, data) VALUES ('POINTSCORES', ?)
+    `INSERT INTO bsglobal (name, data) VALUES ('POINTSCORE', ?)
      ON CONFLICT(name) DO UPDATE SET data = excluded.data`
   ).run(xml)
 

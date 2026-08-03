@@ -68,22 +68,39 @@ def _escape_xml(s: str) -> str:
     )
 
 
-def _build_xml(definitions: list[dict[str, Any]]) -> str:
-    """Build the POINTSCOREDEFINITION XML string."""
+def _build_splash_point_score_xml(cfg: dict[str, Any]) -> str:
+    """Build the BSGLOBAL POINTSCORE XML (singular key) — Splash's real, native
+    points-standings config, one per meet. Verified against 4 real Splash-native .mdb
+    files: the wrapping element structure, <POINTSCORE> attribute set, and nested
+    <AGEGROUPS>/<PLACEPOINTS> shape below all match what those files actually contain.
+    """
     lines = [
         '<?xml version="1.0" encoding="UTF-16"?>',
         "<POINTSCOREDEFINITION>",
         "  <POINTSCORES>",
     ]
 
-    for d in definitions:
-        points_str = ",".join(str(p) for p in d["points"])
-        lines.append(
-            f'    <POINTSCORE pointscoreid="{d["pointscoreid"]}" '
-            f'name="{_escape_xml(d["name"])}" '
-            f'points="{points_str}" />'
-        )
+    attrs = [f'pointscoreid="{cfg["pointscoreid"]}"', f'name="{_escape_xml(cfg["name"])}"']
+    if cfg.get("titleforprints"):
+        attrs.append(f'titleforprints="{_escape_xml(cfg["titleforprints"])}"')
+    for key, value in cfg.get("attributes", {}).items():
+        attrs.append(f'{key}="{_escape_xml(value)}"')
+    lines.append(f'    <POINTSCORE {" ".join(attrs)}>')
 
+    lines.append("      <AGEGROUPS>")
+    for ag in cfg.get("ageGroups", []):
+        lines.append(f'        <AGEGROUP from="{ag["from"]}" to="{ag["to"]}" />')
+    lines.append("      </AGEGROUPS>")
+
+    lines.append("      <PLACEPOINTS>")
+    for pp in cfg.get("placePoints", []):
+        lines.append(
+            f'        <PLACEPOINT position="{pp["position"]}" '
+            f'individual="{pp["individual"]}" relay="{pp["relay"]}" />'
+        )
+    lines.append("      </PLACEPOINTS>")
+
+    lines.append("    </POINTSCORE>")
     lines.append("  </POINTSCORES>")
     lines.append("</POINTSCOREDEFINITION>")
     return "\r\n".join(lines)
@@ -125,22 +142,25 @@ def _apply_assignments(db: Session, assignments: list[dict[str, Any]]) -> None:
 # ── Main orchestrator ──────────────────────────────────────────────────────────
 
 def regenerate_point_scores(db: Session) -> None:
-    """Regenerate the POINTSCORES XML and write it to BSGLOBAL.
+    """Regenerate the POINTSCORE XML and write it to BSGLOBAL.
 
     Also applies scoretype assignments to matching age groups.
     Call this when creating a meet from scratch or after age group mutations.
     """
     config = _load_config()
 
-    # Build XML from definitions
-    xml = _build_xml(config["definitions"])
+    # Build the Splash-native XML from splashPointScore
+    xml = _build_splash_point_score_xml(config["splashPointScore"])
 
-    # Upsert into bsglobal
-    existing = db.query(BsGlobal).filter_by(name="POINTSCORES").first()
+    # Upsert into bsglobal under the real Splash key name (singular). Also drop any stale
+    # 'POINTSCORES' (plural) row from an earlier version of this app — that key was never real
+    # Splash schema, so it left Splash's own points-standings report with no config to find.
+    db.query(BsGlobal).filter_by(name="POINTSCORES").delete()
+    existing = db.query(BsGlobal).filter_by(name="POINTSCORE").first()
     if existing:
         existing.data = xml
     else:
-        db.add(BsGlobal(name="POINTSCORES", data=xml))
+        db.add(BsGlobal(name="POINTSCORE", data=xml))
     db.flush()
 
     # Apply scoretype assignments to age groups

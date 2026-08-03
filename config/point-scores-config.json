@@ -1,5 +1,54 @@
 {
-  "description": "Point scoring definitions stored in BSGLOBAL as POINTSCORES XML. Applied to age groups (via agegroup.scoretype) when creating a meet from scratch. Exported in SMB and used for report generation.",
+  "description": "Point scoring config. `splashPointScore` is written to BSGLOBAL as the POINTSCORE XML key (singular) — Splash's real, native points-standings config, one per meet. Verified against 4 real Splash-native .mdb files (CQS Piscine 2026, CanadienMai2026_S40, CAEM, CQS Plage 2026): key name, attributes, and the 'Standard 16 places' points table all match what those files actually contain. `definitions`/`assignments` are a separate, older mechanism that sets agegroup.scoretype — kept as-is since nothing in this codebase reads it back (neither app's own reports use it; getPointStandings uses COMBINEDEVENTS instead), so its correctness relative to Splash is unconfirmed either way.",
+  "splashPointScore": {
+    "pointscoreid": 1198,
+    "name": "Classement de sauvetage",
+    "titleforprints": "Classement aux points des clubs",
+    "attributes": {
+      "ispublic": "F",
+      "indresultsperevent": "999",
+      "relayresultsperevent": "999",
+      "agerangesmen": "0",
+      "agerangeswomen": "0",
+      "scoreifdsqinfinal": "F",
+      "filteragegroups": "0",
+      "ignoreeventtimestandard": "F",
+      "grouping": "1",
+      "genderdetailed": "F",
+      "addmanualpoints": "F",
+      "relayfactor": "1",
+      "relayindividualpts": "F",
+      "pointsbestresult": "F",
+      "pointsfinalonly": "F",
+      "pointsmaxtimonly": "T",
+      "alwaysuseeventplace": "T",
+      "distributewhenequal": "F",
+      "reducefromfirst": "F",
+      "useprelimresults": "F",
+      "scoreonerecperresult": "F"
+    },
+    "ageGroups": [
+      { "from": -1, "to": -1 }
+    ],
+    "placePoints": [
+      { "position": 1, "individual": 20, "relay": 20 },
+      { "position": 2, "individual": 18, "relay": 18 },
+      { "position": 3, "individual": 16, "relay": 16 },
+      { "position": 4, "individual": 14, "relay": 14 },
+      { "position": 5, "individual": 13, "relay": 13 },
+      { "position": 6, "individual": 12, "relay": 12 },
+      { "position": 7, "individual": 11, "relay": 11 },
+      { "position": 8, "individual": 10, "relay": 10 },
+      { "position": 9, "individual": 8, "relay": 8 },
+      { "position": 10, "individual": 7, "relay": 7 },
+      { "position": 11, "individual": 6, "relay": 6 },
+      { "position": 12, "individual": 5, "relay": 5 },
+      { "position": 13, "individual": 4, "relay": 4 },
+      { "position": 14, "individual": 3, "relay": 3 },
+      { "position": 15, "individual": 2, "relay": 2 },
+      { "position": 16, "individual": 1, "relay": 1 }
+    ]
+  },
   "definitions": [
     {
       "pointscoreid": 1,
