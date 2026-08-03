@@ -1042,6 +1042,87 @@ describe('Beach relay heat generation', () => {
   })
 })
 
+// ── Unit Tests: Relay-only athletes ───────────────────────────────────────────
+//
+// An athlete who only swims relay events (no individual swimresult row) previously never
+// got a beach number at all: generateBeachNumbers, assignLateBeachNumber, and the
+// generateHeatsBeach "missing number" scan all keyed off swimresult only.
+
+describe('Relay-only athletes get beach numbers', () => {
+  let db: Database.Database
+  let cleanup: () => void
+
+  beforeEach(() => {
+    const t = createTestDb()
+    db = t.db
+    cleanup = t.cleanup
+    db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount, stroke, sortcode) VALUES (605, 4, 'Relais Sauvetage', 4, 1, 1)`)
+    db.exec(`INSERT INTO swimsession (swimsessionid, sessionnumber, name, lanemin, lanemax) VALUES (1, 1, 'Session 1', 1, 8)`)
+    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode, internalevent) VALUES (1, 1, 605, 1, 3, 5, 1, 'F')`)
+    db.exec(`INSERT INTO agegroup (agegroupid, swimeventid, agemin, agemax, gender, sortcode) VALUES (200, 1, 10, 12, 3, 1)`)
+    db.exec(`INSERT INTO club (clubid, code, name) VALUES (1, 'ABC', 'Alpha Club')`)
+  })
+
+  afterEach(() => cleanup())
+
+  function getPrefix(athleteId: number): string | null {
+    const row = db.prepare(`SELECT nameprefix FROM athlete WHERE athleteid = ?`).get(athleteId) as { nameprefix: string | null } | undefined
+    return row?.nameprefix ?? null
+  }
+
+  it('generateBeachNumbers assigns a number to an athlete registered only for a relay', () => {
+    insertAthlete(db, 1, 1, 'Relay', 'Only')
+    db.prepare(`INSERT INTO relay (relayid, clubid, swimeventid, agegroupid, teamnumber) VALUES (1, 1, 1, 200, 1)`).run()
+    db.prepare(`INSERT INTO relayposition (relayid, relaynumber, athleteid) VALUES (1, 1, 1)`).run()
+
+    const result = generateBeachNumbers(db)
+
+    expect(result.errors).toEqual([])
+    expect(result.assigned).toBe(1)
+    expect(getPrefix(1)).toBe('A101')
+  })
+
+  it('generateBeachNumbers assigns numbers to both individual and relay-only athletes in the same club', () => {
+    insertAthlete(db, 1, 1, 'Individual', 'Swimmer')
+    insertSwimresult(db, 1, 1)
+    insertAthlete(db, 2, 1, 'Relay', 'Only')
+    db.prepare(`INSERT INTO relay (relayid, clubid, swimeventid, agegroupid, teamnumber) VALUES (1, 1, 1, 200, 1)`).run()
+    db.prepare(`INSERT INTO relayposition (relayid, relaynumber, athleteid) VALUES (1, 1, 2)`).run()
+
+    const result = generateBeachNumbers(db)
+
+    expect(result.errors).toEqual([])
+    expect(result.assigned).toBe(2)
+    expect(getPrefix(1)).not.toBeNull()
+    expect(getPrefix(2)).not.toBeNull()
+    expect(getPrefix(1)).not.toBe(getPrefix(2))
+  })
+
+  it('assignLateBeachNumber assigns a number to a relay-only late arrival, using the team category', () => {
+    insertAthlete(db, 1, 1, 'Relay', 'Only')
+    db.prepare(`INSERT INTO relay (relayid, clubid, swimeventid, agegroupid, teamnumber) VALUES (1, 1, 1, 200, 1)`).run()
+    db.prepare(`INSERT INTO relayposition (relayid, relaynumber, athleteid) VALUES (1, 1, 1)`).run()
+
+    const beachNumber = assignLateBeachNumber(db, 1)
+
+    expect(beachNumber).toMatch(/^[A-Z][1-9]\d{2}$/)
+    expect(getPrefix(1)).toBe(beachNumber)
+  })
+
+  it('generateHeats (beach relay) assigns beach numbers to relay-only athletes missing one', async () => {
+    db.exec(`INSERT INTO bsglobal (name, data) VALUES ('MEET_TYPE', 'BEACH')`)
+    insertAthlete(db, 1, 1, 'Relay', 'Only')
+    db.prepare(`INSERT INTO relay (relayid, clubid, swimeventid, agegroupid, teamnumber) VALUES (1, 1, 1, 200, 1)`).run()
+    db.prepare(`INSERT INTO relayposition (relayid, relaynumber, athleteid) VALUES (1, 1, 1)`).run()
+
+    expect(getPrefix(1)).toBeNull()
+
+    await generateHeats(1, undefined, db)
+
+    expect(getPrefix(1)).not.toBeNull()
+  })
+})
+
 // ── PostgreSQL backend parity ───────────────────────────────────────────────
 //
 // generateBeachNumbers()/assignLateBeachNumber() had no PG-backend coverage at all until this

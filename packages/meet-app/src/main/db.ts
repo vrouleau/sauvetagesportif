@@ -1811,14 +1811,25 @@ function generateHeatsBeach(
   let totalHeats = 0
   let totalAssigned = 0
 
-  // Assign beach numbers to any athletes with entries but no beach number yet
+  // Assign beach numbers to any athletes with entries but no beach number yet — individual
+  // (swimresult) or relay-only (relayposition/relay) entries alike
+  const eventPlaceholders = eventIds.map(() => '?').join(',')
   const athletesMissingNumber = db.prepare(`
-    SELECT DISTINCT a.athleteid
-    FROM athlete a
-    JOIN swimresult r ON r.athleteid = a.athleteid
-    WHERE r.swimeventid IN (${eventIds.map(() => '?').join(',')})
-      AND (a.nameprefix IS NULL OR a.nameprefix = '')
-  `).all(...eventIds) as Array<{ athleteid: number }>
+    SELECT DISTINCT athleteid FROM (
+      SELECT a.athleteid AS athleteid
+      FROM athlete a
+      JOIN swimresult r ON r.athleteid = a.athleteid
+      WHERE r.swimeventid IN (${eventPlaceholders})
+        AND (a.nameprefix IS NULL OR a.nameprefix = '')
+      UNION ALL
+      SELECT a.athleteid AS athleteid
+      FROM athlete a
+      JOIN relayposition rp ON rp.athleteid = a.athleteid
+      JOIN relay rl ON rl.relayid = rp.relayid
+      WHERE rl.swimeventid IN (${eventPlaceholders})
+        AND (a.nameprefix IS NULL OR a.nameprefix = '')
+    )
+  `).all(...eventIds, ...eventIds) as Array<{ athleteid: number }>
 
   for (const row of athletesMissingNumber) {
     assignLateBeachNumber(db, row.athleteid)

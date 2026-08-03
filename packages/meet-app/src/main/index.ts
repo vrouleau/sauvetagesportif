@@ -478,6 +478,12 @@ ipcMain.handle('db:set-relay-member', (_event, eventId: number, athleteId: numbe
     db.prepare(
       `INSERT INTO relayposition (relayid, relaynumber, athleteid) VALUES (?, ?, ?)`
     ).run(relay.relayid, position, memberAthleteId)
+
+    // Assign a beach number immediately for beach meets, instead of waiting on the next heat generation
+    const meetTypeRow = db.prepare(`SELECT data FROM bsglobal WHERE name = 'MEET_TYPE'`).get() as { data: string } | undefined
+    if ((meetTypeRow?.data || 'POOL').toUpperCase() === 'BEACH') {
+      assignLateBeachNumber(db, memberAthleteId)
+    }
   }
 
   return { ok: true, relayId: relay.relayid }
@@ -1092,6 +1098,12 @@ ipcMain.handle('db:set-relay-team-member', (_event, teamId: number, position: nu
     db.prepare(
       `INSERT INTO relayposition (relayid, relaynumber, athleteid) VALUES (?, ?, ?)`
     ).run(teamId, position, athleteId)
+
+    // Assign a beach number immediately for beach meets, instead of waiting on the next heat generation
+    const meetTypeRow = db.prepare(`SELECT data FROM bsglobal WHERE name = 'MEET_TYPE'`).get() as { data: string } | undefined
+    if ((meetTypeRow?.data || 'POOL').toUpperCase() === 'BEACH') {
+      assignLateBeachNumber(db, athleteId)
+    }
   }
 
   return { ok: true }

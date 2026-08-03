@@ -71,12 +71,16 @@ export function generateBeachNumbers(db: Database.Database): BeachNumberResult {
   // Step 1: Clear all existing beach numbers (idempotent regeneration)
   db.prepare(`UPDATE athlete SET nameprefix = NULL`).run()
 
-  // Step 2: Query clubs with registered athletes, sorted by UPPER(code) for determinism
+  // Step 2: Query clubs with registered athletes (individual OR relay-only), sorted by
+  // UPPER(code) for determinism
   const clubs = db.prepare(`
     SELECT DISTINCT c.clubid, c.code, c.name, UPPER(c.code) AS code_upper
     FROM club c
-    JOIN athlete a ON a.clubid = c.clubid
-    JOIN swimresult r ON r.athleteid = a.athleteid
+    WHERE EXISTS (
+      SELECT 1 FROM athlete a JOIN swimresult r ON r.athleteid = a.athleteid WHERE a.clubid = c.clubid
+    ) OR EXISTS (
+      SELECT 1 FROM athlete a JOIN relayposition rp ON rp.athleteid = a.athleteid WHERE a.clubid = c.clubid
+    )
     ORDER BY code_upper
   `).all() as Array<{ clubid: number; code: string; name: string }>
 
@@ -125,21 +129,36 @@ export function generateBeachNumbers(db: Database.Database): BeachNumberResult {
     const letter = clubLetterMap.get(club.clubid)
     if (!letter) continue // skipped due to letter exhaustion
 
-    // Query distinct athletes with their category info for this club
-    // Not DISTINCT: an athlete can legitimately appear once per swimresult (multiple events/age
-    // groups) — the loop below already dedupes by athleteid, keeping the first row encountered
-    // in this deterministic order. SQLite's COLLATE NOCASE has no Postgres equivalent; plain
-    // lastname/firstname ordering is enough here since this only picks which duplicate row wins
-    // the dedup (final display order is re-sorted with proper locale comparison below).
+    // Query distinct athletes with their category info for this club, from BOTH individual
+    // entries (swimresult) and relay-only entries (relayposition/relay) — an athlete who only
+    // swims relays still needs a beach number. Relay rows use the team's own category
+    // (relay.agegroupid), same as the "team's category = event it was created under" rule used
+    // elsewhere for relay entry.
+    // Not DISTINCT: an athlete can legitimately appear once per swimresult/relayposition row
+    // (multiple events/age groups) — the loop below already dedupes by athleteid, keeping the
+    // first row encountered in this deterministic order. SQLite's COLLATE NOCASE has no
+    // Postgres equivalent; plain lastname/firstname ordering is enough here since this only
+    // picks which duplicate row wins the dedup (final display order is re-sorted with proper
+    // locale comparison below).
     const athletes = db.prepare(`
-      SELECT a.athleteid, a.lastname, a.firstname,
-             ag.agemin, ag.agemax, ag.gender AS ag_gender
-      FROM athlete a
-      JOIN swimresult r ON r.athleteid = a.athleteid
-      LEFT JOIN agegroup ag ON r.agegroupid = ag.agegroupid
-      WHERE a.clubid = ?
-      ORDER BY ag.agemin, ag.agemax, ag.gender, a.lastname, a.firstname
-    `).all(club.clubid) as Array<{
+      SELECT athleteid, lastname, firstname, agemin, agemax, ag_gender FROM (
+        SELECT a.athleteid AS athleteid, a.lastname AS lastname, a.firstname AS firstname,
+               ag.agemin AS agemin, ag.agemax AS agemax, ag.gender AS ag_gender
+        FROM athlete a
+        JOIN swimresult r ON r.athleteid = a.athleteid
+        LEFT JOIN agegroup ag ON r.agegroupid = ag.agegroupid
+        WHERE a.clubid = ?
+        UNION ALL
+        SELECT a.athleteid AS athleteid, a.lastname AS lastname, a.firstname AS firstname,
+               ag.agemin AS agemin, ag.agemax AS agemax, ag.gender AS ag_gender
+        FROM athlete a
+        JOIN relayposition rp ON rp.athleteid = a.athleteid
+        JOIN relay rl ON rl.relayid = rp.relayid
+        LEFT JOIN agegroup ag ON rl.agegroupid = ag.agegroupid
+        WHERE a.clubid = ?
+      )
+      ORDER BY agemin, agemax, ag_gender, lastname, firstname
+    `).all(club.clubid, club.clubid) as Array<{
       athleteid: number; lastname: string; firstname: string
       agemin: number | null; agemax: number | null; ag_gender: number | null
     }>
@@ -293,13 +312,25 @@ export function assignLateBeachNumber(db: Database.Database, athleteId: number):
 
   // Step 5: Determine the athlete's category
   // Look at their swimresult entries to find their age group
-  const agRow = db.prepare(`
+  let agRow = db.prepare(`
     SELECT ag.agemin, ag.agemax, ag.gender
     FROM swimresult r
     JOIN agegroup ag ON r.agegroupid = ag.agegroupid
     WHERE r.athleteid = ?
     LIMIT 1
   `).get(athleteId) as { agemin: number | null; agemax: number | null; gender: number | null } | undefined
+
+  // Relay-only athlete (no individual entries): fall back to the relay team's own category
+  if (!agRow) {
+    agRow = db.prepare(`
+      SELECT ag.agemin, ag.agemax, ag.gender
+      FROM relayposition rp
+      JOIN relay rl ON rl.relayid = rp.relayid
+      JOIN agegroup ag ON rl.agegroupid = ag.agegroupid
+      WHERE rp.athleteid = ?
+      LIMIT 1
+    `).get(athleteId) as { agemin: number | null; agemax: number | null; gender: number | null } | undefined
+  }
 
   const catKey = agRow
     ? buildCategoryKey(agRow.agemin, agRow.agemax, agRow.gender)
