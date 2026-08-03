@@ -534,17 +534,22 @@ export function encodeGbin(tableDef: { name: string; cols: ColDef[] }, rows: Rec
         }
       } else if (col.type === 'S') {
         const strVal = val != null ? String(val) : ''
-        let strBuf = Buffer.from(strVal, 'utf8')
-        // Splash's Access/Jet columns are fixed-width; a value longer than the declared
-        // column size overflows on restore ("field is too small") instead of failing here.
-        // Clamp defensively and log loud, so a bad config/data value fails fast in dev.
-        if (strBuf.length > col.size) {
+        // `col.size` for S columns is a max *character* count (Splash's Access/Jet Text field
+        // width — see docs/GBIN_FORMAT.md, "informational only" re: the wire encoding, but it's
+        // what Splash enforces on restore). Truncate by character/codepoint, not UTF-8 byte
+        // length: French text is full of accented multi-byte characters, so byte-length
+        // truncation clamps well before the real 250-char limit is hit (e.g. a 247-char DSQ
+        // description is 261 bytes) and can slice a multi-byte sequence in half, corrupting
+        // the trailing character.
+        let chars = Array.from(strVal)
+        if (chars.length > col.size) {
           console.warn(
             `[smb] ${tableDef.name}.${col.name} value exceeds declared size ${col.size} ` +
-            `(got ${strBuf.length} bytes) — truncating: ${JSON.stringify(strVal)}`
+            `(got ${chars.length} characters) — truncating: ${JSON.stringify(strVal)}`
           )
-          strBuf = Buffer.from(strBuf.subarray(0, col.size))
+          chars = chars.slice(0, col.size)
         }
+        const strBuf = Buffer.from(chars.join(''), 'utf8')
         const lenBuf = Buffer.alloc(2)
         lenBuf.writeUInt16LE(strBuf.length)
         chunks.push(lenBuf)

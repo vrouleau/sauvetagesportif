@@ -213,6 +213,27 @@ describe('SMB save/restore', () => {
     expect(row.lenexcode).toBe('AVERYLONGL') // clamped to LENEXCODE;S;10 (byte length)
   })
 
+  it('does not truncate an accented S field whose char count fits but byte count exceeds declared size', () => {
+    // col.size for S columns is a max *character* count (Splash's Access/Jet Text field width),
+    // not a UTF-8 byte count. French text full of accented characters (2 bytes each in UTF-8)
+    // used to get clamped well before the real 250-char limit — see docs/GBIN_FORMAT.md.
+    const name = 'é'.repeat(240) // 240 chars, 480 bytes — under the 250-char limit, over as bytes
+    db.prepare(
+      `INSERT INTO dsqitem (dsqitemid, code, lenexcode, name, options, sortcode) VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(4003, '3', '3', name, 'RELAY', 3)
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    saveSMB(smbPath, db)
+    expect(warnSpy).not.toHaveBeenCalled()
+    warnSpy.mockRestore()
+
+    db.exec('DELETE FROM dsqitem')
+    restoreSMB(smbPath, db)
+
+    const row = db.prepare('SELECT name FROM dsqitem WHERE dsqitemid=4003').get() as { name: string }
+    expect(row.name).toBe(name)
+  })
+
   it('includes relaysplit in save/restore (previously silently dropped)', () => {
     db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount, stroke) VALUES (1, 100, 'Freestyle Relay', 4, 1)`)
     db.exec(`INSERT INTO swimsession (swimsessionid, sessionnumber, name, course) VALUES (1, 1, 'Session 1', 1)`)
