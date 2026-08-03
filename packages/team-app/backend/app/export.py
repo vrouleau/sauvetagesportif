@@ -92,8 +92,8 @@ def _meet_struct_from_db(db: Session):
     """Build ParsedMeet from DB instead of requiring meet.lxf on disk."""
     from .meet_parser import ParsedMeet, MeetSession, MeetEvent, MeetAgeGroup
 
-    name_row = db.query(BsGlobal).get("meet_name")
-    course_row = db.query(BsGlobal).get("meet_course")
+    name_row = db.get(BsGlobal, "meet_name")
+    course_row = db.get(BsGlobal, "meet_course")
     course = (course_row.data if course_row else None) or "LCM"
 
     gender_map = {1: "M", 2: "F", 3: "X"}
@@ -145,7 +145,7 @@ def generate_lxf(db: Session) -> bytes:
     """Generate a Lenex 3.0 .lxf zip from all registrations."""
     meet_struct = _meet_struct_from_db(db)
 
-    cfg = db.query(BsGlobal).get("age_base_date")
+    cfg = db.get(BsGlobal, "age_base_date")
     age_base_date = cfg.data if cfg and cfg.data else date(date.today().year, 12, 31).isoformat()
 
     # Get all registrations
@@ -187,11 +187,11 @@ def generate_lxf(db: Session) -> bytes:
     # Add optional meet attributes from bsglobal
     for key, attr_name in [("meet_city", "city"), ("meet_nation", "nation"),
                            ("meet_masters", "masters")]:
-        row = db.query(BsGlobal).get(key)
+        row = db.get(BsGlobal, key)
         if row and row.data:
             meet_attrs[attr_name] = row.data
     # Read organizer/hostclub from MEETVALUES
-    mv_row = db.query(BsGlobal).get("MEETVALUES")
+    mv_row = db.get(BsGlobal, "MEETVALUES")
     if mv_row and mv_row.data:
         for line in mv_row.data.replace("\\r", "").split("\n"):
             line = line.strip("\r\n ")
@@ -402,7 +402,7 @@ def generate_lxf(db: Session) -> bytes:
                 member_ids = [p.membersid for p in positions]
                 names = []
                 for mid in member_ids:
-                    m = db.query(Member).get(mid)
+                    m = db.get(Member, mid)
                     if m:
                         names.append(m.lastname or "")
                 team_name = "/".join(names) if names else None
@@ -458,7 +458,7 @@ def generate_lxf(db: Session) -> bytes:
         if club_id in clubs_map:
             continue  # Already handled above
         # Query the club
-        club = db.query(TeamClub).get(club_id)
+        club = db.get(TeamClub, club_id)
         if not club:
             continue
         club_xml = ET.SubElement(clubs_xml, "CLUB", {
@@ -487,7 +487,7 @@ def generate_lxf(db: Session) -> bytes:
             if not team_name and positions:
                 names = []
                 for p in positions:
-                    m = db.query(Member).get(p.membersid)
+                    m = db.get(Member, p.membersid)
                     if m:
                         names.append(m.lastname or "")
                 team_name = "/".join(names) if names else None
@@ -543,9 +543,9 @@ def generate_lxf(db: Session) -> bytes:
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("meet.lef", xml_bytes)
         # Embed Gemini API keys as hidden dotfile (key transport to meet-app)
-        gemini_free = db.query(BsGlobal).get("GEMINI_KEY_FREE")
-        gemini_paid = db.query(BsGlobal).get("GEMINI_KEY_PAID")
-        live_secret = db.query(BsGlobal).get("LIVE_PUSH_SECRET")
+        gemini_free = db.get(BsGlobal, "GEMINI_KEY_FREE")
+        gemini_paid = db.get(BsGlobal, "GEMINI_KEY_PAID")
+        live_secret = db.get(BsGlobal, "LIVE_PUSH_SECRET")
         live_url = os.environ.get("APP_BASE_URL", "http://localhost:8001")
         has_keys = (
             (gemini_free and gemini_free.data)
@@ -575,7 +575,7 @@ def generate_meet_lxf_from_db(db: Session) -> bytes:
     """Generate a meet-structure .lxf (sessions + events) from DB, no file required."""
     meet_struct = _meet_struct_from_db(db)
 
-    cfg = db.query(BsGlobal).get("age_base_date")
+    cfg = db.get(BsGlobal, "age_base_date")
     age_base_date = cfg.data if cfg and cfg.data else date(date.today().year, 12, 31).isoformat()
 
     db_sessions = (

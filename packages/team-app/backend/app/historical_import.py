@@ -101,7 +101,7 @@ def import_historical_meet(db: Session, file_bytes: bytes, force: bool = False) 
 
     # ── Cross-validation: warn if this looks like the current meet ──
     current_meet_name = None
-    cfg = db.query(BsGlobal).get("meet_name")
+    cfg = db.get(BsGlobal, "meet_name")
     if cfg:
         current_meet_name = cfg.data
 
@@ -212,7 +212,7 @@ def import_historical_meet(db: Session, file_bytes: bytes, force: bool = False) 
     next_event_id = (db.query(_func.max(Event.eventsid)).scalar() or 0) + 1
     for eid_str, style_uid in event_style.items():
         # Ensure the SwimStyle exists
-        if not db.query(SwimStyle).get(style_uid):
+        if not db.get(SwimStyle, style_uid):
             db.add(SwimStyle(
                 swimstyleid=style_uid,
                 name=style_names.get(style_uid, f"Style {style_uid}"),

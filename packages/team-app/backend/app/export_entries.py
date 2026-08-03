@@ -59,7 +59,7 @@ def generate_entries_lxf(db: Session) -> bytes:
     # Get style names
     style_names: dict[int, str] = {}
     for uid in style_uids:
-        style = db.query(SwimStyle).get(uid)
+        style = db.get(SwimStyle, uid)
         style_names[uid] = style.name if style else ""
 
     root = ET.Element("LENEX", version="3.0")
@@ -138,8 +138,8 @@ def generate_entries_lxf(db: Session) -> bytes:
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("entries.lef", xml_bytes)
         # Embed Gemini API keys as hidden dotfile (key transport to meet-app)
-        gemini_free = db.query(BsGlobal).get("GEMINI_KEY_FREE")
-        gemini_paid = db.query(BsGlobal).get("GEMINI_KEY_PAID")
+        gemini_free = db.get(BsGlobal, "GEMINI_KEY_FREE")
+        gemini_paid = db.get(BsGlobal, "GEMINI_KEY_PAID")
         if (gemini_free and gemini_free.data) or (gemini_paid and gemini_paid.data):
             import json as _json
             keys = {}

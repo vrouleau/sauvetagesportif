@@ -178,7 +178,7 @@ class PinChange(BaseModel):
 # ---------------------------------------------------------------------------
 
 def _get_config(db: Session, key: str) -> str | None:
-    cfg = db.query(BsGlobal).get(key)
+    cfg = db.get(BsGlobal, key)
     return cfg.data if cfg else None
 
 
@@ -188,7 +188,7 @@ def _get_meet_type(db: Session) -> str:
 
 
 def _set_config(db: Session, key: str, value: str):
-    cfg = db.query(BsGlobal).get(key)
+    cfg = db.get(BsGlobal, key)
     if cfg:
         cfg.data = value
     else:
@@ -197,7 +197,7 @@ def _set_config(db: Session, key: str, value: str):
 
 def _update_meetvalue(db: Session, key: str, typed_value: str):
     """Update a single key in the MEETVALUES blob (Splash format KEY=TYPE;VALUE)."""
-    cfg = db.query(BsGlobal).get("MEETVALUES")
+    cfg = db.get(BsGlobal, "MEETVALUES")
     existing: dict[str, str] = {}
     if cfg and cfg.data:
         for line in cfg.data.split("\r\n"):
@@ -215,7 +215,7 @@ def _get_closure_date(db: Session) -> str | None:
     if val:
         return val
     # Fall back to MEETVALUES DEADLINE
-    cfg = db.query(BsGlobal).get("MEETVALUES")
+    cfg = db.get(BsGlobal, "MEETVALUES")
     if cfg and cfg.data:
         for line in cfg.data.split("\r\n"):
             if line.startswith("DEADLINE=D;"):
@@ -658,7 +658,7 @@ def create_new_meet(data: dict = Body(default={}), db: Session = Depends(get_db)
         _set_config(db, key, val)
 
     # Set AGEDATE in MEETVALUES so the UI picks it up
-    mv_cfg = db.query(BsGlobal).get("MEETVALUES")
+    mv_cfg = db.get(BsGlobal, "MEETVALUES")
     mv_data = mv_cfg.data if mv_cfg and mv_cfg.data else ""
     # Append or replace AGEDATE line
     lines = [l for l in mv_data.split("\r\n") if l and not l.startswith("AGEDATE=")]
@@ -731,7 +731,7 @@ def get_meet_config(db: Session = Depends(get_db)):
     Individual bsglobal keys (meet_name, meet_course) are canonical and override
     any stale values in the MEETVALUES blob.
     """
-    cfg = db.query(BsGlobal).get("MEETVALUES")
+    cfg = db.get(BsGlobal, "MEETVALUES")
     result: dict[str, str] = {}
     if cfg and cfg.data:
         for line in cfg.data.split("\r\n"):
@@ -760,7 +760,7 @@ def get_meet_config(db: Session = Depends(get_db)):
 def set_meet_config(entries: dict, db: Session = Depends(get_db)):
     """Update MEETVALUES-style config. Body: {KEY: {type, value}}."""
     # Read existing MEETVALUES
-    cfg = db.query(BsGlobal).get("MEETVALUES")
+    cfg = db.get(BsGlobal, "MEETVALUES")
     existing: dict[str, str] = {}
     if cfg and cfg.data:
         for line in cfg.data.split("\r\n"):
@@ -906,7 +906,7 @@ def delete_club(club_id: int, db: Session = Depends(get_db)):
 
 @router.post("/clubs/{club_id}/reset-pin", dependencies=[Depends(require_admin)])
 def reset_club_pin(club_id: int, db: Session = Depends(get_db)):
-    club = db.query(TeamClub).get(club_id)
+    club = db.get(TeamClub, club_id)
     if not club:
         raise HTTPException(404)
     club.pin = ''.join(secrets.choice(string.digits) for _ in range(6))
@@ -916,7 +916,7 @@ def reset_club_pin(club_id: int, db: Session = Depends(get_db)):
 
 @router.put("/clubs/{club_id}", dependencies=[Depends(require_admin)])
 def update_club(club_id: int, data: ClubUpdate, db: Session = Depends(get_db)):
-    club = db.query(TeamClub).get(club_id)
+    club = db.get(TeamClub, club_id)
     if not club:
         raise HTTPException(404)
     if data.email is not None:
@@ -933,7 +933,7 @@ def send_pin(club_id: int, data: dict, db: Session = Depends(get_db)):
     from cryptography.fernet import Fernet
     import httpx
 
-    club = db.query(TeamClub).get(club_id)
+    club = db.get(TeamClub, club_id)
     if not club:
         raise HTTPException(404)
     if not club.email:
@@ -973,7 +973,7 @@ def send_pin(club_id: int, data: dict, db: Session = Depends(get_db)):
     org_email = ""
     org_club_name = ""
     if not is_organizer and org_cfg:
-        org_club = db.query(TeamClub).get(int(org_cfg))
+        org_club = db.get(TeamClub, int(org_cfg))
         if org_club:
             org_email = org_club.email or ""
             org_club_name = org_club.name or ""
@@ -1116,7 +1116,7 @@ def self_invite(data: dict, request: Request, db: Session = Depends(get_db)):
     if not email:
         raise HTTPException(400, "email required")
 
-    club = db.query(TeamClub).get(club_id)
+    club = db.get(TeamClub, club_id)
     if not club:
         raise HTTPException(404, "Club not found")
 
@@ -1126,7 +1126,7 @@ def self_invite(data: dict, request: Request, db: Session = Depends(get_db)):
             org_cfg = _get_config(db, "organizer_club_id")
             org_email = ""
             if org_cfg:
-                org_club = db.query(TeamClub).get(int(org_cfg))
+                org_club = db.get(TeamClub, int(org_cfg))
                 if org_club:
                     org_email = org_club.email or ""
             raise HTTPException(403, f"email_mismatch|{org_email}")
@@ -1162,7 +1162,7 @@ def reveal_secret(token: str, db: Session = Depends(get_db)):
     link.viewed = True
     db.commit()
 
-    club = db.query(TeamClub).get(link.club_id)
+    club = db.get(TeamClub, link.club_id)
     return {"pin": pin, "club": club.name if club else ""}
 
 
@@ -1241,7 +1241,7 @@ def create_athlete(data: AthleteCreate, request: Request, db: Session = Depends(
 def delete_athlete(athlete_id: int, request: Request, db: Session = Depends(get_db)):
     pin = request.headers.get("X-Club-Pin", "")
     _check_closure(db, pin)
-    member = db.query(Member).get(athlete_id)
+    member = db.get(Member, athlete_id)
     if not member:
         raise HTTPException(404)
     caller_club = _caller_club_id(db, pin)
@@ -1257,7 +1257,7 @@ def delete_athlete(athlete_id: int, request: Request, db: Session = Depends(get_
 def update_athlete(athlete_id: int, data: AthleteUpdate, request: Request, db: Session = Depends(get_db)):
     pin = request.headers.get("X-Club-Pin", "")
     _check_closure(db, pin)
-    member = db.query(Member).get(athlete_id)
+    member = db.get(Member, athlete_id)
     if not member:
         raise HTTPException(404)
     role, caller_club = _resolve_role(pin, db)
@@ -1279,7 +1279,7 @@ def update_athlete(athlete_id: int, data: AthleteUpdate, request: Request, db: S
     if data.club_id is not None and data.club_id != member.clubsid:
         if role not in ("admin", "organizer"):
             raise HTTPException(403, "Only admin or organizer can change an athlete's club")
-        target_club = db.query(TeamClub).get(data.club_id)
+        target_club = db.get(TeamClub, data.club_id)
         if not target_club:
             raise HTTPException(404, "Target club not found")
         from ..models_team import RelayPos
@@ -1368,7 +1368,7 @@ def list_sessions(db: Session = Depends(get_db)):
 @router.put("/sessions/{session_id}", dependencies=[Depends(require_organizer_or_admin)])
 def update_session(session_id: int, data: dict = Body(default={}), db: Session = Depends(get_db)):
     """Update session fields (name, date, times, lanes, etc.)."""
-    session = db.query(SwimSession).get(session_id)
+    session = db.get(SwimSession, session_id)
     if not session:
         raise HTTPException(404, "Session not found")
 
@@ -1480,7 +1480,7 @@ def create_session(data: dict = Body(default={}), db: Session = Depends(get_db))
 @router.delete("/sessions/{session_id}", dependencies=[Depends(require_organizer_or_admin)])
 def delete_session(session_id: int, db: Session = Depends(get_db)):
     """Delete a session and all its events."""
-    session = db.query(SwimSession).get(session_id)
+    session = db.get(SwimSession, session_id)
     if not session:
         raise HTTPException(404, "Session not found")
     # Delete events in this session (cascades to agegroups, heats, results)
@@ -1602,7 +1602,7 @@ def create_event(data: dict = Body(default={}), db: Session = Depends(get_db)):
     db.commit()
 
     # Return event info including name from swimstyle
-    style = db.query(SwimStyle).get(swimstyle_id) if swimstyle_id else None
+    style = db.get(SwimStyle, swimstyle_id) if swimstyle_id else None
     return {
         "id": next_id,
         "name": style.name if style else "",
@@ -1616,7 +1616,7 @@ def reorder_events(data: dict = Body(default={}), db: Session = Depends(get_db))
     """Reorder events: accepts {updates: [{eventId, sessionId, sortcode}]}."""
     updates = data.get("updates", [])
     for u in updates:
-        event = db.query(SwimEvent).get(u["eventId"])
+        event = db.get(SwimEvent, u["eventId"])
         if event:
             event.swimsessionid = u.get("sessionId", event.swimsessionid)
             event.sortcode = u["sortcode"]
@@ -1627,7 +1627,7 @@ def reorder_events(data: dict = Body(default={}), db: Session = Depends(get_db))
 @router.put("/events/{event_id}", dependencies=[Depends(require_organizer_or_admin)])
 def update_event(event_id: int, data: dict = Body(default={}), db: Session = Depends(get_db)):
     """Update event fields (gender, swimstyle, number, round, maxentries, etc.)."""
-    event = db.query(SwimEvent).get(event_id)
+    event = db.get(SwimEvent, event_id)
     if not event:
         raise HTTPException(404, "Event not found")
 
@@ -1666,7 +1666,7 @@ def update_event(event_id: int, data: dict = Body(default={}), db: Session = Dep
 @router.delete("/events/{event_id}", dependencies=[Depends(require_organizer_or_admin)])
 def delete_event(event_id: int, db: Session = Depends(get_db)):
     """Delete an event and its age groups."""
-    event = db.query(SwimEvent).get(event_id)
+    event = db.get(SwimEvent, event_id)
     if not event:
         raise HTTPException(404, "Event not found")
     db.query(AgeGroup).filter(AgeGroup.swimeventid == event_id).delete()
@@ -1711,7 +1711,7 @@ def create_age_group(data: dict = Body(default={}), db: Session = Depends(get_db
 @router.put("/age-groups/{agegroup_id}", dependencies=[Depends(require_organizer_or_admin)])
 def update_age_group(agegroup_id: int, data: dict = Body(default={}), db: Session = Depends(get_db)):
     """Update age group fields."""
-    ag = db.query(AgeGroup).get(agegroup_id)
+    ag = db.get(AgeGroup, agegroup_id)
     if not ag:
         raise HTTPException(404, "Age group not found")
     for key in ("name", "agemin", "agemax", "gender", "heatcount", "sortcode"):
@@ -1738,7 +1738,7 @@ def move_age_group(agegroup_id: int, data: dict = Body(default={}), db: Session 
     if not target_event_id:
         raise HTTPException(400, "targetEventId required")
 
-    ag = db.query(AgeGroup).get(agegroup_id)
+    ag = db.get(AgeGroup, agegroup_id)
     if not ag:
         raise HTTPException(404, "Age group not found")
 
@@ -1746,15 +1746,15 @@ def move_age_group(agegroup_id: int, data: dict = Body(default={}), db: Session 
     if source_event_id == target_event_id:
         return {"ok": True}
 
-    source_event = db.query(SwimEvent).get(source_event_id)
-    target_event = db.query(SwimEvent).get(target_event_id)
+    source_event = db.get(SwimEvent, source_event_id)
+    target_event = db.get(SwimEvent, target_event_id)
     if not target_event:
         raise HTTPException(404, "Target event not found")
     if not source_event or source_event.swimstyleid != target_event.swimstyleid:
         raise HTTPException(400, "Target event must be the same swim style as the age group's current event")
 
-    source_style = db.query(SwimStyle).get(source_event.swimstyleid)
-    target_style = db.query(SwimStyle).get(target_event.swimstyleid)
+    source_style = db.get(SwimStyle, source_event.swimstyleid)
+    target_style = db.get(SwimStyle, target_event.swimstyleid)
     if (source_style and source_style.relaycount > 1) or (target_style and target_style.relaycount > 1):
         raise HTTPException(400, "Moving age groups is only supported for individual events, not relays")
 
@@ -1807,7 +1807,7 @@ def move_age_group(agegroup_id: int, data: dict = Body(default={}), db: Session 
 @router.delete("/age-groups/{agegroup_id}", dependencies=[Depends(require_organizer_or_admin)])
 def delete_age_group(agegroup_id: int, db: Session = Depends(get_db)):
     """Delete an age group."""
-    ag = db.query(AgeGroup).get(agegroup_id)
+    ag = db.get(AgeGroup, agegroup_id)
     if not ag:
         raise HTTPException(404, "Age group not found")
     db.delete(ag)
@@ -1990,7 +1990,7 @@ def _update_exception(db: Session, athlete_id: int):
         SwimResult.athleteid == athlete_id,
         SwimResult.age_code == "Masters",
     ).first() is not None
-    member = db.query(Member).get(athlete_id)
+    member = db.get(Member, athlete_id)
     if member:
         member.handicapex = "X" if has_masters else None
 
@@ -2000,7 +2000,7 @@ def get_athlete_history(athlete_id: int, db: Session = Depends(get_db)):
     """Return an athlete's results across all historical meets."""
     from ..models_team import Meet, Result, Member as TMember
 
-    member = db.query(TMember).get(athlete_id)
+    member = db.get(TMember, athlete_id)
     if not member:
         raise HTTPException(404, "Athlete not found")
 
@@ -2028,7 +2028,7 @@ def get_athlete_history(athlete_id: int, db: Session = Depends(get_db)):
 
     # Load style names
     import json as _json
-    style_names_cfg = db.query(BsGlobal).get("style_names_json")
+    style_names_cfg = db.get(BsGlobal, "style_names_json")
     style_names: dict[int, str] = {}
     if style_names_cfg and style_names_cfg.data:
         try:
@@ -2099,13 +2099,13 @@ def create_registration(data: RegistrationCreate, request: Request, db: Session 
     entry_time_ms = data.entry_time_ms
 
     caller_club = _caller_club_id(db, pin)
-    member = db.query(Member).get(athlete_id)
+    member = db.get(Member, athlete_id)
     if not member:
         raise HTTPException(404, "Athlete not found")
     if caller_club is not None and member.clubsid != caller_club:
         raise HTTPException(403, "Cannot register athletes from another club")
 
-    event = db.query(SwimEvent).get(event_id)
+    event = db.get(SwimEvent, event_id)
     if not event:
         raise HTTPException(404, "Event not found")
 
@@ -2120,7 +2120,7 @@ def create_registration(data: RegistrationCreate, request: Request, db: Session 
             raise HTTPException(422, f"age_code '{age_code}' not valid for this event")
 
     # Relay lock
-    style = db.query(SwimStyle).get(event.swimstyleid)
+    style = db.get(SwimStyle, event.swimstyleid)
     if style and style.relaycount and style.relaycount > 1:
         club_member_ids = [m.membersid for m in db.query(Member).filter(Member.clubsid == member.clubsid).all()]
         existing_relay = db.query(SwimResult).filter(
@@ -2163,12 +2163,12 @@ def create_registration(data: RegistrationCreate, request: Request, db: Session 
 def delete_registration(reg_id: int, request: Request, db: Session = Depends(get_db)):
     pin = request.headers.get("X-Club-Pin", "")
     _check_closure(db, pin)
-    reg = db.query(SwimResult).get(reg_id)
+    reg = db.get(SwimResult, reg_id)
     if not reg:
         raise HTTPException(404)
     caller_club = _caller_club_id(db, pin)
     if caller_club is not None:
-        member = db.query(Member).get(reg.athleteid)
+        member = db.get(Member, reg.athleteid)
         if not member or member.clubsid != caller_club:
             raise HTTPException(403, "Cannot modify registrations from another club")
     athlete_id = reg.athleteid
@@ -2406,7 +2406,7 @@ def list_historical_meets(db: Session = Depends(get_db)):
 def delete_historical_meet(meet_id: int, db: Session = Depends(get_db)):
     """Delete a historical meet and all its results."""
     from ..models_team import Meet, Result, MemberMeet, Event
-    meet = db.query(Meet).get(meet_id)
+    meet = db.get(Meet, meet_id)
     if not meet:
         raise HTTPException(404, "Meet not found")
     # Don't allow deleting the __best_times_import__ pseudo-meet
@@ -2461,7 +2461,7 @@ def flush_meet(db: Session = Depends(get_db)):
                 "meet_masters", "meet_currency", "meet_fees_json", "closure_date",
                 "organizer_club_id", "current_meetsid", "MEETVALUES",
                 "meet_nation", "meet_city"):
-        cfg = db.query(BsGlobal).get(key)
+        cfg = db.get(BsGlobal, key)
         if cfg:
             db.delete(cfg)
     # Reset age_base_date to Dec 31 of current year
@@ -2538,7 +2538,7 @@ def _reset_for_next_meet(db: Session) -> None:
                 "meet_masters", "meet_currency", "meet_fees_json", "closure_date",
                 "organizer_club_id", "current_meetsid", "MEETVALUES",
                 "meet_nation", "meet_city"):
-        cfg = db.query(BsGlobal).get(key)
+        cfg = db.get(BsGlobal, key)
         if cfg:
             db.delete(cfg)
 
@@ -2590,7 +2590,7 @@ def get_organizer(db: Session = Depends(get_db)):
     cfg = _get_config(db, "organizer_club_id")
     if not cfg:
         return {"club_id": None, "club_name": None}
-    club = db.query(TeamClub).get(int(cfg))
+    club = db.get(TeamClub, int(cfg))
     if not club:
         return {"club_id": None, "club_name": None}
     return {"club_id": club.clubsid, "club_name": club.name}
@@ -2601,7 +2601,7 @@ def set_organizer(data: dict, db: Session = Depends(get_db)):
     club_id = data.get("club_id")
     if club_id is None:
         raise HTTPException(400, "club_id required")
-    if not db.query(TeamClub).get(club_id):
+    if not db.get(TeamClub, club_id):
         raise HTTPException(404, "Club not found")
     _set_config(db, "organizer_club_id", str(club_id))
     db.commit()
@@ -2659,7 +2659,7 @@ def stripe_connect_start(db: Session = Depends(get_db)):
     org_cfg = _get_config(db, "organizer_club_id")
     if not org_cfg:
         raise HTTPException(400, "No organizer club set")
-    club = db.query(TeamClub).get(int(org_cfg))
+    club = db.get(TeamClub, int(org_cfg))
     if not club:
         raise HTTPException(404, "Organizer club not found")
 
@@ -2684,7 +2684,7 @@ def stripe_connect_status(db: Session = Depends(get_db)):
     org_cfg = _get_config(db, "organizer_club_id")
     if not org_cfg:
         return {"connected": False}
-    club = db.query(TeamClub).get(int(org_cfg))
+    club = db.get(TeamClub, int(org_cfg))
     if not club or not club.stripe_account_id:
         return {"connected": False}
     stripe.api_key = os.environ.get("STRIPE_API_KEY")
@@ -2702,7 +2702,7 @@ def stripe_disconnect(db: Session = Depends(get_db)):
     org_cfg = _get_config(db, "organizer_club_id")
     if not org_cfg:
         raise HTTPException(400, "No organizer club set")
-    club = db.query(TeamClub).get(int(org_cfg))
+    club = db.get(TeamClub, int(org_cfg))
     if not club:
         raise HTTPException(404, "Organizer club not found")
     club.stripe_account_id = None
@@ -2721,7 +2721,7 @@ def club_invoice_pdf(club_id: int, db: Session = Depends(get_db)):
         pdf = generate_invoice_pdf(db, club_id)
     except ValueError as e:
         raise HTTPException(400, str(e))
-    club = db.query(TeamClub).get(club_id)
+    club = db.get(TeamClub, club_id)
     name = club.name.replace(" ", "_") if club else "club"
     return Response(content=pdf, media_type="application/pdf",
                     headers={"Content-Disposition": f'attachment; filename="invoice_{name}.pdf"'})
@@ -2744,7 +2744,7 @@ def invoices_pdf_zip(data: dict, db: Session = Depends(get_db)):
                 pdf = generate_invoice_pdf(db, cid)
             except ValueError:
                 continue
-            club = db.query(TeamClub).get(cid)
+            club = db.get(TeamClub, cid)
             name = club.name.replace(" ", "_") if club else f"club_{cid}"
             zf.writestr(f"invoice_{name}.pdf", pdf)
 
@@ -2758,7 +2758,7 @@ def invoices_pdf_zip(data: dict, db: Session = Depends(get_db)):
 @router.get("/clubs/{club_id}/invoice-total", dependencies=[Depends(require_organizer_or_admin)])
 def club_invoice_total(club_id: int, db: Session = Depends(get_db)):
     from ..invoices import _club_line_items, _meet_fees
-    club = db.query(TeamClub).get(club_id)
+    club = db.get(TeamClub, club_id)
     if not club:
         raise HTTPException(404)
     items = _club_line_items(db, club, _meet_fees(db))
@@ -2777,11 +2777,11 @@ def send_club_invoice(club_id: int, db: Session = Depends(get_db)):
     org_cfg = _get_config(db, "organizer_club_id")
     if not org_cfg:
         raise HTTPException(400, "No organizer club set")
-    org_club = db.query(TeamClub).get(int(org_cfg))
+    org_club = db.get(TeamClub, int(org_cfg))
     if not org_club or not org_club.stripe_account_id:
         raise HTTPException(400, "Organizer has no connected Stripe account")
 
-    club = db.query(TeamClub).get(club_id)
+    club = db.get(TeamClub, club_id)
     if not club:
         raise HTTPException(404, "Club not found")
 
@@ -3201,7 +3201,7 @@ def list_historical_meets(db: Session = Depends(get_db)):
 def delete_historical_meet(meet_id: int, db: Session = Depends(get_db)):
     """Delete a historical meet and all its associated data."""
     from ..models_team import Meet
-    meet = db.query(Meet).get(meet_id)
+    meet = db.get(Meet, meet_id)
     if not meet:
         raise HTTPException(404, "Meet not found")
     db.delete(meet)  # cascades to sessions, events, results, membersmeets
@@ -3249,7 +3249,7 @@ async def import_results_lxf(request: Request, file: UploadFile = File(...), for
     db.query(LiveEvent).delete()
     # Clear live mode keys
     for key in ("LIVE_PUSH_SECRET", "LIVE_ENABLED", "LIVE_LAST_PUSH"):
-        cfg = db.query(BsGlobal).get(key)
+        cfg = db.get(BsGlobal, key)
         if cfg:
             db.delete(cfg)
     db.flush()
@@ -3354,7 +3354,7 @@ def _import_relays_from_lxf(db: "Session", file_bytes: bytes) -> int:
         event_number[ev.swimeventid] = ev.eventnumber
 
     # Get current meet ID
-    meet_id_str = db.query(BsGlobal).get("current_meetsid")
+    meet_id_str = db.get(BsGlobal, "current_meetsid")
     meet_id = int(meet_id_str.data) if meet_id_str and meet_id_str.data else None
 
     # Find next relay ID
@@ -4190,12 +4190,12 @@ def delete_relay_team(team_id: int, request: Request, db: Session = Depends(get_
     # ─── Handle virtual teams from swimresult relay locks (Requirement 10) ─────
     if team_id < 0:
         swimresult_id = -team_id
-        sr = db.query(SwimResult).get(swimresult_id)
+        sr = db.get(SwimResult, swimresult_id)
         if not sr:
             raise HTTPException(404, "Relay team not found (legacy lock missing)")
 
         # Determine club from the swimresult athlete for authorization
-        sr_member = db.query(Member).get(sr.athleteid)
+        sr_member = db.get(Member, sr.athleteid)
         if not sr_member:
             raise HTTPException(404, "Athlete from legacy relay lock not found")
 
@@ -4207,7 +4207,7 @@ def delete_relay_team(team_id: int, request: Request, db: Session = Depends(get_
         db.commit()
         return {"deleted": True}
 
-    relay = db.query(Relay).get(team_id)
+    relay = db.get(Relay, team_id)
     if not relay:
         raise HTTPException(404, "Relay team not found")
 
@@ -4242,7 +4242,7 @@ def set_relay_team_member(
     # We need to "materialize" it into relays/relayspos and remove the swimresult.
     if team_id < 0:
         swimresult_id = -team_id
-        sr = db.query(SwimResult).get(swimresult_id)
+        sr = db.get(SwimResult, swimresult_id)
         if not sr:
             raise HTTPException(404, "Relay team not found (legacy lock missing)")
 
@@ -4255,7 +4255,7 @@ def set_relay_team_member(
             raise HTTPException(400, "Event is not a relay event")
 
         # Determine club from the swimresult athlete
-        sr_member = db.query(Member).get(sr.athleteid)
+        sr_member = db.get(Member, sr.athleteid)
         if not sr_member:
             raise HTTPException(404, "Athlete from legacy relay lock not found")
         target_club_id = sr_member.clubsid
@@ -4314,7 +4314,7 @@ def set_relay_team_member(
         athlete_id = data.athleteId
         if athlete_id is not None:
             # Check athlete exists and belongs to club
-            member = db.query(Member).get(athlete_id)
+            member = db.get(Member, athlete_id)
             if not member:
                 raise HTTPException(404, "Athlete not found")
             if member.clubsid != target_club_id:
@@ -4349,7 +4349,7 @@ def set_relay_team_member(
                     .first()
                 )
                 if conflict:
-                    conflict_relay = db.query(Relay).get(conflict.relaysid)
+                    conflict_relay = db.get(Relay, conflict.relaysid)
                     team_letter = _team_number_to_letter(conflict_relay.teamnumb) if conflict_relay else "?"
                     athlete_name = f"{member.lastname}, {member.firstname}"
                     raise HTTPException(
@@ -4374,7 +4374,7 @@ def set_relay_team_member(
         return {"ok": True, "migratedTeamId": relay.relaysid}
 
     # ─── Normal flow: existing relays record ───────────────────────────────────
-    relay = db.query(Relay).get(team_id)
+    relay = db.get(Relay, team_id)
     if not relay:
         raise HTTPException(404, "Relay team not found")
 
@@ -4383,7 +4383,7 @@ def set_relay_team_member(
         raise HTTPException(403, "Cannot modify another club's relay teams")
 
     # Validate position
-    style = db.query(SwimStyle).get(relay.stylesid)
+    style = db.get(SwimStyle, relay.stylesid)
     relaycount = style.relaycount if style else 4
     if position < 1 or position > relaycount:
         raise HTTPException(400, f"Invalid position {position}. Must be between 1 and {relaycount}")
@@ -4392,7 +4392,7 @@ def set_relay_team_member(
 
     if athlete_id is not None:
         # Check athlete exists
-        member = db.query(Member).get(athlete_id)
+        member = db.get(Member, athlete_id)
         if not member:
             raise HTTPException(404, "Athlete not found")
 
@@ -4441,7 +4441,7 @@ def set_relay_team_member(
             )
             if conflict:
                 # Find which team
-                conflict_relay = db.query(Relay).get(conflict.relaysid)
+                conflict_relay = db.get(Relay, conflict.relaysid)
                 team_letter = _team_number_to_letter(conflict_relay.teamnumb) if conflict_relay else "?"
                 athlete_name = f"{member.lastname}, {member.firstname}"
                 raise HTTPException(
@@ -4491,7 +4491,7 @@ def set_relay_team_member(
             m_count = 0
             f_count = 0
             for rp in current_positions:
-                pos_member = db.query(Member).get(rp.membersid)
+                pos_member = db.get(Member, rp.membersid)
                 if pos_member:
                     if pos_member.gender == GENDER_M:
                         m_count += 1
@@ -4583,7 +4583,7 @@ def set_relay_team_name(
     # Virtual teams (negative IDs) must be materialized before naming.
     if team_id < 0:
         swimresult_id = -team_id
-        sr = db.query(SwimResult).get(swimresult_id)
+        sr = db.get(SwimResult, swimresult_id)
         if not sr:
             raise HTTPException(404, "Relay team not found (legacy lock missing)")
 
@@ -4596,7 +4596,7 @@ def set_relay_team_name(
             raise HTTPException(400, "Event is not a relay event")
 
         # Determine club from the swimresult athlete
-        sr_member = db.query(Member).get(sr.athleteid)
+        sr_member = db.get(Member, sr.athleteid)
         if not sr_member:
             raise HTTPException(404, "Athlete from legacy relay lock not found")
         target_club_id = sr_member.clubsid
@@ -4656,7 +4656,7 @@ def set_relay_team_name(
         db.commit()
         return {"ok": True, "migratedTeamId": relay.relaysid}
 
-    relay = db.query(Relay).get(team_id)
+    relay = db.get(Relay, team_id)
     if not relay:
         raise HTTPException(404, "Relay team not found")
 

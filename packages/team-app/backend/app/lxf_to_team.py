@@ -190,7 +190,7 @@ def import_lxf_as_meet(db: DbSession, content: bytes, force: bool = False) -> di
             style_id = int(style_id_str) if style_id_str else None
             event_style_map[eid] = style_id
             # Ensure swimstyle exists in DB
-            if style_id and not db.query(SwimStyle).get(style_id):
+            if style_id and not db.get(SwimStyle, style_id):
                 db.add(SwimStyle(
                     swimstyleid=style_id,
                     distance=int(style_el.get("distance") or 0),
@@ -325,7 +325,7 @@ def import_lxf_as_meet(db: DbSession, content: bytes, force: bool = False) -> di
 
     # ── MemberMeet links ──────────────────────────────────────────────────────
     for mid in member_ids_with_results:
-        member = db.query(Member).get(mid)
+        member = db.get(Member, mid)
         db.merge(MemberMeet(
             membersid=mid,
             meetsid=meet_id,

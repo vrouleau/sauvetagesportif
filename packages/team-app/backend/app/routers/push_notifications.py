@@ -43,12 +43,12 @@ _log = logging.getLogger(__name__)
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _get_config(db: Session, key: str) -> str | None:
-    cfg = db.query(BsGlobal).get(key)
+    cfg = db.get(BsGlobal, key)
     return cfg.data if cfg else None
 
 
 def _set_config(db: Session, key: str, value: str):
-    cfg = db.query(BsGlobal).get(key)
+    cfg = db.get(BsGlobal, key)
     if cfg:
         cfg.data = value
     else:
@@ -146,7 +146,7 @@ def subscribe_push(body: SubscribeRequest, db: Session = Depends(get_db)):
 
     db.commit()
 
-    club = db.query(TeamClub).get(club_id)
+    club = db.get(TeamClub, club_id)
     club_name = club.name if club else "?"
     return {"ok": True, "club_name": club_name}
 
@@ -216,7 +216,7 @@ def send_dsq_notifications(db: Session, dsq_results: list[dict]):
     for d in dsq_results:
         eid = d.get("event_id")
         if eid and eid not in event_cache:
-            ev = db.query(LiveEvent).get(eid)
+            ev = db.get(LiveEvent, eid)
             if ev:
                 event_cache[eid] = ev
 

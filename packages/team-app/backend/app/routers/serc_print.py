@@ -631,10 +631,10 @@ def print_sheets(
         members = []
         for pos in positions:
             if pos.membersid:
-                member = db.query(Member).get(pos.membersid)
+                member = db.get(Member, pos.membersid)
                 if member:
                     members.append(member.lastname)
-        club = db.query(TeamClub).get(relay.clubsid) if relay.clubsid else None
+        club = db.get(TeamClub, relay.clubsid) if relay.clubsid else None
         club_name = (club.name or club.code or "") if club else ""
         team_name = "/".join(m for m in members if m) if members else club_name
         teams_map[relay.relaysid] = team_name

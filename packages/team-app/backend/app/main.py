@@ -79,14 +79,14 @@ def _identify_user(pin: str) -> str:
         return "anonymous"
     db = SessionLocal()
     try:
-        admin_pin_cfg = db.query(BsGlobal).get("admin_pin")
+        admin_pin_cfg = db.get(BsGlobal, "admin_pin")
         admin_pin = admin_pin_cfg.data if admin_pin_cfg else os.environ.get("ADMIN_PIN", "000000")
         if pin == admin_pin:
             return "admin"
         club = db.query(TeamClub).filter(TeamClub.pin == pin).first()
         if not club:
             return "unknown"
-        org_cfg = db.query(BsGlobal).get("organizer_club_id")
+        org_cfg = db.get(BsGlobal, "organizer_club_id")
         if org_cfg and org_cfg.data == str(club.clubsid):
             return f"organizer/{club.name}"
         return f"coach/{club.name}"
@@ -160,8 +160,8 @@ async def _auto_backup_loop():
         try:
             db = SessionLocal()
             try:
-                interval_cfg = db.query(BsGlobal).get("backup_interval_days")
-                max_cfg = db.query(BsGlobal).get("backup_max_count")
+                interval_cfg = db.get(BsGlobal, "backup_interval_days")
+                max_cfg = db.get(BsGlobal, "backup_max_count")
                 interval_days = int(interval_cfg.data) if interval_cfg and interval_cfg.data else 1
                 max_count = int(max_cfg.data) if max_cfg and max_cfg.data else 7
             finally:

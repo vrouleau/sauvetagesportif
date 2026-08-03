@@ -144,7 +144,7 @@ def seed_from_lxf(db: Session, file_bytes: bytes) -> dict:
 
     def _get_event(event_id: int) -> SwimEvent | None:
         if event_id not in _event_cache:
-            _event_cache[event_id] = db.query(SwimEvent).get(event_id)
+            _event_cache[event_id] = db.get(SwimEvent, event_id)
         return _event_cache[event_id]
 
     for cd in clubs_data:
@@ -209,7 +209,7 @@ def seed_from_lxf(db: Session, file_bytes: bytes) -> dict:
                 if event.masters == 'T':
                     age_code = "Masters"
                 elif entry["agegroup_id"]:
-                    ag = db.query(AgeGroup).get(entry["agegroup_id"])
+                    ag = db.get(AgeGroup, entry["agegroup_id"])
                     if ag:
                         age_code = _age_code_from_bounds(ag.agemin or 0, ag.agemax or 99)
                         agegroup_id = entry["agegroup_id"]

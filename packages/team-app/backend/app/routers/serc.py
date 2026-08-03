@@ -91,7 +91,7 @@ def list_teams(db: Session = Depends(get_db)):
         members = []
         for pos in positions:
             if pos.membersid:
-                member = db.query(Member).get(pos.membersid)
+                member = db.get(Member, pos.membersid)
                 if member:
                     members.append(f"{member.lastname}, {member.firstname}")
                 else:
@@ -102,7 +102,7 @@ def list_teams(db: Session = Depends(get_db)):
         # Get club name
         club_name = ""
         if relay.clubsid:
-            club = db.query(TeamClub).get(relay.clubsid)
+            club = db.get(TeamClub, relay.clubsid)
             if club:
                 club_name = club.name or club.code or ""
 
@@ -278,12 +278,12 @@ def get_results(db: Session = Depends(get_db)):
     # Team info
     team_info: dict[int, dict] = {}
     for relay in relays:
-        club = db.query(TeamClub).get(relay.clubsid) if relay.clubsid else None
+        club = db.get(TeamClub, relay.clubsid) if relay.clubsid else None
         positions = db.query(RelayPos).filter(RelayPos.relaysid == relay.relaysid).order_by(RelayPos.numb).all()
         members = []
         for pos in positions:
             if pos.membersid:
-                m = db.query(Member).get(pos.membersid)
+                m = db.get(Member, pos.membersid)
                 if m:
                     members.append(f"{m.lastname}, {m.firstname}")
         team_info[relay.relaysid] = {

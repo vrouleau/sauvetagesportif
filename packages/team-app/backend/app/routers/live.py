@@ -66,12 +66,12 @@ router = APIRouter(prefix="/api/live")
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _get_config(db: Session, key: str) -> str | None:
-    cfg = db.query(BsGlobal).get(key)
+    cfg = db.get(BsGlobal, key)
     return cfg.data if cfg else None
 
 
 def _set_config(db: Session, key: str, value: str):
-    cfg = db.query(BsGlobal).get(key)
+    cfg = db.get(BsGlobal, key)
     if cfg:
         cfg.data = value
     else:
@@ -83,10 +83,10 @@ def _set_config(db: Session, key: str, value: str):
 def require_live_secret(request: Request, db: Session = Depends(get_db)):
     """Validate X-Live-Secret header and ensure live mode is active."""
     secret = request.headers.get("X-Live-Secret", "")
-    cfg = db.query(BsGlobal).get("LIVE_PUSH_SECRET")
+    cfg = db.get(BsGlobal, "LIVE_PUSH_SECRET")
     if not cfg or not cfg.data or secret != cfg.data:
         raise HTTPException(401, "Invalid live secret")
-    enabled = db.query(BsGlobal).get("LIVE_ENABLED")
+    enabled = db.get(BsGlobal, "LIVE_ENABLED")
     if not enabled or enabled.data != "T":
         raise HTTPException(409, "Live mode not active")
 
@@ -215,7 +215,7 @@ async def push_results(data: dict, db: Session = Depends(get_db)):
             LiveResult.event_id == eid,
             LiveResult.swimtime_ms.isnot(None),
         ).distinct().count()
-        ev = db.query(LiveEvent).get(eid)
+        ev = db.get(LiveEvent, eid)
         if ev:
             ev.completed_heats = completed
 
@@ -364,7 +364,7 @@ async def push_status(data: dict, db: Session = Depends(get_db)):
     ).update({"is_official": official})
 
     # Update official_heats count
-    ev = db.query(LiveEvent).get(event_id)
+    ev = db.get(LiveEvent, event_id)
     if ev:
         official_count = db.query(LiveResult.heat_number).filter(
             LiveResult.event_id == event_id,
@@ -610,7 +610,7 @@ async def finalize_meet(db: Session = Depends(get_db)):
     for le in live_events_list:
         # Try to find the swimstyleid from swimevent table
         from ..models import SwimEvent
-        ev = db.query(SwimEvent).get(le.event_id)
+        ev = db.get(SwimEvent, le.event_id)
         event_style_map[le.event_id] = ev.swimstyleid if ev else None
 
     results_archived = 0
@@ -629,7 +629,7 @@ async def finalize_meet(db: Session = Depends(get_db)):
         rank_counter += 1
 
         # Find the event number from live_events
-        le = db.query(LiveEvent).get(lr.event_id)
+        le = db.get(LiveEvent, lr.event_id)
         event_number = le.event_number if le else None
 
         db.add(TeamResult(
@@ -652,7 +652,7 @@ async def finalize_meet(db: Session = Depends(get_db)):
 
     # 5. Clear live-specific bsglobal keys
     for key in ("LIVE_PUSH_SECRET", "LIVE_ENABLED", "LIVE_LAST_PUSH"):
-        cfg = db.query(BsGlobal).get(key)
+        cfg = db.get(BsGlobal, key)
         if cfg:
             db.delete(cfg)
 

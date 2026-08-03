@@ -52,7 +52,7 @@ def list_meets(db: Session = Depends(get_db)):
 @router.get("/meets/{meet_id}")
 def get_meet_results(meet_id: int, db: Session = Depends(get_db)):
     """All results for a historical meet, grouped by event number."""
-    meet = db.query(Meet).get(meet_id)
+    meet = db.get(Meet, meet_id)
     if not meet:
         from fastapi import HTTPException
         raise HTTPException(404, "Meet not found")
@@ -71,8 +71,8 @@ def get_meet_results(meet_id: int, db: Session = Depends(get_db)):
         if evnum not in events:
             events[evnum] = []
 
-        member = db.query(Member).get(r.membersid) if r.membersid else None
-        club = db.query(TeamClub).get(member.clubsid) if member and member.clubsid else None
+        member = db.get(Member, r.membersid) if r.membersid else None
+        club = db.get(TeamClub, member.clubsid) if member and member.clubsid else None
 
         events[evnum].append({
             "athlete_name": f"{member.lastname}, {member.firstname}" if member else "?",

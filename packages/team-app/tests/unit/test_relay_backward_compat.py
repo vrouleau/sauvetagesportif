@@ -234,11 +234,11 @@ def _build_virtual_teams_for_club(db_session, club_id, relay_events, existing_re
         ev = next((e for e in relay_events if e.swimeventid == sr_event_id), None)
         if not ev:
             continue
-        style = db_session.query(SwimStyle).get(ev.swimstyleid)
+        style = db_session.get(SwimStyle, ev.swimstyleid)
         relaycount = style.relaycount if style else 4
 
         # Get athlete name
-        sr_member = db_session.query(Member).get(sr.athleteid)
+        sr_member = db_session.get(Member, sr.athleteid)
         athlete_name = f"{sr_member.lastname}, {sr_member.firstname}" if sr_member else None
 
         members_arr = []
@@ -274,18 +274,18 @@ def _migrate_virtual_team(db_session, swimresult_id, position, athlete_id):
 
     Returns (new_relay_id, success).
     """
-    sr = db_session.query(SwimResult).get(swimresult_id)
+    sr = db_session.get(SwimResult, swimresult_id)
     if not sr:
         return None, False
 
-    event = db_session.query(SwimEvent).get(sr.swimeventid)
+    event = db_session.get(SwimEvent, sr.swimeventid)
     if not event:
         return None, False
-    style = db_session.query(SwimStyle).get(event.swimstyleid)
+    style = db_session.get(SwimStyle, event.swimstyleid)
     if not style or not style.relaycount or style.relaycount <= 1:
         return None, False
 
-    sr_member = db_session.query(Member).get(sr.athleteid)
+    sr_member = db_session.get(Member, sr.athleteid)
     if not sr_member:
         return None, False
     target_club_id = sr_member.clubsid
@@ -436,11 +436,11 @@ class TestRelayBackwardCompat:
         assert new_relay_id is not None
 
         # Verify: swimresult should be deleted
-        sr_check = db_session.query(SwimResult).get(100)
+        sr_check = db_session.get(SwimResult, 100)
         assert sr_check is None
 
         # Verify: relay record should exist
-        relay = db_session.query(Relay).get(new_relay_id)
+        relay = db_session.get(Relay, new_relay_id)
         assert relay is not None
         assert relay.clubsid == 1
         assert relay.stylesid == 201
@@ -560,8 +560,8 @@ class TestRelayBackwardCompat:
         assert success is True
 
         # sr1 deleted, sr2 still exists
-        assert db_session.query(SwimResult).get(100) is None
-        assert db_session.query(SwimResult).get(101) is not None
+        assert db_session.get(SwimResult, 100) is None
+        assert db_session.get(SwimResult, 101) is not None
 
     def test_migrate_with_null_athlete_id(self, db_session, seed_data):
         """Migration with athleteId=None removes position 1 lock athlete."""
@@ -587,7 +587,7 @@ class TestRelayBackwardCompat:
         assert pos1.membersid is None
 
         # Swimresult still deleted
-        assert db_session.query(SwimResult).get(100) is None
+        assert db_session.get(SwimResult, 100) is None
 
     def test_create_team_materializes_swimresult_lock(self, db_session, seed_data):
         """Req 10.4: Creating a new team materializes existing swimresult lock first.
@@ -609,7 +609,7 @@ class TestRelayBackwardCompat:
 
         # Simulate the create_relay_team materialization logic:
         # Check for swimresult lock when no existing relay teams exist
-        style = db_session.query(SwimStyle).get(201)
+        style = db_session.get(SwimStyle, 201)
         age_min, age_max = _age_code_to_range("13-14")
 
         existing_teams = (
@@ -724,7 +724,7 @@ class TestRelayBackwardCompat:
             assert pos.membersid is None
 
         # Verify: swimresult lock is gone
-        assert db_session.query(SwimResult).get(100) is None
+        assert db_session.get(SwimResult, 100) is None
 
         # Verify: virtual team logic no longer shows anything
         relay_events = db_session.query(SwimEvent).all()

@@ -55,7 +55,7 @@ def _load_from_parsed(db: Session, meet: ParsedMeet) -> int:
 
     # Store current meet ID in bsglobal
     from .models import BsGlobal
-    cfg = db.query(BsGlobal).get("current_meetsid")
+    cfg = db.get(BsGlobal, "current_meetsid")
     if cfg:
         cfg.data = str(team_meet.meetsid)
     else:
@@ -88,7 +88,7 @@ def _load_from_parsed(db: Session, meet: ParsedMeet) -> int:
         for ev in ses.events:
             # Upsert swimstyle (id 0 marks a style-less pause/break event — no real style to store)
             if ev.swimstyleid:
-                style = db.query(SwimStyle).get(ev.swimstyleid)
+                style = db.get(SwimStyle, ev.swimstyleid)
                 if not style:
                     style = SwimStyle(
                         swimstyleid=ev.swimstyleid,

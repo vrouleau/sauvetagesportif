@@ -53,7 +53,7 @@ def _meet_fees(db: Session) -> dict[str, int]:
     """
     # Primary: read from MEETVALUES (Splash interoperable)
     fees: dict[str, int] = {}
-    cfg = db.query(BsGlobal).get("MEETVALUES")
+    cfg = db.get(BsGlobal, "MEETVALUES")
     if cfg and cfg.data:
         key_map = {
             "FEECLUB": "CLUB",
@@ -85,7 +85,7 @@ def _meet_fees(db: Session) -> dict[str, int]:
 
     # Fallback: read from meet_fees_json (LXF import legacy)
     if not fees:
-        cfg2 = db.query(BsGlobal).get("meet_fees_json")
+        cfg2 = db.get(BsGlobal, "meet_fees_json")
         if cfg2 and cfg2.data:
             try:
                 data = json.loads(cfg2.data)
@@ -260,7 +260,7 @@ def _create_draft_for_club(club: TeamClub, items: list[dict], meet_name: str) ->
 
 
 def _meet_name(db: Session) -> str:
-    cfg = db.query(BsGlobal).get("meet_name")
+    cfg = db.get(BsGlobal, "meet_name")
     return cfg.data if cfg else "Compétition"
 
 
@@ -315,7 +315,7 @@ def generate_invoice_pdf(db: Session, club_id: int) -> bytes:
     from reportlab.lib.units import inch
     from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-    club = db.query(TeamClub).get(club_id)
+    club = db.get(TeamClub, club_id)
     if not club:
         raise ValueError(f"Club {club_id} not found")
     items = _club_line_items(db, club, _meet_fees(db))

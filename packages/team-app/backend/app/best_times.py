@@ -128,7 +128,7 @@ def get_public_best_times(db: Session, max_age_months: int = 18) -> dict:
     style_uids = sorted(all_uids)
     styles = []
     for uid in style_uids:
-        style = db.query(SwimStyle).get(uid)
+        style = db.get(SwimStyle, uid)
         name = style.name if style else f"ID{uid}"
         styles.append({"uid": uid, "name": name})
 
@@ -165,7 +165,7 @@ def get_public_best_times(db: Session, max_age_months: int = 18) -> dict:
         club["athletes"].sort(key=lambda a: a["name"])
 
     # Determine course (current meet's course, used to pick LCM vs SCM when both exist)
-    course_cfg = db.query(BsGlobal).get("meet_course")
+    course_cfg = db.get(BsGlobal, "meet_course")
     course = course_cfg.data if course_cfg and course_cfg.data else "LCM"
 
     return {"styles": styles, "clubs": clubs, "course": course}
