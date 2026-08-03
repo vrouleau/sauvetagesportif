@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.3.53] - 2026-08-03
+
+### Other
+
+- Replace legacy Query.get() with Session.get() across team-app (`3776fd2`)
+- Fix stale swimstyleid collision with SERC in team-app test fixture (`39c54b7`)
+- Remove SMB import/export and dead point-scores code from team-app (`3ac675f`)
+- Add JS test runner for SERC scoring, enforce score range server-side (`1fe049a`)
+- Correct stale swimstyleid ranges and audit/prune docs/*_PLAN.md TODOs (`a8849d9`)
+- Add TODO: investigate deprecating SMB import/export in team-app (`d9ae3eb`)
+- Write BSGLOBAL points config in Splash's real schema, not an invented one (`1f5f843`)
+- Stamp BSAPPLICATION in exported .smb so Splash accepts the file on reopen (`a3c600b`)
+- Carry session lanemin/lanemax through the meet-app <-> team-app LXF pipeline (`7f267b1`)
+- Fix SMB gbin string truncation using byte length instead of char count (`895fda8`)
+- Implement athlete deletion in meet-app (was a silent no-op) (`da969bc`)
+- Assign beach numbers to relay-only athletes (`4781a73`)
+- Fix mixed-gender relay events encoded as 0 instead of 3 (#3) (`0125457`)
+
 ## [0.3.52] - 2026-08-02
 
 ### Other
