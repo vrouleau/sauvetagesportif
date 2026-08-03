@@ -22,8 +22,7 @@ _age_code_allowed_on_team / _would_miss_native_anchor (this file) are a Python
 port of the TS functions in shared-ui/src/logic/relayRules.ts (used by
 meet-app's main process and RelayEntryPage.tsx) — the two can't share a module
 across the language boundary, so both test suites iterate the same fixture
-(tests/fixtures/relay_age_rules.json) instead. See
-docs/SHARED_LOGIC_CONSOLIDATION_PLAN.md.
+(tests/fixtures/relay_age_rules.json) instead.
 
 Python's _age_code_allowed_on_team doesn't take an `order` parameter — it's
 always checked against the fixed _AGE_CODE_ORDER tuple, which is exactly what

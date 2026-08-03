@@ -25,7 +25,8 @@
  * keeps per team). Mirrors compute_serc_total() in
  * backend/app/routers/serc.py — Python, can't share this module across the
  * language boundary, so both are kept in sync via the fixture in
- * tests/fixtures/serc_scoring.json (see docs/SHARED_LOGIC_CONSOLIDATION_PLAN.md).
+ * tests/fixtures/serc_scoring.json (see sercScoring.test.js and
+ * team-app/tests/unit/test_serc_scoring_fixture.py).
  */
 export function computeSercTotal(scores, factors, hasBystander, numVictims) {
   const of = factors?.overall || {}

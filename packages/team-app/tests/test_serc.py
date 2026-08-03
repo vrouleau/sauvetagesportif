@@ -197,6 +197,22 @@ class TestRoughHandling:
         }, timeout=10)
         assert r.status_code == 422
 
+    @pytest.mark.parametrize("value", [0, 0.5, 10, 8.5])
+    def test_score_in_range_accepted(self, value):
+        """Non-rough fields accept 0-10 in 0.5 increments."""
+        r = requests.put(f"{BASE_URL}/api/serc/score", json={
+            "draw": 1, "relay_team_id": 9999, "section": "overall", "field": "assessment", "value": value
+        }, timeout=10)
+        assert r.status_code == 200
+
+    @pytest.mark.parametrize("value", [-1, 10.5, 11, 4.3])
+    def test_score_out_of_range_rejected(self, value):
+        """Non-rough fields reject values outside 0-10 or off the 0.5 grid."""
+        r = requests.put(f"{BASE_URL}/api/serc/score", json={
+            "draw": 1, "relay_team_id": 9999, "section": "overall", "field": "assessment", "value": value
+        }, timeout=10)
+        assert r.status_code == 422
+
 
 # ---------------------------------------------------------------------------
 # Test 4: SERC relay exemption (no gender/age restrictions)

@@ -194,9 +194,15 @@ def set_score(data: dict = Body(default={}), db: Session = Depends(get_db)):
     else:
         value = None
 
-    # Rough handling can only be 0 or -10
-    if field == "rough" and value is not None and value not in (0, -10, 0.0, -10.0):
-        raise HTTPException(status_code=422, detail="Rough handling must be 0 or -10")
+    # Rough handling can only be 0 or -10; other fields are 0-10 in 0.5 steps
+    # (mirrors SCORE_VALUES in frontend/src/pages/SercJudge.jsx, enforced there
+    # client-side only until now).
+    if field == "rough":
+        if value is not None and value not in (0, -10, 0.0, -10.0):
+            raise HTTPException(status_code=422, detail="Rough handling must be 0 or -10")
+    elif value is not None:
+        if value < 0 or value > 10 or abs(value * 2 - round(value * 2)) > 1e-9:
+            raise HTTPException(status_code=422, detail="Score must be 0-10 in 0.5 increments")
 
     existing = db.query(SercScore).filter(
         SercScore.config_id == config.id,
@@ -341,7 +347,8 @@ def compute_serc_total(
     keeps per team (see calcTotal() in frontend/src/pages/Serc.jsx, which
     can't share this module across the Python/JS boundary but implements the
     identical formula; kept in sync via the fixture in
-    tests/fixtures/serc_scoring.json, see docs/SHARED_LOGIC_CONSOLIDATION_PLAN.md).
+    tests/fixtures/serc_scoring.json, see sercScoring.test.js and
+    test_serc_scoring_fixture.py).
     """
     total = 0.0
     overall = scores.get("overall", {})

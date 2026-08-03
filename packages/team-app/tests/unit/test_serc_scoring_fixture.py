@@ -20,11 +20,9 @@
 
 compute_serc_total() (backend/app/routers/serc.py) and computeSercTotal()
 (frontend/src/sercScoring.js) implement the identical formula in Python and
-JS — can't share a module across that boundary, so both are meant to be
-tested against the same fixture (tests/fixtures/serc_scoring.json). The
-frontend currently has no JS test runner configured (team-app/frontend has
-no vitest/jest setup), so only the Python side is automatically verified
-today — see docs/SHARED_LOGIC_CONSOLIDATION_PLAN.md.
+JS — can't share a module across that boundary, so both are tested against
+the same fixture (tests/fixtures/serc_scoring.json). The JS side is checked
+by frontend/src/sercScoring.test.js (vitest).
 """
 from __future__ import annotations
 

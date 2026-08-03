@@ -24,7 +24,7 @@ import { isAgeCodeAllowedOnTeam, wouldMissNativeAnchor } from './relayRules'
 // Shared with team-app/backend/app/routers/api.py's _age_code_allowed_on_team /
 // _would_miss_native_anchor (Python, can't share the module directly) — this
 // fixture is iterated by both languages' test suites so drift becomes a test
-// failure instead of a silent bug. See docs/SHARED_LOGIC_CONSOLIDATION_PLAN.md.
+// failure instead of a silent bug.
 const fixturePath = join(__dirname, '../../../team-app/tests/fixtures/relay_age_rules.json')
 const fixture = JSON.parse(readFileSync(fixturePath, 'utf-8')) as {
   order: string[]
