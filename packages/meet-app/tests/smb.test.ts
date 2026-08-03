@@ -111,13 +111,38 @@ describe('SMB save/restore', () => {
     expect(pin.data).toBe('123456')
   })
 
+  it('stamps BSAPPLICATION="Meet Manager - MEET" so real Splash accepts the file on reopen', () => {
+    // Every real Splash-native .mdb sampled has this BSGLOBAL key; every .mdb that had one of
+    // our own .smb backups restored into it was missing it (we never wrote it) — and Splash threw
+    // a generic "invalid data" error the next time it reopened such a file, despite the restore
+    // itself and that same session's usage working fine. Always stamp it on export.
+    saveSMB(smbPath, db)
+    db.exec('DELETE FROM bsglobal')
+    restoreSMB(smbPath, db)
+
+    const row = db.prepare(`SELECT data FROM bsglobal WHERE name='BSAPPLICATION'`).get() as { data: string } | undefined
+    expect(row?.data).toBe('Meet Manager - MEET')
+  })
+
+  it('does not duplicate BSAPPLICATION if already present in our own bsglobal', () => {
+    db.prepare(`INSERT INTO bsglobal (name, data) VALUES ('BSAPPLICATION', 'Meet Manager - MEET')`).run()
+    saveSMB(smbPath, db)
+    db.exec('DELETE FROM bsglobal')
+    restoreSMB(smbPath, db)
+
+    const rows = db.prepare(`SELECT data FROM bsglobal WHERE name='BSAPPLICATION'`).all() as { data: string }[]
+    expect(rows.length).toBe(1)
+    expect(rows[0].data).toBe('Meet Manager - MEET')
+  })
+
   it('handles empty database gracefully', () => {
     // No data seeded — save should still work. RECORDAGEGROUP's single sentinel row
     // (see saveSMB's `tableName === 'recordagegroup'` case) is always present regardless
-    // of content, so an otherwise-empty database still produces exactly 1 row.
+    // of content, and BSGLOBAL always gets a synthesized BSAPPLICATION row (see
+    // `tableName === 'bsglobal'` case), so an otherwise-empty database produces exactly 2 rows.
     const result = saveSMB(smbPath, db)
     expect(existsSync(smbPath)).toBe(true)
-    expect(result.rows).toBe(1)
+    expect(result.rows).toBe(2)
   })
 
   it('normalizes Splash MDB round encoding on restore', () => {

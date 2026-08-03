@@ -918,6 +918,15 @@ export function saveSMB(filePath: string, db: Database.Database): { tables: numb
     // best evidence available short of a full Splash course-enum dump. See
     // docs/SMB_SCHEMA_AUDIT_2026-08-01.md.
     if (tableName === 'bsglobal') {
+      // Splash stamps every genuine Meet Manager database with BSAPPLICATION="Meet Manager - MEET"
+      // in BSGLOBAL — confirmed present in every real Splash-native .mdb sampled, and absent from
+      // every .mdb that had one of our own .smb backups restored into it (we never wrote this key).
+      // Splash appears to validate it on file open: those restored files opened and worked fine in
+      // the same session as the restore, but threw a generic "invalid data" error the next time
+      // Splash was reopened against the same file. Always ensure it's present on export.
+      if (!rows.some(r => r['name'] === 'BSAPPLICATION')) {
+        rows = [...rows, { name: 'BSAPPLICATION', data: 'Meet Manager - MEET' }]
+      }
       const meetType = rows.find(r => r['name'] === 'MEET_TYPE')?.['data']
       if (meetType === 'BEACH') {
         let sawMeetCourse = false
