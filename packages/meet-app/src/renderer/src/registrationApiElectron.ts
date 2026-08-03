@@ -153,8 +153,8 @@ export const registrationApiElectron: RegistrationAPI = {
     }
   },
 
-  async deleteAthlete(_id) {
-    // Not directly supported in meet-app IPC — no-op for now
+  async deleteAthlete(id) {
+    await ipc()?.deleteAthlete(id)
   },
 
   async getRegistration(athleteId: number): Promise<RegistrationData> {

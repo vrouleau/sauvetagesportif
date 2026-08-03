@@ -55,6 +55,7 @@ import {
   getPointStandings,
   getResultsList,
   setAthleteClub,
+  deleteAthlete,
   nextId,
   duplicateEvent,
   type SessionUpdate,
@@ -1236,6 +1237,11 @@ ipcMain.handle('db:save-athlete', (_event, athlete: Parameters<typeof saveAthlet
 
 ipcMain.handle('db:set-athlete-club', (_event, athleteId: number, clubId: number) => {
   setAthleteClub(athleteId, clubId)
+})
+
+ipcMain.handle('db:delete-athlete', (_event, athleteId: number) => {
+  deleteAthlete(athleteId)
+  return { ok: true }
 })
 
 // ── Finals IPC ────────────────────────────────────────────────────────────────

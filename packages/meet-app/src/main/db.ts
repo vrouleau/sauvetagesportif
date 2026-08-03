@@ -1596,6 +1596,31 @@ export function setAthleteClub(athleteId: number, clubId: number, injectedDb?: R
   db.prepare(`UPDATE athlete SET clubid=? WHERE athleteid=?`).run(clubId, athleteId)
 }
 
+/**
+ * Delete an athlete entirely: their individual entries, relay memberships, then the
+ * athlete record itself (no FK cascade defined on athleteid in schema.ts, so each is
+ * removed explicitly). Blocked if the athlete has an entry in a validated heat, same as
+ * other heat-modification guards (assertHeatNotValidated/assertHeatIdNotValidated above).
+ */
+export function deleteAthlete(athleteId: number, injectedDb?: ReturnType<typeof getLocalDb>): void {
+  const db = injectedDb ?? getLocalDb()
+
+  const validated = db.prepare(`
+    SELECT 1 FROM swimresult r JOIN heat h ON r.heatid = h.heatid
+    WHERE r.athleteid = ? AND h.racestatus = 5
+    UNION
+    SELECT 1 FROM relayposition rp JOIN relay rl ON rp.relayid = rl.relayid JOIN heat h ON rl.heatid = h.heatid
+    WHERE rp.athleteid = ? AND h.racestatus = 5
+  `).get(athleteId, athleteId)
+  if (validated) {
+    throw new Error('Cannot delete: athlete has results in a validated heat')
+  }
+
+  db.prepare(`DELETE FROM swimresult WHERE athleteid = ?`).run(athleteId)
+  db.prepare(`DELETE FROM relayposition WHERE athleteid = ?`).run(athleteId)
+  db.prepare(`DELETE FROM athlete WHERE athleteid = ?`).run(athleteId)
+}
+
 // ── Local SQLite schema — imported from schema.ts to avoid circular dependency ──
 
 import { runSchemaInit } from './schema'
