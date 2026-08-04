@@ -23,10 +23,19 @@ export class SqliteBackend implements DbBackend {
   readonly type = 'sqlite' as const
   private db: Database.Database
 
-  constructor(dbPath: string) {
-    this.db = new Database(dbPath)
-    this.db.pragma('journal_mode = WAL')
-    this.db.pragma('foreign_keys = ON')
+  /**
+   * Accepts either a file path (opens a new connection, used in production) or an
+   * already-open better-sqlite3 instance (used by tests that need direct SQL access
+   * for seeding/assertions alongside the DbBackend-typed calls smb.ts/lenex.ts expect).
+   */
+  constructor(dbPathOrInstance: string | Database.Database) {
+    if (typeof dbPathOrInstance === 'string') {
+      this.db = new Database(dbPathOrInstance)
+      this.db.pragma('journal_mode = WAL')
+      this.db.pragma('foreign_keys = ON')
+    } else {
+      this.db = dbPathOrInstance
+    }
   }
 
   prepare(sql: string): PreparedStatement {
@@ -55,8 +64,11 @@ export class SqliteBackend implements DbBackend {
     this.db.close()
   }
 
-  /** Expose raw better-sqlite3 instance for SMB/LENEX operations that need it */
-  get raw(): Database.Database {
-    return this.db
+  disableForeignKeys(): void {
+    this.db.pragma('foreign_keys = OFF')
+  }
+
+  enableForeignKeys(): void {
+    this.db.pragma('foreign_keys = ON')
   }
 }

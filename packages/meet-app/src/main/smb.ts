@@ -45,7 +45,7 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 import { inflateRawSync, deflateRawSync } from 'node:zlib'
 import { randomUUID } from 'node:crypto'
-import Database from 'better-sqlite3'
+import type { DbBackend } from './dbBackend'
 
 // ── Table definitions (column name, type, size) ───────────────────────────────
 
@@ -825,7 +825,7 @@ function crc32(buf: Buffer): number {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-export function saveSMB(filePath: string, db: Database.Database): { tables: number; rows: number } {
+export function saveSMB(filePath: string, db: DbBackend): { tables: number; rows: number } {
   const entries: ZipEntry[] = []
   const recordCounts: Record<string, number> = {}
   let totalRows = 0
@@ -1005,19 +1005,14 @@ export function saveSMB(filePath: string, db: Database.Database): { tables: numb
   return { tables: SMB_TABLES.length, rows: totalRows }
 }
 
-export function restoreSMB(filePath: string, db: Database.Database): { tables: number; rows: number; detail: string } {
+export function restoreSMB(filePath: string, db: DbBackend): { tables: number; rows: number; detail: string } {
   const zipEntries = readZipEntries(filePath)
   const tableDetail: string[] = []
   let totalInserted = 0
 
   // Disable FK enforcement for bulk import — Splash encodes NULL integers as 0
   // which would fail FK checks mid-load even though the data is self-consistent.
-  if (typeof db.pragma === 'function') {
-    db.pragma('foreign_keys = OFF')
-  } else {
-    // PostgreSQL: disable FK triggers temporarily
-    try { db.exec('SET session_replication_role = replica') } catch { /* ignore */ }
-  }
+  db.disableForeignKeys()
   try {
     // Clear existing data (reverse FK order). Skip stub tables — no backing table in our schema.
     const reversed = [...SMB_TABLES].reverse()
@@ -1045,20 +1040,20 @@ export function restoreSMB(filePath: string, db: Database.Database): { tables: n
         continue
       }
 
-      // Use intersection of file columns and our expected columns for INSERT
+      // Use intersection of file columns and our expected columns for INSERT.
+      // ON CONFLICT DO NOTHING is portable — SQLite (3.24+, bundled by better-sqlite3)
+      // and Postgres both support the bare (no conflict target) form.
       const fileColNames = new Set(fileCols.map(c => c.name.toLowerCase()))
       const colNames = tableDef.cols.map(c => c.name.toLowerCase()).filter(c => fileColNames.has(c))
       const placeholders = colNames.map(() => '?').join(', ')
-      const isPg = typeof (db as any).pragma !== 'function'
-      const insertSql = isPg
-        ? `INSERT INTO ${tableDef.name.toLowerCase()} (${colNames.join(', ')}) VALUES (${placeholders}) ON CONFLICT DO NOTHING`
-        : `INSERT OR IGNORE INTO ${tableDef.name.toLowerCase()} (${colNames.join(', ')}) VALUES (${placeholders})`
+      const insertSql = `INSERT INTO ${tableDef.name.toLowerCase()} (${colNames.join(', ')}) VALUES (${placeholders}) ON CONFLICT DO NOTHING`
       const stmt = db.prepare(insertSql)
 
       let inserted = 0
-      // For PG: identify date columns that need sentinel filtering
+      // PG's TIMESTAMP columns are stricter than SQLite's untyped date storage — identify
+      // date columns that need OLE-sentinel filtering before insert (SQLite tolerates any value).
       const dateColIndices = new Set<number>()
-      if (isPg) {
+      if (db.type === 'pg') {
         const colDefsLower = tableDef.cols.map(c => ({ name: c.name.toLowerCase(), type: c.type }))
         colNames.forEach((cn, idx) => {
           const def = colDefsLower.find(d => d.name === cn)
@@ -1072,7 +1067,7 @@ export function restoreSMB(filePath: string, db: Database.Database): { tables: n
             const v = row[c] ?? null
             // For PG date columns: convert invalid OLE date values to null
             // Valid OLE dates are roughly 2-73000 (1900-2100). Anything else is garbage.
-            if (isPg && dateColIndices.has(idx)) {
+            if (dateColIndices.has(idx)) {
               if (v === null || v === undefined) return null
               const numVal = typeof v === 'number' ? v : (typeof v === 'string' ? parseFloat(v) : NaN)
               if (isNaN(numVal) || numVal < 2 || numVal > 73000 || !isFinite(numVal)) return null
@@ -1109,12 +1104,7 @@ export function restoreSMB(filePath: string, db: Database.Database): { tables: n
     // in both encodings, so only 2→4 needs converting — symmetric with saveSMB's export-side 4→2.
     db.prepare(`UPDATE heat SET racestatus = 4 WHERE racestatus = 2`).run()
   } finally {
-    if (typeof db.pragma === 'function') {
-      db.pragma('foreign_keys = ON')
-    } else {
-      // PostgreSQL: re-enable FK triggers
-      try { db.exec('SET session_replication_role = DEFAULT') } catch { /* ignore */ }
-    }
+    db.enableForeignKeys()
   }
 
   return { tables: SMB_TABLES.length, rows: totalInserted, detail: tableDetail.join(', ') }
@@ -1138,7 +1128,7 @@ export function restoreSMB(filePath: string, db: Database.Database): { tables: n
 //   5 = Timed Final / Direct Final (TIM)
 //  11 = Break/Pause (unchanged, handled via internalevent flag)
 
-function normalizeRoundEncoding(db: Database.Database): void {
+function normalizeRoundEncoding(db: DbBackend): void {
   // SMB files always use Splash MDB round encoding (written by saveSMB or by Splash itself).
   // Normalize to our canonical encoding on restore.
   //

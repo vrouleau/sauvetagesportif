@@ -23,6 +23,7 @@ import { tmpdir } from 'os'
 import { randomBytes } from 'crypto'
 import { unlinkSync } from 'fs'
 import type Database from 'better-sqlite3'
+import { SqliteBackend } from '../src/main/sqliteBackend'
 import { saveSMB, restoreSMB } from '../src/main/smb'
 import { encodeBarcode, decodeBarcode } from '../src/main/timingBarcode'
 import { parseTimeToMs, formatMsToTime, assembleTimeString } from '../src/main/ocrEngine'
@@ -124,12 +125,14 @@ describe('Time parsing utilities', () => {
 
 describe('Gemini keys roundtrip via SMB', () => {
   let db: Database.Database
+  let backend: SqliteBackend
   let cleanup: () => void
   let smbPath: string
 
   beforeEach(() => {
     const t = createTestDb()
     db = t.db
+    backend = new SqliteBackend(db)
     cleanup = t.cleanup
     smbPath = join(tmpdir(), `test-gemini-${randomBytes(4).toString('hex')}.smb`)
   })
@@ -151,7 +154,7 @@ describe('Gemini keys roundtrip via SMB', () => {
     expect(freeBefore.data).toBe('AIzaSyFreeKeyTest1234')
 
     // Save SMB
-    saveSMB(smbPath, db)
+    saveSMB(smbPath, backend)
 
     // Wipe the database
     db.exec('DELETE FROM bsglobal')
@@ -159,7 +162,7 @@ describe('Gemini keys roundtrip via SMB', () => {
     expect(freeAfterWipe).toBeUndefined()
 
     // Restore SMB
-    restoreSMB(smbPath, db)
+    restoreSMB(smbPath, backend)
 
     // Verify keys survived the roundtrip
     const freeAfter = db.prepare(`SELECT data FROM bsglobal WHERE name = 'GEMINI_KEY_FREE'`).get() as { data: string }
@@ -172,10 +175,10 @@ describe('Gemini keys roundtrip via SMB', () => {
     seedMeet(db)
 
     // No Gemini keys set
-    saveSMB(smbPath, db)
+    saveSMB(smbPath, backend)
 
     // Restore
-    restoreSMB(smbPath, db)
+    restoreSMB(smbPath, backend)
 
     // Should not have any Gemini keys
     const free = db.prepare(`SELECT data FROM bsglobal WHERE name = 'GEMINI_KEY_FREE'`).get()

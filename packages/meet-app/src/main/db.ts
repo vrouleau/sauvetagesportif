@@ -390,8 +390,8 @@ export async function getHeatListEvents(): Promise<HeatListEventRow[]> {
   return sessions.flatMap(s => s.events)
 }
 
-export async function getHeatListSessions(): Promise<HeatListSessionRow[]> {
-  const db = getLocalDb()
+export async function getHeatListSessions(injectedDb?: ReturnType<typeof getLocalDb>): Promise<HeatListSessionRow[]> {
+  const db = injectedDb ?? getLocalDb()
 
   const sessions = db.prepare(
     `SELECT swimsessionid, sessionnumber, name, daytime, lanemin, lanemax FROM swimsession ORDER BY sessionnumber`
@@ -864,8 +864,9 @@ export async function saveResult(
   status: 'DNS' | 'DNF' | 'DSQ' | null,
   splits: Record<number, string> | undefined,
   dsqItemId?: number | null,
+  injectedDb?: ReturnType<typeof getLocalDb>,
 ): Promise<void> {
-  const db = getLocalDb()
+  const db = injectedDb ?? getLocalDb()
   assertHeatNotValidated(db, swimresultId)
   const swimtime = finalTime ? displayToMs(finalTime) : null
   const resultstatus = encodeResultStatus(status)

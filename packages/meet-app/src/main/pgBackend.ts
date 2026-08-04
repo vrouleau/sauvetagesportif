@@ -32,10 +32,38 @@ import type { DbBackend, PreparedStatement } from './dbBackend'
 
 /**
  * Convert SQLite-style `?` placeholders to PostgreSQL `$1, $2, ...` style.
+ *
+ * Skips `?` characters inside single-quoted string literals (tracking `''`-escaped quotes) —
+ * a naive global replace corrupts any query with a literal `?` in its SQL text (e.g.
+ * `db.ts`'s `getHeatListSessions` uses `'???'` as its "unknown age group" fallback string).
+ * That both mangles the literal itself and shifts every real placeholder after it out of
+ * sync with the bound params array, producing Postgres errors like "could not determine data
+ * type of parameter $1" — found via `tests/results-entry.test.ts`'s PG-parity coverage.
  */
-function rewritePlaceholders(sql: string): string {
+export function rewritePlaceholders(sql: string): string {
   let idx = 0
-  return sql.replace(/\?/g, () => `$${++idx}`)
+  let inString = false
+  let result = ''
+  for (let i = 0; i < sql.length; i++) {
+    const ch = sql[i]
+    if (ch === "'") {
+      if (inString && sql[i + 1] === "'") {
+        // Escaped quote ('') inside a string literal — consume both chars, stay in-string.
+        result += "''"
+        i++
+        continue
+      }
+      inString = !inString
+      result += ch
+      continue
+    }
+    if (ch === '?' && !inString) {
+      result += `$${++idx}`
+      continue
+    }
+    result += ch
+  }
+  return result
 }
 
 /**
@@ -114,6 +142,14 @@ export class PgBackend implements DbBackend {
       this.worker.postMessage({ type: 'close' })
       setTimeout(() => this.worker.terminate(), 1000)
     }
+  }
+
+  disableForeignKeys(): void {
+    try { this.exec('SET session_replication_role = replica') } catch { /* ignore — needs superuser; best-effort */ }
+  }
+
+  enableForeignKeys(): void {
+    try { this.exec('SET session_replication_role = DEFAULT') } catch { /* ignore */ }
   }
 
   /** Test the connection — async, used only during connect flow */

@@ -17,7 +17,7 @@
 // along with Sauvetage Sportif. If not, see <https://www.gnu.org/licenses/>.
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { createTestDb } from './helpers'
+import { createTestDb, createPgTestDb, isPgTestAvailable, type TestBackendKind } from './helpers'
 import { join } from 'path'
 import { existsSync, unlinkSync } from 'fs'
 import { tmpdir } from 'os'
@@ -332,5 +332,96 @@ describe('LENEX exporter', () => {
     } finally {
       freshCleanup()
     }
+  })
+})
+
+// ── PostgreSQL backend parity ───────────────────────────────────────────────
+//
+// importLenex had no PG-backend coverage at all — the same gap beachNumber.ts had before it
+// shipped two real SQLite-only-syntax bugs (SELECT DISTINCT ORDER BY expression not in the
+// select list, COLLATE NOCASE) that every SQLite test passed and real Postgres rejected
+// outright the moment a beach meet's entries were imported against a shared PG backend (see
+// docs history on the DB abstraction refactor). importLenex is on the same import path and
+// itself calls generateBeachNumbers for beach meets, so a dialect-specific bug here would be
+// just as invisible to SQLite-only tests. Uses a synthetic minimal LXF rather than the
+// team-app fixture so it runs standalone regardless of whether that fixture is checked out.
+// Skipped automatically if no Postgres server is reachable.
+const pgAvailable = await isPgTestAvailable()
+const LENEX_PARITY_BACKENDS: TestBackendKind[] = pgAvailable ? ['sqlite', 'pg'] : ['sqlite']
+if (!pgAvailable) {
+  console.warn(
+    '[lenex.test.ts] Postgres not reachable — skipping PG-backend importLenex tests. ' +
+    'Start it with: docker compose -f packages/meet-app/docker-compose.postgres.yml up -d'
+  )
+}
+
+describe.each(LENEX_PARITY_BACKENDS)('importLenex backend parity [%s]', (kind) => {
+  async function withDb(fn: (db: Database.Database) => void | Promise<void>) {
+    if (kind === 'sqlite') {
+      const { db, cleanup } = createTestDb()
+      try {
+        await fn(db)
+      } finally {
+        cleanup()
+      }
+    } else {
+      const { db, cleanup } = await createPgTestDb()
+      try {
+        // importLenex only calls db.prepare()/db.exec() — PgBackend satisfies that
+        // structurally even though it isn't a real better-sqlite3 Database.
+        await fn(db as unknown as Database.Database)
+      } finally {
+        await cleanup()
+      }
+    }
+  }
+
+  it('imports sessions, events, swim styles, and age groups from a synthetic LXF, idempotently', async () => {
+    await withDb(async (db) => {
+      const lxfPath = join(tmpdir(), `test-lenex-parity-${kind}-${randomBytes(4).toString('hex')}.lxf`)
+      const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<LENEX version="3.0">
+  <MEETS>
+    <MEET name="Parity Test Meet" city="Test City" nation="CAN" course="LCM">
+      <SESSIONS>
+        <SESSION number="1" name="Session 1">
+          <EVENTS>
+            <EVENT eventid="1" number="1" gender="M" round="TIM">
+              <SWIMSTYLE swimstyleid="601" distance="16" relaycount="1" name="Drapeau Sur Plage" />
+              <AGEGROUPS>
+                <AGEGROUP agegroupid="1" name="Open" agemin="18" agemax="-1" gender="M" />
+              </AGEGROUPS>
+            </EVENT>
+          </EVENTS>
+        </SESSION>
+      </SESSIONS>
+    </MEET>
+  </MEETS>
+</LENEX>`
+      writeZipSingleEntry(lxfPath, 'meet.lef', xml)
+
+      try {
+        const summary = importLenex(lxfPath, db)
+        expect(summary.sessions).toBe(1)
+        expect(summary.events).toBe(1)
+
+        const styles = db.prepare('SELECT COUNT(*) AS c FROM swimstyle').get() as { c: number }
+        expect(styles.c).toBe(1)
+        const ags = db.prepare('SELECT COUNT(*) AS c FROM agegroup').get() as { c: number }
+        expect(ags.c).toBe(1)
+
+        // Re-import must be idempotent on both backends — exercises the upsert (ON CONFLICT
+        // DO UPDATE) paths, not just a fresh insert.
+        const summary2 = importLenex(lxfPath, db)
+        expect(summary2.sessions).toBe(1)
+        expect(summary2.events).toBe(1)
+        const stylesAfter = db.prepare('SELECT COUNT(*) AS c FROM swimstyle').get() as { c: number }
+        expect(stylesAfter.c).toBe(1)
+        const agsAfter = db.prepare('SELECT COUNT(*) AS c FROM agegroup').get() as { c: number }
+        expect(agsAfter.c).toBe(1)
+      } finally {
+        try { unlinkSync(lxfPath) } catch {}
+      }
+    })
   })
 })

@@ -47,4 +47,14 @@ export interface DbBackend {
 
   /** Backend type identifier */
   readonly type: 'sqlite' | 'pg'
+
+  /**
+   * Disable foreign-key enforcement for the duration of a bulk load (e.g. SMB
+   * restore, which inserts rows out of FK dependency order). Must be paired
+   * with enableForeignKeys() in a finally block.
+   */
+  disableForeignKeys(): void
+
+  /** Re-enable foreign-key enforcement after disableForeignKeys(). */
+  enableForeignKeys(): void
 }

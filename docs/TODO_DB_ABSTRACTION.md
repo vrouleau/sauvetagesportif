@@ -1,58 +1,21 @@
-# TODO: Database Abstraction Layer Refactor
+# Database Abstraction Layer Refactor
 
-**Priority:** Unblocked — DSQ catalog merged in `3615e65` (this file's own origin commit); ~10+ commits since.
-**Problem:** The `DbBackend` interface is incomplete — SQLite-specific syntax leaks through in multiple places. Behaviorally this has since been patched at each call site with inline backend sniffing rather than through the interface, so runtime correctness is no longer at risk, but the leaky-abstraction debt itself is unchanged.
+**Status: done (2026-08-04).** `DbBackend` (`dbBackend.ts`) now has `disableForeignKeys()`/`enableForeignKeys()`, implemented per-backend in `SqliteBackend` (real `PRAGMA foreign_keys`) and `PgBackend` (`SET session_replication_role`). `smb.ts`'s `saveSMB`/`restoreSMB`/`normalizeRoundEncoding` are typed against `DbBackend` instead of better-sqlite3's `Database.Database`, and dispatch on `db.type === 'pg'` instead of duck-typing `typeof db.pragma === 'function'`. The `INSERT OR IGNORE` vs `ON CONFLICT DO NOTHING` branch in `restoreSMB` was unified — SQLite (3.24+, bundled by better-sqlite3) supports the bare `ON CONFLICT DO NOTHING` form too, so both backends now share one INSERT statement.
 
-**Status as of 2026-08-03 audit:**
+**Bug this caught, not just debt paid down:** the pre-refactor `typeof db.pragma === 'function'` sniff was checked against whatever `getLocalDb()`/`getDb()` returns in production — a `SqliteBackend` or `PgBackend` instance (see `connectionManager.ts`), **not** a raw better-sqlite3 handle. `SqliteBackend` never exposed a `.pragma` method, so the sniff misidentified real local SQLite meets as "PG" on every desktop `.smb` save/restore: the FK-disable/enable pragma toggle silently never ran, and the PG-only OLE-date-sentinel filter (nulling any `D`-type column value outside 2–73000) was incorrectly applied to plain local restores too — a live, shipping bug invisible to `smb.test.ts` because that suite passed a raw `better-sqlite3.Database` directly, bypassing `SqliteBackend` entirely. `tests/smb.test.ts` and `tests/timing-scan.test.ts` now wrap their test db in `SqliteBackend` for every `saveSMB`/`restoreSMB` call, so this path is exercised for real going forward.
 
-| Location | Issue | Status |
-|----------|-------|--------|
-| `smb.ts` restoreSMB | `INSERT OR IGNORE` vs `ON CONFLICT DO NOTHING` | **Fixed, ad-hoc** — `isPg` ternary at call site (`smb.ts:1047-1050`), not a `DbBackend` method. Verified against real Splash+Postgres. |
-| `smb.ts` restoreSMB | `PRAGMA foreign_keys` vs `SET session_replication_role` | **Fixed, ad-hoc** — `typeof db.pragma === 'function'` branch (`smb.ts:1010, 1107`), the exact sniffing hack this doc calls out below as unresolved. |
-| `lenex.ts` importLenex / `index.ts` seedDsqCodes | `INSERT OR REPLACE INTO bsglobal` | **Fixed, cleanly** — both now use portable `ON CONFLICT (...) DO UPDATE` (SQLite 3.24+/PG both support it), no branching needed. See `index.ts:146-154`. |
-| `smb.ts` date columns | OLE sentinel values need filtering for PG's stricter TIMESTAMP | **Fixed, ad-hoc** — inline sentinel-range filter in `restoreSMB` (`smb.ts:1054-1076`), not a `DbBackend`-level concern. |
-| Various | `typeof db.pragma === 'function'` / `isPg` sniffing | **Still unresolved** — this is the actual remaining ask. `dbBackend.ts`'s `DbBackend` interface still has no dialect helpers (unchanged since this doc was written); `smb.ts` duck-types its `db: Database.Database` parameter and sniffs for a `pragma` method at runtime to tell backends apart. |
+**Testing Strategy's PG-in-CI ask is now covered too:** added a `describe.each(['sqlite','pg'])` block to `smb.test.ts` (`SMB save/restore backend parity`) that round-trips a full meet — club, athlete, events, a heat, a result — through `saveSMB`/`restoreSMB` against a real `PgBackend`, not just SQLite. Verified against a live Postgres instance (2/2 new cases pass, 330/330 full suite). Runs automatically in CI, which already provisions a Postgres service (`.github/workflows/ci.yml`).
 
-**Also still missing:** the Testing Strategy's ask to run SMB restore against PG in CI. `schema.test.ts`, `heat-generation.test.ts`, and `combined-events.test.ts` already run `describe.each(['sqlite','pg'])`; `smb.test.ts` does not — it only exercises `restoreSMB` against SQLite. Coverage against real PG has so far come from manual sessions (see `packages/meet-app/CLAUDE.md`'s PG-backend testing notes), not an automated suite.
+**Not touched, intentionally out of scope:** `timingScanDb.ts`'s `.pragma()` calls — that's a separate, always-local-only SQLite database for camera scan images, never shared with Postgres or Splash, so it was never part of the `DbBackend` abstraction to begin with.
 
-## Proposed Solution
+## What was implemented
 
-Extend `DbBackend` interface with dialect-aware helpers:
+`disableForeignKeys()`/`enableForeignKeys()` were added directly to `DbBackend` (the doc originally proposed `upsertSql`/`insertIgnoreSql` generic SQL-generation helpers too, but those turned out unnecessary in practice: SQLite 3.24+ and Postgres both accept the same bare `INSERT ... ON CONFLICT DO NOTHING`/`ON CONFLICT (...) DO UPDATE` syntax, so `smb.ts` and the other call sites just write one portable statement instead of asking a helper to generate dialect-specific SQL).
 
-```typescript
-interface DbBackend {
-  // Existing
-  prepare(sql: string): PreparedStatement
-  exec(sql: string): void
-  transaction<T>(fn: (...args: any[]) => T): (...args: any[]) => T
-  close(): void
-  readonly type: 'sqlite' | 'pg'
+**LXF import (`lenex.ts`) PG-parity coverage added (2026-08-04):** `tests/lenex.test.ts` now has an `importLenex backend parity [sqlite]`/`[pg]` block that imports a synthetic LXF (sessions, events, swim styles, age groups) into a real `PgBackend` and re-imports it to exercise the idempotent-upsert path, not just SQLite. `importLenex` itself was left typed against better-sqlite3's `Database.Database` (unlike `smb.ts`) — it only ever calls `.prepare()`/`.exec()`, both present on `PgBackend` too, so there was no functional bug here the way there was in `smb.ts` (which also called `.pragma()`, the thing that was actually broken); the test passes a `PgBackend` cast to that type rather than retyping `importLenex`/`exportLenexResults`/`exportMeetLenex`/`beachNumber.ts`'s two exports (all in the same call chain) to `DbBackend`, since that cascade would touch `beach-number.test.ts`'s ~1200 lines for a purely cosmetic type-accuracy win with no bug behind it. Verified: 2/2 new cases pass, 332/332 full suite.
 
-  // New: dialect helpers
-  disableForeignKeys(): void
-  enableForeignKeys(): void
-  upsertSql(table: string, cols: string[], conflictCol: string): string
-  insertIgnoreSql(table: string, cols: string[]): string
-}
-```
+**`getHeatListSessions`/`saveResult` PG-parity coverage added (2026-08-04) — and it immediately found a real, shipping bug.** Both functions gained an optional `injectedDb?: ReturnType<typeof getLocalDb>` parameter (same pattern already used by `getSessions`/`nextId`/`moveAgeGroup`/etc.), and `tests/results-entry.test.ts` added a `describe.each(['sqlite','pg'])` block that writes a time via `saveResult` and reads it back via `getHeatListSessions` against a real `PgBackend`. Per `packages/meet-app/CLAUDE.md`'s documented concurrency model, this exact pair (results entry + report/heat-list reads) is what multiple real stations run concurrently against a *shared* Postgres server — the highest real-world exposure of anything flagged in this doc.
 
-Or alternatively, a standalone `sqlDialect(db: DbBackend)` helper module.
+**The bug:** `PgBackend`'s `rewritePlaceholders()` (`pgBackend.ts`) blindly regex-replaced every `?` character in a SQL string with a sequential `$N`, including `?` characters inside string literals. `getHeatListSessions`'s age-group-name query uses `COALESCE(..., '???') AS agegroupname` (six occurrences across `db.ts`, all the same "unknown age group" fallback) — the three literal `?`s in `'???'` got consumed as if they were real placeholders, shifting every genuine placeholder after them out of sync with the actual bound params array. Postgres then rejected the query with `could not determine data type of parameter $1` — reproduced live against a real Postgres instance the moment the new PG-parity test ran, immediately on the first `getHeatListSessions` call. **Fixed** by rewriting `rewritePlaceholders` to track single-quote string-literal state (including `''`-escaped quotes) and only rewrite `?` outside of a string. Regression coverage: `tests/pgBackend.test.ts` (5 unit tests, including the exact `'???'`-before-a-real-placeholder shape that triggered this) plus `results-entry.test.ts`'s live-PG integration test. All 6 `'???'` call sites in `db.ts` are fixed by this one shared-function fix, not patched individually. Verified: 343/343 full suite, main-process typecheck clean.
 
-## Scope
-
-- Audit all `INSERT OR IGNORE`, `INSERT OR REPLACE`, `PRAGMA` usage
-- Replace with DbBackend methods or dialect helper
-- Remove all `typeof db.pragma` sniffing
-- Handle date sentinel values at the DbBackend level (PgBackend normalizes on insert)
-- Add integration tests that run SMB restore on both SQLite and PG
-
-## Testing Strategy
-
-When implementing this refactor, add a PG integration test to CI:
-1. Spin up a PostgreSQL container in the CI workflow
-2. Run SMB restore against PG (verifies INSERT syntax, date handling, FK disable)
-3. Run LXF import against PG (verifies entries import, event structure preservation)
-4. Verify getDsqItems works on both backends (with and without name_en column)
-5. Verify all queries in getHeatListSessions/getAthletes/saveResult work on PG
-
-This catches dialect issues at CI time rather than at user-testing time.
+`getDsqItems` was left alone — it doesn't exist as a named function (the `db:get-dsq-items` IPC handler in `index.ts` just inlines `SELECT dsqitemid, code, name, options, sortcode FROM dsqitem WHERE code IS NOT NULL AND code != '' ORDER BY sortcode`, a simple single-table query with no literal `?`, `DISTINCT`, `COLLATE`, or other portability risk found) — extracting it into a testable function for this would be pure ceremony with no bug behind it, unlike the other two.

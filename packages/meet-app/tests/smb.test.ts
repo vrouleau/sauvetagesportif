@@ -17,24 +17,34 @@
 // along with Sauvetage Sportif. If not, see <https://www.gnu.org/licenses/>.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { createTestDb, seedMeet } from './helpers'
+import {
+  createTestDb, seedMeet, createPgTestDb, isPgTestAvailable, resetTestDb,
+  type TestBackendKind,
+} from './helpers'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { randomBytes } from 'crypto'
 import { unlinkSync, existsSync } from 'fs'
 import type Database from 'better-sqlite3'
+import { SqliteBackend } from '../src/main/sqliteBackend'
+import type { DbBackend } from '../src/main/dbBackend'
 
 // Import the SMB functions directly
 import { saveSMB, restoreSMB, readZipEntries, decodeGbin } from '../src/main/smb'
 
 describe('SMB save/restore', () => {
   let db: Database.Database
+  // saveSMB/restoreSMB take a DbBackend (production passes SqliteBackend/PgBackend,
+  // never the raw better-sqlite3 handle) — wrap the same open connection so direct
+  // SQL in this file (seeding/assertions) and the SMB calls see the same data.
+  let backend: SqliteBackend
   let cleanup: () => void
   let smbPath: string
 
   beforeEach(() => {
     const t = createTestDb()
     db = t.db
+    backend = new SqliteBackend(db)
     cleanup = t.cleanup
     smbPath = join(tmpdir(), `test-${randomBytes(4).toString('hex')}.smb`)
   })
@@ -46,7 +56,7 @@ describe('SMB save/restore', () => {
 
   it('saves an SMB file that exists on disk', () => {
     seedMeet(db)
-    const result = saveSMB(smbPath, db)
+    const result = saveSMB(smbPath, backend)
     expect(existsSync(smbPath)).toBe(true)
     expect(result.tables).toBeGreaterThan(0)
     expect(result.rows).toBeGreaterThan(0)
@@ -56,7 +66,7 @@ describe('SMB save/restore', () => {
     seedMeet(db)
 
     // Save
-    saveSMB(smbPath, db)
+    saveSMB(smbPath, backend)
 
     // Verify data exists before restore
     const sessionsBefore = db.prepare('SELECT COUNT(*) as c FROM swimsession').get() as { c: number }
@@ -77,7 +87,7 @@ describe('SMB save/restore', () => {
     expect(sessionsAfterWipe.c).toBe(0)
 
     // Restore
-    const result = restoreSMB(smbPath, db)
+    const result = restoreSMB(smbPath, backend)
     expect(result.rows).toBeGreaterThan(0)
 
     // Verify data is back
@@ -95,14 +105,14 @@ describe('SMB save/restore', () => {
     db.prepare(`INSERT INTO bsglobal (name, data) VALUES ('MEETVALUES', 'NAME=S;Test Meet')`).run()
     db.prepare(`INSERT INTO bsglobal (name, data) VALUES ('admin_pin', '123456')`).run()
 
-    saveSMB(smbPath, db)
+    saveSMB(smbPath, backend)
 
     // Wipe
     db.exec('DELETE FROM bsglobal')
     expect((db.prepare('SELECT COUNT(*) as c FROM bsglobal').get() as { c: number }).c).toBe(0)
 
     // Restore
-    restoreSMB(smbPath, db)
+    restoreSMB(smbPath, backend)
 
     const meetvals = db.prepare(`SELECT data FROM bsglobal WHERE name='MEETVALUES'`).get() as { data: string }
     expect(meetvals.data).toContain('NAME=S;Test Meet')
@@ -116,9 +126,9 @@ describe('SMB save/restore', () => {
     // our own .smb backups restored into it was missing it (we never wrote it) — and Splash threw
     // a generic "invalid data" error the next time it reopened such a file, despite the restore
     // itself and that same session's usage working fine. Always stamp it on export.
-    saveSMB(smbPath, db)
+    saveSMB(smbPath, backend)
     db.exec('DELETE FROM bsglobal')
-    restoreSMB(smbPath, db)
+    restoreSMB(smbPath, backend)
 
     const row = db.prepare(`SELECT data FROM bsglobal WHERE name='BSAPPLICATION'`).get() as { data: string } | undefined
     expect(row?.data).toBe('Meet Manager - MEET')
@@ -126,9 +136,9 @@ describe('SMB save/restore', () => {
 
   it('does not duplicate BSAPPLICATION if already present in our own bsglobal', () => {
     db.prepare(`INSERT INTO bsglobal (name, data) VALUES ('BSAPPLICATION', 'Meet Manager - MEET')`).run()
-    saveSMB(smbPath, db)
+    saveSMB(smbPath, backend)
     db.exec('DELETE FROM bsglobal')
-    restoreSMB(smbPath, db)
+    restoreSMB(smbPath, backend)
 
     const rows = db.prepare(`SELECT data FROM bsglobal WHERE name='BSAPPLICATION'`).all() as { data: string }[]
     expect(rows.length).toBe(1)
@@ -140,7 +150,7 @@ describe('SMB save/restore', () => {
     // (see saveSMB's `tableName === 'recordagegroup'` case) is always present regardless
     // of content, and BSGLOBAL always gets a synthesized BSAPPLICATION row (see
     // `tableName === 'bsglobal'` case), so an otherwise-empty database produces exactly 2 rows.
-    const result = saveSMB(smbPath, db)
+    const result = saveSMB(smbPath, backend)
     expect(existsSync(smbPath)).toBe(true)
     expect(result.rows).toBe(2)
   })
@@ -160,7 +170,7 @@ describe('SMB save/restore', () => {
     db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode, internalevent, preveventid) VALUES (300, 1, 1, 12, 2, 4, 5, 'F', 200)`)
 
     // Save — file will contain Splash MDB encoding (5→1, 1→2, 4→9)
-    saveSMB(smbPath, db)
+    saveSMB(smbPath, backend)
 
     // Wipe
     db.exec('DELETE FROM swimevent')
@@ -168,7 +178,7 @@ describe('SMB save/restore', () => {
     db.exec('DELETE FROM swimstyle')
 
     // Restore — should detect MDB encoding (round=9 in file) and normalize back
-    restoreSMB(smbPath, db)
+    restoreSMB(smbPath, backend)
 
     // Verify round values are back to canonical
     const timEvent = db.prepare('SELECT round, gender FROM swimevent WHERE swimeventid=100').get() as { round: number; gender: number }
@@ -191,10 +201,10 @@ describe('SMB save/restore', () => {
       `INSERT INTO dsqitem (dsqitemid, code, lenexcode, name, options, sortcode) VALUES (?, ?, ?, ?, ?, ?)`
     ).run(4001, '1', '1', 'Test DSQ', 'INDIVIDUAL,RELAY', 1)
 
-    saveSMB(smbPath, db)
+    saveSMB(smbPath, backend)
 
     db.exec('DELETE FROM dsqitem')
-    restoreSMB(smbPath, db)
+    restoreSMB(smbPath, backend)
 
     const row = db.prepare('SELECT options FROM dsqitem WHERE dsqitemid=4001').get() as { options: string }
     expect(row.options).toBe('00000')
@@ -211,10 +221,10 @@ describe('SMB save/restore', () => {
       `INSERT INTO relay (relayid, clubid, swimeventid, athletes, relaycode) VALUES (?, ?, ?, ?, ?)`
     ).run(1, 1, 100, 40000, 99999)
 
-    expect(() => saveSMB(smbPath, db)).not.toThrow()
+    expect(() => saveSMB(smbPath, backend)).not.toThrow()
 
     db.exec('DELETE FROM relay')
-    restoreSMB(smbPath, db)
+    restoreSMB(smbPath, backend)
 
     const row = db.prepare('SELECT athletes, relaycode FROM relay WHERE relayid=1').get() as { athletes: number; relaycode: number }
     expect(row.athletes).toBe(40000)
@@ -227,12 +237,12 @@ describe('SMB save/restore', () => {
     ).run(4002, '2', 'AVERYLONGLENEXCODETHATOVERFLOWS', 'Test DSQ 2', 'RELAY', 2)
 
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    saveSMB(smbPath, db)
+    saveSMB(smbPath, backend)
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('DSQITEM.LENEXCODE'))
     warnSpy.mockRestore()
 
     db.exec('DELETE FROM dsqitem')
-    restoreSMB(smbPath, db)
+    restoreSMB(smbPath, backend)
 
     const row = db.prepare('SELECT lenexcode FROM dsqitem WHERE dsqitemid=4002').get() as { lenexcode: string }
     expect(row.lenexcode).toBe('AVERYLONGL') // clamped to LENEXCODE;S;10 (byte length)
@@ -248,12 +258,12 @@ describe('SMB save/restore', () => {
     ).run(4003, '3', '3', name, 'RELAY', 3)
 
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    saveSMB(smbPath, db)
+    saveSMB(smbPath, backend)
     expect(warnSpy).not.toHaveBeenCalled()
     warnSpy.mockRestore()
 
     db.exec('DELETE FROM dsqitem')
-    restoreSMB(smbPath, db)
+    restoreSMB(smbPath, backend)
 
     const row = db.prepare('SELECT name FROM dsqitem WHERE dsqitemid=4003').get() as { name: string }
     expect(row.name).toBe(name)
@@ -267,10 +277,10 @@ describe('SMB save/restore', () => {
     db.exec(`INSERT INTO relay (relayid, clubid, swimeventid) VALUES (1, 1, 100)`)
     db.prepare(`INSERT INTO relaysplit (relayid, distance, swimtime) VALUES (?, ?, ?)`).run(1, 25, 15230)
 
-    saveSMB(smbPath, db)
+    saveSMB(smbPath, backend)
 
     db.exec('DELETE FROM relaysplit')
-    restoreSMB(smbPath, db)
+    restoreSMB(smbPath, backend)
 
     const row = db.prepare('SELECT swimtime FROM relaysplit WHERE relayid=1 AND distance=25').get() as { swimtime: number } | undefined
     expect(row?.swimtime).toBe(15230)
@@ -291,10 +301,10 @@ describe('SMB save/restore', () => {
     db.exec(`INSERT INTO heat (heatid, swimeventid, heatnumber, racestatus, sortcode) VALUES (1, 100, 1, 4, 100)`)
     db.exec(`INSERT INTO swimresult (swimresultid, athleteid, swimeventid, heatid, agegroupid) VALUES (1, 1, 100, 1, 500)`)
 
-    saveSMB(smbPath, db)
+    saveSMB(smbPath, backend)
 
     db.exec('DELETE FROM heat')
-    restoreSMB(smbPath, db)
+    restoreSMB(smbPath, backend)
 
     const row = db.prepare('SELECT agegroupid FROM heat WHERE heatid=1').get() as { agegroupid: number | null }
     expect(row.agegroupid).toBe(500)
@@ -306,7 +316,7 @@ describe('SMB save/restore', () => {
     // access violation the moment any heat was viewed, even with zero results entered. We have no
     // records-tracking feature, so these are always empty, but must be genuinely present.
     seedMeet(db)
-    saveSMB(smbPath, db)
+    saveSMB(smbPath, backend)
 
     const zipEntries = readZipEntries(smbPath)
     for (const t of ['RECORDLIST', 'RECORDAGEGROUP', 'RECORDLISTAGEGROUP', 'RECORD', 'RECORDSPLIT', 'RECORDPOSITION']) {
@@ -314,7 +324,7 @@ describe('SMB save/restore', () => {
     }
 
     // Restore must not error even though these tables have no backing table in our own schema
-    expect(() => restoreSMB(smbPath, db)).not.toThrow()
+    expect(() => restoreSMB(smbPath, backend)).not.toThrow()
   })
 
   it('remaps racestatus 4 (our "seeded, not validated") to Splash\'s own 2 on export, and back on restore', () => {
@@ -330,7 +340,7 @@ describe('SMB save/restore', () => {
     db.exec(`INSERT INTO heat (heatid, swimeventid, heatnumber, racestatus, sortcode) VALUES (1, 100, 1, 4, 100)`)
     db.exec(`INSERT INTO heat (heatid, swimeventid, heatnumber, racestatus, sortcode) VALUES (2, 100, 2, 5, 200)`)
 
-    saveSMB(smbPath, db)
+    saveSMB(smbPath, backend)
 
     const zipEntries = readZipEntries(smbPath)
     const gbin = zipEntries.get('HEAT-0001.gbin')!
@@ -341,11 +351,85 @@ describe('SMB save/restore', () => {
     expect(exported2.racestatus).toBe(5)  // 5 unchanged
 
     db.exec('DELETE FROM heat')
-    restoreSMB(smbPath, db)
+    restoreSMB(smbPath, backend)
 
     const restored1 = db.prepare('SELECT racestatus FROM heat WHERE heatid=1').get() as { racestatus: number }
     const restored2 = db.prepare('SELECT racestatus FROM heat WHERE heatid=2').get() as { racestatus: number }
     expect(restored1.racestatus).toBe(4)  // round-trips back to our canonical 4
     expect(restored2.racestatus).toBe(5)
+  })
+})
+
+// ── Cross-backend parity: SMB save/restore against both SQLite and PostgreSQL ─
+//
+// restoreSMB dispatches on db.type ('sqlite' | 'pg') for FK-enforcement toggling
+// (DbBackend.disableForeignKeys/enableForeignKeys) and PG-specific OLE-date-sentinel
+// filtering. Every test above exercises the SQLite path through a real SqliteBackend;
+// this block is the only place a real PgBackend goes through saveSMB/restoreSMB, so a
+// dialect-dispatch regression fails here instead of only surfacing during a manual
+// session against a live Splash+Postgres setup (previously the only PG coverage this
+// code path had — see docs history on the DB abstraction refactor). Skips automatically
+// if no Postgres server is reachable (see packages/meet-app/docker-compose.postgres.yml).
+
+const pgAvailable = await isPgTestAvailable()
+const SMB_PARITY_BACKENDS: TestBackendKind[] = pgAvailable ? ['sqlite', 'pg'] : ['sqlite']
+if (!pgAvailable) {
+  console.warn(
+    '[smb.test.ts] Postgres not reachable — skipping PG-backend SMB parity tests. ' +
+    'Start it with: docker compose -f packages/meet-app/docker-compose.postgres.yml up -d'
+  )
+}
+
+describe.each(SMB_PARITY_BACKENDS)('SMB save/restore backend parity [%s]', (kind) => {
+  async function withDb(fn: (db: DbBackend) => void | Promise<void>) {
+    if (kind === 'sqlite') {
+      const { db, cleanup } = createTestDb()
+      try {
+        await fn(new SqliteBackend(db))
+      } finally {
+        cleanup()
+      }
+    } else {
+      const { db, cleanup } = await createPgTestDb()
+      try {
+        await fn(db)
+      } finally {
+        await cleanup()
+      }
+    }
+  }
+
+  it('round-trips a full meet — clubs, athletes, events, heats and results — through save/restore', async () => {
+    await withDb(async (backend) => {
+      seedMeet(backend)
+      // Add a heat (nullable AGEGROUPID left unset, exercising the same optional-FK path
+      // saveSMB's AGEGROUPID backfill and restoreSMB's FK-disable both exist to handle) and
+      // a result referencing athlete/event/heat, so the restore actually has FK edges to cross.
+      backend.exec(`INSERT INTO heat (heatid, swimeventid, heatnumber, racestatus, sortcode) VALUES (1, 1, 1, 5, 1)`)
+      backend.exec(`INSERT INTO swimresult (swimresultid, athleteid, swimeventid, heatid, lane, swimtime) VALUES (1, 1, 1, 1, 4, 65430)`)
+
+      const path = join(tmpdir(), `test-parity-${kind}-${randomBytes(4).toString('hex')}.smb`)
+      try {
+        const saveResult = saveSMB(path, backend)
+        expect(saveResult.rows).toBeGreaterThan(0)
+
+        resetTestDb(backend)
+        expect((backend.prepare('SELECT COUNT(*) AS c FROM athlete').get() as { c: number }).c).toBe(0)
+
+        const restoreResult = restoreSMB(path, backend)
+        expect(restoreResult.rows).toBeGreaterThan(0)
+
+        expect((backend.prepare('SELECT COUNT(*) AS c FROM club').get() as { c: number }).c).toBe(1)
+        expect((backend.prepare('SELECT COUNT(*) AS c FROM athlete').get() as { c: number }).c).toBe(1)
+        expect((backend.prepare('SELECT COUNT(*) AS c FROM swimevent').get() as { c: number }).c).toBe(3)
+        expect((backend.prepare('SELECT COUNT(*) AS c FROM heat').get() as { c: number }).c).toBe(1)
+
+        const result = backend.prepare('SELECT swimtime, lane FROM swimresult WHERE swimresultid = 1').get() as { swimtime: number; lane: number }
+        expect(result.swimtime).toBe(65430)
+        expect(result.lane).toBe(4)
+      } finally {
+        try { unlinkSync(path) } catch {}
+      }
+    })
   })
 })
