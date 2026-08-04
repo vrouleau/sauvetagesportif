@@ -44,6 +44,7 @@
 
 import { readFileSync, writeFileSync } from 'node:fs'
 import { inflateRawSync, deflateRawSync } from 'node:zlib'
+import { randomUUID } from 'node:crypto'
 import Database from 'better-sqlite3'
 
 // ── Table definitions (column name, type, size) ───────────────────────────────
@@ -59,8 +60,7 @@ export interface ColDef {
 // The column ORDER here defines the binary layout in the gbin file.
 // `stub: true` tables have no backing table in our own schema (we don't have a records-tracking
 // feature) — they're exported as genuinely-present-but-empty gbin files instead of omitted
-// entirely. See the RECORDLIST/RECORDAGEGROUP bug writeup in docs/SMB_SCHEMA_AUDIT_2026-08-01.md:
-// omitting them (the previous behavior) produced a working `.smb` file, but real Splash's Results
+// entirely: omitting them (the previous behavior) produced a working `.smb` file, but real Splash's Results
 // module apparently doesn't tolerate a *missing* record-checking table the way it tolerates an
 // empty one — it crashed with an access violation (nil dereference) the moment any heat was
 // viewed, even with zero results entered. saveSMB/restoreSMB special-case `stub` tables: always
@@ -267,12 +267,11 @@ const SMB_TABLES: { name: string; cols: ColDef[]; stub?: boolean }[] = [
       { name: 'WINNERTITLE', type: 'S', size: 100 },
       { name: 'FOREIGNCOUNT', type: 'I', size: 16 },
       { name: 'FINALSEEDTYPE', type: 'I', size: 16 },
-      { name: 'AFINAL8LANES', type: 'S', size: 1 }, // real Splash column, found missing via full schema diff against splashmeet.smb (docs/SMB_SCHEMA_AUDIT_2026-08-01.md)
+      { name: 'AFINAL8LANES', type: 'S', size: 1 }, // real Splash column, found missing via full schema diff against a genuine Splash-native .smb export
     ]
   },
-  // Real column defs captured from a populated Splash mdb via GetSchema("Columns")
-  // (see docs/SMB_SCHEMA_AUDIT_2026-08-01.md methodology) — we have no records-tracking
-  // feature, so these always export 0 rows (see `stub` comment above SMB_TABLES).
+  // Real column defs captured from a populated Splash mdb via GetSchema("Columns") —
+  // we have no records-tracking feature, so these always export 0 rows (see `stub` comment above SMB_TABLES).
   {
     name: 'RECORDLIST', stub: true, cols: [
       { name: 'RECORDLISTID', type: 'I', size: 32 },
@@ -426,7 +425,7 @@ const SMB_TABLES: { name: string; cols: ColDef[]; stub?: boolean }[] = [
       { name: 'AGEMAX', type: 'I', size: 16 },
       { name: 'AGEMIN', type: 'I', size: 16 },
       { name: 'AGETOTAL', type: 'I', size: 16 },
-      { name: 'ATHLETES', type: 'I', size: 32 }, // real Splash ≥11.84174 uses I;32, not I;16 (see docs/SMB_SCHEMA_AUDIT_2026-08-01.md)
+      { name: 'ATHLETES', type: 'I', size: 32 }, // real Splash ≥11.84174 uses I;32, not I;16
       { name: 'BACKUPTIME1', type: 'I', size: 32 },
       { name: 'BACKUPTIME2', type: 'I', size: 32 },
       { name: 'BACKUPTIME3', type: 'I', size: 32 },
@@ -461,7 +460,7 @@ const SMB_TABLES: { name: string; cols: ColDef[]; stub?: boolean }[] = [
       { name: 'QTTIMING', type: 'I', size: 16 },
       { name: 'QUALCODE', type: 'S', size: 2 },
       { name: 'REACTIONTIME', type: 'I', size: 16 },
-      { name: 'RELAYCODE', type: 'I', size: 32 }, // real Splash ≥11.84174 uses I;32, not I;16 (see docs/SMB_SCHEMA_AUDIT_2026-08-01.md)
+      { name: 'RELAYCODE', type: 'I', size: 32 }, // real Splash ≥11.84174 uses I;32, not I;16
       { name: 'RESERVECODE', type: 'S', size: 20 },
       { name: 'RESULTSTATUS', type: 'I', size: 16 },
       { name: 'SWIMEVENTID', type: 'I', size: 32 },
@@ -867,7 +866,6 @@ export function saveSMB(filePath: string, db: Database.Database): { tables: numb
     // whose digit encoding isn't reverse-engineered yet — writing our tag text there overflows
     // the 5-char field and Access rejects the whole restore. Until the encoding is known, write
     // the confirmed-safe default (matches real "no options set" rows) instead of the tag text.
-    // See docs/SMB_SCHEMA_AUDIT_2026-08-01.md.
     if (tableName === 'dsqitem') {
       rows = rows.map(row => ({ ...row, options: '00000' }))
     }
@@ -906,8 +904,7 @@ export function saveSMB(filePath: string, db: Database.Database): { tables: numb
       // via Microsoft.ACE.OLEDB.12.0 all used {2, 5} exclusively, never 4 — confirmed the actual
       // root cause of the Results-module access violation (THeat.VerifyStatus/UpdateStatus, which
       // exists specifically to interpret this field) after three other hypotheses were each
-      // individually ruled out by a bit-for-bit-identical crash following their fixes. See
-      // docs/SMB_SCHEMA_AUDIT_2026-08-01.md.
+      // individually ruled out by a bit-for-bit-identical crash following their fixes.
       rows = rows.map(row => row['racestatus'] === 4 ? { ...row, racestatus: 2 } : row)
     }
 
@@ -915,8 +912,7 @@ export function saveSMB(filePath: string, db: Database.Database): { tables: numb
     // offers those three, so BSGLOBAL.MeetCourse/MEETVALUES.COURSE always default to 1 (LCM) even
     // for a beach meet. A real Splash-native import of this exact same beach entries LXF used
     // COURSE=7, not 1 — single real sample, not independently reverse-engineered, but it's the
-    // best evidence available short of a full Splash course-enum dump. See
-    // docs/SMB_SCHEMA_AUDIT_2026-08-01.md.
+    // best evidence available short of a full Splash course-enum dump.
     if (tableName === 'bsglobal') {
       // Splash stamps every genuine Meet Manager database with BSAPPLICATION="Meet Manager - MEET"
       // in BSGLOBAL — confirmed present in every real Splash-native .mdb sampled, and absent from
@@ -971,11 +967,16 @@ export function saveSMB(filePath: string, db: Database.Database): { tables: numb
     'RESULTPLACE', 'TIMINGDATA', 'SPLASHMEMESSAGE',
   ]
 
+  // Version/GUID/[ExtraInfo] match the real installed Splash build's own .smb export
+  // (Meet Manager 11.84754, confirmed twice via direct comparison against genuine
+  // Splash-native re-exports). None of these were found to block a restore, but matching
+  // them keeps our file closer to what a real Splash install would produce.
   const ini = [
     '[Geologix]',
     'Application=Meet Manager 11',
-    'Version=11.84087',
+    'Version=11.84754',
     'Identification=BACKUP_MM_MEET_11',
+    `GUID=${randomUUID()}`,
     'NullDateYear=1800',
     'ExtraFiles=0',
     '',
@@ -990,9 +991,13 @@ export function saveSMB(filePath: string, db: Database.Database): { tables: numb
     '[Tables]',
     ...allTableNames.map(t => `${t}=${(recordCounts[t] ?? 0) > 0 ? 1 : 0}`),
     '',
+    '[ExtraInfo]',
+    'DBFilename=meet.mdb',
+    '',
   ].join('\r\n')
 
-  entries.push({ name: 'geologix.ini', data: Buffer.from(ini, 'ascii') })
+  // Real Splash writes geologix.ini with a UTF-8 BOM; match that for closer fidelity.
+  entries.push({ name: 'geologix.ini', data: Buffer.concat([Buffer.from([0xEF, 0xBB, 0xBF]), Buffer.from(ini, 'ascii')]) })
 
   const zip = createZip(entries)
   writeFileSync(filePath, zip)
@@ -1098,8 +1103,8 @@ export function restoreSMB(filePath: string, db: Database.Database): { tables: n
 
     // ── Post-import normalization: Splash racestatus encoding → canonical ──
     // Splash writes 2 for "generated/seeded, not yet officially validated" (confirmed against
-    // three real, populated Splash competition databases via Microsoft.ACE.OLEDB.12.0 — see
-    // docs/SMB_SCHEMA_AUDIT_2026-08-01.md); our own canonical encoding uses 4 for that same state
+    // three real, populated Splash competition databases via Microsoft.ACE.OLEDB.12.0);
+    // our own canonical encoding uses 4 for that same state
     // (decodeHeatStatus() in db.ts, validateHeat()/invalidateHeat()). 5 (validated) already matches
     // in both encodings, so only 2→4 needs converting — symmetric with saveSMB's export-side 4→2.
     db.prepare(`UPDATE heat SET racestatus = 4 WHERE racestatus = 2`).run()

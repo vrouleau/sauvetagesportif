@@ -364,8 +364,7 @@ Separate SQLite: `{userData}/timing_scans.sqlite`
 2. Keys stored in PostgreSQL `bsglobal` table
 3. Keys travel to meet-app via `.lxf` export: embedded as `.keys` JSON dotfile
    inside the zip archive (transparent). Team-app's own `.smb` import/export
-   was removed (see `docs/SMB_DEPRECATION_INVESTIGATION_2026-08-03.md`) — this
-   is now the only path.
+   was removed (superseded by LXF) — this is now the only path.
 4. Gemini OCR works automatically in meet-app (transparent to end users)
 
 ### Time entry

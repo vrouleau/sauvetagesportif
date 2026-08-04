@@ -65,7 +65,7 @@ describe('LENEX importer', () => {
     // Our own meet templates (config/template_pool.lxf, template_beach.lxf) never set a
     // <SWIMSTYLE stroke="..."> attribute — every style we ever import is a custom lifesaving
     // discipline, not a real FINA stroke. Confirmed via a real Splash-native import of the same
-    // entries LXF (docs/SMB_SCHEMA_AUDIT_2026-08-01.md): Splash represents this as
+    // entries LXF: Splash represents this as
     // stroke=0/technique=0/code="ID{swimstyleid}" — never stroke=1 (Freestyle) with technique=null,
     // which is what this importer used to write, and a state genuine Splash data never contains.
     const lxfPath = join(tmpdir(), `test-custom-style-${randomBytes(4).toString('hex')}.lxf`)

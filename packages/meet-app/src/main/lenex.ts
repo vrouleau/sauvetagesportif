@@ -117,7 +117,7 @@ function encodeStroke(s: string | undefined): number {
     // stroke="..."> attribute — every event we ever import is a custom lifesaving discipline, not
     // a FINA-catalog stroke. Real Splash's own LXF importer represents exactly this case with
     // STROKE=0 (never a real stroke code) — confirmed by decoding a genuine Splash-native export
-    // of this same LXF (see docs/SMB_SCHEMA_AUDIT_2026-08-01.md). Previously defaulted to 1 (FREE),
+    // of this same LXF. Previously defaulted to 1 (FREE),
     // which falsely claimed every custom style was Freestyle — a (stroke=1, technique=null)
     // combination Splash's own data never produces, and the leading suspect for a Results-module
     // access violation opening any heat in a restored .smb.
