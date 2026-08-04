@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.4.0] - 2026-08-04
+
+### Other
+
+- Remove docs/TODO_DB_ABSTRACTION.md — everything it tracked is done (`2dde1bc`)
+- Clean up event context menu: add Open/15-18 category presets, remove dead duplicates, fix silent no-op (`f5ffa9c`)
+- Implement DB abstraction layer refactor, fix a real PG placeholder bug (`94babef`)
+- Remove docs/TODO.md (`2ddcc2f`)
+- Match geologix.ini to real Splash format, retire two completed audit docs (`ba4606e`)
+- Itemize club invoices per athlete instead of per event (`62faa76`)
+
 ## [0.3.53] - 2026-08-03
 
 ### Other
