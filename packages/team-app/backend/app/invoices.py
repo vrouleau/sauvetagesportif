@@ -29,9 +29,9 @@ from sqlalchemy.orm import Session, joinedload
 
 from .models import (
     BsGlobal, SwimEvent, SwimStyle, SwimResult,
-    fee_dollars_to_cents,
+    fee_dollars_to_cents, GENDER_M, GENDER_F,
 )
-from .models_team import TeamClub, Member
+from .models_team import TeamClub, Member, Relay, RelayPos
 
 
 MEET_FEE_LABELS = {
@@ -104,7 +104,14 @@ def _stripe_client() -> None:
 
 
 def _club_line_items(db: Session, club: TeamClub, meet_fees: dict[str, int]) -> list[dict]:
-    """Build flat line items for a club."""
+    """Build one line item per athlete for a club.
+
+    Individual event fees are summed onto the athlete's own line. Relay event
+    fees are split evenly across that relay team's members (remainder cents
+    distributed deterministically so the split always sums back to the exact
+    event fee — no revenue lost to rounding). No per-event detail is shown,
+    only the athlete's individual/relay counts.
+    """
     # Build a map of event_number -> fee_cents
     all_events = db.query(SwimEvent).options(joinedload(SwimEvent.swimstyle)).all()
     fee_by_number = {}
@@ -122,44 +129,147 @@ def _club_line_items(db: Session, club: TeamClub, meet_fees: dict[str, int]) -> 
         .all()
     )
 
-    event_items: list[dict] = []
-    relay_seen: dict[int, dict] = {}
+    def _event_fee(ev) -> int:
+        return fee_dollars_to_cents(ev.fee) or fee_by_number.get(ev.eventnumber - 1, 0)
 
+    def _relay_count(ev) -> int:
+        style = ev.swimstyle if getattr(ev, "swimstyle", None) else None
+        return style.relaycount if style else 1
+
+    def _relay_team_fee(relay) -> int:
+        """Resolve the SwimEvent fee for a materialized relay team (relays table).
+
+        Same match priority as get_relay_teams/_get_event_native_age_code in
+        routers/api.py: eventnumb+style first, falling back to style+gender
+        for legacy rows without eventnumb.
+        """
+        event = None
+        if relay.eventnumb:
+            event = (
+                db.query(SwimEvent)
+                .filter(SwimEvent.swimstyleid == relay.stylesid, SwimEvent.eventnumber == relay.eventnumb)
+                .first()
+            )
+        if not event:
+            gender_str = "M" if relay.gender == GENDER_M else "F" if relay.gender == GENDER_F else "X"
+            for ev in db.query(SwimEvent).filter(SwimEvent.swimstyleid == relay.stylesid).all():
+                ev_gender_str = "M" if ev.gender == GENDER_M else "F" if ev.gender == GENDER_F else "X"
+                if ev_gender_str == gender_str:
+                    event = ev
+                    break
+        if not event:
+            return 0
+        return fee_dollars_to_cents(event.fee) or fee_by_number.get(event.eventnumber - 1, 0)
+
+    # First pass: for each billable relay event, collect its team members and
+    # fee so the fee can be split evenly (with exact-cent remainder handling).
+    relay_team_athletes: dict[int, set[int]] = {}
+    relay_event_fee: dict[int, int] = {}
     for reg, ev, ath in rows:
-        fee = fee_dollars_to_cents(ev.fee) or fee_by_number.get(ev.eventnumber - 1, 0)
+        if _relay_count(ev) <= 1:
+            continue
+        fee = _event_fee(ev)
         if fee <= 0:
             continue
-        style = ev.swimstyle if hasattr(ev, 'swimstyle') and ev.swimstyle else None
-        relay_count = style.relaycount if style else 1
-        style_name = style.name if style else ""
-        if relay_count == 1:
-            event_items.append({
-                "event_number": ev.eventnumber,
-                "event_name": style_name,
-                "description": f"{ath.lastname.upper()}, {ath.firstname}",
-                "qty": 1,
-                "unit_cents": fee,
-                "_sort": (ev.eventnumber or 0, ath.lastname.lower(), ath.firstname.lower()),
-            })
-        else:
-            line = relay_seen.get(ev.swimeventid)
-            if line is None:
-                line = {
-                    "event_number": ev.eventnumber,
-                    "event_name": style_name,
-                    "description": "",
-                    "members": [],
-                    "qty": 1,
-                    "unit_cents": fee,
-                    "_sort": (ev.eventnumber or 0, "", ""),
-                }
-                relay_seen[ev.swimeventid] = line
-                event_items.append(line)
-            line["members"].append(f"{ath.lastname.upper()}, {ath.firstname}")
+        relay_team_athletes.setdefault(ev.swimeventid, set()).add(ath.membersid)
+        relay_event_fee[ev.swimeventid] = fee
 
-    for line in relay_seen.values():
-        members = sorted(set(line.pop("members")))
-        line["description"] = "Relais — " + ", ".join(members) if members else "Relais"
+    relay_split_cents: dict[int, dict[int, int]] = {}
+    for evid, member_ids in relay_team_athletes.items():
+        fee = relay_event_fee[evid]
+        ids_sorted = sorted(member_ids)
+        n = len(ids_sorted)
+        base, remainder = divmod(fee, n)
+        relay_split_cents[evid] = {
+            mid: base + (1 if i < remainder else 0) for i, mid in enumerate(ids_sorted)
+        }
+
+    # Second pass: accumulate per-athlete totals and counts.
+    athletes: dict[int, dict] = {}
+    for reg, ev, ath in rows:
+        fee = _event_fee(ev)
+        if fee <= 0:
+            continue
+        entry = athletes.setdefault(ath.membersid, {
+            "name": f"{ath.lastname.upper()}, {ath.firstname}",
+            "_sort": (ath.lastname.lower(), ath.firstname.lower()),
+            "individual_count": 0,
+            "relay_count": 0,
+            "total_cents": 0,
+        })
+        if _relay_count(ev) == 1:
+            entry["individual_count"] += 1
+            entry["total_cents"] += fee
+        else:
+            entry["relay_count"] += 1
+            entry["total_cents"] += relay_split_cents[ev.swimeventid][ath.membersid]
+
+    # Materialized relay teams (built via the Relay Entry page) live in the
+    # relays/relayspos tables, not swimresult — swimresult only holds a
+    # placeholder "lock" until a team is created, at which point the lock row
+    # is deleted (see create_relay_team in routers/api.py). Both sources must
+    # be combined here or a club's relay fees vanish the moment its rosters
+    # are actually built.
+    meet_id_cfg = db.get(BsGlobal, "current_meetsid")
+    meet_id = int(meet_id_cfg.data) if meet_id_cfg and meet_id_cfg.data else None
+    relay_query = db.query(Relay).filter(Relay.clubsid == club.clubsid)
+    if meet_id:
+        relay_query = relay_query.filter(Relay.meetsid == meet_id)
+    relay_teams = relay_query.all()
+
+    if relay_teams:
+        relay_ids = [r.relaysid for r in relay_teams]
+        positions = (
+            db.query(RelayPos, Member)
+            .join(Member, RelayPos.membersid == Member.membersid)
+            .filter(RelayPos.relaysid.in_(relay_ids), RelayPos.membersid.isnot(None))
+            .all()
+        )
+        members_by_relay: dict[int, list[Member]] = {}
+        for pos, ath in positions:
+            members_by_relay.setdefault(pos.relaysid, []).append(ath)
+
+        for relay in relay_teams:
+            members = members_by_relay.get(relay.relaysid) or []
+            if not members:
+                continue
+            fee = _relay_team_fee(relay)
+            if fee <= 0:
+                continue
+            ids_sorted = sorted(m.membersid for m in members)
+            n = len(ids_sorted)
+            base, remainder = divmod(fee, n)
+            split = {mid: base + (1 if i < remainder else 0) for i, mid in enumerate(ids_sorted)}
+            for m in members:
+                entry = athletes.setdefault(m.membersid, {
+                    "name": f"{m.lastname.upper()}, {m.firstname}",
+                    "_sort": (m.lastname.lower(), m.firstname.lower()),
+                    "individual_count": 0,
+                    "relay_count": 0,
+                    "total_cents": 0,
+                })
+                entry["relay_count"] += 1
+                entry["total_cents"] += split[m.membersid]
+
+    event_items: list[dict] = []
+    for a in athletes.values():
+        if a["total_cents"] <= 0:
+            continue
+        parts = []
+        if a["individual_count"]:
+            parts.append(
+                f"{a['individual_count']} individuelle" + ("s" if a["individual_count"] > 1 else "")
+            )
+        if a["relay_count"]:
+            parts.append(f"{a['relay_count']} relais")
+        event_items.append({
+            "event_number": None,
+            "event_name": a["name"],
+            "description": ", ".join(parts),
+            "qty": 1,
+            "unit_cents": a["total_cents"],
+            "_sort": a["_sort"],
+        })
 
     event_items.sort(key=lambda x: x["_sort"])
     for it in event_items:
@@ -366,7 +476,7 @@ def generate_invoice_pdf(db: Session, club_id: int) -> bytes:
     flow.append(Spacer(1, 18))
 
     # Line items table
-    header_row = [Paragraph("<b>#</b>", cell), Paragraph("<b>ÉPREUVE / EVENT</b>", cell),
+    header_row = [Paragraph("<b>#</b>", cell), Paragraph("<b>ATHLÈTE / ATHLETE</b>", cell),
                   Paragraph("<b>DÉTAIL</b>", cell), Paragraph("<b>QTÉ</b>", cell_r),
                   Paragraph("<b>P.U.</b>", cell_r), Paragraph("<b>MONTANT</b>", cell_r)]
     data = [header_row]
