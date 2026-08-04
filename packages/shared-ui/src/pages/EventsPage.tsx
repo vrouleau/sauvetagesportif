@@ -659,11 +659,19 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
     await handleAddCategoryPresets([{ name: 'Nouvelle catégorie', minAge: 0, maxAge: null }])
   }
 
+  async function handleAddCategory1518() {
+    await handleAddCategoryPresets([{ name: '15-18', minAge: 15, maxAge: 18 }])
+  }
+
   async function handleAddCategory1518Open() {
     await handleAddCategoryPresets([
       { name: '15-18', minAge: 15, maxAge: 18 },
       { name: '19+', minAge: 19, maxAge: null },
     ])
+  }
+
+  async function handleAddCategoryOpen() {
+    await handleAddCategoryPresets([{ name: 'Open', minAge: 19, maxAge: null }])
   }
 
   async function handleAddCategoryMaster() {
@@ -1142,18 +1150,16 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
             setContextMenu(null)
             if (action === 'addSession') handleAddSession()
             else if (action === 'addDirectFinal') handleAddEventWithPhase('Finale directe')
-            else if (action === 'addSemiFinal') handleAddEventWithPhase('Eliminatoire')
             else if (action === 'addFinal') handleConvertToFinal()
-            else if (action === 'addMainHeat') handleAddEventWithPhase('Eliminatoire')
-            else if (action === 'addSeparateHeats') handleAddEventWithPhase('Eliminatoire')
-            else if (action === 'addTimeTrial') handleAddEventWithPhase('Finale directe')
             else if (action === 'addAward') handleAddAward()
             else if (action === 'addBreak') handleAddBreak()
             else if (action === 'addCategory') handleAddCategory()
             else if (action === 'addCategory10') handleAddCategoryPresets([{ name: '10-', minAge: 0, maxAge: 10 }])
             else if (action === 'addCategory1112') handleAddCategoryPresets([{ name: '11-12', minAge: 11, maxAge: 12 }])
             else if (action === 'addCategory1314') handleAddCategoryPresets([{ name: '13-14', minAge: 13, maxAge: 14 }])
+            else if (action === 'addCategory1518') handleAddCategory1518()
             else if (action === 'addCategory1518Open') handleAddCategory1518Open()
+            else if (action === 'addCategoryOpen') handleAddCategoryOpen()
             else if (action === 'addCategoryMaster') handleAddCategoryMaster()
             else if (action === 'delete') handleDelete()
           }}
@@ -1363,11 +1369,10 @@ function ToolbarBtn({
 
 type MenuAction =
   | 'addSession'
-  | 'addDirectFinal' | 'addSemiFinal' | 'addFinal'
-  | 'addMainHeat' | 'addSeparateHeats' | 'addTimeTrial' | 'addAward'
+  | 'addDirectFinal' | 'addFinal' | 'addAward'
   | 'addBreak'
   | 'addCategory' | 'addCategory10' | 'addCategory1112'
-  | 'addCategory1314' | 'addCategory1518Open' | 'addCategoryMaster'
+  | 'addCategory1314' | 'addCategory1518' | 'addCategory1518Open' | 'addCategoryOpen' | 'addCategoryMaster'
   | 'delete'
 
 function ContextMenu({
@@ -1432,6 +1437,10 @@ function ContextMenu({
 
   const canAddEvent = isSession || isEvent
   const canAddCategory = isEvent || isAgeGroup
+  // handleConvertToFinal only acts on a selected Timed Final event — it's a silent no-op
+  // otherwise (see EventsPage.tsx), so disable rather than show an item that does nothing
+  // when a session (or any non-Timed-Final event) is right-clicked.
+  const canConvertToFinal = isEvent && target.event.phase === 'Finale directe'
 
   return (
     <div
@@ -1443,11 +1452,7 @@ function ContextMenu({
       {item(t.events.menu.addSession, !isCompetition && !isSession, 'addSession')}
       <div className="my-1 border-t border-gray-200" />
       {item(t.events.menu.addDirectFinal, !canAddEvent, 'addDirectFinal')}
-      {item(t.events.menu.addSemiFinal, !canAddEvent, 'addSemiFinal')}
-      {item(t.events.menu.addFinal, !canAddEvent, 'addFinal')}
-      {item(t.events.menu.addMainHeat, !canAddEvent, 'addMainHeat')}
-      {item(t.events.menu.addSeparateHeats, !canAddEvent, 'addSeparateHeats')}
-      {item(t.events.menu.addTimeTrial, !canAddEvent, 'addTimeTrial')}
+      {item(t.events.menu.addFinal, !canConvertToFinal, 'addFinal')}
       {item(t.events.menu.addAward, !canAddEvent, 'addAward')}
       {item(t.events.menu.addBreak, !canAddEvent, 'addBreak')}
       <div className="my-1 border-t border-gray-200" />
@@ -1455,7 +1460,9 @@ function ContextMenu({
       {item(t.events.menu.addCategory10, !canAddCategory, 'addCategory10')}
       {item(t.events.menu.addCategory1112, !canAddCategory, 'addCategory1112')}
       {item(t.events.menu.addCategory1314, !canAddCategory, 'addCategory1314')}
+      {item(t.events.menu.addCategory1518, !canAddCategory, 'addCategory1518')}
       {item(t.events.menu.addCategory1518Open, !canAddCategory, 'addCategory1518Open')}
+      {item(t.events.menu.addCategoryOpen, !canAddCategory, 'addCategoryOpen')}
       {item(t.events.menu.addCategoryMaster, !canAddCategory, 'addCategoryMaster')}
       <div className="my-1 border-t border-gray-200" />
       {item(t.events.menu.delete, isCompetition, 'delete')}
