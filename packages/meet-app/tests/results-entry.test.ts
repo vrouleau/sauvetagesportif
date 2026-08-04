@@ -22,10 +22,10 @@
  * documented concurrency model, this exact pair is what multiple real stations run
  * concurrently against a *shared* Postgres server (only event-structure changes — heat
  * generation, event/agegroup edits — are single-station; results entry and report reads are
- * the multi-station case), so of the gaps flagged in docs/TODO_DB_ABSTRACTION.md this is the
- * one with the most real-world exposure. Neither function used any SQLite-only syntax (both
+ * the multi-station case), making this pairing the highest real-world-exposure spot to have
+ * PG-parity coverage. Neither function used any SQLite-only syntax (both
  * already relied on inClause() and portable SQL), so unlike beachNumber.ts's PG-parity suite
- * this isn't chasing a known bug — it's closing a coverage gap on a high-traffic path.
+ * this isn't chasing a known bug — it added coverage on a high-traffic path that had none.
  * Skipped automatically if no Postgres server is reachable.
  */
 import { describe, it, expect } from 'vitest'
