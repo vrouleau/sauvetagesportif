@@ -188,6 +188,40 @@ room scoping, no changes to `finalize_meet` beyond the guard above. This
 is a two-line schema addition (`LIVE_ACTIVE_MEETSID`) plus one validation
 check, not a fourth migration surface.
 
+### 6. Bonus fix, folded in here since it's the same subsystem: scope the live page to today's session
+
+Separate from concurrency, but caught while tracing this code: the live
+page doesn't currently show "today's session" at all — it shows
+**everything ever pushed since live mode was last enabled.**
+`GET /api/live/events` (`live.py:441`) has no date filter, `LiveEvent`
+rows are only ever cleared by `finalize_meet` at the very end of the whole
+meet, and the frontend (`ResultsPage.jsx`'s `LiveView`) just renders
+whatever that endpoint returns. So on a multi-day meet, day 1's events sit
+in the sidebar right through day 3; if heats are ever generated for the
+whole meet in one action, every day's events show from day one.
+
+This is worth fixing here rather than separately, because it directly
+reinforces decision #5 above: once the live page only shows *today's*
+session, "at most one meet is ever genuinely live" stops being just a
+scheduling argument and becomes something the page itself enforces by
+construction — there's structurally nothing from a different day (or a
+different meet, since two meets never share a session day) for it to
+display.
+
+Concrete fix:
+
+- `LiveEvent` gains a `session_date` column.
+- meet-app's `_pushStartListsAfterGeneration` (`index.ts:2226`) already
+  joins `swimsession` for `sessionnumber`/`name` — it just needs to also
+  select `s.startdate` (confirmed present in meet-app's own schema,
+  `schema.ts:53`, currently unused by any live-push code) and include it
+  as `session_date` in `eventsPayload` (`index.ts:2263`).
+- `GET /api/live/events` filters `WHERE session_date = <today>` by
+  default. No session scheduled today → empty list, same "waiting for
+  events" empty state the page already shows.
+- No frontend change needed — `LiveView` already just renders whatever
+  the endpoint returns; the filter lives entirely server-side.
+
 ## Migration mechanics
 
 This is the project's first true in-place ALTER migration (every prior
@@ -197,10 +231,12 @@ drop/rebuild). Concretely, at startup, before `create_all`:
 1. Detect existing installs (the `swimevent` table exists and has no
    `meetsid` column).
 2. `ALTER TABLE ... ADD COLUMN meetsid INTEGER` (nullable) on the five
-   registration tables and `secret_links`. Live tables (`live_events`,
-   `live_results`, `live_startlist`, `push_subscriptions`) are
-   **unchanged** — see "Live results" above, they intentionally stay a
-   singleton.
+   registration tables and `secret_links`. `live_results`, `live_startlist`,
+   `push_subscriptions` are **unchanged** — see "Live results" above, they
+   intentionally stay a singleton. `live_events` gets one unrelated
+   addition: `ADD COLUMN session_date DATE` (nullable — old rows without
+   it just won't match the "today" filter, which is fine, they're stale
+   anyway and get cleared on the next `finalize_meet`).
 3. Backfill: every existing row gets the value currently in
    `bsglobal.current_meetsid` (there is, by construction, only one meet
    today — this is a safe 1:1 backfill, not a guess).
@@ -475,6 +511,13 @@ build here beyond what Phase 1 already added:
   that didn't exist before because the conflict wasn't previously
   possible.
 
+**The "today's session only" fix (Phase 1, item 6) also needs no Phase 2
+work.** It's a server-side filter on `GET /api/live/events` — `LiveView`
+in `ResultsPage.jsx` already just renders whatever that endpoint returns,
+so the visible effect (spectators only ever see today's events instead of
+the whole meet's history-to-date) falls out automatically once the filter
+ships, with no frontend change.
+
 ## Frontend plumbing
 
 - `localStorage`: add `meet_id` alongside the existing `pin`/`role`/
@@ -527,6 +570,11 @@ build here beyond what Phase 1 already added:
   meet A's live data is still sitting un-finalized is rejected with a
   clear message; enabling live mode for meet A again (or after meet A is
   properly finalized) succeeds.
+- Today's-session filter test: `live_events` rows with yesterday's or
+  tomorrow's `session_date` don't appear in `GET /api/live/events`; rows
+  matching today's date do. Covers the day-boundary edge (a session
+  running late into the evening should still count as "today" by its
+  `session_date`, not wall-clock time crossing midnight).
 
 ## Decisions
 
