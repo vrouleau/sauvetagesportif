@@ -15,19 +15,22 @@ exactly one meet's data at a time, so running a second concurrent meet —
 pool or beach — requires either a second app instance or artificially
 staggering registration windows so they never truly overlap.
 
-The same problem exists one layer further in: the real-time live-results
-feed meet-app pushes to during a competition (`models_live.py`) is its own
-separate singleton, with no meet dimension at all — see the dedicated
-subsection below. It's actually the more urgent of the two, since it risks
-silent data collision (not just a UX limitation) the moment two physical
-meets are live at once.
+Registration is the only part of this that actually needs to support
+concurrency. The real-time live-results feed meet-app pushes to during a
+competition (`models_live.py`) does not: sessions each pin to one calendar
+date and two meets never schedule a session on the same day, so at most
+one meet is ever genuinely "live" at a time — see the dedicated
+subsection below for why that stays a deliberate singleton, with just one
+new invariant to enforce (no two meets' sessions on the same date) now
+that overlapping registration periods are becoming normal.
 
 Phase 1 is the data model change needed to make "more than one meet
-active at once" representable at all, for both registration and live
-results. Phase 2 (below) is exposing that capability through the UI
-(persistent meet-switcher, per-meet live config, etc.). **Phase 1 does not
-change any user-visible behavior** — it only removes the schema-level
-blocker so Phase 2 has something to build on.
+registering at once" representable at all, plus that one small scheduling
+guard for the live side. Phase 2 (below) is exposing the registration
+side through the UI (persistent meet-switcher, etc.) — live results needs
+no new UI at all. **Phase 1 does not change any user-visible behavior**
+— it only removes the schema-level blocker so Phase 2 has something to
+build on.
 
 ## Current state (verified against the code and against a real Splash
 Team Manager `.mdb` file)
@@ -137,59 +140,53 @@ An invite link must resolve to one specific meet once more than one can be
 open. Add `meetsid` (nullable, backfilled to the current meet at migration
 time, NOT NULL after).
 
-### 5. Live results (`models_live.py`) — a fourth singleton, and the most urgent one
+### 5. Live results (`models_live.py`) — stays a singleton, on purpose
 
-This one isn't covered by anything above and deserves its own call-out:
-`routers/live.py` is the real-time feed meet-app pushes to during a live
-competition (heat results, DSQs, announcements → WebSocket-broadcast to
-spectators on `/results`). I checked `models_live.py` directly — it's
-**entirely unscoped**, more so than the registration tables:
+Correction from an earlier draft of this plan: I'd initially treated
+`models_live.py` as a fourth table set needing the same `meetsid`
+treatment as everything else. That's not right, and it's worth recording
+why, since the reasoning is the whole point.
 
-- `LiveEvent.event_id` is the primary key **on its own** — not even a
-  composite key. `LiveResult`/`LiveStartlist` are unique on
-  `(event_id, heat_number, lane)`, no `meetsid` anywhere.
-- `PushSubscription` (coach DSQ push notifications) is keyed by `club_id`
-  only — "cleared on meet finalization (same lifecycle as other live
-  tables)" per its own docstring, i.e. it already assumes a single live
-  meet's lifecycle.
-- Live mode is gated by exactly **one shared secret**:
-  `bsglobal.LIVE_PUSH_SECRET`, checked by `require_live_secret`
-  (`live.py:83`). `POST /api/live/enable` (`live.py:524`) *generates a
-  new secret and overwrites the old one* every time it's called.
-- `ConnectionManager` (`live.py:105`) broadcasts every message to **every
-  connected WebSocket**, with no per-meet channel/room concept.
-- `finalize_meet` (`live.py:565`) promotes *all* `LiveResult` rows to a
-  single new historical `Meet` row — it has no way to know two physical
-  meets' results are mixed together in there.
+**Registration periods can overlap. Competition days cannot.** Two meets
+can both be collecting entries at once (that's the entire premise of this
+plan), but a meet's *sessions* each pin to one calendar date, and two
+meets never schedule a session on the same day — there's no world where
+two physical competitions are both running live on the same weekend. Live
+mode is only ever meaningful while a session is actually happening, so at
+most one meet is ever genuinely "live" at any moment, by the nature of
+the thing, not by a rule the software has to invent. `models_live.py`
+being a singleton isn't a gap to close — it's already the correct shape
+for a concept that only ever has one active instance. Adding `meetsid`
+scoping, per-meet secrets, and WebSocket rooms here would be solving a
+collision that can't occur, at real cost to the live subsystem's
+simplicity.
 
-**Why this is more urgent than the registration singleton:** the
-registration tables degrade gracefully today — nothing breaks until
-someone actually tries to open a second concurrent meet, which is exactly
-what this whole plan is gating. Live results is different: `event_id`
-values are template-based and get reused meet-to-meet (same numbering
-scheme every cycle, per the ID-ranges table earlier in this doc), so two
-meet-app instances pushing concurrently would very plausibly collide on
-the same `(event_id, heat_number, lane)` key today, silently overwriting
-each other's live times — *and* the second organizer to call
-`/api/live/enable` invalidates the first meet's push secret, breaking
-their feed outright. This isn't a missing nicety, it's latent data
-corruption waiting for the first time two competitions run live at once.
+**What Phase 1 actually needs here is much smaller: make the "no two
+sessions on the same day" assumption an enforced invariant instead of an
+unenforced convention**, now that overlapping *registration* periods are
+becoming normal. Concretely:
 
-Fix, same pattern as the rest of this plan:
+- When a session's date is saved (session create, and `PUT
+  /api/sessions/{id}` — `api.py`, see "Session Date" in the team-app
+  CLAUDE.md), reject the write if any other meet already has a session on
+  that date. This is the one new check — small, and it's what actually
+  keeps the live tables' singleton assumption true going forward, rather
+  than just hoping nobody schedules a conflict.
+- Small defense-in-depth backstop, not the primary safeguard: track which
+  `meetsid` currently owns the live tables (`bsglobal.LIVE_ACTIVE_MEETSID`,
+  set by `enable_live_mode`, cleared by `finalize_meet`). If
+  `enable_live_mode` is called for a *different* meet while a previous
+  meet's live data hasn't been finalized or cleared yet, reject with a
+  clear message ("Meet X's live results haven't been finalized — finalize
+  or clear them first") instead of silently overwriting the secret and
+  mixing two meets' heats into one table. This only ever fires if the
+  session-date rule above was somehow bypassed or an organizer forgot to
+  finalize before their next session — it shouldn't come up in practice.
 
-- Add `meetsid` to `live_events`, `live_results`, `live_startlist`,
-  `push_subscriptions`; widen the unique constraints to
-  `(meetsid, event_id, heat_number, lane)` and `LiveEvent`'s PK to
-  `(meetsid, event_id)`.
-- Move `LIVE_ENABLED`/`LIVE_PUSH_SECRET`/`LIVE_LAST_PUSH` out of
-  `bsglobal` into the new meet-scoped `meet_config` table — **this is the
-  one that actually matters**: each concurrently-open meet gets its own
-  independent secret, so a second meet's organizer enabling live mode can
-  no longer invalidate a first meet's in-progress push credential.
-- `require_live_secret` resolves which `meetsid` a push belongs to *from
-  the secret itself* (look up which meet's `meet_config` row holds that
-  secret) — meet-app doesn't need to know or send a `meetsid` explicitly,
-  it just keeps using the secret it was configured with.
+No `meetsid` column, no widened keys, no per-meet secrets, no WebSocket
+room scoping, no changes to `finalize_meet` beyond the guard above. This
+is a two-line schema addition (`LIVE_ACTIVE_MEETSID`) plus one validation
+check, not a fourth migration surface.
 
 ## Migration mechanics
 
@@ -200,16 +197,18 @@ drop/rebuild). Concretely, at startup, before `create_all`:
 1. Detect existing installs (the `swimevent` table exists and has no
    `meetsid` column).
 2. `ALTER TABLE ... ADD COLUMN meetsid INTEGER` (nullable) on the five
-   registration tables, `secret_links`, and the four live-results tables
-   (`live_events`, `live_results`, `live_startlist`, `push_subscriptions`).
+   registration tables and `secret_links`. Live tables (`live_events`,
+   `live_results`, `live_startlist`, `push_subscriptions`) are
+   **unchanged** — see "Live results" above, they intentionally stay a
+   singleton.
 3. Backfill: every existing row gets the value currently in
    `bsglobal.current_meetsid` (there is, by construction, only one meet
    today — this is a safe 1:1 backfill, not a guess).
-4. Add the FK constraint and flip to `NOT NULL` once backfilled; widen
-   `LiveEvent`'s PK and the live unique constraints to include `meetsid`.
-5. Create `meet_config`, copy the 13 registration keys **and**
-   `LIVE_ENABLED`/`LIVE_PUSH_SECRET`/`LIVE_LAST_PUSH` out of `bsglobal`
-   for the current `meetsid`, delete them from `bsglobal`.
+4. Add the FK constraint and flip to `NOT NULL` once backfilled.
+5. Create `meet_config`, copy the 13 registration keys out of `bsglobal`
+   for the current `meetsid`, delete them from `bsglobal`. `LIVE_ENABLED`/
+   `LIVE_PUSH_SECRET`/`LIVE_LAST_PUSH` stay in `bsglobal` as-is; add
+   `LIVE_ACTIVE_MEETSID` alongside them.
 6. Add `meet_type`/`registration_open` columns to `meets`, backfill
    `meet_type` from the existing `bsglobal.meet_type` value and
    `registration_open = true` for the current meet.
@@ -252,19 +251,11 @@ Registration tables (`SwimSession`/`SwimEvent`/`AgeGroup`/`SwimResult`/
 | `best_times.py` | 2 |
 
 Live-results tables (`LiveEvent`/`LiveResult`/`LiveSplit`/`LiveStartlist`/
-`PushSubscription`) — smaller, self-contained surface, entirely inside the
-live subsystem:
-
-| File | Occurrences |
-|---|---|
-| `routers/live.py` | 45 |
-| `routers/push_notifications.py` | 17 |
-| `models_live.py` | 5 |
-| `routers/api.py` | 5 |
-
-The live-results fix is contained enough (four files, one of them the
-model definitions themselves) that it can land alongside the registration
-migration in the same Phase 1 pass rather than needing its own phase.
+`PushSubscription`) need **no query changes** — they stay unscoped, per
+the "stays a singleton, on purpose" reasoning above. The only touch point
+is `enable_live_mode` (`live.py:524`), which gains the
+`LIVE_ACTIVE_MEETSID` guard, and the session-date-save endpoints, which
+gain the same-day-exclusivity check.
 
 The payoff: `flush_meet`/`_reset_for_next_meet`/`create_new_meet` change
 from blanket `db.query(X).delete()` to `.filter(meetsid == target).delete()`
@@ -465,40 +456,24 @@ UI inside them. LXF export/import (`/api/export/registrations-lxf`,
 `/api/upload/meet`, etc.) take whatever `meetId` is currently active in the
 switcher.
 
-## Live results — per-meet push credentials and public view
+## Live results — no new UI needed
 
-Phase 1 makes each meet's live secret independent; Phase 2 is what
-surfaces that so two organizers can run live mode at once without
-coordinating with each other.
+Since at most one meet is ever genuinely live (sessions can't collide on a
+calendar day — see Phase 1), the public `/results` page, the organizer
+live-config screen, and the WebSocket broadcast are **unchanged in Phase
+2**. There's no second live meet to pick between, so there's nothing to
+build here beyond what Phase 1 already added:
 
-- **Organizer's live-config screen** (today: `POST /api/live/enable`,
-  `GET /api/live/config`) becomes per-meet — enabling live mode for meet A
-  generates a secret scoped to meet A's `meet_config` row and has no effect
-  on meet B's. Each meet-app instance is configured with the secret for
-  the one physical competition it's running, same as today, just no
-  longer capable of stepping on a concurrent meet's credential.
-- **Public `/results` page**: `GET /api/live/status` today answers "is
-  *a* live meet active" with one flat boolean. It becomes "list of
-  currently-live meets." Same invisibility rule as the registration
-  switcher: exactly one live meet → spectators land straight on it, no
-  picker; more than one → a lightweight list to choose from before landing
-  on `ResultsPage.jsx`.
-- **WebSocket broadcast becomes per-meet.** `ConnectionManager`
-  (`live.py:105`) currently has no concept of "which meet is this
-  spectator watching" — every connected socket gets every broadcast. Fix:
-  `/api/live/ws` takes a `meet_id` query param, and `manager.broadcast`
-  filters to sockets subscribed to the relevant `meetsid` instead of
-  blasting everyone. Without this, a spectator watching meet A's beach
-  results would also see meet B's heat updates and DSQ alerts mixed in.
-- **`finalize_meet`** (`live.py:565`) takes an explicit `meetsid` and only
-  promotes that meet's `LiveResult` rows to history, scoped-deletes only
-  that meet's live tables — same pattern as the registration side's
-  scoped flush, applied here for the same reason (don't touch a
-  concurrently-running second live meet).
-- **DSQ/announcement push notifications** (`push_notifications.py`)
-  currently notify "ALL subscribed coaches" per its own comment — becomes
-  scoped to subscribers of the specific meet the DSQ/announcement belongs
-  to, via `PushSubscription.meetsid`.
+- If an organizer tries to enable live mode while a previous meet's live
+  data hasn't been finalized (the `LIVE_ACTIVE_MEETSID` guard from Phase
+  1), they see a clear error telling them to finalize or clear the
+  previous meet first — a message, not a new screen.
+- If the session-date exclusivity check (Phase 1) rejects a session date
+  because another meet already has one that day, the organizer sees that
+  at the point they're setting the date, in the same session-properties
+  panel they already use — no new UI, just a new validation error path
+  that didn't exist before because the conflict wasn't previously
+  possible.
 
 ## Frontend plumbing
 
@@ -545,14 +520,13 @@ coordinating with each other.
 - Self-invite test: a meet-specific invite link lands directly on that
   meet without the switcher appearing, even when the invited club has
   other open meets.
-- **Live-results isolation test** (the one directly motivated by real
-  collision risk, not just UX): enable live mode on two concurrent meets
-  that reuse the same `event_id`/`heat_number`/`lane` combination
-  (realistic, since IDs are template-based), push results to both, and
-  assert neither meet's secret invalidates the other's, no `LiveResult`
-  row is overwritten across meets, a spectator connected to meet A's
-  WebSocket never receives meet B's broadcasts, and `finalize_meet` on
-  meet A leaves meet B's live data untouched.
+- Session-date exclusivity test: saving a session date that collides with
+  another currently-open meet's session date is rejected; non-colliding
+  dates across two open meets save fine.
+- `LIVE_ACTIVE_MEETSID` guard test: enabling live mode for meet B while
+  meet A's live data is still sitting un-finalized is rejected with a
+  clear message; enabling live mode for meet A again (or after meet A is
+  properly finalized) succeeds.
 
 ## Decisions
 
