@@ -2527,33 +2527,41 @@ def _reset_for_next_meet(db: Session) -> None:
     Called after an organizer closes the meet by importing final results.
     Preserves historical meets (meetstate=3), clubs, members, and best times.
     """
-    # Clear Team Manager current (non-historical) meets first (FK to swimstyle)
     from ..models_team import (
         Event as TeamEvent, Session as TeamSession,
         Meet as TeamMeet, MemberMeet as TeamMemberMeet,
     )
     current_ids = [r for r, in db.query(TeamMeet.meetsid).filter(TeamMeet.meetstate != 3).all()]
-    if current_ids:
-        db.query(TeamMemberMeet).filter(TeamMemberMeet.meetsid.in_(current_ids)).delete(synchronize_session=False)
-        db.query(TeamEvent).filter(TeamEvent.meetsid.in_(current_ids)).delete(synchronize_session=False)
-        db.query(TeamSession).filter(TeamSession.meetsid.in_(current_ids)).delete(synchronize_session=False)
-        db.query(TeamMeet).filter(TeamMeet.meetsid.in_(current_ids)).delete(synchronize_session=False)
-    db.flush()
 
-    # Clear Meet Manager schema (registrations + event structure) — scoped to
-    # the meet(s) just closed (current_ids), not a blanket delete, so a
-    # concurrently-open meet's own registrations survive. Today current_ids is
-    # always exactly the one meet being closed (no endpoint opens a second one
-    # yet — see docs/CONCURRENT_MEETS_PLAN.md), but this is the actual new
-    # capability Phase 1 delivers. SwimStyle is never wiped here — it's a
-    # shared catalog (upserted by id), and historical Team Manager Event/Result
-    # rows we just preserved above still reference it.
+    # Clear Meet Manager schema (registrations + event structure) first —
+    # scoped to the meet(s) just closed (current_ids), not a blanket delete,
+    # so a concurrently-open meet's own registrations survive. Today
+    # current_ids is always exactly the one meet being closed (no endpoint
+    # opens a second one yet — see docs/CONCURRENT_MEETS_PLAN.md), but this
+    # is the actual new capability Phase 1 delivers. SwimStyle is never wiped
+    # here — it's a shared catalog (upserted by id), and historical Team
+    # Manager Event/Result rows preserved below still reference it.
+    #
+    # Must run before the meets row itself is deleted below: these tables now
+    # carry a meetsid FK to meets.meetsid (Phase 1), and Postgres enforces it
+    # immediately — deleting meets first raises ForeignKeyViolation. SQLite's
+    # dev stack doesn't catch this ordering bug (docker-compose.yml alone),
+    # only the Postgres-backed integration suite does.
     if current_ids:
         db.query(SwimResult).filter(SwimResult.meetsid.in_(current_ids)).delete(synchronize_session=False)
         db.query(Heat).filter(Heat.meetsid.in_(current_ids)).delete(synchronize_session=False)
         db.query(AgeGroup).filter(AgeGroup.meetsid.in_(current_ids)).delete(synchronize_session=False)
         db.query(SwimEvent).filter(SwimEvent.meetsid.in_(current_ids)).delete(synchronize_session=False)
         db.query(SwimSession).filter(SwimSession.meetsid.in_(current_ids)).delete(synchronize_session=False)
+
+    # Clear Team Manager current (non-historical) meets (FK to swimstyle, and
+    # the meets row(s) the Meet Manager tables above just stopped referencing)
+    if current_ids:
+        db.query(TeamMemberMeet).filter(TeamMemberMeet.meetsid.in_(current_ids)).delete(synchronize_session=False)
+        db.query(TeamEvent).filter(TeamEvent.meetsid.in_(current_ids)).delete(synchronize_session=False)
+        db.query(TeamSession).filter(TeamSession.meetsid.in_(current_ids)).delete(synchronize_session=False)
+        db.query(TeamMeet).filter(TeamMeet.meetsid.in_(current_ids)).delete(synchronize_session=False)
+    db.flush()
 
     # meet_config for current_ids was already cleared above (ON DELETE CASCADE
     # from the TeamMeet delete). Intentionally preserved in bsglobal (app-level,

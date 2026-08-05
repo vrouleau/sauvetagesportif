@@ -47,6 +47,9 @@ from app import models_serc  # noqa: F401
 from app.migrations.versions import m0001_concurrent_meets as migration
 from app.migrations.runner import apply_pending
 from app.meet_config import get_active_meetsid, session_date_conflict
+from app.events import load_events
+
+POOL_TEMPLATE = Path(__file__).resolve().parent.parent.parent.parent.parent / "config" / "template_pool.lxf"
 
 
 # ---------------------------------------------------------------------------
@@ -145,6 +148,34 @@ class TestMigration:
         assert "meetsid" in cols
         with new_engine.connect() as conn:
             assert conn.execute(text("SELECT COUNT(*) FROM meet_config")).scalar() == 0
+
+
+class TestLoadEventsStartupGuard:
+    """Regression test: main.py's startup calls events.load_events(), which
+    used to only check "is swimevent empty?" before loading the pool
+    template. A meet can be registration_open=True with zero events yet
+    (empty meet state — see team-app's CLAUDE.md), and on that shape
+    load_events would create a *second* registration_open=True Meet row.
+    get_active_meetsid() then resolves to whichever has the higher meetsid —
+    not necessarily the real one. Caught via live WSL testing, not by any
+    prior test."""
+
+    def test_skips_load_when_a_meet_is_already_active_with_no_events(self, db_session):
+        db_session.add(TeamMeet(meetsid=7, name="Real Meet", registration_open=True))
+        db_session.commit()
+
+        count = load_events(db_session, POOL_TEMPLATE)
+
+        assert count == 0
+        assert db_session.query(TeamMeet).count() == 1
+        assert get_active_meetsid(db_session) == 7
+
+    def test_loads_when_nothing_is_active(self, db_session):
+        count = load_events(db_session, POOL_TEMPLATE)
+
+        assert count > 0
+        assert db_session.query(TeamMeet).count() == 1
+        assert get_active_meetsid(db_session) is not None
 
 
 class TestRunner:

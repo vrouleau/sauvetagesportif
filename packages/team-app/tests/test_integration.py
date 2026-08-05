@@ -36,6 +36,7 @@ from conftest import (
     BASE_URL, MEET_TEMPLATE, ENTRIES_FILE, RESULTS_FILE,
     get_registration, post_registration, delete_registration,
     export_bundle, export_lxf, export_registrations_lxf, export_meet_lxf,
+    exec_in_backend,
 )
 
 # ---------------------------------------------------------------------------
@@ -1001,6 +1002,80 @@ class TestSessions:
         """The /sessions endpoint should be accessible without authentication."""
         r = requests.get(f"{BASE_URL}/api/sessions", timeout=10)
         assert r.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Session-date exclusivity (Concurrent Meets Phase 1) — PUT /sessions/{id}
+# ---------------------------------------------------------------------------
+
+class TestSessionDateExclusivityEndpoint:
+    """session_date_conflict() (meet_config.py) has full unit coverage, but
+    nothing exercised the actual HTTP wiring: does PUT /api/sessions/{id}
+    call it and return 409, or accept a colliding date silently?
+
+    Phase 1 doesn't expose any public endpoint that opens a second
+    registration_open=True meet yet (that's Phase 2), so there's no way to
+    reach this precondition through the API alone — this seeds a rival meet
+    directly in the backend container via exec_in_backend(), same DB the
+    running stack uses, then drives the actual assertion over plain HTTP."""
+
+    RIVAL_MEETSID = 999999
+    RIVAL_DATE = "2027-03-15"
+
+    @pytest.fixture(scope="class", autouse=True)
+    def rival_meet(self, uploaded):
+        exec_in_backend(
+            "from app.database import SessionLocal\n"
+            "from app.models_team import Meet\n"
+            "from app.models import SwimSession\n"
+            "from datetime import date\n"
+            "db = SessionLocal()\n"
+            f"db.add(Meet(meetsid={TestSessionDateExclusivityEndpoint.RIVAL_MEETSID}, "
+            "name='Rival Meet', meetstate=0, registration_open=True))\n"
+            # Meet (models_team.py) and SwimSession (models.py) use separate
+            # declarative Base/MetaData, so the unit-of-work insert-ordering
+            # topological sort doesn't see the cross-metadata FK — flush the
+            # Meet row for real before inserting anything that references it
+            # (same pattern events.py's _load_from_parsed already follows).
+            "db.flush()\n"
+            f"db.add(SwimSession(swimsessionid={TestSessionDateExclusivityEndpoint.RIVAL_MEETSID}, "
+            f"meetsid={TestSessionDateExclusivityEndpoint.RIVAL_MEETSID}, sessionnumber=1, "
+            f"name='Rival Session', startdate=date.fromisoformat('{TestSessionDateExclusivityEndpoint.RIVAL_DATE}')))\n"
+            "db.commit()\n"
+        )
+        yield
+        exec_in_backend(
+            "from app.database import SessionLocal\n"
+            "from app.models_team import Meet\n"
+            "from app.models import SwimSession\n"
+            "db = SessionLocal()\n"
+            f"db.query(SwimSession).filter(SwimSession.meetsid=={TestSessionDateExclusivityEndpoint.RIVAL_MEETSID}).delete()\n"
+            f"db.query(Meet).filter(Meet.meetsid=={TestSessionDateExclusivityEndpoint.RIVAL_MEETSID}).delete()\n"
+            "db.commit()\n"
+        )
+
+    @pytest.fixture(scope="class")
+    def a_session_id(self, uploaded) -> int:
+        r = requests.get(f"{BASE_URL}/api/sessions", timeout=10)
+        r.raise_for_status()
+        return r.json()[0]["id"]
+
+    def test_colliding_date_is_rejected(self, rival_meet, a_session_id, admin_headers):
+        r = requests.put(
+            f"{BASE_URL}/api/sessions/{a_session_id}",
+            json={"startdate": self.RIVAL_DATE},
+            headers=admin_headers, timeout=10,
+        )
+        assert r.status_code == 409, f"Expected 409 on colliding session date, got {r.status_code}: {r.text}"
+        assert "Rival Meet" in r.text
+
+    def test_non_colliding_date_is_accepted(self, rival_meet, a_session_id, admin_headers):
+        r = requests.put(
+            f"{BASE_URL}/api/sessions/{a_session_id}",
+            json={"startdate": "2027-04-20"},
+            headers=admin_headers, timeout=10,
+        )
+        assert r.status_code == 200, f"Non-colliding session date rejected: {r.text}"
 
 
 # ---------------------------------------------------------------------------
@@ -1976,6 +2051,100 @@ class TestLiveNotifications:
 
 
 # ---------------------------------------------------------------------------
+# Live events — scoped to today's session_date (Concurrent Meets Phase 1)
+# ---------------------------------------------------------------------------
+
+class TestLiveEventsSessionDateFilter:
+    """GET /api/live/events used to return everything ever pushed since live
+    mode was last enabled; it's now scoped to session_date == today (see
+    docs/CONCURRENT_MEETS_PLAN.md item 6), so a stale prior day's events (or
+    a concurrently-registering meet's events on a different day) don't leak
+    into the live view. Nothing previously exercised this endpoint at all."""
+
+    @pytest.fixture(autouse=True, scope="class")
+    def _ensure_meet(self, admin_headers):
+        with open(MEET_TEMPLATE, "rb") as f:
+            r = requests.post(f"{BASE_URL}/api/upload/meet?force=true",
+                              files={"file": ("meet.lxf", f, "application/octet-stream")},
+                              headers=admin_headers, timeout=60)
+            assert r.status_code == 200
+
+    @pytest.fixture(scope="class")
+    def live_secret(self, admin_headers) -> str:
+        r = requests.post(f"{BASE_URL}/api/live/enable", headers=admin_headers, timeout=10)
+        assert r.status_code == 200
+        return r.json()["secret"]
+
+    @pytest.fixture(scope="class")
+    def live_headers(self, live_secret) -> dict:
+        return {"X-Live-Secret": live_secret, "Content-Type": "application/json"}
+
+    def test_event_with_todays_session_date_is_returned(self, live_headers):
+        from datetime import date
+        today = date.today().isoformat()
+        r = requests.post(
+            f"{BASE_URL}/api/live/push-events",
+            headers=live_headers,
+            json={"events": [{
+                "event_id": 9101, "session_number": 1, "session_name": "Session 1",
+                "event_number": 1, "event_name": "Today's Event", "gender": "M",
+                "distance": 100, "round": "TIM", "total_heats": 1,
+                "session_date": today,
+            }]},
+            timeout=10,
+        )
+        assert r.status_code == 200
+        assert r.json()["accepted"] == 1
+
+        r = requests.get(f"{BASE_URL}/api/live/events", timeout=10)
+        r.raise_for_status()
+        ids = [e["event_id"] for e in r.json()]
+        assert 9101 in ids
+
+    def test_event_with_a_different_session_date_is_excluded(self, live_headers):
+        r = requests.post(
+            f"{BASE_URL}/api/live/push-events",
+            headers=live_headers,
+            json={"events": [{
+                "event_id": 9102, "session_number": 2, "session_name": "Session 2",
+                "event_number": 1, "event_name": "Yesterday's Event", "gender": "F",
+                "distance": 100, "round": "TIM", "total_heats": 1,
+                "session_date": "2020-01-01",
+            }]},
+            timeout=10,
+        )
+        assert r.status_code == 200
+        assert r.json()["accepted"] == 1
+
+        r = requests.get(f"{BASE_URL}/api/live/events", timeout=10)
+        r.raise_for_status()
+        ids = [e["event_id"] for e in r.json()]
+        assert 9102 not in ids
+
+    def test_event_with_no_session_date_is_excluded(self, live_headers):
+        """meet-app instances that haven't been updated to send session_date
+        yet must not have their events leak into the live view forever —
+        excluded, same as a stale prior day (see live.py's live_events)."""
+        r = requests.post(
+            f"{BASE_URL}/api/live/push-events",
+            headers=live_headers,
+            json={"events": [{
+                "event_id": 9103, "session_number": 3, "session_name": "Session 3",
+                "event_number": 1, "event_name": "No Date Event", "gender": "M",
+                "distance": 100, "round": "TIM", "total_heats": 1,
+            }]},
+            timeout=10,
+        )
+        assert r.status_code == 200
+        assert r.json()["accepted"] == 1
+
+        r = requests.get(f"{BASE_URL}/api/live/events", timeout=10)
+        r.raise_for_status()
+        ids = [e["event_id"] for e in r.json()]
+        assert 9103 not in ids
+
+
+# ---------------------------------------------------------------------------
 # Relay Team Composition Validation (gender balance + age group anchor)
 # ---------------------------------------------------------------------------
 
@@ -2911,6 +3080,76 @@ class TestUploadMeetPreservesHistory:
         assert meet_type.upper() == "POOL", (
             f"Pool meet misclassified as {meet_type} due to a historical beach style"
         )
+
+
+# ---------------------------------------------------------------------------
+# Flush Meet — must not wipe archived (historical) meets either
+# ---------------------------------------------------------------------------
+
+class TestFlushMeetPreservesHistory:
+    """Same regression class as TestNewMeetPreservesHistory /
+    TestUploadMeetPreservesHistory, but for DELETE /api/registrations
+    ("Flush Meet" in Admin). This path used to blanket-delete every TeamMeet
+    row (and every SwimResult/AgeGroup/SwimEvent/SwimSession row), including
+    archived (meetstate=3) ones, plus the entire SwimStyle catalog — found
+    live against a real WSL dev DB, where clicking "Reset Meet" still wiped
+    history even after the /api/admin/new-meet and /api/upload/meet paths
+    had already been fixed. Fixed in flush_meet() (routers/api.py); this is
+    its regression test, matching the pattern the other two paths already
+    have."""
+
+    @pytest.fixture(autouse=True, scope="class")
+    def _restore_current_meet(self, admin_headers):
+        yield
+        with open(MEET_TEMPLATE, "rb") as f:
+            requests.post(f"{BASE_URL}/api/upload/meet?force=true",
+                          files={"file": ("meet.lxf", f, "application/octet-stream")},
+                          headers=admin_headers, timeout=60)
+        if ENTRIES_FILE.exists():
+            with open(ENTRIES_FILE, "rb") as f:
+                requests.post(f"{BASE_URL}/api/upload/entries",
+                              files={"file": ("entries.lxf", f, "application/octet-stream")},
+                              headers=admin_headers, timeout=60)
+
+    @pytest.fixture(scope="class")
+    def results_lxf_bytes(self, results_path) -> bytes:
+        return results_path.read_bytes()
+
+    def test_flush_meet_keeps_historical_results(self, results_lxf_bytes, admin_headers):
+        r = requests.post(
+            f"{BASE_URL}/api/admin/import-historical?force=true",
+            files={"file": ("results.lxf", results_lxf_bytes, "application/octet-stream")},
+            headers=admin_headers, timeout=30,
+        )
+        assert r.status_code == 200, f"Historical import failed: {r.text}"
+        meet_id = r.json()["meet_id"]
+
+        before = requests.get(f"{BASE_URL}/api/admin/historical-meets",
+                              headers=admin_headers, timeout=10)
+        before.raise_for_status()
+        before_entry = next((m for m in before.json() if m["id"] == meet_id), None)
+        assert before_entry is not None
+        assert before_entry["resultCount"] > 0
+
+        r = requests.delete(f"{BASE_URL}/api/registrations", headers=admin_headers, timeout=30)
+        assert r.status_code == 200, f"flush meet failed: {r.text}"
+
+        after = requests.get(f"{BASE_URL}/api/admin/historical-meets",
+                             headers=admin_headers, timeout=10)
+        after.raise_for_status()
+        after_entry = next((m for m in after.json() if m["id"] == meet_id), None)
+        assert after_entry is not None, "Historical meet vanished after DELETE /api/registrations"
+        assert after_entry["resultCount"] == before_entry["resultCount"], (
+            "Historical results were lost after flushing the current meet"
+        )
+
+    def test_flush_meet_keeps_swimstyle_catalog_usable(self, admin_headers):
+        """SwimStyle rows are upserted by id, not wiped, so both the surviving
+        historical results and the fresh (reloaded) meet keep valid style
+        references."""
+        r = requests.get(f"{BASE_URL}/api/swim-styles", headers=admin_headers, timeout=10)
+        r.raise_for_status()
+        assert len(r.json()) > 0
 
 
 # ---------------------------------------------------------------------------

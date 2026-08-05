@@ -29,6 +29,7 @@ from .models import (
 )
 from .models_team import Meet, Session as TeamSession, Event as TeamEvent
 from .meet_parser import parse_meet_lxf, ParsedMeet
+from .meet_config import get_active_meetsid
 
 
 def _round_from_lenex(round_str: str) -> int:
@@ -154,8 +155,16 @@ def _load_from_parsed(db: Session, meet: ParsedMeet) -> int:
 
 
 def load_events(db: Session, lxf_path: Path) -> int:
-    """Load events from meet .lxf if table is empty. Returns count."""
-    if db.query(SwimEvent).first():
+    """Load events from meet .lxf on a genuinely empty install.
+
+    Must check for an already-active meet, not just an empty `swimevent`
+    table: a meet can be "current" (registration_open=True) with zero events
+    loaded yet (see "Empty meet state is supported" in team-app's CLAUDE.md).
+    Loading the template on top of that would create a second
+    registration_open=True row, and get_active_meetsid() would then resolve
+    to whichever one has the higher meetsid — not necessarily the real one.
+    """
+    if db.query(SwimEvent).first() or get_active_meetsid(db) is not None:
         return 0
     meet = parse_meet_lxf(lxf_path)
     return _load_from_parsed(db, meet)
