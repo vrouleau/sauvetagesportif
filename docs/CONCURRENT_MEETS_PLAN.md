@@ -77,7 +77,7 @@ Two additions to `meets` itself:
 | New column | Purpose |
 |---|---|
 | `meet_type` (`POOL`/`BEACH`) | First-class instead of a `bsglobal` scalar — this is the one field concurrency rules actually key off. |
-| `registration_open` (boolean) | `meetstate` already distinguishes planned(0)/completed(3); this adds "is this meet currently accepting entries," independent of archival state. A pool meet and a beach meet can both have `registration_open = true` at once; two pool meets should not (business rule enforced at the application layer, not the DB — see Non-Goals). |
+| `registration_open` (boolean) | `meetstate` already distinguishes planned(0)/completed(3); this adds "is this meet currently accepting entries," independent of archival state. Any number of meets — pool, beach, or a mix — can have `registration_open = true` at once; there's no type-based cap (see Phase 2). |
 
 ### 2. Add `meetsid` FK to the Meet Manager tables
 
@@ -186,8 +186,9 @@ file, not all are call sites — real audit happens during implementation):
 
 The payoff: `flush_meet`/`_reset_for_next_meet`/`create_new_meet` change
 from blanket `db.query(X).delete()` to `.filter(meetsid == target).delete()`
-— which is what actually unlocks closing one beach meet without touching
-a concurrently-open second one.
+— which is what actually unlocks closing one meet (beach's scoped
+flush, or pool's results-import archival) without touching whatever else
+is concurrently open, pool or beach.
 
 ## Non-goals for Phase 1
 
@@ -266,17 +267,26 @@ design work is making that threading disappear in the single-meet case.
 ## Application-layer business rule (new in Phase 2 — Phase 1 only stores the flag)
 
 Phase 1 added `meets.registration_open`, but didn't decide who's allowed to
-set it. Phase 2 owns that rule:
+set it. The first draft of this plan assumed pool meets never overlap and
+hard-coded a "max 1 open pool meet" cap — that assumption doesn't hold:
+there's a 2-week gap between pool meets in January–February 2027 tight
+enough that their registration windows can overlap too. So the real rule
+isn't about sport type at all:
 
-- **Pool**: at most one `meetsid` with `registration_open = true` at a
-  time (unchanged from today). Starting a new pool meet while one is open
-  is blocked with a clear message, same spirit as today's implicit
-  single-meet behavior — just explicit now instead of accidental.
-- **Beach**: no such limit. Multiple `registration_open = true` beach
-  meets can coexist.
+- **No system-enforced cap, for either type.** Admin can open a new meet
+  (pool or beach) regardless of what's already `registration_open` — the
+  decision to run two meets concurrently is an organizational call, not
+  something the schema or backend should block.
+- Type only matters for *what happens when a meet closes* (Phase 1's
+  distinction stands: beach closes via the scoped delete/flush, no
+  archive, since there's nothing to keep; pool closes via the existing
+  results-import → historical-archive path) — not for how many can be
+  open at once.
 
-This check lives in `create_new_meet` (`api.py:578`) and needs one new
-guard clause per type before allocating the new `meets` row.
+This removes the type-based guard clause from `create_new_meet`
+(`api.py:578`) altogether rather than adding one — one less special case,
+and it no longer silently breaks the next time meet scheduling gets tight
+in either sport.
 
 ## Admin: from "the current meet" to a meets list
 
@@ -411,8 +421,10 @@ switcher.
   switch (Organizer tab present for A, absent for B), and a club/admin
   with only one open meet never sees the dropdown at all — regression
   check for the "invisible in the common case" requirement.
-- Admin rule test: attempting to open a second pool meet while one is
-  `registration_open` is rejected; attempting the same for beach succeeds.
+- Admin flow test: opening a second pool meet while one is already
+  `registration_open` succeeds (covers the January–February 2027 case
+  directly) and both remain independently manageable — closure dates,
+  entries, and closing one doesn't touch the other.
 - Self-invite test: a meet-specific invite link lands directly on that
   meet without the switcher appearing, even when the invited club has
   other open meets.
