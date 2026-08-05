@@ -2445,18 +2445,29 @@ def status(db: Session = Depends(get_db)):
 
 @router.delete("/registrations", dependencies=[Depends(require_admin)])
 def flush_meet(db: Session = Depends(get_db)):
-    """Flush meet: delete registrations, events, meet config. Reloads pool template."""
+    """Flush meet: delete registrations, events, meet config. Reloads pool template.
+
+    Current (non-historical) meet only — matches what the UI actually
+    promises ("delete the organizer designation, meet structure, and all
+    registrations"), same as _reset_for_next_meet. Used to blanket-delete
+    every TeamMeet row including archived (meetstate=3) ones, silently
+    destroying historical results/events on every "Flush Meet" click —
+    real data loss, not the advertised behavior. Fixed here.
+    """
     reg_count = db.query(SwimResult).delete()
     db.query(Heat).delete()
     db.query(AgeGroup).delete()
     db.query(SwimEvent).delete()
     db.query(SwimSession).delete()
-    # Clear Team Manager event tables BEFORE swimstyle (FK dependency)
+    # Clear Team Manager event tables for the current meet only — archived
+    # (meetstate=3) meets, and the SwimStyle catalog their Event/Result rows
+    # still reference, survive.
     from ..models_team import Event as TeamEvent, Session as TeamSession, Meet as TeamMeet
-    db.query(TeamEvent).delete()
-    db.query(TeamSession).delete()
-    db.query(TeamMeet).delete()
-    db.query(SwimStyle).delete()
+    current_ids = [r for r, in db.query(TeamMeet.meetsid).filter(TeamMeet.meetstate != 3).all()]
+    if current_ids:
+        db.query(TeamEvent).filter(TeamEvent.meetsid.in_(current_ids)).delete(synchronize_session=False)
+        db.query(TeamSession).filter(TeamSession.meetsid.in_(current_ids)).delete(synchronize_session=False)
+        db.query(TeamMeet).filter(TeamMeet.meetsid.in_(current_ids)).delete(synchronize_session=False)
     for key in ("meet_filename", "meet_uploaded_at", "meet_name", "meet_course",
                 "meet_masters", "meet_currency", "meet_fees_json", "closure_date",
                 "organizer_club_id", "current_meetsid", "MEETVALUES",
@@ -2495,11 +2506,19 @@ def _reload_pool_template(db: Session) -> None:
     from ..models_team import Event as TeamEvent, Session as TeamSession
     meet = parse_meet_lxf(template_path)
     _load_from_parsed(db, meet)
+    # Scoped to the stub meet _load_from_parsed just created (bsglobal
+    # current_meetsid, which it just set) — TeamEvent/TeamSession already
+    # carry a real meetsid FK (Team Manager schema is multi-meet), so a
+    # blanket delete here would also wipe any preserved historical meet's
+    # event/session structure, not just this throwaway stub's.
+    stub_meetsid_str = _get_config(db, "current_meetsid")
+    stub_meetsid = int(stub_meetsid_str) if stub_meetsid_str else None
     db.query(AgeGroup).delete()
     db.query(SwimEvent).delete()
     db.query(SwimSession).delete()
-    db.query(TeamEvent).delete()
-    db.query(TeamSession).delete()
+    if stub_meetsid is not None:
+        db.query(TeamEvent).filter(TeamEvent.meetsid == stub_meetsid).delete(synchronize_session=False)
+        db.query(TeamSession).filter(TeamSession.meetsid == stub_meetsid).delete(synchronize_session=False)
     styles_loaded = db.query(SwimStyle).count()
     print(f"Reloaded {styles_loaded} swimstyles from pool template (no events)")
 
