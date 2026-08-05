@@ -300,52 +300,78 @@ guard clause per type before allocating the new `meets` row.
   change** — these already operate across all data or are app-level, not
   meet-scoped.
 
-## Organizer: mostly unchanged, now meet-scoped instead of app-scoped
+## Role is per-(club, meet), not per-login
 
-An organizer session is already tied to one club (`organizer_club_id`). In
-Phase 1 that key moved into meet-scoped `meet_config`, which means it was
-already implicitly one-club-per-meet — Phase 2 just makes that explicit:
-assigning an organizer is a per-meet action (done from the Admin meets
-dashboard above), and once assigned, `Organizer.jsx` and `EventsPage`
-operate on that one `meetId` for the rest of that organizer's session. An
-organizer never juggles multiple meets in one sitting in this design —
-Admin assigns one organizer club per meet, same mental model as today,
-just no longer assuming there's only one meet in the whole system.
+This is a correction from the first draft. An organizer's club doesn't
+only organize — while running meet A, the same club is very likely also
+*entering athletes as a participant* in a concurrently-open meet B (their
+own coach registering swimmers for the other beach meet), and Admin
+manages every open meet at once by definition. So `role` can't be resolved
+once at login and held fixed — it's a function of **which meet is
+currently selected**:
 
-Practical effect: **`Organizer.jsx` and `EventsPage.tsx` barely change.**
-They gain a `meetId` they read from context instead of assuming "the
-current meet," but the screens themselves don't need new UI.
+- `admin`: global, same for every meet (unchanged).
+- a club's role is **per meet**: e.g. club X is `organizer` for meet A and
+  plain `coach` for meet B, simultaneously.
 
-LXF export/import (`/api/export/registrations-lxf`, `/api/upload/meet`,
-etc.) start taking the organizer's bound `meetId` — since it's already
-resolved from their session, no new picker needed here either.
+`POST /api/auth` changes to return the club's full list of open meets,
+each tagged with that club's role for it, instead of one flat `role`:
 
-## Coach flow — the one place a picker can appear
+```json
+{
+  "club_id": 12,
+  "club_name": "CNSM",
+  "meets": [
+    { "meet_id": 3, "name": "Beach Meet A", "role": "organizer" },
+    { "meet_id": 4, "name": "Beach Meet B", "role": "coach" }
+  ]
+}
+```
 
-This is the only surface where genuine ambiguity exists: a club could
-have open registrations in two concurrent beach meets. Design:
+## Meet switcher — persistent, not a login-time picker
 
-1. `POST /api/auth` gains a resolved list of open meets that club is
-   eligible for (today: always exactly 1; during beach season: possibly
-   more, per club).
-2. **Exactly 1 open meet** (pool always, beach usually): auth response
-   includes that `meetId`, `main.jsx` stores it in `localStorage` next to
-   `role`/`club_id`, and every route behaves exactly as it does today —
-   zero visible change, same PIN, same click path.
-3. **More than 1 open meet for that club**: after PIN entry, insert one
-   lightweight screen — a list of the open meets ("Beach Meet A — May
-   10–12" / "Beach Meet B — May 24–26"), reusing the meet-info fields
-   already returned by `/api/meet-info` per meet. Coach picks one, lands
-   on the exact same `IndividualEntryPage`/`RelayEntryPage` they already
-   know, now scoped to that `meetId`. A "switch meet" link stays available
-   from within the app (small addition to `AuthLayout`'s title bar,
-   `main.jsx:197`) rather than forcing logout/login to change meets.
-4. **Self-invite / secret links** (`Secret.jsx`, `SelfInvite.jsx`): these
-   already carry a token that Phase 1 ties to one `meetsid`. A coach
-   arriving via a meet-specific invite link skips the picker entirely —
-   the token already answers "which meet." The picker in step 3 is only
-   needed for the generic PIN-login path when a club is eligible for more
-   than one open meet and arrives without a meet-specific link.
+Given the above, switching meets is routine, not an edge case — it needs
+to happen without logout/login, and the visible tabs need to update to
+match the role for whichever meet is currently selected (an organizer tab
+should appear for meet A and disappear for meet B, in the same session).
+
+Design: a **meet-switcher dropdown in `AuthLayout`'s title bar**
+(`main.jsx:197`, next to the existing club-name/language/logout controls),
+always shown when the logged-in identity (club or admin) has more than one
+open meet:
+
+- Selecting a meet sets the active `meetId` in state + `localStorage`
+  (alongside `pin`/`club_id`) and re-derives `canOrganizer`/`canAdmin` from
+  that meet's role instead of a fixed login-time value — the tab bar
+  (`main.jsx:202-209`) already reads `canOrganizer`/`canAdmin` to decide
+  which tabs render, so this is a matter of recomputing those two booleans
+  per selection rather than once at login, not a tab-bar redesign.
+  `IndividualEntryPage`/`RelayEntryPage`/`EventsPage` keep working exactly
+  as they do today once `meetId` changes — no new UI inside those pages.
+- **Exactly 1 open meet** (pool always, most of beach season): no dropdown
+  rendered at all, `meetId` resolved silently — zero visible change from
+  today, same PIN, same click path.
+- **More than 1 open meet**: dropdown appears, defaults to picking one
+  sensibly (e.g. the meet with the nearest closure date, or an
+  organizer-role meet over a coach-role one), and switching is a single
+  click, no page reload, no re-auth.
+- Admin gets the same dropdown, scoped to all open meets rather than just
+  the ones a specific club participates in — reusing the same component
+  rather than building a separate admin-only switcher.
+
+**Self-invite / secret links** (`Secret.jsx`, `SelfInvite.jsx`) are
+unaffected by this — they already carry a token Phase 1 ties to one
+`meetsid`, so a coach arriving via a meet-specific invite link lands
+directly on that meet regardless of what else is open; the switcher is
+only relevant for the generic PIN-login path.
+
+## Organizer/Admin practical effect
+
+`Organizer.jsx` and `EventsPage.tsx` barely change beyond reading `meetId`
+from context instead of assuming "the current meet" — same screens, no new
+UI inside them. LXF export/import (`/api/export/registrations-lxf`,
+`/api/upload/meet`, etc.) take whatever `meetId` is currently active in the
+switcher.
 
 ## Frontend plumbing
 
@@ -361,8 +387,11 @@ have open registrations in two concurrent beach meets. Design:
   and the HTTP adapter layer (team-app-specific, not shared) attaches the
   meet context.
 - Backend endpoints read `X-Meet-Id` the same way they already read
-  `X-Club-Pin`, defaulting to "the club's one open meet" when the header
-  is absent (keeps old clients/tests working during rollout).
+  `X-Club-Pin`. If absent (old clients, or a club/admin with only one open
+  meet), it resolves to that one open meet; if the identity has more than
+  one open meet and no `X-Meet-Id` is sent, the backend returns a 409 with
+  the candidate list rather than guessing — the frontend switcher always
+  sends it once it knows there's a choice.
 
 ## Non-goals for Phase 2
 
@@ -370,29 +399,36 @@ have open registrations in two concurrent beach meets. Design:
   dimension is carried at the HTTP-adapter layer, not the shared
   component layer, specifically so meet-app's Electron IPC adapter (which
   has no concurrency problem) needs zero changes.
-- No support for an organizer or coach actively working inside two meets
-  in the same browser tab at once — switching meets is an explicit action
-  (picker or "switch meet" link), not simultaneous split-screen use.
+- No support for viewing/editing two meets side-by-side in the same
+  browser tab — switching is a one-click dropdown selection, not
+  simultaneous split-screen use. Two tabs/windows already gives a user
+  who wants that today (each tab holds its own `meetId` independently).
 
 ## Testing
 
-- Coach-flow integration test: one club registered in two concurrent beach
-  meets sees the picker and lands in the right one; a club in exactly one
-  meet (pool, or solo beach) sees no picker at all — regression check for
-  the "invisible in the common case" requirement.
+- Meet-switcher integration test: a club that's `organizer` for meet A and
+  `coach` for meet B sees the dropdown, the tab bar updates correctly on
+  switch (Organizer tab present for A, absent for B), and a club/admin
+  with only one open meet never sees the dropdown at all — regression
+  check for the "invisible in the common case" requirement.
 - Admin rule test: attempting to open a second pool meet while one is
   `registration_open` is rejected; attempting the same for beach succeeds.
-- Self-invite test: a meet-specific invite link bypasses the picker even
-  when the invited club has other open meets.
+- Self-invite test: a meet-specific invite link lands directly on that
+  meet without the switcher appearing, even when the invited club has
+  other open meets.
 
-## Open decisions for you
+## Decisions
 
-1. **"Switch meet" link placement/frequency** — is switching meets rare
-   enough that a logout-and-pick-again flow is fine, or does it need the
-   persistent title-bar link described above?
-2. **Admin meets-dashboard scope** — should recently-closed beach meets
-   stay visible/undoable for a grace period, or does "close registration"
-   delete immediately with no recovery window (matches "no results, throw
-   it away" today, but worth confirming that's still fine now that it's a
-   more visible, deliberate admin action rather than an end-of-cycle
-   default)?
+1. **Meet switching: persistent title-bar dropdown, not logout/re-pick.**
+   Settled — an organizer's club is routinely also a participant in a
+   concurrent meet, and admin manages all open meets at once, so switching
+   is routine behavior, not a rare edge case. A dropdown in `AuthLayout`
+   that recomputes `meetId` and the derived `canOrganizer`/`canAdmin` flags
+   is the right shape; logout/login would punish the exact users who need
+   this most.
+2. **Admin meets-dashboard scope** — still open: should recently-closed
+   beach meets stay visible/undoable for a grace period, or does "close
+   registration" delete immediately with no recovery window (matches "no
+   results, throw it away" today, but worth confirming that's still fine
+   now that it's a more visible, deliberate admin action rather than an
+   end-of-cycle default)?
