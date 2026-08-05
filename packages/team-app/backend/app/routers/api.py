@@ -41,7 +41,14 @@ from ..models import (
     gender_to_str, gender_from_str, fee_dollars_to_cents, fee_cents_to_dollars,
     GENDER_M, GENDER_F, GENDER_MIXED, ROUND_FIN, ROUND_TIM, ROUND_PRE,
 )
-from ..models_team import TeamClub, Member
+from ..models_team import TeamClub, Member, Meet as TeamMeet
+from ..meet_config import (
+    get_active_meetsid, _get_meet_config, _set_meet_config,
+    _get_meet_type, _set_meet_type, _update_meetvalue,
+    _get_closure_date, _set_closure_date,
+    _get_organizer_club_id, _set_organizer_club_id,
+    session_date_conflict,
+)
 from ..seed import seed_from_lxf
 from ..best_times import (
     get_best_times_for_member, get_best_time_date,
@@ -182,47 +189,12 @@ def _get_config(db: Session, key: str) -> str | None:
     return cfg.data if cfg else None
 
 
-def _get_meet_type(db: Session) -> str:
-    """Get the meet type, checking both team-app key (meet_type) and meet-app key (MEET_TYPE)."""
-    return (_get_config(db, "meet_type") or _get_config(db, "MEET_TYPE") or "POOL").upper()
-
-
 def _set_config(db: Session, key: str, value: str):
     cfg = db.get(BsGlobal, key)
     if cfg:
         cfg.data = value
     else:
         db.add(BsGlobal(name=key, data=value))
-
-
-def _update_meetvalue(db: Session, key: str, typed_value: str):
-    """Update a single key in the MEETVALUES blob (Splash format KEY=TYPE;VALUE)."""
-    cfg = db.get(BsGlobal, "MEETVALUES")
-    existing: dict[str, str] = {}
-    if cfg and cfg.data:
-        for line in cfg.data.split("\r\n"):
-            eq = line.find("=")
-            if eq >= 0:
-                existing[line[:eq]] = line[eq + 1:]
-    existing[key] = typed_value
-    data = "\r\n".join(f"{k}={v}" for k, v in existing.items() if v)
-    _set_config(db, "MEETVALUES", data)
-
-
-def _get_closure_date(db: Session) -> str | None:
-    """Get closure/deadline date — reads from closure_date key first, falls back to MEETVALUES DEADLINE."""
-    val = _get_config(db, "closure_date")
-    if val:
-        return val
-    # Fall back to MEETVALUES DEADLINE
-    cfg = db.get(BsGlobal, "MEETVALUES")
-    if cfg and cfg.data:
-        for line in cfg.data.split("\r\n"):
-            if line.startswith("DEADLINE=D;"):
-                raw = line[11:]  # after "DEADLINE=D;"
-                if raw and len(raw) >= 8:
-                    return f"{raw[:4]}-{raw[4:6]}-{raw[6:8]}"
-    return None
 
 
 def _get_admin_pin(db: Session) -> str:
@@ -386,7 +358,7 @@ def _resolve_role(pin: str, db: Session) -> tuple[str, int | None]:
     club = db.query(TeamClub).filter(TeamClub.pin == pin).first()
     if not club:
         return "none", None
-    org_cfg = _get_config(db, "organizer_club_id")
+    org_cfg = _get_organizer_club_id(db)
     if org_cfg and org_cfg == str(club.clubsid):
         return "organizer", club.clubsid
     return "coach", club.clubsid
@@ -410,7 +382,7 @@ def _check_closure(db: Session, pin: str = ""):
         return
     club = db.query(TeamClub).filter(TeamClub.pin == pin).first()
     if club:
-        org_cfg = _get_config(db, "organizer_club_id")
+        org_cfg = _get_organizer_club_id(db)
         if org_cfg and org_cfg == str(club.clubsid):
             return
     cfg = _get_closure_date(db)
@@ -453,7 +425,7 @@ def auth(data: dict, request: Request, db: Session = Depends(get_db)):
     if not club:
         _audit.info(f"[?] LOGIN_FAILED  (ip={ip})")
         raise HTTPException(401, "Invalid PIN")
-    org_cfg = _get_config(db, "organizer_club_id")
+    org_cfg = _get_organizer_club_id(db)
     if org_cfg and org_cfg == str(club.clubsid):
         _audit.info(f"[organizer/{club.name}] LOGIN  (ip={ip})")
         return {"role": "organizer", "club_id": club.clubsid, "club_name": club.name}
@@ -479,14 +451,14 @@ def _replace_current_meet_structure(db: Session, meet, content: bytes, filename:
 
     # Wipe registrations (swimresults with entrytime) then events — current
     # (non-historical) meet only.
-    db.query(SwimResult).delete()
-    db.query(AgeGroup).delete()
-    db.query(SwimEvent).delete()
-    db.query(SwimSession).delete()
-    # Clear Team Manager event tables BEFORE swimstyle (FK dependency)
     from ..models_team import Event as TeamEvent, Session as TeamSession, Meet as TeamMeet, MemberMeet as TeamMemberMeet
     current_ids = [r for r, in db.query(TeamMeet.meetsid).filter(TeamMeet.meetstate != 3).all()]
     if current_ids:
+        db.query(SwimResult).filter(SwimResult.meetsid.in_(current_ids)).delete(synchronize_session=False)
+        db.query(AgeGroup).filter(AgeGroup.meetsid.in_(current_ids)).delete(synchronize_session=False)
+        db.query(SwimEvent).filter(SwimEvent.meetsid.in_(current_ids)).delete(synchronize_session=False)
+        db.query(SwimSession).filter(SwimSession.meetsid.in_(current_ids)).delete(synchronize_session=False)
+        # Clear Team Manager event tables BEFORE swimstyle (FK dependency)
         db.query(TeamMemberMeet).filter(TeamMemberMeet.meetsid.in_(current_ids)).delete(synchronize_session=False)
         db.query(TeamEvent).filter(TeamEvent.meetsid.in_(current_ids)).delete(synchronize_session=False)
         db.query(TeamSession).filter(TeamSession.meetsid.in_(current_ids)).delete(synchronize_session=False)
@@ -496,8 +468,9 @@ def _replace_current_meet_structure(db: Session, meet, content: bytes, filename:
     # historical Event/Result rows keep referencing the same style IDs across meets.
     from ..events import _load_from_parsed
     count = _load_from_parsed(db, meet)
+    replace_meetsid = get_active_meetsid(db)
 
-    # Track metadata
+    # Track metadata (meet-scoped keys) plus age_base_date (stays app-level)
     import json as _json
     for key, val in [("meet_filename", filename or "meet.lxf"),
                      ("meet_uploaded_at", datetime.utcnow().isoformat()),
@@ -505,9 +478,9 @@ def _replace_current_meet_structure(db: Session, meet, content: bytes, filename:
                      ("meet_course", meet.course),
                      ("meet_masters", "T" if meet.masters else "F"),
                      ("meet_currency", meet.currency or "CAD"),
-                     ("meet_fees_json", _json.dumps(meet.meet_fees)),
-                     ("age_base_date", meet.age_base_date)]:
-        _set_config(db, key, val)
+                     ("meet_fees_json", _json.dumps(meet.meet_fees))]:
+        _set_meet_config(db, replace_meetsid, key, val)
+    _set_config(db, "age_base_date", meet.age_base_date)
 
     # Auto-detect meet type from swim style IDs used in *this* upload (>= 600 = beach).
     # Must look at the parsed meet, not the global SwimStyle table — that table now
@@ -517,20 +490,20 @@ def _replace_current_meet_structure(db: Session, meet, content: bytes, filename:
         ev.swimstyleid and ev.swimstyleid >= 600
         for ses in meet.sessions for ev in ses.events
     )
-    _set_config(db, "meet_type", "BEACH" if has_beach else "POOL")
+    _set_meet_type(db, "BEACH" if has_beach else "POOL", meetsid=replace_meetsid)
 
     # Sync meet identity into MEETVALUES blob for Splash-format compatibility.
     # Individual bsglobal keys (meet_name, meet_course) are the canonical source;
     # MEETVALUES is kept in sync for interop with the meet-app EventsPage.
     if meet.meet_name:
-        _update_meetvalue(db, "NAME", f"S;{meet.meet_name}")
+        _update_meetvalue(db, "NAME", f"S;{meet.meet_name}", meetsid=replace_meetsid)
     if meet.course:
         course_map = {"LCM": "1", "SCM": "3", "SCY": "2"}
-        _update_meetvalue(db, "COURSE", f"I;{course_map.get(meet.course, '1')}")
+        _update_meetvalue(db, "COURSE", f"I;{course_map.get(meet.course, '1')}", meetsid=replace_meetsid)
 
     # Reset closure date (clear both the key and MEETVALUES DEADLINE fallback)
-    _set_config(db, "closure_date", "")
-    _update_meetvalue(db, "DEADLINE", "D;")
+    _set_closure_date(db, "", meetsid=replace_meetsid)
+    _update_meetvalue(db, "DEADLINE", "D;", meetsid=replace_meetsid)
 
     # Regenerate club PINs
     for club in db.query(TeamClub).all():
@@ -607,14 +580,14 @@ def create_new_meet(data: dict = Body(default={}), db: Session = Depends(get_db)
     # Wipe existing data — current (non-historical) meet only. Archived meets
     # (meetstate=3) and their results/events/sessions must survive, same as
     # the organizer's end-of-meet reset (_reset_for_next_meet).
-    db.query(SwimResult).delete()
-    db.query(AgeGroup).delete()
-    db.query(SwimEvent).delete()
-    db.query(SwimSession).delete()
-    # Clear Team Manager event tables BEFORE swimstyle (FK dependency)
     from ..models_team import Event as TeamEvent, Session as TeamSession, Meet as TeamMeet, MemberMeet as TeamMemberMeet
     current_ids = [r for r, in db.query(TeamMeet.meetsid).filter(TeamMeet.meetstate != 3).all()]
     if current_ids:
+        db.query(SwimResult).filter(SwimResult.meetsid.in_(current_ids)).delete(synchronize_session=False)
+        db.query(AgeGroup).filter(AgeGroup.meetsid.in_(current_ids)).delete(synchronize_session=False)
+        db.query(SwimEvent).filter(SwimEvent.meetsid.in_(current_ids)).delete(synchronize_session=False)
+        db.query(SwimSession).filter(SwimSession.meetsid.in_(current_ids)).delete(synchronize_session=False)
+        # Clear Team Manager event tables BEFORE swimstyle (FK dependency)
         db.query(TeamMemberMeet).filter(TeamMemberMeet.meetsid.in_(current_ids)).delete(synchronize_session=False)
         db.query(TeamEvent).filter(TeamEvent.meetsid.in_(current_ids)).delete(synchronize_session=False)
         db.query(TeamSession).filter(TeamSession.meetsid.in_(current_ids)).delete(synchronize_session=False)
@@ -628,10 +601,10 @@ def create_new_meet(data: dict = Body(default={}), db: Session = Depends(get_db)
     # historical Event/Result rows keep referencing the same style IDs across meets.
     from ..events import _load_from_parsed
     _load_from_parsed(db, meet)
-    new_meetsid = int(_get_config(db, "current_meetsid"))
-    db.query(AgeGroup).delete()
-    db.query(SwimEvent).delete()
-    db.query(SwimSession).delete()
+    new_meetsid = get_active_meetsid(db)
+    db.query(AgeGroup).filter(AgeGroup.meetsid == new_meetsid).delete(synchronize_session=False)
+    db.query(SwimEvent).filter(SwimEvent.meetsid == new_meetsid).delete(synchronize_session=False)
+    db.query(SwimSession).filter(SwimSession.meetsid == new_meetsid).delete(synchronize_session=False)
     db.query(TeamEvent).filter(TeamEvent.meetsid == new_meetsid).delete(synchronize_session=False)
     db.query(TeamSession).filter(TeamSession.meetsid == new_meetsid).delete(synchronize_session=False)
     db.flush()
@@ -640,10 +613,10 @@ def create_new_meet(data: dict = Body(default={}), db: Session = Depends(get_db)
     MEET_STORAGE.parent.mkdir(parents=True, exist_ok=True)
     MEET_STORAGE.write_bytes(template_path.read_bytes())
 
-    # Set meet type in BSGLOBAL
-    _set_config(db, "meet_type", meet_type.upper())
+    # Set meet type (dual-write: bsglobal + meets.meet_type)
+    _set_meet_type(db, meet_type.upper(), meetsid=new_meetsid)
 
-    # Track metadata
+    # Track metadata (meet-scoped keys) plus age_base_date (stays app-level)
     import json as _json
     from datetime import date as _date
     year = _date.today().year
@@ -653,27 +626,26 @@ def create_new_meet(data: dict = Body(default={}), db: Session = Depends(get_db)
                      ("meet_course", meet.course),
                      ("meet_masters", "T" if meet.masters else "F"),
                      ("meet_currency", meet.currency or "CAD"),
-                     ("meet_fees_json", _json.dumps(meet.meet_fees)),
-                     ("age_base_date", f"{year}-12-31")]:
-        _set_config(db, key, val)
+                     ("meet_fees_json", _json.dumps(meet.meet_fees))]:
+        _set_meet_config(db, new_meetsid, key, val)
+    _set_config(db, "age_base_date", f"{year}-12-31")
 
     # Set AGEDATE in MEETVALUES so the UI picks it up
-    mv_cfg = db.get(BsGlobal, "MEETVALUES")
-    mv_data = mv_cfg.data if mv_cfg and mv_cfg.data else ""
+    mv_data = _get_meet_config(db, new_meetsid, "MEETVALUES") or ""
     # Append or replace AGEDATE line
     lines = [l for l in mv_data.split("\r\n") if l and not l.startswith("AGEDATE=")]
     lines.append(f"AGEDATE=D;{year}1231000000000")
-    _set_config(db, "MEETVALUES", "\r\n".join(lines))
+    _set_meet_config(db, new_meetsid, "MEETVALUES", "\r\n".join(lines))
 
     # Sync meet name and course into MEETVALUES so EventsPage tree picks it up
     if meet.meet_name:
-        _update_meetvalue(db, "NAME", f"S;{meet.meet_name}")
+        _update_meetvalue(db, "NAME", f"S;{meet.meet_name}", meetsid=new_meetsid)
     if meet.course:
         course_map = {"LCM": "1", "SCM": "3", "SCY": "2"}
-        _update_meetvalue(db, "COURSE", f"I;{course_map.get(meet.course, '1')}")
+        _update_meetvalue(db, "COURSE", f"I;{course_map.get(meet.course, '1')}", meetsid=new_meetsid)
 
     # Reset closure date
-    _set_config(db, "closure_date", "")
+    _set_closure_date(db, "", meetsid=new_meetsid)
 
     styles_loaded = db.query(SwimStyle).count()
 
@@ -684,14 +656,15 @@ def create_new_meet(data: dict = Body(default={}), db: Session = Depends(get_db)
 @router.get("/meet-info")
 def meet_info(db: Session = Depends(get_db)):
     import json as _json
-    filename = _get_config(db, "meet_filename")
-    uploaded = _get_config(db, "meet_uploaded_at")
-    name = _get_config(db, "meet_name")
-    course = _get_config(db, "meet_course")
-    masters = _get_config(db, "meet_masters")
-    closure = _get_closure_date(db)
-    currency = _get_config(db, "meet_currency")
-    fees_json = _get_config(db, "meet_fees_json")
+    meetsid = get_active_meetsid(db)
+    filename = _get_meet_config(db, meetsid, "meet_filename") if meetsid else None
+    uploaded = _get_meet_config(db, meetsid, "meet_uploaded_at") if meetsid else None
+    name = _get_meet_config(db, meetsid, "meet_name") if meetsid else None
+    course = _get_meet_config(db, meetsid, "meet_course") if meetsid else None
+    masters = _get_meet_config(db, meetsid, "meet_masters") if meetsid else None
+    closure = _get_closure_date(db, meetsid=meetsid)
+    currency = _get_meet_config(db, meetsid, "meet_currency") if meetsid else None
+    fees_json = _get_meet_config(db, meetsid, "meet_fees_json") if meetsid else None
     try:
         meet_fees = _json.loads(fees_json) if fees_json else {}
     except ValueError:
@@ -731,10 +704,11 @@ def get_meet_config(db: Session = Depends(get_db)):
     Individual bsglobal keys (meet_name, meet_course) are canonical and override
     any stale values in the MEETVALUES blob.
     """
-    cfg = db.get(BsGlobal, "MEETVALUES")
+    meetsid = get_active_meetsid(db)
+    data_str = _get_meet_config(db, meetsid, "MEETVALUES") if meetsid else None
     result: dict[str, str] = {}
-    if cfg and cfg.data:
-        for line in cfg.data.split("\r\n"):
+    if data_str:
+        for line in data_str.split("\r\n"):
             if not line:
                 continue
             eq = line.find("=")
@@ -745,11 +719,11 @@ def get_meet_config(db: Session = Depends(get_db)):
             # Strip type prefix (I;, S;, B;, D;, F;)
             semi = rest.find(";")
             result[key] = rest[semi + 1:] if semi >= 0 else rest
-    # Individual bsglobal keys are canonical — override MEETVALUES
-    name = _get_config(db, "meet_name")
+    # Individual meet_config keys are canonical — override MEETVALUES
+    name = _get_meet_config(db, meetsid, "meet_name") if meetsid else None
     if name:
         result["NAME"] = name
-    course = _get_config(db, "meet_course")
+    course = _get_meet_config(db, meetsid, "meet_course") if meetsid else None
     if course:
         course_map = {"LCM": "1", "SCM": "3", "SCY": "2"}
         result["COURSE"] = course_map.get(course, "1")
@@ -759,11 +733,12 @@ def get_meet_config(db: Session = Depends(get_db)):
 @router.put("/meet-config", dependencies=[Depends(require_organizer_or_admin)])
 def set_meet_config(entries: dict, db: Session = Depends(get_db)):
     """Update MEETVALUES-style config. Body: {KEY: {type, value}}."""
+    meetsid = get_active_meetsid(db)
     # Read existing MEETVALUES
-    cfg = db.get(BsGlobal, "MEETVALUES")
+    data_str = _get_meet_config(db, meetsid, "MEETVALUES") if meetsid else None
     existing: dict[str, str] = {}
-    if cfg and cfg.data:
-        for line in cfg.data.split("\r\n"):
+    if data_str:
+        for line in data_str.split("\r\n"):
             if not line:
                 continue
             eq = line.find("=")
@@ -777,26 +752,24 @@ def set_meet_config(entries: dict, db: Session = Depends(get_db)):
         existing[key] = f"{type_code};{value}"
         # Sync canonical individual keys
         if key == "NAME":
-            _set_config(db, "meet_name", value)
+            _set_meet_config(db, meetsid, "meet_name", value)
         elif key == "COURSE":
             course_map = {"1": "LCM", "2": "SCY", "3": "SCM"}
-            _set_config(db, "meet_course", course_map.get(value, "LCM"))
+            _set_meet_config(db, meetsid, "meet_course", course_map.get(value, "LCM"))
         # Sync DEADLINE → closure_date
         elif key == "DEADLINE" and value:
             # Convert YYYYMMDDHHMMSSMMM → YYYY-MM-DD
             raw = value
             if len(raw) >= 8:
-                _set_config(db, "closure_date", f"{raw[:4]}-{raw[4:6]}-{raw[6:8]}")
+                _set_closure_date(db, f"{raw[:4]}-{raw[4:6]}-{raw[6:8]}", meetsid=meetsid)
             else:
-                _set_config(db, "closure_date", "")
+                _set_closure_date(db, "", meetsid=meetsid)
         elif key == "DEADLINE" and not value:
-            _set_config(db, "closure_date", "")
+            _set_closure_date(db, "", meetsid=meetsid)
     # Serialize back
     data = "\r\n".join(f"{k}={v}" for k, v in existing.items())
-    if cfg:
-        cfg.data = data
-    else:
-        db.add(BsGlobal(name="MEETVALUES", data=data))
+    if meetsid:
+        _set_meet_config(db, meetsid, "MEETVALUES", data)
     db.commit()
     return {"ok": True}
 
@@ -804,7 +777,7 @@ def set_meet_config(entries: dict, db: Session = Depends(get_db)):
 @router.put("/closure-date", dependencies=[Depends(require_organizer_or_admin)])
 def set_closure_date(data: ClosureDateUpdate, db: Session = Depends(get_db)):
     val = data.closure_date
-    _set_config(db, "closure_date", val)
+    _set_closure_date(db, val)
     # Also sync to MEETVALUES DEADLINE
     if val:
         _update_meetvalue(db, "DEADLINE", f"D;{val.replace('-', '')}000000000")
@@ -952,9 +925,11 @@ def send_pin(club_id: int, data: dict, db: Session = Depends(get_db)):
     f = Fernet(key)
     pin_encrypted = f.encrypt(club.pin.encode()).decode()
 
+    meetsid = get_active_meetsid(db)
+
     token = str(uuid.uuid4())
     expires = datetime.utcnow() + timedelta(days=7)
-    link = SecretLink(token=token, club_id=club.clubsid,
+    link = SecretLink(token=token, club_id=club.clubsid, meetsid=meetsid,
                       pin_encrypted=pin_encrypted, expires_at=expires, lang=lang)
     db.add(link)
     db.flush()
@@ -964,10 +939,10 @@ def send_pin(club_id: int, data: dict, db: Session = Depends(get_db)):
     base_url = os.environ.get("APP_BASE_URL", "http://localhost:8001")
     secret_url = f"{base_url}/secret/{token}"
 
-    meet_name = _get_config(db, "meet_name") or "Meet"
-    closure_date = _get_config(db, "closure_date")
+    meet_name = (_get_meet_config(db, meetsid, "meet_name") if meetsid else None) or "Meet"
+    closure_date = _get_meet_config(db, meetsid, "closure_date") if meetsid else None
 
-    org_cfg = _get_config(db, "organizer_club_id")
+    org_cfg = _get_organizer_club_id(db)
     is_organizer = org_cfg and str(club.clubsid) == str(org_cfg)
 
     org_email = ""
@@ -1123,7 +1098,7 @@ def self_invite(data: dict, request: Request, db: Session = Depends(get_db)):
     if club.email:
         # Club has a configured email — validate it matches
         if email != club.email.strip().lower():
-            org_cfg = _get_config(db, "organizer_club_id")
+            org_cfg = _get_organizer_club_id(db)
             org_email = ""
             if org_cfg:
                 org_club = db.get(TeamClub, int(org_cfg))
@@ -1365,6 +1340,21 @@ def list_sessions(db: Session = Depends(get_db)):
     return result
 
 
+def _check_session_date_exclusivity(db: Session, session: SwimSession, target_date) -> None:
+    """Reject a session date that collides with another currently-open meet's
+    session date (see docs/CONCURRENT_MEETS_PLAN.md, "Live results"). The
+    actual conflict check lives in meet_config.py so it's testable without a
+    FastAPI dependency; this just adapts it to an HTTP error.
+    """
+    conflicting_name = session_date_conflict(db, session, target_date)
+    if conflicting_name:
+        raise HTTPException(
+            409,
+            f"Meet '{conflicting_name}' already has a session on {target_date.isoformat()} — "
+            f"two meets can't run sessions on the same day."
+        )
+
+
 @router.put("/sessions/{session_id}", dependencies=[Depends(require_organizer_or_admin)])
 def update_session(session_id: int, data: dict = Body(default={}), db: Session = Depends(get_db)):
     """Update session fields (name, date, times, lanes, etc.)."""
@@ -1405,6 +1395,8 @@ def update_session(session_id: int, data: dict = Body(default={}), db: Session =
                     val = _d.fromisoformat(val)
                 except (ValueError, TypeError):
                     val = None
+                if val is not None:
+                    _check_session_date_exclusivity(db, session, val)
             elif key in ("daytime", "endtime", "warmupfrom", "warmupuntil", "officialmeeting") and val:
                 if ":" in str(val) and "-" not in str(val):
                     val = datetime(2000, 1, 1, *[int(x) for x in str(val).split(":")[:2]])
@@ -1470,7 +1462,8 @@ def create_session(data: dict = Body(default={}), db: Session = Depends(get_db))
     next_id = (db.query(func.max(SwimSession.swimsessionid)).scalar() or 0) + 1
     name = data.get("name", "New Session")
     number = data.get("number", 1)
-    session = SwimSession(swimsessionid=next_id, name=name, sessionnumber=number,
+    session = SwimSession(swimsessionid=next_id, meetsid=get_active_meetsid(db), name=name,
+                          sessionnumber=number,
                           course=1, following='F', poolglobal='F', roundtotenths='F')
     db.add(session)
     db.commit()
@@ -1525,6 +1518,7 @@ def create_event(data: dict = Body(default={}), db: Session = Depends(get_db)):
 
         event = SwimEvent(
             swimeventid=next_id,
+            meetsid=get_active_meetsid(db),
             swimsessionid=session_id,
             eventnumber=number,
             gender=gender_int,
@@ -1587,6 +1581,7 @@ def create_event(data: dict = Body(default={}), db: Session = Depends(get_db)):
 
     event = SwimEvent(
         swimeventid=next_id,
+        meetsid=get_active_meetsid(db),
         swimsessionid=session_id,
         eventnumber=number,
         gender=gender_int,
@@ -1696,6 +1691,7 @@ def create_age_group(data: dict = Body(default={}), db: Session = Depends(get_db
 
     ag = AgeGroup(
         agegroupid=next_id,
+        meetsid=get_active_meetsid(db),
         swimeventid=event_id,
         name=name,
         agemin=min_age,
@@ -1956,7 +1952,8 @@ def get_registration(athlete_id: int, db: Session = Depends(get_db)):
         elif 15 <= age <= 18:
             suggested_age_code = "15-18"
 
-    meet_course = _get_config(db, "meet_course") or "LCM"
+    _meetsid_for_course = get_active_meetsid(db)
+    meet_course = (_get_meet_config(db, _meetsid_for_course, "meet_course") if _meetsid_for_course else None) or "LCM"
     meet_type = _get_meet_type(db)
     closure = _get_closure_date(db)
 
@@ -2146,6 +2143,7 @@ def create_registration(data: RegistrationCreate, request: Request, db: Session 
 
     result = SwimResult(
         athleteid=athlete_id,
+        meetsid=get_active_meetsid(db),
         swimeventid=event_id,
         age_code=age_code,
         entrytime=entry_time_ms,
@@ -2311,7 +2309,8 @@ async def upload_results(file: UploadFile = File(...), force: bool = False, db: 
             meet_el = xml_root.find(".//MEET")
             if meet_el is not None:
                 lxf_meet_name = meet_el.get("name", "").strip()
-                current_meet_name = (_get_config(db, "meet_name") or "").strip()
+                _active_meetsid = get_active_meetsid(db)
+                current_meet_name = ((_get_meet_config(db, _active_meetsid, "meet_name") if _active_meetsid else None) or "").strip()
                 if lxf_meet_name and current_meet_name and lxf_meet_name.lower() != current_meet_name.lower():
                     raise HTTPException(409, (
                         f"This LXF is from '{lxf_meet_name}' but your current meet is "
@@ -2450,42 +2449,45 @@ def flush_meet(db: Session = Depends(get_db)):
     Current (non-historical) meet only — matches what the UI actually
     promises ("delete the organizer designation, meet structure, and all
     registrations"), same as _reset_for_next_meet. Used to blanket-delete
-    every TeamMeet row including archived (meetstate=3) ones, silently
-    destroying historical results/events on every "Flush Meet" click —
-    real data loss, not the advertised behavior. Fixed here.
+    every TeamMeet row (and every SwimResult/AgeGroup/SwimEvent/SwimSession
+    row) including archived (meetstate=3) ones, silently destroying
+    historical results/events on every "Flush Meet" click — real data loss,
+    not the advertised behavior. Fixed here; see docs/CONCURRENT_MEETS_PLAN.md
+    for why these tables carry a meetsid at all now.
     """
-    reg_count = db.query(SwimResult).delete()
-    db.query(Heat).delete()
-    db.query(AgeGroup).delete()
-    db.query(SwimEvent).delete()
-    db.query(SwimSession).delete()
-    # Clear Team Manager event tables for the current meet only — archived
-    # (meetstate=3) meets, and the SwimStyle catalog their Event/Result rows
-    # still reference, survive.
     from ..models_team import Event as TeamEvent, Session as TeamSession, Meet as TeamMeet
     current_ids = [r for r, in db.query(TeamMeet.meetsid).filter(TeamMeet.meetstate != 3).all()]
+    reg_count = 0
     if current_ids:
+        reg_count = db.query(SwimResult).filter(SwimResult.meetsid.in_(current_ids)).delete(synchronize_session=False)
+        db.query(Heat).filter(Heat.meetsid.in_(current_ids)).delete(synchronize_session=False)
+        db.query(AgeGroup).filter(AgeGroup.meetsid.in_(current_ids)).delete(synchronize_session=False)
+        db.query(SwimEvent).filter(SwimEvent.meetsid.in_(current_ids)).delete(synchronize_session=False)
+        db.query(SwimSession).filter(SwimSession.meetsid.in_(current_ids)).delete(synchronize_session=False)
+        # Clear Team Manager event tables for the current meet only — archived
+        # meets, and the SwimStyle catalog their Event/Result rows still
+        # reference, survive. Deleting the Meet row(s) cascades to meet_config
+        # (ON DELETE CASCADE on MeetConfig.meetsid) — no more hardcoded
+        # meet-scoped bsglobal key list to keep in sync.
         db.query(TeamEvent).filter(TeamEvent.meetsid.in_(current_ids)).delete(synchronize_session=False)
         db.query(TeamSession).filter(TeamSession.meetsid.in_(current_ids)).delete(synchronize_session=False)
         db.query(TeamMeet).filter(TeamMeet.meetsid.in_(current_ids)).delete(synchronize_session=False)
-    for key in ("meet_filename", "meet_uploaded_at", "meet_name", "meet_course",
-                "meet_masters", "meet_currency", "meet_fees_json", "closure_date",
-                "organizer_club_id", "current_meetsid", "MEETVALUES",
-                "meet_nation", "meet_city"):
-        cfg = db.get(BsGlobal, key)
-        if cfg:
-            db.delete(cfg)
-    # Reset age_base_date to Dec 31 of current year
+    # Reset age_base_date to Dec 31 of current year (app-level, stays in bsglobal)
     from datetime import date as _date
     year = _date.today().year
     _set_config(db, "age_base_date", f"{year}-12-31")
-    _set_config(db, "MEETVALUES", f"AGEDATE=D;{year}1231000000000")
     db.query(TeamClub).update({TeamClub.invite_send_count: 0, TeamClub.stripe_send_count: 0})
     # Remove stored meet files
     if MEET_STORAGE.exists():
         MEET_STORAGE.unlink()
-    # Reload pool template's swimstyle catalog only (no events — see _reload_pool_template)
+    # Reload pool template's swimstyle catalog only (no events — see _reload_pool_template).
+    # AGEDATE must be set into the *new* stub meet's meet_config, so it has to
+    # happen after this creates it — setting it earlier (the pre-Phase-1
+    # ordering) would write to a meetsid that doesn't exist yet.
     _reload_pool_template(db)
+    new_meetsid = get_active_meetsid(db)
+    if new_meetsid:
+        _set_meet_config(db, new_meetsid, "MEETVALUES", f"AGEDATE=D;{year}1231000000000")
     db.commit()
     return {"deleted": reg_count}
 
@@ -2506,19 +2508,15 @@ def _reload_pool_template(db: Session) -> None:
     from ..models_team import Event as TeamEvent, Session as TeamSession
     meet = parse_meet_lxf(template_path)
     _load_from_parsed(db, meet)
-    # Scoped to the stub meet _load_from_parsed just created (bsglobal
-    # current_meetsid, which it just set) — TeamEvent/TeamSession already
-    # carry a real meetsid FK (Team Manager schema is multi-meet), so a
-    # blanket delete here would also wipe any preserved historical meet's
-    # event/session structure, not just this throwaway stub's.
-    stub_meetsid_str = _get_config(db, "current_meetsid")
-    stub_meetsid = int(stub_meetsid_str) if stub_meetsid_str else None
-    db.query(AgeGroup).delete()
-    db.query(SwimEvent).delete()
-    db.query(SwimSession).delete()
-    if stub_meetsid is not None:
-        db.query(TeamEvent).filter(TeamEvent.meetsid == stub_meetsid).delete(synchronize_session=False)
-        db.query(TeamSession).filter(TeamSession.meetsid == stub_meetsid).delete(synchronize_session=False)
+    # Scoped to the stub meetsid _load_from_parsed just created — a blanket
+    # delete here would also wipe a concurrently-open meet's real events, or
+    # (independent of concurrency) any preserved historical Event/Session rows.
+    stub_meetsid = get_active_meetsid(db)
+    db.query(AgeGroup).filter(AgeGroup.meetsid == stub_meetsid).delete(synchronize_session=False)
+    db.query(SwimEvent).filter(SwimEvent.meetsid == stub_meetsid).delete(synchronize_session=False)
+    db.query(SwimSession).filter(SwimSession.meetsid == stub_meetsid).delete(synchronize_session=False)
+    db.query(TeamEvent).filter(TeamEvent.meetsid == stub_meetsid).delete(synchronize_session=False)
+    db.query(TeamSession).filter(TeamSession.meetsid == stub_meetsid).delete(synchronize_session=False)
     styles_loaded = db.query(SwimStyle).count()
     print(f"Reloaded {styles_loaded} swimstyles from pool template (no events)")
 
@@ -2542,30 +2540,29 @@ def _reset_for_next_meet(db: Session) -> None:
         db.query(TeamMeet).filter(TeamMeet.meetsid.in_(current_ids)).delete(synchronize_session=False)
     db.flush()
 
-    # Clear Meet Manager schema (registrations + event structure). SwimStyle is
-    # never wiped here — it's a shared catalog (upserted by id), and historical
-    # Team Manager Event/Result rows we just preserved above still reference it.
-    db.query(SwimResult).delete()
-    db.query(Heat).delete()
-    db.query(AgeGroup).delete()
-    db.query(SwimEvent).delete()
-    db.query(SwimSession).delete()
+    # Clear Meet Manager schema (registrations + event structure) — scoped to
+    # the meet(s) just closed (current_ids), not a blanket delete, so a
+    # concurrently-open meet's own registrations survive. Today current_ids is
+    # always exactly the one meet being closed (no endpoint opens a second one
+    # yet — see docs/CONCURRENT_MEETS_PLAN.md), but this is the actual new
+    # capability Phase 1 delivers. SwimStyle is never wiped here — it's a
+    # shared catalog (upserted by id), and historical Team Manager Event/Result
+    # rows we just preserved above still reference it.
+    if current_ids:
+        db.query(SwimResult).filter(SwimResult.meetsid.in_(current_ids)).delete(synchronize_session=False)
+        db.query(Heat).filter(Heat.meetsid.in_(current_ids)).delete(synchronize_session=False)
+        db.query(AgeGroup).filter(AgeGroup.meetsid.in_(current_ids)).delete(synchronize_session=False)
+        db.query(SwimEvent).filter(SwimEvent.meetsid.in_(current_ids)).delete(synchronize_session=False)
+        db.query(SwimSession).filter(SwimSession.meetsid.in_(current_ids)).delete(synchronize_session=False)
 
-    # Clear bsglobal meet config.
-    # Intentionally preserved: admin_pin, GEMINI_KEY_FREE, GEMINI_KEY_PAID, bt_* best-time keys.
-    for key in ("meet_filename", "meet_uploaded_at", "meet_name", "meet_course",
-                "meet_masters", "meet_currency", "meet_fees_json", "closure_date",
-                "organizer_club_id", "current_meetsid", "MEETVALUES",
-                "meet_nation", "meet_city"):
-        cfg = db.get(BsGlobal, key)
-        if cfg:
-            db.delete(cfg)
+    # meet_config for current_ids was already cleared above (ON DELETE CASCADE
+    # from the TeamMeet delete). Intentionally preserved in bsglobal (app-level,
+    # not meet-scoped): admin_pin, GEMINI_KEY_FREE, GEMINI_KEY_PAID, bt_* keys.
 
-    # Reset age_base_date to Dec 31 of current year
+    # Reset age_base_date to Dec 31 of current year (app-level, stays in bsglobal)
     from datetime import date as _date
     year = _date.today().year
     _set_config(db, "age_base_date", f"{year}-12-31")
-    _set_config(db, "MEETVALUES", f"AGEDATE=D;{year}1231000000000")
 
     # Regenerate all club PINs and reset invite/payment counters
     for club in db.query(TeamClub).all():
@@ -2576,8 +2573,14 @@ def _reset_for_next_meet(db: Session) -> None:
     if MEET_STORAGE.exists():
         MEET_STORAGE.unlink()
 
-    # Reload pool template's swimstyle catalog only (no events — see _reload_pool_template)
+    # Reload pool template's swimstyle catalog only (no events — see _reload_pool_template).
+    # AGEDATE must be set into the *new* stub meet's meet_config, so it has to
+    # happen after this creates it — setting it earlier (the pre-Phase-1
+    # ordering) would write to a meetsid that doesn't exist yet.
     _reload_pool_template(db)
+    new_meetsid = get_active_meetsid(db)
+    if new_meetsid:
+        _set_meet_config(db, new_meetsid, "MEETVALUES", f"AGEDATE=D;{year}1231000000000")
 
 
 @router.post("/clubs/regenerate-pins", dependencies=[Depends(require_admin)])
@@ -2606,7 +2609,7 @@ def invite_all_clubs(data: dict, request: Request, db: Session = Depends(get_db)
 
 @router.get("/admin/organizer", dependencies=[Depends(require_admin)])
 def get_organizer(db: Session = Depends(get_db)):
-    cfg = _get_config(db, "organizer_club_id")
+    cfg = _get_organizer_club_id(db)
     if not cfg:
         return {"club_id": None, "club_name": None}
     club = db.get(TeamClub, int(cfg))
@@ -2622,7 +2625,7 @@ def set_organizer(data: dict, db: Session = Depends(get_db)):
         raise HTTPException(400, "club_id required")
     if not db.get(TeamClub, club_id):
         raise HTTPException(404, "Club not found")
-    _set_config(db, "organizer_club_id", str(club_id))
+    _set_organizer_club_id(db, club_id)
     db.commit()
     return {"ok": True, "organizer_club_id": club_id}
 
@@ -2675,7 +2678,7 @@ def stripe_connect_start(db: Session = Depends(get_db)):
     if not stripe.api_key:
         raise HTTPException(500, "STRIPE_API_KEY not configured")
 
-    org_cfg = _get_config(db, "organizer_club_id")
+    org_cfg = _get_organizer_club_id(db)
     if not org_cfg:
         raise HTTPException(400, "No organizer club set")
     club = db.get(TeamClub, int(org_cfg))
@@ -2700,7 +2703,7 @@ def stripe_connect_start(db: Session = Depends(get_db)):
 @router.get("/stripe/status", dependencies=[Depends(require_organizer_or_admin)])
 def stripe_connect_status(db: Session = Depends(get_db)):
     import stripe
-    org_cfg = _get_config(db, "organizer_club_id")
+    org_cfg = _get_organizer_club_id(db)
     if not org_cfg:
         return {"connected": False}
     club = db.get(TeamClub, int(org_cfg))
@@ -2718,7 +2721,7 @@ def stripe_connect_status(db: Session = Depends(get_db)):
 
 @router.post("/stripe/disconnect", dependencies=[Depends(require_organizer_or_admin)])
 def stripe_disconnect(db: Session = Depends(get_db)):
-    org_cfg = _get_config(db, "organizer_club_id")
+    org_cfg = _get_organizer_club_id(db)
     if not org_cfg:
         raise HTTPException(400, "No organizer club set")
     club = db.get(TeamClub, int(org_cfg))
@@ -2793,7 +2796,7 @@ def send_club_invoice(club_id: int, db: Session = Depends(get_db)):
     if not stripe.api_key:
         raise HTTPException(500, "STRIPE_API_KEY not configured")
 
-    org_cfg = _get_config(db, "organizer_club_id")
+    org_cfg = _get_organizer_club_id(db)
     if not org_cfg:
         raise HTTPException(400, "No organizer club set")
     org_club = db.get(TeamClub, int(org_cfg))
@@ -3191,8 +3194,8 @@ def list_historical_meets(db: Session = Depends(get_db)):
     """List all meets in the Team Manager schema (historical + current)."""
     from ..models_team import Meet, Result
     meets = db.query(Meet).order_by(Meet.mindate.desc()).all()
-    current_id = _get_config(db, "current_meetsid")
-    meet_city = _get_config(db, "meet_city") or ""
+    current_id = get_active_meetsid(db)
+    meet_city = (_get_meet_config(db, current_id, "meet_city") if current_id else None) or ""
     result = []
     for m in meets:
         has_results = db.query(Result).filter(
@@ -3201,8 +3204,8 @@ def list_historical_meets(db: Session = Depends(get_db)):
             Result.totaltime > 0,
         ).limit(1).count() > 0
         place = m.place or ""
-        # For current meet, fall back to bsglobal meet_city
-        if not place and current_id and str(m.meetsid) == current_id:
+        # For current meet, fall back to meet_config's meet_city
+        if not place and current_id and m.meetsid == current_id:
             place = meet_city
         result.append({
             "id": m.meetsid,
@@ -3333,8 +3336,7 @@ def _team_number_to_letter(n: int) -> str:
 
 
 def _get_current_meet_id(db: Session) -> int | None:
-    val = _get_config(db, "current_meetsid")
-    return int(val) if val else None
+    return get_active_meetsid(db)
 
 
 def _import_relays_from_lxf(db: "Session", file_bytes: bytes) -> int:
@@ -3373,8 +3375,7 @@ def _import_relays_from_lxf(db: "Session", file_bytes: bytes) -> int:
         event_number[ev.swimeventid] = ev.eventnumber
 
     # Get current meet ID
-    meet_id_str = db.get(BsGlobal, "current_meetsid")
-    meet_id = int(meet_id_str.data) if meet_id_str and meet_id_str.data else None
+    meet_id = get_active_meetsid(db)
 
     # Find next relay ID
     from sqlalchemy import func as sqla_func

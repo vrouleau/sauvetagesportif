@@ -33,6 +33,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .models import BsGlobal, SwimStyle
+from .meet_config import get_active_meetsid, _get_meet_config
 from .models_team import Meet, Event, Result, MemberMeet, TeamClub, Member, gender_from_str
 from .best_times import _lenex_time_to_ms, _find_or_create_athlete
 
@@ -100,10 +101,7 @@ def import_historical_meet(db: Session, file_bytes: bytes, force: bool = False) 
     meta = _parse_meet_metadata(root)
 
     # ── Cross-validation: warn if this looks like the current meet ──
-    current_meet_name = None
-    cfg = db.get(BsGlobal, "meet_name")
-    if cfg:
-        current_meet_name = cfg.data
+    current_meet_name = _get_meet_config(db, get_active_meetsid(db), "meet_name")
 
     warning = None
     if current_meet_name and meta["name"] and not force:

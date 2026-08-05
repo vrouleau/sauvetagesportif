@@ -129,7 +129,7 @@ def seed_data(db_session):
     db_session.add(club2)
 
     # Meet
-    meet = Meet(meetsid=1, name="Test Meet", course=3)
+    meet = Meet(meetsid=1, name="Test Meet", course=3, registration_open=True)
     db_session.add(meet)
 
     # Athletes (age 14 as of 2026-12-31)

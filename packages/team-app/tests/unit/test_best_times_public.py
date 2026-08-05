@@ -31,7 +31,7 @@ from sqlalchemy.orm import sessionmaker
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "backend"))
 
-from app.models import Base, SwimStyle, BsGlobal
+from app.models import Base, SwimStyle, MeetConfig
 from app.models_team import Meet, Result, TeamClub, Member
 from app.best_times import get_public_best_times
 
@@ -117,7 +117,11 @@ def test_excludes_unofficial_results_and_athletes_without_a_club():
 def test_returns_configured_meet_course():
     db, engine = _create_session()
     try:
-        db.add(BsGlobal(name="meet_course", data="SCM"))
+        # meet_course lives in meet_config (meetsid-scoped), not bsglobal —
+        # see docs/CONCURRENT_MEETS_PLAN.md. get_active_meetsid resolves via
+        # the one meet with registration_open=True.
+        db.add(Meet(meetsid=1, name="Current Meet", registration_open=True))
+        db.add(MeetConfig(meetsid=1, name="meet_course", data="SCM"))
         db.commit()
 
         data = get_public_best_times(db)

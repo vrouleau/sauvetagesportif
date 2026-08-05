@@ -60,6 +60,7 @@ class SwimStyle(Base):
 class SwimSession(Base):
     __tablename__ = "swimsession"
     swimsessionid = Column(Integer, primary_key=True)
+    meetsid = Column(Integer, ForeignKey("meets.meetsid"))
     course = Column(SmallInteger)  # 1=50m(LCM), 2=25yd(SCY), 3=25m(SCM)
     daytime = Column(DateTime)
     endtime = Column(DateTime)
@@ -95,6 +96,7 @@ class SwimSession(Base):
 class SwimEvent(Base):
     __tablename__ = "swimevent"
     swimeventid = Column(Integer, primary_key=True)
+    meetsid = Column(Integer, ForeignKey("meets.meetsid"))
     comment = Column(Text)
     daytime = Column(DateTime)
     duration = Column(DateTime)
@@ -151,6 +153,7 @@ class SwimEvent(Base):
 class AgeGroup(Base):
     __tablename__ = "agegroup"
     agegroupid = Column(Integer, primary_key=True)
+    meetsid = Column(Integer, ForeignKey("meets.meetsid"))
     agebytotal = Column(String(1), default='F')
     agemax = Column(SmallInteger)
     agemax2 = Column(SmallInteger)
@@ -194,6 +197,7 @@ class AgeGroup(Base):
 class SwimResult(Base):
     __tablename__ = "swimresult"
     swimresultid = Column(Integer, primary_key=True)
+    meetsid = Column(Integer, ForeignKey("meets.meetsid"))
     athleteid = Column(Integer, ForeignKey("members.membersid"))
     swrabestid = Column(Integer)
     swrabesttime = Column(Integer)
@@ -257,6 +261,7 @@ class SwimResult(Base):
 class Heat(Base):
     __tablename__ = "heat"
     heatid = Column(Integer, primary_key=True)
+    meetsid = Column(Integer, ForeignKey("meets.meetsid"))
     agegroupid = Column(Integer)
     agegrouporder = Column(Integer)
     daytime = Column(DateTime)
@@ -297,6 +302,19 @@ class BsGlobal(Base):
 
 
 # ---------------------------------------------------------------------------
+# meet_config (team-specific, not in Splash) — meet-scoped equivalent of
+# bsglobal, for the config keys that are per-meet rather than app-level.
+# See docs/CONCURRENT_MEETS_PLAN.md.
+# ---------------------------------------------------------------------------
+
+class MeetConfig(Base):
+    __tablename__ = "meet_config"
+    meetsid = Column(Integer, ForeignKey("meets.meetsid", ondelete="CASCADE"), primary_key=True)
+    name = Column(String(50), primary_key=True)
+    data = Column(Text)
+
+
+# ---------------------------------------------------------------------------
 # secret_links (team-specific, not in Splash)
 # ---------------------------------------------------------------------------
 
@@ -305,6 +323,7 @@ class SecretLink(Base):
     id = Column(Integer, primary_key=True)
     token = Column(String(36), unique=True, nullable=False)
     club_id = Column(Integer, ForeignKey("clubs.clubsid"), nullable=False)
+    meetsid = Column(Integer, ForeignKey("meets.meetsid"))
     pin_encrypted = Column(String(200), nullable=False)
     expires_at = Column(DateTime, nullable=False)
     viewed = Column(Boolean, default=False)

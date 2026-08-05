@@ -27,6 +27,7 @@ from defusedxml.ElementTree import fromstring as _ET_fromstring
 
 from sqlalchemy.orm import Session
 from .models import gender_from_str, SwimEvent, AgeGroup, SwimResult, SwimStyle
+from .meet_config import get_active_meetsid
 from .models_team import TeamClub, Member
 
 
@@ -138,6 +139,7 @@ def seed_from_lxf(db: Session, file_bytes: bytes) -> dict:
     athletes_added = 0
     entries_added = 0
     entries_updated = 0
+    meetsid = get_active_meetsid(db)
 
     # Cache event masters flag and relay count to avoid per-entry queries
     _event_cache: dict[int, SwimEvent] = {}
@@ -230,6 +232,7 @@ def seed_from_lxf(db: Session, file_bytes: bytes) -> dict:
                 else:
                     db.add(SwimResult(
                         athleteid=member.membersid,
+                        meetsid=meetsid,
                         swimeventid=event_id,
                         agegroupid=agegroup_id,
                         age_code=age_code,

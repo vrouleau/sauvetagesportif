@@ -27,6 +27,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .database import engine, SessionLocal
 from .models import Base, BsGlobal
 from .models_team import TeamClub
+from .meet_config import get_active_meetsid, _get_meet_config
 from . import models_team  # noqa: F401 — register Team Manager tables with Base.metadata
 from . import models_live  # noqa: F401 — register Live results tables with Base.metadata
 from . import models_serc  # noqa: F401 — register SERC tables with Base.metadata
@@ -86,8 +87,9 @@ def _identify_user(pin: str) -> str:
         club = db.query(TeamClub).filter(TeamClub.pin == pin).first()
         if not club:
             return "unknown"
-        org_cfg = db.get(BsGlobal, "organizer_club_id")
-        if org_cfg and org_cfg.data == str(club.clubsid):
+        meetsid = get_active_meetsid(db)
+        org_cfg = _get_meet_config(db, meetsid, "organizer_club_id")
+        if org_cfg and org_cfg == str(club.clubsid):
             return f"organizer/{club.name}"
         return f"coach/{club.name}"
     finally:
