@@ -2,7 +2,9 @@
 
 > **Source**: International Life Saving Federation (ILS) — Competition Rule Book, 2025 Edition  
 > Effective 1 September 2025  
-> File: `ILS-2025-Competition-Rulebook-Final-081025.pdf`  
+> Files: `ILS-2025-Competition-Rulebook-Final-081025.pdf` and `ILS-2025-Competition-Rulebook-Revised-May-2026-Highlight.pdf`
+> (the May 2026 revision is byte-identical to the original for every section cited in this document, including the
+> disqualification code lists — verified by `pdftotext` diff, 2026-08-08).  
 > This document is a **development reference**. Always refer to the official ILS CRB for authoritative rules.
 
 ---
@@ -134,6 +136,39 @@ For M-only or F-only events, all team members must be of the specified gender.
 | DQ44 | Competitor re-entering water after completing their leg | All pool relays |
 | DQ53 | Third competitor releasing wall before manikin head surfaces | Pool Lifesaver Relay |
 
+### 4.6 Disqualification Codes (Beach and Ocean Events)
+
+Unlike pool events (§20, dozens of technique-specific codes), the CRB defines only **12 numbered
+codes** for beach/ocean events, at Section 4 §25 "Disqualification Codes for Beach and Ocean
+Events" (p. S4.63–64). Codes 1–10 are near-identical restatements of the pool section's general
+codes (incomplete event, unfair competition, late/absent at start, venue damage, officials abuse,
+false start, non-compliance with starter, disturbing others, wrong start position); 11 and 12 are
+beach-specific:
+
+| Code | Infringement | Applies To |
+|------|-------------|------------|
+| 1 | Not competing in accordance with the general rules | All events |
+| 2 | Competing unfairly (doping, impersonation, double entry, course interference, jostling, outside assistance, fair-play violation) | All events |
+| 3 | Late to Marshalling Area (DNS) | All events |
+| 4 | Absent at start, except A/B final (DNS) | All events |
+| 5 | Wilful damage to venue/accommodation/property | All events |
+| 6 | Abuse of officials | All events |
+| 7 | False start (moving before the signal) — **eliminated**, not DSQ'd, in Beach Flags | All events |
+| 8 | Not complying with starter's commands — eliminated in Beach Flags | All events |
+| 9 | Disturbing others after the starter's first command — eliminated in Beach Flags | All events |
+| 10 | Starting from the wrong position/lane | All events |
+| 11 | Picking up or blocking more than one baton/flag | **Beach Flags only** (individual) |
+| 12 | Failure to complete the event/course as defined | All events |
+
+There is no ILS code for beach relay changeover violations specifically — a bad tag/changeover
+(wrong zone, wrong position — see §4.4 above) is disqualified under the general codes 2 or 10, not
+a dedicated relay code the way pool relays have (DQ36/DQ38/DQ44/DQ53 above).
+
+`config/dsq-codes.json`'s `"beach"` array mirrors this list verbatim (codes `"1"`–`"12"`, same
+numbering scheme as the pool array's `"1"`–`"52"`). An earlier version of that file had 18
+invented alphanumeric codes (`DQ1`, `STR`, `VIC`, `CRF`, …) with no basis in the CRB — corrected
+2026-08-08; see `docs/DSQ_CATALOG_SPEC.md` for the fix history.
+
 ---
 
 ## 5. Relay Team Composition Rules (Application-Specific)
@@ -212,6 +247,9 @@ An athlete is eligible for a relay team if:
 | ILS CRB 2025, Section 2, Rule 11 | S2-26 | Age categories |
 | ILS CRB 2025, Section 3 | S3-2 to S3-34 | Pool events and rules |
 | ILS CRB 2025, Section 3, Rule 18 | S3-29 | Pool Lifesaver Relay (2M+2F) |
+| ILS CRB 2025, Section 3, §20 | S3-34 to S3-38 | Disqualification codes (pool) |
 | ILS CRB 2025, Section 4 | S4-2 to S4-63 | Beach and ocean events |
 | ILS CRB 2025, Section 4 | S4-5 | Relay changeovers (beach) |
+| ILS CRB 2025, Section 4, §25 | S4-63 to S4-64 | Disqualification codes (beach and ocean) |
 | Application doc | `docs/RELAY_TEAM_RULES.md` | Implementation rules |
+| Application doc | `docs/DSQ_CATALOG_SPEC.md` | DSQ code catalog implementation + fix history |
