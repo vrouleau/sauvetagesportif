@@ -3398,7 +3398,7 @@ export function getBeachNumberReport(): Array<{
     FROM athlete a
     JOIN club c ON a.clubid = c.clubid
     WHERE a.nameprefix IS NOT NULL AND a.nameprefix != ''
-    ORDER BY c.name, CAST(SUBSTR(a.nameprefix, 2) AS INTEGER)
+    ORDER BY c.name, a.nameprefix
   `).all() as Array<{ clubName: string; beachNumber: string; lastName: string; firstName: string }>
 }
 

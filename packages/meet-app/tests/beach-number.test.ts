@@ -46,7 +46,10 @@ function populateDb(
   db.exec(`INSERT OR IGNORE INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode, internalevent) VALUES (1, 1, 1, 1, 1, 5, 1, 'F')`)
 
   const insertClub = db.prepare(`INSERT INTO club (clubid, code, name) VALUES (?, ?, ?)`)
-  const insertAthlete = db.prepare(`INSERT INTO athlete (athleteid, clubid, firstname, lastname) VALUES (?, ?, ?, ?)`)
+  // gender=1 (M) for every generated athlete — the property tests below only assert
+  // determinism/uniqueness/idempotency, never the literal category code, so a fixed
+  // sex is enough; it just needs to be a valid one for categoryCodeFor() to resolve.
+  const insertAthlete = db.prepare(`INSERT INTO athlete (athleteid, clubid, firstname, lastname, gender) VALUES (?, ?, ?, ?, 1)`)
   const insertResult = db.prepare(`INSERT INTO swimresult (swimresultid, athleteid, swimeventid) VALUES (?, ?, ?)`)
 
   for (const club of clubs) {
@@ -75,11 +78,12 @@ function insertClub(db: Database.Database, clubid: number, code: string, name: s
   db.prepare(`INSERT INTO club (clubid, code, name) VALUES (?, ?, ?)`).run(clubid, code, name)
 }
 
-/** Insert a single athlete. */
-function insertAthlete(db: Database.Database, athleteid: number, clubid: number, lastname: string, firstname: string) {
+/** Insert a single athlete. Defaults to gender=1 (M) — see categoryCodeFor() in beachNumber.ts,
+ *  which requires a valid athlete.gender to resolve a beach-number category. */
+function insertAthlete(db: Database.Database, athleteid: number, clubid: number, lastname: string, firstname: string, gender: 1 | 2 = 1) {
   db.prepare(
-    `INSERT INTO athlete (athleteid, clubid, lastname, firstname) VALUES (?, ?, ?, ?)`
-  ).run(athleteid, clubid, lastname, firstname)
+    `INSERT INTO athlete (athleteid, clubid, lastname, firstname, gender) VALUES (?, ?, ?, ?, ?)`
+  ).run(athleteid, clubid, lastname, firstname, gender)
 }
 
 /** Insert a swimresult linking an athlete. */
@@ -251,9 +255,9 @@ describe('Beach number generation - Late arrival stability property test', () =>
             const newAthleteId = totalAthletes + 1
             const newSwimresultId = totalAthletes + 1
 
-            // Insert the late arrival athlete
+            // Insert the late arrival athlete (gender=1/M — required for categoryCodeFor() to resolve)
             db.prepare(
-              `INSERT INTO athlete (athleteid, clubid, firstname, lastname) VALUES (?, ?, ?, ?)`
+              `INSERT INTO athlete (athleteid, clubid, firstname, lastname, gender) VALUES (?, ?, ?, ?, 1)`
             ).run(newAthleteId, targetClubId, lateAthlete.firstname, lateAthlete.lastname)
 
             // Step 5: Call assignLateBeachNumber for the new athlete
@@ -268,8 +272,8 @@ describe('Beach number generation - Late arrival stability property test', () =>
             }
 
             // Step 7: Verify the new athlete got a valid beach number
-            // Format check: one uppercase letter + three digits (category hundreds + sequence)
-            expect(newBeachNumber).toMatch(/^[A-Z][1-9]\d{2}$/)
+            // Format check: club letter + category code (digit 0-9 or letter A-Z) + 2-digit sequence
+            expect(newBeachNumber).toMatch(/^[A-Z][0-9A-Z]\d{2}$/)
 
             // Verify it doesn't conflict with any existing numbers
             const existingNumbers = beforeNumbers.map(b => b.nameprefix)
@@ -312,17 +316,19 @@ describe('Sequence numbering (generateBeachNumbers)', () => {
 
       expect(result.errors).toEqual([])
       expect(result.assigned).toBe(4)
-      // Alphabetical order: Alpha Bob (A101), Alpha Charlie (A102), mango Diane (A103), Zeta Anna (A104)
-      expect(getNameprefix(db, 3)).toBe('A101') // Alpha, Bob
-      expect(getNameprefix(db, 2)).toBe('A102') // Alpha, Charlie
-      expect(getNameprefix(db, 4)).toBe('A103') // mango, Diane
-      expect(getNameprefix(db, 1)).toBe('A104') // Zeta, Anna
+      // No age group on any of these entries → 'Open' bracket; all athletes default to
+      // gender=1 (M) → category code '9' (Open/M). Alphabetical order within category:
+      // Alpha Bob (A901), Alpha Charlie (A902), mango Diane (A903), Zeta Anna (A904)
+      expect(getNameprefix(db, 3)).toBe('A901') // Alpha, Bob
+      expect(getNameprefix(db, 2)).toBe('A902') // Alpha, Charlie
+      expect(getNameprefix(db, 4)).toBe('A903') // mango, Diane
+      expect(getNameprefix(db, 1)).toBe('A904') // Zeta, Anna
     } finally {
       cleanup()
     }
   })
 
-  it('produces zero-padded sequences within category (101, 102, ..., 199)', () => {
+  it('produces zero-padded sequences within category (901, 902, ..., 910)', () => {
     const { db, cleanup } = createTestDb()
     try {
       insertClub(db, 1, 'T', 'Test Club')
@@ -337,11 +343,12 @@ describe('Sequence numbering (generateBeachNumbers)', () => {
 
       expect(result.errors).toEqual([])
       expect(result.assigned).toBe(10)
-      // First athlete (Name01) gets T101, last (Name10) gets T110
-      expect(getNameprefix(db, 1)).toBe('T101')
-      expect(getNameprefix(db, 2)).toBe('T102')
-      expect(getNameprefix(db, 9)).toBe('T109')
-      expect(getNameprefix(db, 10)).toBe('T110')
+      // No age group → 'Open'/M → category code '9'. First athlete (Name01) gets T901,
+      // last (Name10) gets T910
+      expect(getNameprefix(db, 1)).toBe('T901')
+      expect(getNameprefix(db, 2)).toBe('T902')
+      expect(getNameprefix(db, 9)).toBe('T909')
+      expect(getNameprefix(db, 10)).toBe('T910')
     } finally {
       cleanup()
     }
@@ -395,6 +402,108 @@ describe('Sequence numbering (generateBeachNumbers)', () => {
   })
 })
 
+// ── Unit Tests: Hardcoded category codes ──────────────────────────────────────
+//
+// The character after the club letter is now a FIXED global code per (age bracket, sex) —
+// see CATEGORY_ORDER in beachNumber.ts. It is no longer assigned dynamically per club in
+// order of appearance, so the same category must produce the same code for every club.
+
+describe('Hardcoded category codes (age bracket + sex)', () => {
+  function setup(db: Database.Database) {
+    db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount, stroke) VALUES (601, 16, 'Drapeau Sur Plage', 1, 0)`)
+    db.exec(`INSERT INTO swimsession (swimsessionid, sessionnumber, name, course) VALUES (1, 1, 'Session 1', 1)`)
+    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode) VALUES (100, 1, 601, 1, 3, 5, 1)`)
+    // agegroupid → (agemin, agemax, name): 10=10-, 20=11-12, 30=13-14, 40=15-18, 50=Open (19+), 60=Masters
+    db.exec(`INSERT INTO agegroup (agegroupid, swimeventid, agemin, agemax, sortcode) VALUES (10, 100, 1, 10, 1)`)
+    db.exec(`INSERT INTO agegroup (agegroupid, swimeventid, agemin, agemax, sortcode) VALUES (20, 100, 11, 12, 2)`)
+    db.exec(`INSERT INTO agegroup (agegroupid, swimeventid, agemin, agemax, sortcode) VALUES (30, 100, 13, 14, 3)`)
+    db.exec(`INSERT INTO agegroup (agegroupid, swimeventid, agemin, agemax, sortcode) VALUES (40, 100, 15, 18, 4)`)
+    db.exec(`INSERT INTO agegroup (agegroupid, swimeventid, agemin, agemax, sortcode) VALUES (50, 100, 19, -1, 5)`)
+    db.exec(`INSERT INTO agegroup (agegroupid, swimeventid, agemin, agemax, name, sortcode) VALUES (60, 100, 30, -1, 'Masters', 6)`)
+  }
+
+  function registerAthlete(
+    db: Database.Database, athleteId: number, clubId: number, lastname: string,
+    gender: 1 | 2, agegroupId: number
+  ) {
+    db.exec(`INSERT INTO athlete (athleteid, clubid, firstname, lastname, gender) VALUES (${athleteId}, ${clubId}, 'A', '${lastname}', ${gender})`)
+    db.exec(`INSERT INTO swimresult (swimresultid, athleteid, swimeventid, agegroupid) VALUES (${athleteId}, ${athleteId}, 100, ${agegroupId})`)
+  }
+
+  it('maps each (bracket, sex) to the documented fixed code, the same for every club', () => {
+    const { db, cleanup } = createTestDb()
+    try {
+      setup(db)
+      db.exec(`INSERT INTO club (clubid, code, name) VALUES (1, 'A', 'Club A')`)
+      db.exec(`INSERT INTO club (clubid, code, name) VALUES (2, 'B', 'Club B')`)
+
+      // Club A: one athlete per bracket/sex combination
+      registerAthlete(db, 1, 1, 'TenF', 2, 10)
+      registerAthlete(db, 2, 1, 'TenM', 1, 10)
+      registerAthlete(db, 3, 1, 'ElevenTwelveF', 2, 20)
+      registerAthlete(db, 4, 1, 'ElevenTwelveM', 1, 20)
+      registerAthlete(db, 5, 1, 'ThirteenFourteenF', 2, 30)
+      registerAthlete(db, 6, 1, 'ThirteenFourteenM', 1, 30)
+      registerAthlete(db, 7, 1, 'FifteenEighteenF', 2, 40)
+      registerAthlete(db, 8, 1, 'FifteenEighteenM', 1, 40)
+      registerAthlete(db, 9, 1, 'OpenF', 2, 50)
+      registerAthlete(db, 10, 1, 'OpenM', 1, 50)
+      registerAthlete(db, 11, 1, 'MastersF', 2, 60)
+      registerAthlete(db, 12, 1, 'MastersM', 1, 60)
+
+      // Club B: same brackets, reversed insertion/discovery order, to prove the code
+      // does not depend on which club or which order categories are first seen in.
+      registerAthlete(db, 21, 2, 'MastersM', 1, 60)
+      registerAthlete(db, 22, 2, 'MastersF', 2, 60)
+      registerAthlete(db, 23, 2, 'TenM', 1, 10)
+      registerAthlete(db, 24, 2, 'TenF', 2, 10)
+
+      const result = generateBeachNumbers(db)
+      expect(result.errors).toEqual([])
+
+      // Club A: fixed codes '0'..'9', then 'A', 'B'
+      expect(getNameprefix(db, 1)).toBe('A001')
+      expect(getNameprefix(db, 2)).toBe('A101')
+      expect(getNameprefix(db, 3)).toBe('A201')
+      expect(getNameprefix(db, 4)).toBe('A301')
+      expect(getNameprefix(db, 5)).toBe('A401')
+      expect(getNameprefix(db, 6)).toBe('A501')
+      expect(getNameprefix(db, 7)).toBe('A601')
+      expect(getNameprefix(db, 8)).toBe('A701')
+      expect(getNameprefix(db, 9)).toBe('A801')
+      expect(getNameprefix(db, 10)).toBe('A901')
+      expect(getNameprefix(db, 11)).toBe('AA01')
+      expect(getNameprefix(db, 12)).toBe('AB01')
+
+      // Club B: same category codes as club A, despite different discovery order
+      expect(getNameprefix(db, 21)).toBe('BB01')
+      expect(getNameprefix(db, 22)).toBe('BA01')
+      expect(getNameprefix(db, 23)).toBe('B101')
+      expect(getNameprefix(db, 24)).toBe('B001')
+    } finally {
+      cleanup()
+    }
+  })
+
+  it('assignLateBeachNumber resolves the same fixed code as generateBeachNumbers', () => {
+    const { db, cleanup } = createTestDb()
+    try {
+      setup(db)
+      db.exec(`INSERT INTO club (clubid, code, name) VALUES (1, 'C', 'Club C')`)
+      registerAthlete(db, 1, 1, 'Filler', 1, 10) // occupies club letter 'C', category '1'
+
+      generateBeachNumbers(db)
+
+      registerAthlete(db, 2, 1, 'MastersF', 2, 60)
+      const beachNumber = assignLateBeachNumber(db, 2)
+
+      expect(beachNumber).toBe('CA01')
+    } finally {
+      cleanup()
+    }
+  })
+})
+
 // ── Unit Tests: Late Arrival ──────────────────────────────────────────────────
 
 describe('Late arrival (assignLateBeachNumber)', () => {
@@ -409,7 +518,8 @@ describe('Late arrival (assignLateBeachNumber)', () => {
       insertSwimresult(db, 2, 2)
       insertSwimresult(db, 3, 3)
 
-      // Generate initial numbers: Alpha->C101, Beta->C102, Gamma->C103
+      // No age group → 'Open'/M → category '9'. Generate initial numbers:
+      // Alpha->C901, Beta->C902, Gamma->C903
       generateBeachNumbers(db)
 
       // Add a late arrival athlete
@@ -417,8 +527,8 @@ describe('Late arrival (assignLateBeachNumber)', () => {
 
       const beachNumber = assignLateBeachNumber(db, 4)
 
-      expect(beachNumber).toBe('C104')
-      expect(getNameprefix(db, 4)).toBe('C104')
+      expect(beachNumber).toBe('C904')
+      expect(getNameprefix(db, 4)).toBe('C904')
     } finally {
       cleanup()
     }
@@ -439,9 +549,9 @@ describe('Late arrival (assignLateBeachNumber)', () => {
 
       const beachNumber = assignLateBeachNumber(db, 2)
 
-      // Should get letter 'D' (first char of 'DEF' not already used)
-      expect(beachNumber).toBe('D101')
-      expect(getNameprefix(db, 2)).toBe('D101')
+      // Should get letter 'D' (first char of 'DEF' not already used); no age group → 'Open'/M → '9'
+      expect(beachNumber).toBe('D901')
+      expect(getNameprefix(db, 2)).toBe('D901')
     } finally {
       cleanup()
     }
@@ -456,13 +566,13 @@ describe('Late arrival (assignLateBeachNumber)', () => {
       generateBeachNumbers(db)
 
       const existingNumber = getNameprefix(db, 1)
-      expect(existingNumber).toBe('M101')
+      expect(existingNumber).toBe('M901')
 
       // Call assignLateBeachNumber again for same athlete (e.g., added to another event)
       const beachNumber = assignLateBeachNumber(db, 1)
 
-      expect(beachNumber).toBe('M101')
-      expect(getNameprefix(db, 1)).toBe('M101')
+      expect(beachNumber).toBe('M901')
+      expect(getNameprefix(db, 1)).toBe('M901')
     } finally {
       cleanup()
     }
@@ -508,7 +618,7 @@ describe('Late arrival (assignLateBeachNumber)', () => {
       // Existing numbers unchanged
       expect(getNameprefix(db, 1)).toBe(before1)
       expect(getNameprefix(db, 2)).toBe(before2)
-      expect(getNameprefix(db, 3)).toBe('P103')
+      expect(getNameprefix(db, 3)).toBe('P903')
     } finally {
       cleanup()
     }
@@ -547,7 +657,7 @@ describe('Club letter assignment edge cases', () => {
     for (let i = 0; i < athleteCount; i++) {
       const athleteId = nextAthleteId++
       db.prepare(
-        'INSERT INTO athlete (athleteid, clubid, lastname, firstname) VALUES (?, ?, ?, ?)'
+        'INSERT INTO athlete (athleteid, clubid, lastname, firstname, gender) VALUES (?, ?, ?, ?, 1)'
       ).run(athleteId, clubId, `Last${athleteId}`, `First${athleteId}`)
       db.prepare(
         'INSERT INTO swimresult (swimresultid, athleteid) VALUES (?, ?)'
@@ -570,7 +680,8 @@ describe('Club letter assignment edge cases', () => {
 
     expect(result.assigned).toBe(1)
     expect(result.errors).toHaveLength(0)
-    expect(getPrefix(1)).toBe('A101')
+    // No age group → 'Open'/M → category '9'
+    expect(getPrefix(1)).toBe('A901')
   })
 
   it('club code chars already taken uses next available from code, then fallback', () => {
@@ -582,8 +693,8 @@ describe('Club letter assignment edge cases', () => {
 
     expect(result.assigned).toBe(2)
     expect(result.errors).toHaveLength(0)
-    expect(getPrefix(1)).toBe('A101')
-    expect(getPrefix(2)).toBe('C101')
+    expect(getPrefix(1)).toBe('A901')
+    expect(getPrefix(2)).toBe('C901')
   })
 
   it('all code chars taken falls back to first available A-Z letter', () => {
@@ -601,13 +712,13 @@ describe('Club letter assignment edge cases', () => {
     expect(result.errors).toHaveLength(0)
     // Sorted: A1, AAA, AB, AC
     // "A1" → 'A'
-    expect(getPrefix(1)).toBe('A101')
+    expect(getPrefix(1)).toBe('A901')
     // "AAA" → tries 'A' (taken) × 3 → fallback picks 'B' (first free)
-    expect(getPrefix(4)).toBe('B101')
+    expect(getPrefix(4)).toBe('B901')
     // "AB" → tries 'A' (taken), 'B' (taken) → fallback picks 'C'
-    expect(getPrefix(2)).toBe('C101')
+    expect(getPrefix(2)).toBe('C901')
     // "AC" → tries 'A' (taken), 'C' (taken) → fallback picks 'D'
-    expect(getPrefix(3)).toBe('D101')
+    expect(getPrefix(3)).toBe('D901')
   })
 
   it('>26 clubs produces error, excess clubs have no beach numbers', () => {
@@ -638,7 +749,7 @@ describe('Club letter assignment edge cases', () => {
     expect(result.assigned).toBe(1)
     expect(result.errors).toHaveLength(0)
     // 'a' in code maps to letter 'A'
-    expect(getPrefix(1)).toBe('A101')
+    expect(getPrefix(1)).toBe('A901')
   })
 
   it('mixed case code chars are treated case-insensitively for collision', () => {
@@ -652,8 +763,8 @@ describe('Club letter assignment edge cases', () => {
     expect(result.errors).toHaveLength(0)
     // Same UPPER(code), first processed gets 'A', second tries 'A' (taken) gets 'B'
     const prefixes = [getPrefix(1), getPrefix(2)]
-    expect(prefixes).toContain('A101')
-    expect(prefixes).toContain('B101')
+    expect(prefixes).toContain('A901')
+    expect(prefixes).toContain('B901')
   })
 
   it('deterministic ordering by UPPER(code)', () => {
@@ -668,11 +779,11 @@ describe('Club letter assignment edge cases', () => {
     expect(result.errors).toHaveLength(0)
     // ORDER BY UPPER(code): AAA, MMM, ZZZ
     // "AAA" (athleteid 2) → 'A'
-    expect(getPrefix(2)).toBe('A101')
+    expect(getPrefix(2)).toBe('A901')
     // "MMM" (athleteid 3) → 'M'
-    expect(getPrefix(3)).toBe('M101')
+    expect(getPrefix(3)).toBe('M901')
     // "ZZZ" (athleteid 1) → 'Z'
-    expect(getPrefix(1)).toBe('Z101')
+    expect(getPrefix(1)).toBe('Z901')
   })
 
   it('deterministic ordering ignores case of code', () => {
@@ -685,9 +796,9 @@ describe('Club letter assignment edge cases', () => {
     expect(result.assigned).toBe(2)
     expect(result.errors).toHaveLength(0)
     // "AAA" processed first → gets 'A'
-    expect(getPrefix(2)).toBe('A101')
+    expect(getPrefix(2)).toBe('A901')
     // "bbb" (BBB) processed second → gets 'B'
-    expect(getPrefix(1)).toBe('B101')
+    expect(getPrefix(1)).toBe('B901')
   })
 })
 
@@ -733,20 +844,20 @@ describe('Beach heat generation assigns missing beach numbers', () => {
 
     expect(result.heatsCreated).toBeGreaterThanOrEqual(1)
     expect(result.entriesAssigned).toBe(1)
-    // Beach number should now be assigned
-    expect(getPrefix(1)).toBe('A101')
+    // Beach number should now be assigned. No age group → 'Open' bracket; gender=1 (M) → '9'
+    expect(getPrefix(1)).toBe('A901')
   })
 
   it('does not overwrite existing beach number when generating heats', async () => {
     // Athlete already has a beach number
-    db.exec(`INSERT INTO athlete (athleteid, clubid, firstname, lastname, gender, birthdate, nation, nameprefix) VALUES (1, 1, 'Jean', 'Dupont', 1, '2000-01-01', 'CAN', 'A101')`)
+    db.exec(`INSERT INTO athlete (athleteid, clubid, firstname, lastname, gender, birthdate, nation, nameprefix) VALUES (1, 1, 'Jean', 'Dupont', 1, '2000-01-01', 'CAN', 'A901')`)
     db.exec(`INSERT INTO swimresult (swimresultid, athleteid, swimeventid, entrytime) VALUES (1, 1, 1, 60000)`)
 
     const result = await generateHeats(1, undefined, db)
 
     expect(result.heatsCreated).toBeGreaterThanOrEqual(1)
     // Beach number should remain unchanged
-    expect(getPrefix(1)).toBe('A101')
+    expect(getPrefix(1)).toBe('A901')
   })
 
   it('assigns beach numbers to multiple athletes from different clubs', async () => {
@@ -763,14 +874,15 @@ describe('Beach heat generation assigns missing beach numbers', () => {
 
     await generateHeats(1, undefined, db)
 
-    // Both should now have beach numbers with different club letters
-    expect(getPrefix(1)).toBe('A101')
-    expect(getPrefix(2)).toBe('D101')
+    // Both should now have beach numbers with different club letters. No age group →
+    // 'Open' bracket; athlete 1 is gender=1 (M) → '9', athlete 2 is gender=2 (F) → '8'
+    expect(getPrefix(1)).toBe('A901')
+    expect(getPrefix(2)).toBe('D801')
   })
 
   it('assigns beach number using next sequence when club already has numbered athletes', async () => {
     // Athlete 1 already has a beach number
-    db.exec(`INSERT INTO athlete (athleteid, clubid, firstname, lastname, gender, birthdate, nation, nameprefix) VALUES (1, 1, 'Jean', 'Dupont', 1, '2000-01-01', 'CAN', 'A101')`)
+    db.exec(`INSERT INTO athlete (athleteid, clubid, firstname, lastname, gender, birthdate, nation, nameprefix) VALUES (1, 1, 'Jean', 'Dupont', 1, '2000-01-01', 'CAN', 'A901')`)
     db.exec(`INSERT INTO swimresult (swimresultid, athleteid, swimeventid, entrytime) VALUES (1, 1, 1, 60000)`)
     // Athlete 2 from same club, no beach number
     db.exec(`INSERT INTO athlete (athleteid, clubid, firstname, lastname, gender, birthdate, nation) VALUES (2, 1, 'Pierre', 'Martin', 1, '1999-03-20', 'CAN')`)
@@ -780,9 +892,9 @@ describe('Beach heat generation assigns missing beach numbers', () => {
 
     await generateHeats(1, undefined, db)
 
-    // Athlete 1 stays A101, athlete 2 gets A102
-    expect(getPrefix(1)).toBe('A101')
-    expect(getPrefix(2)).toBe('A102')
+    // Athlete 1 stays A901, athlete 2 gets A902
+    expect(getPrefix(1)).toBe('A901')
+    expect(getPrefix(2)).toBe('A902')
   })
 })
 
@@ -1079,7 +1191,9 @@ describe('Relay-only athletes get beach numbers', () => {
 
     expect(result.errors).toEqual([])
     expect(result.assigned).toBe(1)
-    expect(getPrefix(1)).toBe('A101')
+    // Relay's own age group (10-12) doesn't match a strict bracket → 'Open'; athlete's own
+    // gender=1 (M, the insertAthlete() default) → category '9'
+    expect(getPrefix(1)).toBe('A901')
   })
 
   it('generateBeachNumbers assigns numbers to both individual and relay-only athletes in the same club', () => {
@@ -1105,7 +1219,7 @@ describe('Relay-only athletes get beach numbers', () => {
 
     const beachNumber = assignLateBeachNumber(db, 1)
 
-    expect(beachNumber).toMatch(/^[A-Z][1-9]\d{2}$/)
+    expect(beachNumber).toMatch(/^[A-Z][0-9A-Z]\d{2}$/)
     expect(getPrefix(1)).toBe(beachNumber)
   })
 
@@ -1175,12 +1289,14 @@ describe.each(BACKENDS)('Beach number generation backend parity [%s]', (kind) =>
     db.exec(`INSERT INTO agegroup (agegroupid, swimeventid, agemin, agemax, gender, sortcode) VALUES (201, 100, 13, 14, 2, 2)`)
     db.exec(`INSERT INTO club (clubid, code, name) VALUES (1, 'zeta', 'Zeta Club')`)
     db.exec(`INSERT INTO club (clubid, code, name) VALUES (2, 'alpha', 'Alpha Club')`)
-    const athletes: Array<[number, number, string, string, number]> = [
-      [1, 1, 'Zed', 'Adams', 200], [2, 1, 'Yves', 'Baker', 200], [3, 1, 'Xena', 'Clark', 201],
-      [4, 2, 'Ann', 'Davis', 200], [5, 2, 'Bob', 'Evans', 201],
+    // gender matches the age group each athlete is placed in (200=M, 201=F) — categoryCodeFor()
+    // reads the athlete's own gender, not the age group's, so the fixture needs to agree.
+    const athletes: Array<[number, number, string, string, number, number]> = [
+      [1, 1, 'Zed', 'Adams', 200, 1], [2, 1, 'Yves', 'Baker', 200, 1], [3, 1, 'Xena', 'Clark', 201, 2],
+      [4, 2, 'Ann', 'Davis', 200, 1], [5, 2, 'Bob', 'Evans', 201, 2],
     ]
-    for (const [athleteId, clubId, firstname, lastname, agegroupId] of athletes) {
-      db.exec(`INSERT INTO athlete (athleteid, clubid, firstname, lastname) VALUES (${athleteId}, ${clubId}, '${firstname}', '${lastname}')`)
+    for (const [athleteId, clubId, firstname, lastname, agegroupId, gender] of athletes) {
+      db.exec(`INSERT INTO athlete (athleteid, clubid, firstname, lastname, gender) VALUES (${athleteId}, ${clubId}, '${firstname}', '${lastname}', ${gender})`)
       db.exec(`INSERT INTO swimresult (swimresultid, athleteid, swimeventid, agegroupid) VALUES (${athleteId}, ${athleteId}, 100, ${agegroupId})`)
     }
   })
@@ -1197,15 +1313,15 @@ describe.each(BACKENDS)('Beach number generation backend parity [%s]', (kind) =>
     const rows = db.prepare(`SELECT athleteid, nameprefix FROM athlete ORDER BY athleteid`).all() as
       Array<{ athleteid: number; nameprefix: string | null }>
     for (const row of rows) {
-      expect(row.nameprefix).toMatch(/^[A-Z]\d{3}$/)
+      expect(row.nameprefix).toMatch(/^[A-Z][0-9A-Z]\d{2}$/)
     }
   })
 
   it('assignLateBeachNumber runs without a SQL error for a late arrival', () => {
-    db.exec(`INSERT INTO athlete (athleteid, clubid, firstname, lastname) VALUES (6, 1, 'Cara', 'Late')`)
+    db.exec(`INSERT INTO athlete (athleteid, clubid, firstname, lastname, gender) VALUES (6, 1, 'Cara', 'Late', 1)`)
     db.exec(`INSERT INTO swimresult (swimresultid, athleteid, swimeventid, agegroupid) VALUES (6, 6, 100, 200)`)
 
     const beachNumber = assignLateBeachNumber(db as unknown as Database.Database, 6)
-    expect(beachNumber).toMatch(/^[A-Z]\d{3}$/)
+    expect(beachNumber).toMatch(/^[A-Z][0-9A-Z]\d{2}$/)
   })
 })

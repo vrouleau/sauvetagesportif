@@ -206,12 +206,14 @@ Beach events are **ranked** (positions 1st, 2nd, 3rd) instead of **timed**. Posi
 
 ### Beach Numbers
 
-Athletes in beach meets get a unique jersey/bib number stored in `athlete.nameprefix`. Format: `Letter + 3 digits` (e.g., `C201`).
+Athletes in beach meets get a unique jersey/bib number stored in `athlete.nameprefix`. Format: `Letter + 3 chars` (e.g., `C201`, or `C A01` for Masters — no space, 4 chars total).
 
 **Encoding:**
 - Letter (A-Z) = club identifier (from club code characters, fallback to first unused letter)
-- Hundreds digit (1-9) = category (age group + gender), assigned dynamically per club
-- Tens + units (01-99) = athlete sequence within category, alphabetical by lastname/firstname
+- Category char = **fixed global code** per (age bracket, sex) — the same code everywhere, not assigned dynamically per club. Age brackets follow the canonical order (`AGE_CODE_ORDER` in `shared-ui/src/logic/ageGroupCode.ts`): 10-, 11-12, 13-14, 15-18, Open, Masters. Each bracket has a female slot then a male slot:
+  `10-F=0, 10-M=1, 11-12F=2, 11-12M=3, 13-14F=4, 13-14M=5, 15-18F=6, 15-18M=7, OpenF=8, OpenM=9, MastersF=A, MastersM=B`
+  (digits 0-9 cover the first 5 brackets; Masters overflows into letters once digits run out). The bracket comes from the athlete's age group (`agemin`/`agemax`/`name`); the sex comes from the athlete's own `gender` (not the age group's, which can be mixed for X relay events).
+- Last 2 chars (01-99) = athlete sequence within category, alphabetical by lastname/firstname
 
 **Generation triggers:**
 - `importLenex` → calls `generateBeachNumbers(db)` when `MEET_TYPE='BEACH'`
@@ -222,7 +224,7 @@ Athletes in beach meets get a unique jersey/bib number stored in `athlete.namepr
 - `generateBeachNumbers(db)` — full idempotent regeneration (clears all, recomputes)
 - `assignLateBeachNumber(db, athleteId)` — assigns next available number for one athlete
 
-**Constraints:** 26 clubs max, 9 categories per club, 99 athletes per category.
+**Constraints:** 26 clubs max, 12 fixed categories (6 age brackets × 2 sexes), 99 athletes per category per club.
 
 **Properties:** deterministic, unique, idempotent, stable (late arrivals don't change existing numbers).
 
