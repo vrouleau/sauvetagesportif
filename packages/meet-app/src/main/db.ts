@@ -1874,7 +1874,6 @@ function generateHeatsBeach(
       JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid
       WHERE e.swimeventid = ?
     `).get(evId) as { maxentries: number | null; distance: number | null; relaycount: number | null } | undefined
-    const maxPerHeat = styleRow?.maxentries ?? styleRow?.distance ?? 16
     const isRelayEvent = (styleRow?.relaycount ?? 1) > 1
 
     // Delete existing heats for this event
@@ -1892,6 +1891,22 @@ function generateHeatsBeach(
         `SELECT swimresultid AS id FROM swimresult WHERE swimeventid=? ORDER BY swimresultid`
       ).all(evId) as Array<{ id: number }>).map(r => r.id)
     }
+
+    // Events like beach flags / sprint have no heat structure — results are
+    // entered manually on the beach and only a final is used. maxentries=0
+    // signals that: create a single empty heat shell (so the event still
+    // appears on the schedule) instead of distributing entries into heats.
+    if (styleRow?.maxentries === 0) {
+      const heatId = (db.prepare(`SELECT COALESCE(MAX(heatid), 0) + 1 AS next FROM heat`).get() as { next: number }).next
+      db.prepare(
+        `INSERT INTO heat (heatid, swimeventid, heatnumber, racestatus, sortcode)
+         VALUES (?, ?, 1, 4, 100)`
+      ).run(heatId, evId)
+      totalHeats++
+      continue
+    }
+
+    const maxPerHeat = styleRow?.maxentries ?? styleRow?.distance ?? 16
 
     if (entryIds.length === 0) continue
 

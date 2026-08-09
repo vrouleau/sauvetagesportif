@@ -291,6 +291,7 @@ Custom: `swimsession.lanesbyplace` (comma-separated lane numbers).
 - Athletes shuffled randomly and distributed evenly across heats
 - No lane assignment (sequential numbers as placeholders)
 - Auto-assigns beach numbers to athletes missing one before generating heats
+- `swimevent.maxentries = 0` → no heat distribution: events like beach flags/sprint that only run a final (results entered manually on the beach) get a single empty heat shell instead of entries being split across heats
 
 ## Beach Numbers
 
