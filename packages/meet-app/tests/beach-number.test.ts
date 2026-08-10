@@ -943,6 +943,38 @@ describe('Beach heat generation respects swimstyle.distance as max per heat', ()
     expect(heats[0].athlete_count + heats[1].athlete_count).toBe(12)
   })
 
+  it('creates a single empty heat when maxentries=0 (no heat generation, e.g. beach flags/sprint)', async () => {
+    db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount, stroke, sortcode) VALUES (601, 16, 'Drapeau', 1, 1, 1)`)
+    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode, internalevent, maxentries) VALUES (1, 1, 601, 1, 1, 5, 1, 'F', 0)`)
+    insertAthletes(12)
+    insertEntries(1, 12)
+
+    const result = await generateHeats(1, undefined, db)
+
+    expect(result.heatsCreated).toBe(1)
+    expect(result.entriesAssigned).toBe(0)
+    const heats = getHeats(1)
+    expect(heats).toHaveLength(1)
+    expect(heats[0].athlete_count).toBe(0)
+
+    // Entries remain unassigned (heatid stays NULL) — handled manually on the beach
+    const unassigned = (db.prepare(
+      `SELECT COUNT(*) AS c FROM swimresult WHERE swimeventid = 1 AND heatid IS NULL`
+    ).get() as { c: number }).c
+    expect(unassigned).toBe(12)
+  })
+
+  it('creates a single empty heat when maxentries=0 even with no entries', async () => {
+    db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount, stroke, sortcode) VALUES (601, 16, 'Drapeau', 1, 1, 1)`)
+    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode, internalevent, maxentries) VALUES (1, 1, 601, 1, 1, 5, 1, 'F', 0)`)
+
+    const result = await generateHeats(1, undefined, db)
+
+    expect(result.heatsCreated).toBe(1)
+    expect(result.entriesAssigned).toBe(0)
+    expect(getHeats(1)).toHaveLength(1)
+  })
+
   it('no heat ever exceeds swimstyle.distance', async () => {
     // distance=10; 28 entries → 3 heats, none exceeding 10
     db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount, stroke, sortcode) VALUES (602, 10, 'Sprint', 1, 1, 1)`)
