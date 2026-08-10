@@ -462,12 +462,12 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
   }
 
   function formatTimeDisplay(time: string | undefined, status?: string | null): string {
-    if (status === 'DNS') return 'DNS'
-    if (status === 'DNF') return 'DNF'
-    if (status === 'DSQ') return 'DSQ'
-    // EXH: pool keeps showing the real time; beach shows "EXH" in place of the position number
-    // (the underlying value stays on entry.finalTime either way, still editable).
-    if (status === 'EXH') return isBeach ? 'EXH' : (time || '')
+    if (status === 'DNS') return t.heats.resultStatus.DNS
+    if (status === 'DNF') return t.heats.resultStatus.DNF
+    if (status === 'DSQ') return t.heats.resultStatus.DSQ
+    // EXH: pool keeps showing the real time; beach shows the localized "EXH" label in place of
+    // the position number (the underlying value stays on entry.finalTime either way, still editable).
+    if (status === 'EXH') return isBeach ? t.heats.resultStatus.EXH : (time || '')
     if (!time) return ''
     return time
   }
@@ -1673,10 +1673,10 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
                             onClick={(e) => e.stopPropagation()}
                           >
                             <option value=""></option>
-                            <option value="DNS">DNS</option>
-                            <option value="DNF">DNF</option>
-                            <option value="DSQ">DSQ</option>
-                            <option value="EXH">EXH</option>
+                            <option value="DNS">{t.heats.resultStatus.DNS}</option>
+                            <option value="DNF">{t.heats.resultStatus.DNF}</option>
+                            <option value="DSQ">{t.heats.resultStatus.DSQ}</option>
+                            <option value="EXH">{t.heats.resultStatus.EXH}</option>
                           </select>
                         </td>
                       </tr>

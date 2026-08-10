@@ -64,7 +64,7 @@ function getQualLabel(code: string, lang: string): string {
 }
 
 export default function FinalsPage({ refreshKey = 0, meetType = 'POOL' }: { refreshKey?: number; meetType?: string }) {
-  const { lang } = useLang()
+  const { t, lang } = useLang()
   const isBeach = meetType === 'BEACH'
 
   const [events, setEvents] = useState<FinalEvent[]>([])
@@ -402,7 +402,7 @@ export default function FinalsPage({ refreshKey = 0, meetType = 'POOL' }: { refr
                             c.resultStatus === 'DNS' ? 'bg-gray-200 text-gray-600' :
                             'bg-orange-100 text-orange-700'
                           }`}>
-                            {c.resultStatus}
+                            {t.heats.resultStatus[c.resultStatus]}
                           </span>
                         )}
                       </td>

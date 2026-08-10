@@ -245,6 +245,13 @@ const fr = {
       inProgress: 'En cours',
       assigned: 'Attribution faite',
     },
+    // Result status — Splash's own French labels (see résultat status dropdown)
+    resultStatus: {
+      DNS: 'Forfait',
+      DNF: 'Abandon',
+      DSQ: 'Disqualifié',
+      EXH: 'Hors concours',
+    },
     sessionLabel: 'Session n°',
     splitCols: { distance: 'Distance', time: 'Temps', delta: 'Delta' },
     dsq: {
@@ -583,6 +590,13 @@ const en = {
       completed: 'Completed',
       inProgress: 'In progress',
       assigned: 'Assigned',
+    },
+    // Result status — kept as the same English abbreviations used in the data model/LENEX
+    resultStatus: {
+      DNS: 'DNS',
+      DNF: 'DNF',
+      DSQ: 'DSQ',
+      EXH: 'EXH',
     },
     sessionLabel: 'Session no.',
     splitCols: { distance: 'Distance', time: 'Time', delta: 'Delta' },
