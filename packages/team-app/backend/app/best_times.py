@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import re
 from datetime import date
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload
 
 from .models import SwimStyle, BsGlobal
@@ -64,6 +64,7 @@ def get_best_times_for_member(
             Result.totaltime.isnot(None),
             Result.totaltime > 0,
             Result.resulttyp == 0,
+            or_(Result.resultstatus.is_(None), Result.resultstatus != 4),  # exclude HC/EXH
         )
         .group_by(Result.stylesid, Result.course)
         .all()
@@ -113,6 +114,7 @@ def get_public_best_times(db: Session, max_age_months: int = 18) -> dict:
             Result.totaltime.isnot(None),
             Result.totaltime > 0,
             Result.resulttyp == 0,
+            or_(Result.resultstatus.is_(None), Result.resultstatus != 4),  # exclude HC/EXH
         ).distinct().all()
     ]
 
@@ -196,6 +198,7 @@ def get_best_time(
             Result.totaltime.isnot(None),
             Result.totaltime > 0,
             Result.resulttyp == 0,
+            or_(Result.resultstatus.is_(None), Result.resultstatus != 4),  # exclude HC/EXH
         )
         .first()
     )
@@ -232,6 +235,7 @@ def get_best_time_date(
             Result.totaltime.isnot(None),
             Result.totaltime > 0,
             Result.resulttyp == 0,
+            or_(Result.resultstatus.is_(None), Result.resultstatus != 4),  # exclude HC/EXH
         )
         .scalar()
     )
@@ -247,6 +251,7 @@ def get_best_time_date(
             Result.course == course_int,
             Result.totaltime == best_time,
             Result.resulttyp == 0,
+            or_(Result.resultstatus.is_(None), Result.resultstatus != 4),  # exclude HC/EXH
         )
         .order_by(Result.eventdate.desc())
         .first()

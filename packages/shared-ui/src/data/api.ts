@@ -188,6 +188,8 @@ export interface RelayTeam {
   members: RelayTeamMember[]
   clubId?: number           // Owning club ID (included in admin all-clubs view)
   clubName?: string         // Owning club name (included in admin all-clubs view)
+  /** Hors concours / exhibition — bypasses age/gender composition rules, same as SERC. meet-app only. */
+  hc?: boolean
 }
 
 export interface RelayEventGroup {
@@ -244,6 +246,8 @@ export interface RegistrationCategory {
   registered: boolean
   registration_id?: number
   entry_time_ms?: number | null
+  /** Hors concours / exhibition — result kept but excluded from points/standings/finals qualification. */
+  hc?: boolean
 }
 
 export interface RegistrationStyle {
@@ -287,7 +291,7 @@ export interface RegistrationAPI {
   deleteAthlete(id: number): Promise<void>
   getRegistration(athleteId: number): Promise<RegistrationData>
   updateAthlete(athleteId: number, data: Record<string, unknown>): Promise<void>
-  register(data: { athlete_id: number; event_id: number; entry_time_ms: number | null; age_code: string }): Promise<void>
+  register(data: { athlete_id: number; event_id: number; entry_time_ms: number | null; age_code: string; is_hc?: boolean }): Promise<void>
   unregister(registrationId: number): Promise<void>
   setRelayMember?(eventId: number, position: number, athleteId: number | null): Promise<void>
   resetClubPin?(clubId: string): Promise<{ pin: string }>
@@ -298,4 +302,6 @@ export interface RegistrationAPI {
   deleteRelayTeam(teamId: number): Promise<void>
   setRelayTeamMember(teamId: number, position: number, athleteId: number | null): Promise<void>
   setRelayTeamName(teamId: number, name: string | null): Promise<void>
+  /** Hors concours / exhibition for a relay team — meet-app only (team-app has no status column on its relay schema yet). */
+  setRelayTeamHC?(teamId: number, isHC: boolean): Promise<void>
 }

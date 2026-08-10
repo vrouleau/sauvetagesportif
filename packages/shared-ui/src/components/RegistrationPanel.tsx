@@ -32,6 +32,7 @@ export interface RegistrationPanelProps {
   onUnregister: (regId: number) => void
   onUpdateEntryTime: (eventId: number, ageCode: string, timeMs: number | null) => void
   onSetRelayMember?: (eventId: number, position: number, athleteId: number | null) => void
+  onSetHC?: (eventId: number, ageCode: string, entryTimeMs: number | null, isHC: boolean) => void
 }
 
 export default function RegistrationPanel({
@@ -41,6 +42,7 @@ export default function RegistrationPanel({
   onUnregister,
   onUpdateEntryTime,
   onSetRelayMember,
+  onSetHC,
 }: RegistrationPanelProps) {
   const { t } = useLang()
   const tr = t.registration
@@ -176,6 +178,7 @@ export default function RegistrationPanel({
                 {!isBeach && <th className="border border-gray-300 px-2 py-1 text-right w-20">{tr.bt50}</th>}
                 {!isBeach && <th className="border border-gray-300 px-2 py-1 text-right w-20">{tr.bt25}</th>}
                 {!isBeach && <th className="border border-gray-300 px-2 py-1 text-left w-24">{tr.entryTime}</th>}
+                <th className="border border-gray-300 px-2 py-1 text-center w-10" title={tr.hcTitle}>{tr.hc}</th>
               </tr>
             </thead>
             <tbody>
@@ -219,6 +222,18 @@ export default function RegistrationPanel({
                         )}
                       </td>
                     )}
+                    <td className="border border-gray-300 px-2 py-0.5 text-center">
+                      {reg && (
+                        <input
+                          type="checkbox"
+                          checked={!!reg.hc}
+                          disabled={saving}
+                          className="w-3.5 h-3.5"
+                          title={tr.hcTitle}
+                          onChange={(e) => onSetHC?.(reg.event_id, reg.age_code, reg.entry_time_ms ?? null, e.target.checked)}
+                        />
+                      )}
+                    </td>
                   </tr>
                 )
               })}

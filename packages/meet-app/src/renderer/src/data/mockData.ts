@@ -41,7 +41,7 @@ export interface LaneEntry {
   entryTime?: string
   finalTime?: string
   splitTimes?: Record<number, string>
-  status?: 'DNS' | 'DNF' | 'DSQ' | null
+  status?: 'DNS' | 'DNF' | 'DSQ' | 'EXH' | null
   dsqCode?: string
   dsqReason?: string
   dsqItemId?: number

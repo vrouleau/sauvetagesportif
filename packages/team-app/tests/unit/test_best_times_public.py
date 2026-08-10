@@ -33,7 +33,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "backend"))
 
 from app.models import Base, SwimStyle, MeetConfig
 from app.models_team import Meet, Result, TeamClub, Member
-from app.best_times import get_public_best_times
+from app.best_times import get_public_best_times, get_best_times_for_member
 
 
 def _create_session():
@@ -109,6 +109,44 @@ def test_excludes_unofficial_results_and_athletes_without_a_club():
         data = get_public_best_times(db)
 
         assert data["clubs"] == []
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_excludes_hc_exhibition_results():
+    """HC (hors concours/exhibition) results keep their time but must not become
+    a member's best time — resultstatus=4, same encoding as meet-app's
+    swimresult.resultstatus. See docs/HORS_CONCOURS_DESIGN.md."""
+    db, engine = _create_session()
+    try:
+        db.add(TeamClub(clubsid=1, name="Alpha Club", code="ALP"))
+        db.add(SwimStyle(swimstyleid=101, code="S101", name="100 Free", distance=100, stroke=1))
+        db.flush()
+
+        db.add(Member(membersid=1, firstname="Ann", lastname="Alpha", clubsid=1, gender=2))
+        db.add(Meet(meetsid=1, name="Meet", meetstate=3, course=1))
+        db.flush()
+
+        # Only result is HC — a faster time, but must not count as a best time.
+        db.add(Result(resultsid=1, membersid=1, meetsid=1, stylesid=101, course=1,
+                      totaltime=50000, resulttyp=0, resultstatus=4, eventdate=datetime(2026, 1, 1)))
+        db.commit()
+
+        data = get_public_best_times(db)
+        assert data["clubs"] == []
+
+        member_bt = get_best_times_for_member(db, member_id=1)
+        assert member_bt == {}
+
+        # A later, slower, non-HC swim should become the best time — the HC
+        # result must not shadow it via a lower totaltime.
+        db.add(Result(resultsid=2, membersid=1, meetsid=1, stylesid=101, course=1,
+                      totaltime=62000, resulttyp=0, resultstatus=None, eventdate=datetime(2026, 1, 2)))
+        db.commit()
+
+        member_bt = get_best_times_for_member(db, member_id=1)
+        assert member_bt["101"]["LCM"]["time_ms"] == 62000
     finally:
         db.close()
         engine.dispose()

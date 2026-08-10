@@ -359,6 +359,19 @@ function useIndividualEntryPage(api: RegistrationAPI, role: string, clubId?: str
     }
   }, [api, state.selectedAthleteId, reloadRegistration])
 
+  const handleSetHC = useCallback(async (eventId: number, ageCode: string, entryTimeMs: number | null, isHC: boolean) => {
+    if (!state.selectedAthleteId) return
+    try {
+      await api.register({ athlete_id: state.selectedAthleteId, event_id: eventId, entry_time_ms: entryTimeMs, age_code: ageCode, is_hc: isHC })
+      await reloadRegistration()
+    } catch (err) {
+      setState(prev => ({
+        ...prev,
+        error: err instanceof Error ? err.message : 'Failed to set HC status',
+      }))
+    }
+  }, [api, state.selectedAthleteId, reloadRegistration])
+
   // Retry on error
   const handleRetry = useCallback(() => {
     setState(prev => ({ ...prev, error: null }))
@@ -393,6 +406,7 @@ function useIndividualEntryPage(api: RegistrationAPI, role: string, clubId?: str
     handleRegister,
     handleUnregister,
     handleUpdateEntryTime,
+    handleSetHC,
     handleRetry,
   }
 }
@@ -481,6 +495,7 @@ export default function IndividualEntryPage({ role, clubId, refreshKey, onImport
     handleRegister,
     handleUnregister,
     handleUpdateEntryTime,
+    handleSetHC,
     handleRetry,
   } = useIndividualEntryPage(api, role, clubId, refreshKey)
 
@@ -647,6 +662,7 @@ export default function IndividualEntryPage({ role, clubId, refreshKey, onImport
                   onRegister={handleRegister}
                   onUnregister={handleUnregister}
                   onUpdateEntryTime={handleUpdateEntryTime}
+                  onSetHC={handleSetHC}
                 />
               </div>
             </>

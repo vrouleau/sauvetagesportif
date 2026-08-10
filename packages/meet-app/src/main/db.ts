@@ -85,17 +85,19 @@ function decodePhase(round: number | null): 'Finale' | 'Eliminatoire' | 'Finale 
   return 'Finale directe'
 }
 
-function decodeResultStatus(s: number | null): 'DNS' | 'DNF' | 'DSQ' | null {
+function decodeResultStatus(s: number | null): 'DNS' | 'DNF' | 'DSQ' | 'EXH' | null {
   if (s === 1) return 'DNS'
   if (s === 2) return 'DNF'
   if (s === 3) return 'DSQ'
+  if (s === 4) return 'EXH'
   return null
 }
 
-function encodeResultStatus(s: 'DNS' | 'DNF' | 'DSQ' | null | undefined): number | null {
+function encodeResultStatus(s: 'DNS' | 'DNF' | 'DSQ' | 'EXH' | null | undefined): number | null {
   if (s === 'DNS') return 1
   if (s === 'DNF') return 2
   if (s === 'DSQ') return 3
+  if (s === 'EXH') return 4
   return null
 }
 
@@ -267,7 +269,7 @@ export interface LaneEntryRow {
   entryTime: string
   finalTime?: string
   splitTimes?: Record<number, string>
-  status?: 'DNS' | 'DNF' | 'DSQ' | null
+  status?: 'DNS' | 'DNF' | 'DSQ' | 'EXH' | null
   handicapex?: string
   dsqItemId?: number
   beachNumber?: string
@@ -383,7 +385,7 @@ export interface AthleteRow {
   birthPlace?: string
   handicapex?: string
   beachNumber?: string
-  entries: Array<{ eventId: number; eventName: string; category: string; agegroupId: number | null; entryTime?: string }>
+  entries: Array<{ eventId: number; eventName: string; category: string; agegroupId: number | null; entryTime?: string; resultstatus?: number | null }>
 }
 
 // ── Query: all sessions + events + heats + entries for HeatsPage ──────────────
@@ -495,7 +497,9 @@ export async function getHeatListSessions(injectedDb?: ReturnType<typeof getLoca
     const status = decodeResultStatus(r.resultstatus)
     const birthYear = parseBirthYear(r.birthdate)
     // For beach meets, display position as plain integer instead of time format
-    const finalTimeDisplay = status ? undefined : (
+    // EXH (exhibition/hors concours) keeps its recorded time/position — only points/standings/
+    // qualification are suppressed. DNS/DNF/DSQ still clear it.
+    const finalTimeDisplay = (status && status !== 'EXH') ? undefined : (
       isBeachMeet && r.swimtime != null
         ? String(Math.round(r.swimtime / 1000))
         : msToDisplay(r.swimtime)
@@ -569,7 +573,9 @@ export async function getHeatListSessions(injectedDb?: ReturnType<typeof getLoca
     for (const r of relayRows) {
       if (!entryMap.has(r.heatid)) entryMap.set(r.heatid, [])
       const status = decodeResultStatus(r.resultstatus)
-      const finalTimeDisplay = status ? undefined : (
+      // EXH (exhibition/hors concours) keeps its recorded time/position — only points/standings/
+    // qualification are suppressed. DNS/DNF/DSQ still clear it.
+    const finalTimeDisplay = (status && status !== 'EXH') ? undefined : (
         isBeachMeet && r.swimtime != null
           ? String(Math.round(r.swimtime / 1000))
           : msToDisplay(r.swimtime)
@@ -790,7 +796,7 @@ export async function getAthletes(): Promise<AthleteRow[]> {
   const { clause: aph, params: aphParams } = inClause(athleteIds)
 
   const entries = db.prepare(`
-    SELECT r.athleteid, r.swimeventid, r.entrytime, r.agegroupid,
+    SELECT r.athleteid, r.swimeventid, r.entrytime, r.agegroupid, r.resultstatus,
            COALESCE(NULLIF(ag.name, ''), CASE WHEN ag.agemin IS NOT NULL THEN CAST(ag.agemin AS TEXT) || '-' || COALESCE(CAST(ag.agemax AS TEXT), '+') END, '???') AS agegroupname,
            e.eventnumber,
            ss.distance, ss.stroke, ss.name AS stylename
@@ -802,6 +808,7 @@ export async function getAthletes(): Promise<AthleteRow[]> {
     ORDER BY r.athleteid, e.eventnumber
   `).all(...aphParams) as Array<{
     athleteid: number; swimeventid: number; entrytime: number | null; agegroupid: number | null
+    resultstatus: number | null
     agegroupname: string | null; eventnumber: number | null
     distance: number | null; stroke: number | null; stylename: string | null
   }>
@@ -819,6 +826,7 @@ export async function getAthletes(): Promise<AthleteRow[]> {
       category: e.agegroupname ?? '',
       agegroupId: e.agegroupid,
       entryTime: msToDisplay(e.entrytime),
+      resultstatus: e.resultstatus,
     })
   }
 
@@ -864,7 +872,7 @@ export async function saveResult(
   swimresultId: number,
   finalTime: string | undefined,
   reactionTimeSecs: number | null,
-  status: 'DNS' | 'DNF' | 'DSQ' | null,
+  status: 'DNS' | 'DNF' | 'DSQ' | 'EXH' | null,
   splits: Record<number, string> | undefined,
   dsqItemId?: number | null,
   injectedDb?: ReturnType<typeof getLocalDb>,
@@ -923,7 +931,7 @@ function _notifyLivePushForResult(
 
     if (!row || !row.heatnumber) return
 
-    const statusStr = resultstatus === 1 ? 'DNS' : resultstatus === 2 ? 'DNF' : resultstatus === 3 ? 'DSQ' : ''
+    const statusStr = resultstatus === 1 ? 'DNS' : resultstatus === 2 ? 'DNF' : resultstatus === 3 ? 'DSQ' : resultstatus === 4 ? 'EXH' : ''
 
     // Look up DSQ reason from dsqitem table (if it exists and dsqitemid is set)
     let dsqReason: string | undefined
@@ -1161,7 +1169,7 @@ export async function saveRelayResult(
   relayId: number,
   finalTime: string | undefined,
   reactionTimeSecs: number | null,
-  status: 'DNS' | 'DNF' | 'DSQ' | null,
+  status: 'DNS' | 'DNF' | 'DSQ' | 'EXH' | null,
   splits: Record<number, string> | undefined,
   dsqItemId?: number | null,
 ): Promise<void> {
@@ -2588,7 +2596,7 @@ export interface FinalCandidateRow {
   prelimTime: string | null   // formatted display time
   prelimTimeMs: number | null // raw ms for sorting
   prelimRank: number
-  resultStatus: 'DNS' | 'DNF' | 'DSQ' | null
+  resultStatus: 'DNS' | 'DNF' | 'DSQ' | 'EXH' | null
   qualCode: string | null     // 'A' | 'B' | 'R' | null
   noAdvance: boolean
   finalFix: boolean

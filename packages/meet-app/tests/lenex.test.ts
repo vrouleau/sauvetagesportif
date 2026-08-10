@@ -484,6 +484,30 @@ describe('LENEX exporter', () => {
       freshCleanup()
     }
   })
+
+  it('round-trips EXH (hors concours/exhibition, resultstatus=4) through importLenex, keeping swimtime', () => {
+    seedResultsFixture(db, dateToOle(2014, 7, 3))
+    db.prepare(`UPDATE swimresult SET resultstatus=4 WHERE swimresultid=1`).run() // EXH
+    exportLenexResults(outPath, db)
+
+    const raw = readLefXml(outPath)
+    expect(raw).toContain('status="EXH"')
+
+    const { db: freshDb, cleanup: freshCleanup } = createTestDb()
+    try {
+      const summary = importLenex(outPath, freshDb)
+      expect(summary.results).toBeGreaterThan(0)
+      const row = freshDb.prepare(`SELECT swimtime, resultstatus, heatid, lane FROM swimresult LIMIT 1`).get() as {
+        swimtime: number | null; resultstatus: number | null; heatid: number | null; lane: number | null
+      }
+      expect(row.swimtime).toBe(58500)
+      expect(row.resultstatus).toBe(4)
+      expect(row.heatid).not.toBeNull()
+      expect(row.lane).toBe(4)
+    } finally {
+      freshCleanup()
+    }
+  })
 })
 
 // ── PostgreSQL backend parity ───────────────────────────────────────────────

@@ -759,6 +759,7 @@ function decodeResultStatus(s: number | null): string | null {
     case 1: return 'DNS'
     case 2: return 'DNF'
     case 3: return 'DSQ'
+    case 4: return 'EXH'
     default: return null
   }
 }
@@ -768,6 +769,7 @@ function encodeResultStatus(s: string | undefined): number | null {
     case 'DNS': return 1
     case 'DNF': return 2
     case 'DSQ': return 3
+    case 'EXH': return 4
     default: return null
   }
 }

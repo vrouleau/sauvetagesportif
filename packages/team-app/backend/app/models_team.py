@@ -213,6 +213,7 @@ class Result(Base):
     resulttyp = Column(SmallInteger)    # 0=official
     course = Column(SmallInteger)       # 1=LCM, 2=SCY, 3=SCM
     entrytimecourse = Column(SmallInteger)
+    resultstatus = Column(SmallInteger)  # NULL/0=normal, 4=HC/EXH (hors concours — excluded from best times)
 
     member = relationship("Member", back_populates="results")
     meet = relationship("Meet", back_populates="results")

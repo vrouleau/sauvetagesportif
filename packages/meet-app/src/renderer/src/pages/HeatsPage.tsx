@@ -48,7 +48,7 @@ function saveEntryResult(
   entry: LaneEntry,
   finalTime: string | undefined,
   reactionTimeSecs: number | null,
-  status: 'DNS' | 'DNF' | 'DSQ' | null,
+  status: 'DNS' | 'DNF' | 'DSQ' | 'EXH' | null,
   splits: Record<number, string> | undefined,
   dsqItemId?: number | null,
 ) {
@@ -446,7 +446,7 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
     : allLanes
 
   const ranked = [...entries]
-    .filter((e) => e.finalTime && e.status !== 'DNS' && e.status !== 'DNF' && e.status !== 'DSQ')
+    .filter((e) => e.finalTime && e.status !== 'DNS' && e.status !== 'DNF' && e.status !== 'DSQ' && e.status !== 'EXH')
     .sort((a, b) => parseTimeSecs(a.finalTime!) - parseTimeSecs(b.finalTime!))
   const rankOf = (lane: number) => {
     const idx = ranked.findIndex((e) => e.lane === lane)
@@ -465,6 +465,9 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
     if (status === 'DNS') return 'DNS'
     if (status === 'DNF') return 'DNF'
     if (status === 'DSQ') return 'DSQ'
+    // EXH: pool keeps showing the real time; beach shows "EXH" in place of the position number
+    // (the underlying value stays on entry.finalTime either way, still editable).
+    if (status === 'EXH') return isBeach ? 'EXH' : (time || '')
     if (!time) return ''
     return time
   }
@@ -618,12 +621,13 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
     if (e.key === 'Escape') setEditingLane(null)
   }
 
-  function setStatus(lane: number, status: 'DNS' | 'DNF' | 'DSQ' | null) {
+  function setStatus(lane: number, status: 'DNS' | 'DNF' | 'DSQ' | 'EXH' | null) {
     setHeatData((prev) => {
       if (selectedHeatId === null) return prev
       const updated = (prev[selectedHeatId] ?? []).map((e) => {
         if (e.lane !== lane) return e
-        const next: LaneEntry = { ...e, status, finalTime: status ? undefined : e.finalTime }
+        // EXH keeps the recorded time/position — only DNS/DNF/DSQ clear it.
+        const next: LaneEntry = { ...e, status, finalTime: (status && status !== 'EXH') ? undefined : e.finalTime }
         const dsqId = status === 'DSQ' ? selectedDsqItemId : null
         saveEntryResult(next, next.finalTime, null, next.status ?? null, next.splitTimes, dsqId)
         return next
@@ -1662,7 +1666,7 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
                             className={`text-xs border border-gray-300 rounded px-1 ${isSelected ? 'bg-blue-100 border-blue-300' : 'bg-white'}`}
                             value={entry.status ?? ''}
                             onChange={(e) => {
-                              const val = e.target.value as 'DNS' | 'DNF' | 'DSQ' | ''
+                              const val = e.target.value as 'DNS' | 'DNF' | 'DSQ' | 'EXH' | ''
                               setSelectedLane(lane)
                               setStatus(lane, val || null)
                             }}
@@ -1672,6 +1676,7 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
                             <option value="DNS">DNS</option>
                             <option value="DNF">DNF</option>
                             <option value="DSQ">DSQ</option>
+                            <option value="EXH">EXH</option>
                           </select>
                         </td>
                       </tr>

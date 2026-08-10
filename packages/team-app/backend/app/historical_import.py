@@ -327,6 +327,9 @@ def import_historical_meet(db: Session, file_bytes: bytes, force: bool = False) 
                 if status in ("DSQ", "DNS", "DNF") and not swimtime_ms:
                     continue
 
+                # HC (hors concours / exhibition) keeps its time but is excluded from best-times.
+                is_hc = status.upper() == "EXH"
+
                 db.add(Result(
                     resultsid=next_result_id,
                     membersid=member.membersid,
@@ -337,6 +340,7 @@ def import_historical_meet(db: Session, file_bytes: bytes, force: bool = False) 
                     eventnumb=event_number.get(eid, 0),
                     resulttyp=0,  # official
                     eventdate=_dt(meta["startdate"].year, meta["startdate"].month, meta["startdate"].day) if meta["startdate"] else None,
+                    resultstatus=4 if is_hc else None,
                 ))
                 next_result_id += 1
                 results_imported += 1

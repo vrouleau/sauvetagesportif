@@ -180,15 +180,18 @@ class TestLoadEventsStartupGuard:
 
 class TestRunner:
     def test_apply_pending_is_idempotent(self, new_engine):
+        # Not scoped to migration 0001 specifically — this exercises the real
+        # versions/ package, so it picks up every migration that exists (e.g.
+        # 0002_hc_results_status), in filename order.
         ran_first = apply_pending(new_engine)
-        assert ran_first == ["0001_concurrent_meets"]
+        assert ran_first == ["0001_concurrent_meets", "0002_hc_results_status"]
 
         ran_second = apply_pending(new_engine)
         assert ran_second == []
 
         with new_engine.connect() as conn:
             count = conn.execute(text("SELECT COUNT(*) FROM schema_migrations")).scalar()
-        assert count == 1
+        assert count == 2
 
 
 # ---------------------------------------------------------------------------

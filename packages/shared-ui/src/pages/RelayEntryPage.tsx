@@ -76,6 +76,7 @@ function RelayEventCard({
   isDisabled,
   onMemberChange,
   onNameChange,
+  onSetHC,
   onCreateTeam,
   onDeleteTeam,
 }: {
@@ -86,6 +87,7 @@ function RelayEventCard({
   isDisabled: boolean
   onMemberChange: (teamId: number, position: number, athleteId: number | null) => void
   onNameChange: (teamId: number, name: string | null) => void
+  onSetHC?: (teamId: number, isHC: boolean) => void
   onCreateTeam: (eventId: number) => void
   onDeleteTeam: (team: RelayTeam) => void
 }) {
@@ -145,6 +147,7 @@ function RelayEventCard({
               isDisabled={isDisabled}
               onMemberChange={onMemberChange}
               onNameChange={onNameChange}
+              onSetHC={onSetHC}
               onDeleteTeam={onDeleteTeam}
             />
           ))}
@@ -166,6 +169,7 @@ function RelayTeamRow({
   isDisabled,
   onMemberChange,
   onNameChange,
+  onSetHC,
   onDeleteTeam,
 }: {
   team: RelayTeam
@@ -177,6 +181,7 @@ function RelayTeamRow({
   isDisabled: boolean
   onMemberChange: (teamId: number, position: number, athleteId: number | null) => void
   onNameChange: (teamId: number, name: string | null) => void
+  onSetHC?: (teamId: number, isHC: boolean) => void
   onDeleteTeam: (team: RelayTeam) => void
 }) {
   const { t } = useLang()
@@ -255,6 +260,18 @@ function RelayTeamRow({
           aria-label={t.relay.teamName}
           className="flex-1 text-xs border border-gray-300 rounded px-2 py-1 bg-white disabled:bg-gray-100 disabled:text-gray-500 min-w-0"
         />
+        {onSetHC && (
+          <label className="flex items-center gap-1 text-xs text-gray-600 shrink-0" title={t.relay.hcTitle}>
+            <input
+              type="checkbox"
+              checked={!!team.hc}
+              disabled={isDisabled}
+              className="w-3.5 h-3.5"
+              onChange={(e) => onSetHC(team.id, e.target.checked)}
+            />
+            {t.relay.hc}
+          </label>
+        )}
         <button
           type="button"
           onClick={() => onDeleteTeam(team)}
@@ -281,10 +298,12 @@ function RelayTeamRow({
           // - BUT keep the currently selected athlete for this position in the list
 
           // For mixed events, compute gender counts on this team (excluding current position)
-          // SERC events (swimstyle 530) have no restrictions
+          // SERC events (swimstyle 530) have no restrictions, neither does an HC (exhibition) team —
+          // it's frequently an ad-hoc pickup team that couldn't validly compose otherwise.
           const isSERC = event.swimstyleId === 530
+          const isHC = !!team.hc
           let allowedGender: 'M' | 'F' | null = null
-          if (!isSERC && event.gender === 'X') {
+          if (!isSERC && !isHC && event.gender === 'X') {
             const maxPerGender = event.relaycount / 2
             let mCount = 0
             let fCount = 0
@@ -322,14 +341,14 @@ function RelayTeamRow({
             // Exclude if assigned to another team for same event
             if (crossTeamAssignedIds.has(athlete.id)) return false
             // For M/F events: hard-filter by event gender
-            if (!isSERC && event.gender !== 'X' && athlete.gender !== event.gender) return false
+            if (!isSERC && !isHC && event.gender !== 'X' && athlete.gender !== event.gender) return false
             // For mixed events: exclude gender that has reached its quota
-            if (!isSERC && allowedGender != null && athlete.gender !== allowedGender) return false
+            if (!isSERC && !isHC && allowedGender != null && athlete.gender !== allowedGender) return false
             // Age group check: a team is anchored to the event's own category — members
             // must be from that exact category or the single adjacent-younger one, and
             // at least 1 member must match the exact category (checked once no positions
             // remain to fill after this one — no need to block earlier).
-            if (!isSERC && athlete.ageGroup && nativeCode) {
+            if (!isSERC && !isHC && athlete.ageGroup && nativeCode) {
               if (!isAgeCodeAllowedOnTeam(athlete.ageGroup, nativeCode, ageCategoryOrder)) return false
               if (wouldMissNativeAnchor(currentAgeGroups, athlete.ageGroup, nativeCode, remainingAfterThis)) return false
             }
@@ -498,6 +517,25 @@ export default function RelayEntryPage({ role, clubId, refreshKey }: RelayEntryP
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update team name')
+    }
+  }, [api, pageData])
+
+  // ─── HC (hors concours / exhibition) toggle handler — meet-app only ─────────
+  const handleSetHC = useCallback(async (teamId: number, isHC: boolean) => {
+    try {
+      await api.setRelayTeamHC?.(teamId, isHC)
+      // Optimistically update local state
+      if (pageData) {
+        const updated = { ...pageData, teamsByEvent: { ...pageData.teamsByEvent } }
+        for (const key of Object.keys(updated.teamsByEvent)) {
+          updated.teamsByEvent[key] = updated.teamsByEvent[key].map(team =>
+            team.id === teamId ? { ...team, hc: isHC } : team
+          )
+        }
+        setPageData(updated)
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update HC status')
     }
   }, [api, pageData])
 
@@ -704,6 +742,7 @@ export default function RelayEntryPage({ role, clubId, refreshKey }: RelayEntryP
                   isDisabled={isDisabled}
                   onMemberChange={handleMemberChange}
                   onNameChange={handleNameChange}
+                  onSetHC={api.setRelayTeamHC ? handleSetHC : undefined}
                   onCreateTeam={handleCreateTeam}
                   onDeleteTeam={handleDeleteTeam}
                 />

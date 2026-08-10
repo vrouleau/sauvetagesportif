@@ -1,8 +1,10 @@
 # "Hors Concours" (HC) — Design Notes
 
-Status: **data model decided, ready to implement.** Splash Meet Manager's own
-`.mdb` files were inspected directly (see "Splash ground-truth investigation"
-below) and settle the previously-open question.
+Status: **implemented** (2026-08-10). Splash Meet Manager's own `.mdb` files
+were inspected directly (see "Splash ground-truth investigation" below) and
+settled the data-model question; see "Implementation" at the end for what
+shipped, including two decisions made during implementation review that
+extend the scope described below.
 
 ## Goal
 
@@ -159,31 +161,88 @@ per-value contract change (value `4` doesn't clear the time; values
    *unofficial* editing UI, not its persisted data, and is retracted (see
    "Correction" above).
 
-## Remaining work
+## Implementation (2026-08-10)
 
-- Schema/logic change: `db.ts`'s `decodeResultStatus`/`encodeResultStatus`
-  gain a 4th value; `saveResult`/`saveRelayResult` stop clearing
-  time/position specifically for that value (they still clear for
-  `1`/`2`/`3`).
-- Points/standings queries (`getCombinedResults`, `getPointStandings`, the
-  two ranking queries ~3610/~3641) exclude `resultstatus=4` same as
-  `1`/`2`/`3`; finals-qualification ranking query also excludes it (per
-  decision #2).
-- Beach: wherever positions are numbered/displayed, skip HC athletes from the
-  numbering (decision #3).
-- `lenex.ts`: export/import support for the new value — Splash's own LENEX
-  round-trip behavior for `resultstatus=4` is still unverified (only the raw
-  `.mdb` was inspected, not a Splash-generated `.lxf`); worth a quick check
-  before finalizing the export string (likely a 4th `<RESULT status="...">`
-  literal, naming TBD — "EXH" would match Splash's own UI label).
-- UI: `HeatsPage`/`FinalsPage` — HC toggle alongside the existing DNS/DNF/DSQ
-  control, keeping the time/position field enabled/visible when HC is set.
-  `IndividualEntryPage`/`RelayEntryPage` (shared-ui) — HC checkbox at
-  registration, applies to both meet-app and team-app (shared component —
-  team-app-side plumbing through `meetApi.js`/FastAPI/Postgres would also be
-  needed if the flag should reach team-app, TBD).
-- i18n: FR "Hors concours" / EN — Splash's own label is "Exhibition Swim"
-  (EXH), which settles the earlier open naming question; still need to
-  decide our exact UI string but "Exhibition" is the evidence-backed choice.
-- Tests: unit tests for the new exclusion logic (mirroring existing
-  DNS/DNF/DSQ coverage), LENEX round-trip test if applicable.
+Everything in "Remaining work" (previous revision of this doc) shipped, plus
+three things resolved during implementation review that weren't covered by
+the decisions above:
+
+**Naming**: the status *code* (in `resultstatus` decode/encode, the
+`<select>` option, and the LENEX wire string) is **`'EXH'`**, not `'HC'` —
+matching the existing convention that `DNS`/`DNF`/`DSQ` are English
+abbreviations shown as-is regardless of UI language, and matching Splash's
+own English label. `'HC'`/"hors concours" remains the feature's French-facing
+conceptual name (this doc's title, boolean field/prop names like `is_hc`,
+`hc`, `setRelayTeamHC`, i18n keys `t.registration.hc`/`t.relay.hc` — both
+localized to "HC" (FR) / "EXH" (EN)).
+
+**Cross-app compatibility, verified safe before implementing**: neither
+meet-app's SQLite (`db/schema.sql:342`) nor team-app's Postgres
+(`models.py:230`) has a CHECK constraint on `resultstatus` — both are plain
+`SMALLINT`. Splash's own `.smb` interop (`smb.ts`) treats `RESULTSTATUS` as a
+generic 16-bit int with no special-casing, so a raw `4` already round-tripped
+through `.smb` before this change. team-app's `swimresult.resultstatus`
+mirror column existed but was never read/written by any team-app code. Net
+result: extending to value `4` needed no schema migration on either
+*existing* table — only decode/encode logic needed to learn it, and it flows
+through team-app's registration/entries path (see below) as a plain
+boolean, not by team-app decoding the LENEX status string at all.
+
+**Best-times exclusion (new decision, not covered above)**: team-app's
+historical `results` table (`models_team.Result`, backs `best_times.py`) had
+no status column at all, and its production LXF-import path
+(`lxf_to_team.py`) didn't read the `status` attribute — so an EXH swim's kept
+time would have silently become a valid best-time/seed-time. **Decided: EXH
+swims are excluded from best-times.** This *did* need a real schema change —
+migration `m0002_hc_results_status` adds `results.resultstatus`
+(`backend/app/migrations/versions/`), `lxf_to_team.py`/`historical_import.py`
+now encode the LENEX `status="EXH"` attribute onto it, and `best_times.py`'s
+queries exclude `resultstatus=4`.
+
+**Relay composition-rule bypass (new decision, not covered above)**: an EXH
+relay team is frequently an ad-hoc/late pickup team that couldn't validly
+compose under the normal age-anchor/gender-balance rules — that's often *why*
+it's being marked EXH. SERC events (swimstyle 530) already establish exactly
+this shape of bypass (a literal style-id check gating every restriction, at
+`RelayEntryPage.tsx`'s client-side filter and meet-app's
+`db:set-relay-team-member` handler in `index.ts`); mirrored with an `isHC`
+flag alongside `isSERC` at both of those points. team-app's copy of the same
+validation (`api.py`) was **not** touched — see scope boundary below.
+
+**Scope boundary — relay EXH is meet-app-only.** Individual EXH is
+symmetric across both apps (both already had `swimresult.resultstatus`).
+Relay is not: meet-app's `relay` table already had `resultstatus`, but
+team-app's *current-meet* relay teams write into `models_team.Relay`, which
+has no status column at all — adding one is a real schema decision left for
+a follow-up. Relay EXH is implemented only in meet-app: at time-entry
+(`HeatsPage`, works for free once `resultstatus=4` is understood everywhere)
+and at registration (`RelayEntryPage`, via an **optional**
+`RegistrationAPI.setRelayTeamHC` method that team-app's adapter simply
+doesn't implement, hiding the checkbox there — same pattern as the existing
+`setRelayMember?`/`resetClubPin?` optional methods).
+
+**Late-entry flow, confirmed to need no extra work.** Individual late
+entries (`HeatsPage`'s "Ajouter inscription tardive" dialog → `addLateEntry`)
+get `heatid`/`lane` in the same INSERT that creates the row, so they're an
+ordinary editable grid row immediately — the HeatsPage status-dropdown
+change already lets an operator mark EXH right there, which is expected to
+be the dominant real-world path (a late arrival added post-heat-generation,
+not pre-registered as EXH). For relay, the team must exist (unseeded) before
+the same dialog can place it via `assignRelayToHeatLane` — which is exactly
+why the composition-rule bypass above matters: an ad-hoc late team needs EXH
+checked *before* members are assigned.
+
+**Everything from the original "Remaining work" list**: `decodeResultStatus`/
+`encodeResultStatus` (and 5 other duplicated decode sites across `db.ts`,
+`lenex.ts`, `livePush.ts`, `index.ts`) learned value `4`; the points/standings
+queries needed **no changes** — they already only include `NULL`/`0`, so `4`
+was automatically excluded once decode recognized it; same for finals
+auto-qualification (`getFinalCandidates`'s rank loop already treats any
+truthy status as unranked). `FinalsPage`'s qualify dropdown was unblocked for
+EXH specifically (`isDisabled` now excludes it) so decision #2's "manually
+placed" path is actually reachable. Beach numbering already excluded any
+truthy status from the "occupied positions" count (`!e.status`), so no
+change was needed there either — only the *display* (`formatTimeDisplay`)
+needed an EXH-specific branch to show `"EXH"` instead of the kept position
+number. `IndividualEntryPage`/`RegistrationPanel` got an "HC"/"EXH" checkbox
+column, wired through `register()`'s payload (`is_hc`) on both apps.

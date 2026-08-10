@@ -307,6 +307,8 @@ def import_lxf_as_meet(db: DbSession, content: bytes, force: bool = False) -> di
                 if not swimtime_ms and not entrytime_ms:
                     continue
                 style_id = event_style_map.get(eid) if eid else None
+                # HC (hors concours / exhibition) keeps its time but is excluded from best-times.
+                is_hc = (result_el.get("status") or "").upper() == "EXH"
                 res_id = _next_id(db, Result, Result.resultsid)
                 db.add(Result(
                     resultsid=res_id,
@@ -318,6 +320,7 @@ def import_lxf_as_meet(db: DbSession, content: bytes, force: bool = False) -> di
                     entrytime=entrytime_ms,
                     course=meet_course,
                     resulttyp=0,  # official
+                    resultstatus=4 if is_hc else None,
                 ))
                 results_imported += 1
                 member_ids_with_results.add(member_id)

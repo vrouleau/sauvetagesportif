@@ -148,6 +148,7 @@ class RegistrationCreate(BaseModel):
     event_id: int
     age_code: str = "Open"
     entry_time_ms: int | None = None
+    is_hc: bool | None = None
 
     @field_validator("age_code")
     @classmethod
@@ -1893,6 +1894,7 @@ def get_registration(athlete_id: int, db: Session = Depends(get_db)):
                 "registered": reg is not None,
                 "registration_id": reg.swimresultid if reg else None,
                 "entry_time_ms": reg.entrytime if reg else None,
+                "hc": (reg.resultstatus == 4) if reg else False,
             })
 
     # Sort categories
@@ -2136,6 +2138,10 @@ def create_registration(data: RegistrationCreate, request: Request, db: Session 
 
     if existing:
         existing.entrytime = entry_time_ms
+        # Only touch resultstatus when is_hc is explicitly present, so plain entry-time edits
+        # never clobber a status set elsewhere.
+        if data.is_hc is not None:
+            existing.resultstatus = 4 if data.is_hc else None
         db.commit()
         _update_exception(db, athlete_id)
         db.commit()
@@ -2147,6 +2153,7 @@ def create_registration(data: RegistrationCreate, request: Request, db: Session 
         swimeventid=event_id,
         age_code=age_code,
         entrytime=entry_time_ms,
+        resultstatus=4 if data.is_hc else None,
     )
     db.add(result)
     db.flush()

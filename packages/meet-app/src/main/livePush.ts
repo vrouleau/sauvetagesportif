@@ -416,6 +416,7 @@ export class LivePushModule {
       case 1: return 'DNS'
       case 2: return 'DNF'
       case 3: return 'DSQ'
+      case 4: return 'EXH'
       default: return ''
     }
   }

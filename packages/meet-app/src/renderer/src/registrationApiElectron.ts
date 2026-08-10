@@ -52,7 +52,7 @@ interface LocalAthlete {
   clubName: string
   licence?: string
   handicapex?: string
-  entries: Array<{ eventId: number; eventName: string; category: string; agegroupId: number | null; entryTime?: string }>
+  entries: Array<{ eventId: number; eventName: string; category: string; agegroupId: number | null; entryTime?: string; resultstatus?: number | null }>
 }
 
 interface LocalSession {
@@ -218,6 +218,7 @@ export const registrationApiElectron: RegistrationAPI = {
             registered: !!entry,
             registration_id: entry ? event.id : undefined,
             entry_time_ms: entry ? displayToMs(entry.entryTime) : null,
+            hc: entry ? entry.resultstatus === 4 : false,
           })
         }
       }
@@ -311,6 +312,10 @@ export const registrationApiElectron: RegistrationAPI = {
 
   async setRelayTeamMember(teamId: number, position: number, athleteId: number | null): Promise<void> {
     await ipc()?.setRelayTeamMember(teamId, position, athleteId)
+  },
+
+  async setRelayTeamHC(teamId: number, isHC: boolean): Promise<void> {
+    await ipc()?.setRelayTeamHC(teamId, isHC)
   },
 
   async setRelayTeamName(teamId: number, name: string | null): Promise<void> {

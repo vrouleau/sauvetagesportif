@@ -341,7 +341,7 @@ ipcMain.handle('db:get-dsq-items', () => {
 // dropdown asked for, so a user's explicit category choice (e.g. "Open" vs "15-18" on the same
 // event) is honored instead of silently overridden.
 
-ipcMain.handle('db:register', (_event, data: { athlete_id: number; event_id: number; entry_time_ms: number | null; age_code: string }) => {
+ipcMain.handle('db:register', (_event, data: { athlete_id: number; event_id: number; entry_time_ms: number | null; age_code: string; is_hc?: boolean }) => {
   const db = getLocalDb()
   // Check if already registered
   const existing = db.prepare(
@@ -349,8 +349,15 @@ ipcMain.handle('db:register', (_event, data: { athlete_id: number; event_id: num
   ).get(data.athlete_id, data.event_id) as { swimresultid: number } | undefined
   let id: number
   if (existing) {
-    // Update entry time
-    db.prepare(`UPDATE swimresult SET entrytime = ? WHERE swimresultid = ?`).run(data.entry_time_ms, existing.swimresultid)
+    // Update entry time. Only touch resultstatus when is_hc is explicitly present — plain
+    // entry-time edits (handleRegister/handleUpdateEntryTime) never send it, so they never
+    // clobber a DNS/DNF/DSQ/EXH status set elsewhere (e.g. at result entry).
+    if (typeof data.is_hc === 'boolean') {
+      db.prepare(`UPDATE swimresult SET entrytime = ?, resultstatus = ? WHERE swimresultid = ?`)
+        .run(data.entry_time_ms, data.is_hc ? 4 : null, existing.swimresultid)
+    } else {
+      db.prepare(`UPDATE swimresult SET entrytime = ? WHERE swimresultid = ?`).run(data.entry_time_ms, existing.swimresultid)
+    }
     id = existing.swimresultid
   } else {
     // Find the best matching age group for this event
@@ -396,9 +403,9 @@ ipcMain.handle('db:register', (_event, data: { athlete_id: number; event_id: num
 
     id = nextId('swimresult', 'swimresultid')
     db.prepare(
-      `INSERT INTO swimresult (swimresultid, athleteid, swimeventid, agegroupid, entrytime, usetimetype)
-       VALUES (?, ?, ?, ?, ?, 0)`
-    ).run(id, data.athlete_id, data.event_id, agegroupId, data.entry_time_ms)
+      `INSERT INTO swimresult (swimresultid, athleteid, swimeventid, agegroupid, entrytime, usetimetype, resultstatus)
+       VALUES (?, ?, ?, ?, ?, 0, ?)`
+    ).run(id, data.athlete_id, data.event_id, agegroupId, data.entry_time_ms, data.is_hc ? 4 : null)
   }
 
   // Assign a beach number immediately for beach meets, instead of waiting on the next heat generation
@@ -686,7 +693,7 @@ ipcMain.handle('db:get-relay-page-data', (_event, clubId?: number) => {
     id: number; teamNumber: string; teamName: string | null
     ageGroup?: string
     members: Array<{ position: number; athleteId: number | null; athleteName: string | null }>
-    clubId?: number; clubName?: string
+    clubId?: number; clubName?: string; hc?: boolean
   }>> = {}
 
   // Build a lookup for agegroupid -> ageCode
@@ -697,7 +704,7 @@ ipcMain.handle('db:get-relay-page-data', (_event, clubId?: number) => {
 
   // Query relays
   let relayQuery = `
-    SELECT r.relayid, r.clubid, r.swimeventid, r.agegroupid, r.teamnumber, r.name
+    SELECT r.relayid, r.clubid, r.swimeventid, r.agegroupid, r.teamnumber, r.name, r.resultstatus
     FROM relay r
     WHERE r.swimeventid IN (${placeholders})
   `
@@ -710,7 +717,7 @@ ipcMain.handle('db:get-relay-page-data', (_event, clubId?: number) => {
 
   const relays = db.prepare(relayQuery).all(...relayParams) as Array<{
     relayid: number; clubid: number; swimeventid: number
-    agegroupid: number | null; teamnumber: number | null; name: string | null
+    agegroupid: number | null; teamnumber: number | null; name: string | null; resultstatus: number | null
   }>
 
   // Load all relay positions for these relays
@@ -825,6 +832,7 @@ ipcMain.handle('db:get-relay-page-data', (_event, clubId?: number) => {
       members,
       clubId: r.clubid,
       clubName: clubNamesMap.get(r.clubid) ?? undefined,
+      hc: r.resultstatus === 4,
     })
   }
 
@@ -942,10 +950,13 @@ ipcMain.handle('db:set-relay-team-member', (_event, teamId: number, position: nu
 
   // Validate position
   const relay = db.prepare(
-    `SELECT r.relayid, r.swimeventid, r.agegroupid, r.clubid
+    `SELECT r.relayid, r.swimeventid, r.agegroupid, r.clubid, r.resultstatus
      FROM relay r WHERE r.relayid = ?`
-  ).get(teamId) as { relayid: number; swimeventid: number; agegroupid: number | null; clubid: number | null } | undefined
+  ).get(teamId) as { relayid: number; swimeventid: number; agegroupid: number | null; clubid: number | null; resultstatus: number | null } | undefined
   if (!relay) throw new Error('Relay team not found')
+  // HC (hors concours / exhibition) teams bypass composition rules the same way SERC does —
+  // an HC team is frequently an ad-hoc pickup team that couldn't validly compose otherwise.
+  const isHC = relay.resultstatus === 4
 
   // Get relaycount for position validation
   const eventStyle = db.prepare(`
@@ -1004,7 +1015,7 @@ ipcMain.handle('db:set-relay-team-member', (_event, teamId: number, position: nu
     const eventGenderVal = eventInfo?.eventGender ?? 0
     // gender 1=M, 2=F; anything else (0 or 3) is mixed (X) — don't assume mixed is
     // always encoded as 3, some data (Splash-native imports, see api.py's MDB fixup) uses 0
-    if (!isSERC && eventGenderVal !== 1 && eventGenderVal !== 2) {
+    if (!isSERC && !isHC && eventGenderVal !== 1 && eventGenderVal !== 2) {
       const rc = eventInfo?.relaycount ?? 4
       const maxPerGender = Math.floor(rc / 2)
 
@@ -1037,8 +1048,8 @@ ipcMain.handle('db:set-relay-team-member', (_event, teamId: number, position: nu
     // Age group composition validation: a team is anchored to the event's own
     // age category — members must be from that exact category, or the single
     // adjacent-younger one (swim-up), and at least 1 member must match the exact
-    // category. SERC events skip this check.
-    if (!isSERC) {
+    // category. SERC events and HC teams skip this check.
+    if (!isSERC && !isHC) {
     const nativeCode = getEventNativeAgeCode(db, relay.swimeventid)
 
     // Get the new athlete's dominant registration age group (from individual entries)
@@ -1095,7 +1106,7 @@ ipcMain.handle('db:set-relay-team-member', (_event, teamId: number, position: nu
         )
       }
     }
-    } // end if (!isSERC)
+    } // end if (!isSERC && !isHC)
 
     db.prepare(
       `INSERT INTO relayposition (relayid, relaynumber, athleteid) VALUES (?, ?, ?)`
@@ -1116,6 +1127,16 @@ ipcMain.handle('db:set-relay-team-name', (_event, teamId: number, name: string |
 
   // Update the relay team name
   db.prepare(`UPDATE relay SET name = ? WHERE relayid = ?`).run(name, teamId)
+
+  return { ok: true }
+})
+
+ipcMain.handle('db:set-relay-team-hc', (_event, teamId: number, isHC: boolean) => {
+  const db = getLocalDb()
+
+  // Hors concours / exhibition — result kept but excluded from points/standings and from
+  // composition rules (mirrors resultstatus=4 on the individual swimresult path).
+  db.prepare(`UPDATE relay SET resultstatus = ? WHERE relayid = ?`).run(isHC ? 4 : null, teamId)
 
   return { ok: true }
 })
@@ -2202,7 +2223,7 @@ function _notifyLivePushFromScan(db: ReturnType<typeof getLocalDb>, swimresultId
 
     if (!row || !row.heatnumber) return
 
-    const statusStr = row.resultstatus === 1 ? 'DNS' : row.resultstatus === 2 ? 'DNF' : row.resultstatus === 3 ? 'DSQ' : ''
+    const statusStr = row.resultstatus === 1 ? 'DNS' : row.resultstatus === 2 ? 'DNF' : row.resultstatus === 3 ? 'DSQ' : row.resultstatus === 4 ? 'EXH' : ''
 
     livePush.notifyResultWrite({
       event_id: row.swimeventid,

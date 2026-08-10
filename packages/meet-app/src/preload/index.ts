@@ -136,7 +136,7 @@ const api = {
       ipcRenderer.invoke('db:get-meet-type'),
     getDsqItems: () =>
       ipcRenderer.invoke('db:get-dsq-items'),
-    register: (data: { athlete_id: number; event_id: number; entry_time_ms: number | null; age_code: string }) =>
+    register: (data: { athlete_id: number; event_id: number; entry_time_ms: number | null; age_code: string; is_hc?: boolean }) =>
       ipcRenderer.invoke('db:register', data),
     unregister: (athleteId: number, eventId: number) =>
       ipcRenderer.invoke('db:unregister', athleteId, eventId),
@@ -159,6 +159,8 @@ const api = {
       ipcRenderer.invoke('db:set-relay-team-member', teamId, position, athleteId),
     setRelayTeamName: (teamId: number, name: string | null) =>
       ipcRenderer.invoke('db:set-relay-team-name', teamId, name),
+    setRelayTeamHC: (teamId: number, isHC: boolean) =>
+      ipcRenderer.invoke('db:set-relay-team-hc', teamId, isHC),
     reorderEvents: (updates: Array<{ eventId: number; sessionId: number; sortcode: number }>) =>
       ipcRenderer.invoke('db:reorder-events', updates),
     generateHeats: (eventId?: number, sessionId?: number) =>

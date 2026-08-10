@@ -48,7 +48,7 @@ interface FinalCandidate {
   prelimTime: string | null
   prelimTimeMs: number | null
   prelimRank: number
-  resultStatus: 'DNS' | 'DNF' | 'DSQ' | null
+  resultStatus: 'DNS' | 'DNF' | 'DSQ' | 'EXH' | null
   qualCode: string | null
   noAdvance: boolean
   finalFix: boolean
@@ -368,7 +368,9 @@ export default function FinalsPage({ refreshKey = 0, meetType = 'POOL' }: { refr
               </thead>
               <tbody>
                 {candidates.map((c) => {
-                  const isDisabled = !!c.resultStatus
+                  // EXH swimmers are excluded from automatic qualification (prelimRank stays 0)
+                  // but can still be manually placed into a final heat.
+                  const isDisabled = !!c.resultStatus && c.resultStatus !== 'EXH'
                   const currentVal = c.noAdvance ? 'W' : (c.qualCode ?? '')
                   const showSeparator = selectedEvent &&
                     !isDisabled && c.prelimRank > 0 &&
