@@ -17,8 +17,8 @@
 // along with Sauvetage Sportif. If not, see <https://www.gnu.org/licenses/>.
 
 import { assignLateBeachNumber } from './beachNumber'
-import { regenerateCombinedEvents, resolveToFinal } from './combinedEvents'
-import { regeneratePointScores } from './pointScores'
+import { regenerateCombinedEvents, resolveToFinal, loadCombinedEventsConfig } from './combinedEvents'
+import { regeneratePointScores, loadPointScoresConfig } from './pointScores'
 import { getDb as getActiveDb, isPgConnected, closeDb as closeActiveDb } from './connectionManager'
 import type { DbBackend } from './dbBackend'
 import { livePush, type LiveResultPayload } from './livePush'
@@ -3707,11 +3707,21 @@ export interface PointStandingsClub {
   }>
 }
 
+export interface PointStandingsGroup {
+  label: string
+  clubs: Array<{
+    clubName: string
+    clubCode: string
+    points: number
+  }>
+}
+
 export function getPointStandings(selectedEventIds: number[], injectedDb?: ReturnType<typeof getLocalDb>): {
   clubs: PointStandingsClub[]
   categories: string[]
+  groups: PointStandingsGroup[]
 } {
-  if (selectedEventIds.length === 0) return { clubs: [], categories: [] }
+  if (selectedEventIds.length === 0) return { clubs: [], categories: [], groups: [] }
   const db = injectedDb ?? getLocalDb()
 
   // Ensure combined event definitions are up-to-date before querying
@@ -3720,7 +3730,7 @@ export function getPointStandings(selectedEventIds: number[], injectedDb?: Retur
 
   // Use the same combined events logic to compute points per club
   const row = db.prepare(`SELECT data FROM bsglobal WHERE name = 'COMBINEDEVENTS'`).get() as { data: string } | undefined
-  if (!row || !row.data) return { clubs: [], categories: [] }
+  if (!row || !row.data) return { clubs: [], categories: [], groups: [] }
 
   const xml = row.data
   const categoryNames: string[] = []
@@ -3841,5 +3851,45 @@ export function getPointStandings(selectedEventIds: number[], injectedDb?: Retur
 
   clubs.sort((a, b) => b.totalPoints - a.totalPoints || a.clubName.localeCompare(b.clubName))
 
-  return { clubs, categories: categoryNames }
+  // Split the flat club/category table into age-bracket sections (mirrors Splash's own
+  // "Classement aux points" report: one ranked club list per age bracket, plus an overall
+  // "Cat. générale" section). Bracket boundaries come from the same ageGroups config used
+  // to build Splash's native POINTSCORE XML, so both reports agree on the same brackets.
+  const ageGroupBuckets = loadPointScoresConfig().splashPointScore.ageGroups
+  const categoryAgeRange = new Map(
+    loadCombinedEventsConfig().categories.map(c => [c.name, { ageMin: c.ageMin, ageMax: c.ageMax }])
+  )
+
+  const groups: PointStandingsGroup[] = ageGroupBuckets.map(bucket => {
+    const isOverall = bucket.from === -1 && bucket.to === -1
+    const label = isOverall
+      ? 'Cat. générale'
+      : bucket.from === -1
+        ? `${bucket.to} ans et moins`
+        : bucket.to === -1
+          ? `${bucket.from} ans et plus`
+          : `${bucket.from} - ${bucket.to} ans`
+
+    const bucketLow = bucket.from === -1 ? -Infinity : bucket.from
+    const bucketHigh = bucket.to === -1 ? Infinity : bucket.to
+    const bucketCategories = categoryNames.filter(name => {
+      const range = categoryAgeRange.get(name)
+      if (!range) return false
+      const catHigh = range.ageMax === -1 ? Infinity : range.ageMax
+      return range.ageMin >= bucketLow && catHigh <= bucketHigh
+    })
+
+    const groupClubs = clubs.map(c => ({
+      clubName: c.clubName,
+      clubCode: c.clubCode,
+      points: c.categories
+        .filter(cc => bucketCategories.includes(cc.categoryName))
+        .reduce((sum, cc) => sum + cc.points, 0),
+    }))
+    groupClubs.sort((a, b) => b.points - a.points || a.clubName.localeCompare(b.clubName))
+
+    return { label, clubs: groupClubs }
+  }).filter(g => g.clubs.some(c => c.points > 0))
+
+  return { clubs, categories: categoryNames, groups }
 }

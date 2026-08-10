@@ -809,72 +809,61 @@ function buildEntriesByEventPdfHeaderInfo(meetInfo: MeetInfo): PdfHeaderInfo {
 
 // ── Point Standings (Classement au points) PDF generator ─────────────────────
 
-interface PointStandingsData {
-  clubs: Array<{
-    clubName: string
-    clubCode: string
-    totalPoints: number
-    categories: Array<{ categoryName: string; points: number }>
-  }>
-  categories: string[]
+interface PointStandingsGroup {
+  label: string
+  clubs: Array<{ clubName: string; clubCode: string; points: number }>
 }
 
-function generatePointStandingsPdfHtml(data: PointStandingsData): string {
-  if (data.clubs.length === 0) {
-    return `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body><p>Aucun résultat disponible.</p></body></html>`
-  }
+interface PointStandingsData {
+  groups: PointStandingsGroup[]
+}
 
-  // Truncate long category names for column headers
-  function shortCat(name: string): string {
-    // Try to extract a shorter version (e.g., "10 et - G" from "Cumulatif 10 ans et moins - garçons")
-    const m = name.match(/(\d+[\s-]+\d+|\d+\s+et\s+[\w-]+).*?([GMFgmf])/i)
-    if (m) return `${m[1]} ${m[2].toUpperCase()}`
-    if (name.length > 15) return name.slice(0, 14) + '…'
-    return name
-  }
+function fmtPoints(pts: number): string {
+  return pts > 0
+    ? pts.toLocaleString('fr-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    : '-'
+}
 
-  const catHeaders = data.categories.map(c => `<td align="right"><em class="f8">${esc(shortCat(c))}</em></td>`).join('\n  ')
-
-  let html = `<div class="ps-report">
-<table width="100%" cellspacing="0" cellpadding="2" border="0" class="ps-table">
-<tr class="ps-hdr">
-  <td width="4%" align="right"><em class="f8">Rang</em></td>
-  <td width="30%"><em class="f8">Club</em></td>
-  ${catHeaders}
-  <td width="8%" align="right"><b><em class="f8">Total</em></b></td>
-</tr>
-`
-
+// One ranked club list per age bracket (ties share a rank, blank rank number for repeats).
+function generatePointStandingsGroupHtml(group: PointStandingsGroup): string {
   let rank = 1
   let lastPoints: number | null = null
   let sameCount = 0
+  let rows = ''
 
-  for (let i = 0; i < data.clubs.length; i++) {
-    const club = data.clubs[i]
+  for (let i = 0; i < group.clubs.length; i++) {
+    const club = group.clubs[i]
 
-    if (club.totalPoints !== lastPoints) {
+    if (club.points !== lastPoints) {
       rank = i + 1
       sameCount = 1
-      lastPoints = club.totalPoints
+      lastPoints = club.points
     } else {
       sameCount++
     }
 
     const rankStr = sameCount === 1 ? `${rank}.` : ''
-    const catCells = club.categories.map(c =>
-      `<td align="right">${c.points > 0 ? c.points : ''}</td>`
-    ).join('\n  ')
-
-    html += `<tr>
-  <td align="right">${rankStr}</td>
-  <td><b>${esc(club.clubName)}</b></td>
-  ${catCells}
-  <td align="right"><b>${club.totalPoints}</b></td>
+    rows += `<tr>
+  <td align="right" width="4%">${rankStr}</td>
+  <td width="60%"><b>${esc(club.clubName)}</b></td>
+  <td width="16%">${esc(club.clubCode)}</td>
+  <td width="20%" align="right">${fmtPoints(club.points)}</td>
 </tr>\n`
   }
 
-  html += `</table>
+  return `<div class="ps-group">
+<div class="ps-group-title">${esc(group.label)}</div>
+<table width="100%" cellspacing="0" cellpadding="2" border="0" class="ps-table">
+${rows}</table>
 </div>`
+}
+
+function generatePointStandingsPdfHtml(data: PointStandingsData): string {
+  if (!data.groups || data.groups.length === 0) {
+    return `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body><p>Aucun résultat disponible.</p></body></html>`
+  }
+
+  const body = data.groups.map(generatePointStandingsGroupHtml).join('\n')
 
   return `<!DOCTYPE html>
 <html>
@@ -882,17 +871,16 @@ function generatePointStandingsPdfHtml(data: PointStandingsData): string {
 <meta charset="UTF-8">
 <style>
 BODY, TABLE, TD { font-family: Arial, Helvetica, sans-serif; font-size: 10pt; color: black; }
-.f8 { font-size: 8pt; }
 body { margin: 0; padding: 0; }
-.ps-report { margin-bottom: 14pt; }
+.ps-group { margin-bottom: 16pt; }
+.ps-group-title { font-weight: bold; margin-bottom: 4pt; }
 .ps-table { border-collapse: collapse; }
-.ps-table td { padding: 2px 4px; border-bottom: 1px solid #ddd; }
-.ps-hdr td { border-bottom: 2px solid #333; padding: 2px 4px; }
-@page { size: Letter landscape; }
+.ps-table td { padding: 1px 4px; }
+@page { size: Letter portrait; }
 </style>
 </head>
 <body>
-${html}
+${body}
 </body>
 </html>`
 }
@@ -1444,7 +1432,7 @@ export default function ReportPage({ refreshKey = 0, meetType = 'POOL' }: { refr
       const eventIds = [...selectedEventIds]
       if (eventIds.length === 0) return
       const data = await dbApi()?.getPointStandings(eventIds) as PointStandingsData | undefined
-      if (!data || data.clubs.length === 0) {
+      if (!data || data.groups.length === 0) {
         alert('Aucune donnée de classement aux points disponible. Vérifiez que des résultats existent pour les épreuves sélectionnées.')
         return
       }

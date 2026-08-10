@@ -28,6 +28,9 @@
       "scoreonerecperresult": "F"
     },
     "ageGroups": [
+      { "from": -1, "to": 14 },
+      { "from": 15, "to": 18 },
+      { "from": 19, "to": -1 },
       { "from": -1, "to": -1 }
     ],
     "placePoints": [
