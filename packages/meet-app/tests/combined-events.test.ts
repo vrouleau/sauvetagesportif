@@ -120,10 +120,11 @@ function seedPrelimFinalPair(db: DbBackend) {
 }
 
 /**
- * Reproduces the real-world bug found after the first beach meet (2026-08): combined-event
- * point standings must only count individual results — relay results must never contribute,
- * even when a relay event's age group matches a combined-events category. Two clubs, same
- * category (19+ women): one has an individual result, the other only a relay result.
+ * Two clubs, same category (19+ women): one has only an individual result, the other only
+ * a relay result. Used to verify getCombinedResults (per-athlete "Résultat combiné") stays
+ * individual-only while getPointStandings (club "Classement aux points") scores both —
+ * confirmed against a real Splash report (2026-08, CQS Plage 2026) that club-level point
+ * standings include relay placements, unlike the per-athlete combined report.
  */
 function seedIndividualAndRelay(db: DbBackend) {
   db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount) VALUES (1, 100, 'Freestyle', 1)`)
@@ -241,17 +242,27 @@ describe.each(BACKENDS)('combinedEvents [%s]', (kind) => {
     })
   })
 
-  describe('relay exclusion', () => {
+  describe('relay handling', () => {
     it('queryEventsWithAgeGroups excludes relay events (relaycount > 1)', () => {
       seedIndividualAndRelay(db)
       const events = queryEventsWithAgeGroups(db)
       expect(events.map(e => e.swimeventid)).toEqual([1])
     })
 
-    it('getPointStandings only awards combined points from the individual event, never the relay', () => {
+    it('getCombinedResults (per-athlete "Résultat combiné") never awards points from a relay result', () => {
+      seedIndividualAndRelay(db)
+      const categories = getCombinedResults([1, 2], db)
+      const cat = categories.find(c => c.name.includes('19 ans et plus') && c.name.includes('dames'))
+      expect(cat).toBeDefined()
+      expect(cat!.athletes.map(a => a.clubName)).toEqual(['IND'])
+    })
+
+    it('getPointStandings (club "Classement aux points") awards points from BOTH individual and relay results', () => {
       seedIndividualAndRelay(db)
       const { clubs } = getPointStandings([1, 2], db)
-      expect(clubs.map(c => c.clubCode)).toEqual(['IND'])
+      const byCode = new Map(clubs.map(c => [c.clubCode, c.totalPoints]))
+      expect(byCode.get('IND')).toBeGreaterThan(0)
+      expect(byCode.get('REL')).toBeGreaterThan(0)
     })
   })
 })

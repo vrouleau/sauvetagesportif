@@ -165,6 +165,45 @@ export function queryEventsWithAgeGroups(db: Database.Database): EventWithAgeGro
     .all() as EventWithAgeGroup[]
 }
 
+/**
+ * Same event/age-group query as queryEventsWithAgeGroups, but for relay events
+ * (relaycount > 1) instead of individual ones.
+ *
+ * Used only by getPointStandings' club "Classement aux points" report — confirmed
+ * against Splash's own real report (2026-08, CQS Plage 2026) that club-level point
+ * standings include both individual AND relay placements per age bracket, unlike the
+ * per-athlete "Résultat combiné" report (getCombinedResults), which stays individual-only.
+ * Kept as a separate query rather than a flag on queryEventsWithAgeGroups so the
+ * COMBINEDEVENTS XML (and everything driven off it, including getCombinedResults)
+ * stays untouched and individual-only as documented above.
+ */
+export function queryRelayEventsWithAgeGroups(db: Database.Database): EventWithAgeGroup[] {
+  const meetTypeRow = db.prepare(
+    `SELECT data FROM bsglobal WHERE name = 'MEET_TYPE'`
+  ).get() as { data: string } | undefined
+  const isBeach = (meetTypeRow?.data || 'POOL').toUpperCase() === 'BEACH'
+
+  const distanceFilter = isBeach ? '' : 'AND ss.distance >= 25'
+
+  return db
+    .prepare(
+      `SELECT e.swimeventid, ag.agegroupid, e.eventnumber, e.gender AS eventgender, e.internalevent,
+              ag.agemin, ag.agemax, ag.gender,
+              ss.relaycount
+       FROM swimevent e
+       JOIN agegroup ag ON ag.swimeventid = e.swimeventid
+       JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid
+       WHERE 1=1
+         ${distanceFilter}
+         AND ss.relaycount > 1
+         AND (e.internalevent IS NULL OR e.internalevent = 'F')
+         AND e.eventnumber IS NOT NULL
+         AND (e.preveventid IS NULL OR e.preveventid < 1)
+       ORDER BY e.eventnumber, ag.sortcode`
+    )
+    .all() as EventWithAgeGroup[]
+}
+
 // ── Prelim → Final Resolution ──────────────────────────────────────────────────
 
 /**

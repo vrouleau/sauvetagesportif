@@ -17,7 +17,10 @@
 // along with Sauvetage Sportif. If not, see <https://www.gnu.org/licenses/>.
 
 import { assignLateBeachNumber } from './beachNumber'
-import { regenerateCombinedEvents, resolveToFinal, loadCombinedEventsConfig } from './combinedEvents'
+import {
+  regenerateCombinedEvents, resolveToFinal, loadCombinedEventsConfig,
+  queryRelayEventsWithAgeGroups,
+} from './combinedEvents'
 import { regeneratePointScores, loadPointScoresConfig } from './pointScores'
 import { getDb as getActiveDb, isPgConnected, closeDb as closeActiveDb } from './connectionManager'
 import type { DbBackend } from './dbBackend'
@@ -3850,6 +3853,86 @@ export function getPointStandings(selectedEventIds: number[], injectedDb?: Retur
         const club = clubPoints.get(key)!
         club.totalPoints += pts
         club.catPoints.set(categoryName, (club.catPoints.get(categoryName) ?? 0) + pts)
+      }
+    }
+  }
+
+  // Club standings also include relay results — confirmed against a real Splash "Classement
+  // aux points" report (2026-08, CQS Plage 2026): unlike getCombinedResults' per-athlete
+  // "Résultat combiné" (individual-only by design), club-level totals sum both individual
+  // and relay placements within the same age bracket. Matched separately from the individual
+  // loop above (via the raw category config, not the individual-only COMBINEDEVENTS XML) so
+  // that XML — and everything else driven off it — stays untouched and individual-only.
+  // Relay events are matched by age only, not gender — a relay's own age group can be
+  // gender=3 (mixed, e.g. a 2M+2F relay), which never satisfies a single-gender category's
+  // exact gender check, and Splash's real club standings don't split by gender at all (only
+  // by age bracket in the final report). Each distinct age range is scored under only ONE of
+  // its (otherwise identical) filles/garçons category entries — matching under both would
+  // double-count every relay result, since both share the same age range and roll into the
+  // same age-bracket group below.
+  const relayEventsWithAgeGroups = queryRelayEventsWithAgeGroups(db)
+  const seenRelayAgeRanges = new Set<string>()
+  for (const category of loadCombinedEventsConfig().categories) {
+    if (category.isSpecialNoEvents) continue
+    const ageRangeKey = `${category.ageMin}:${category.ageMax}`
+    if (seenRelayAgeRanges.has(ageRangeKey)) continue
+    seenRelayAgeRanges.add(ageRangeKey)
+
+    const matchingRelayEvents = relayEventsWithAgeGroups
+      .filter(ev => ev.agemin === category.ageMin && (
+        category.ageMax === -1
+          ? (ev.agemax === -1 || ev.agemax === 99 || ev.agemax === null)
+          : ev.agemax === category.ageMax
+      ))
+      .map(ev => ({ eventId: ev.swimeventid, agegroupId: ev.agegroupid }))
+      .filter(ev => selectedEventIds.includes(ev.eventId))
+    if (matchingRelayEvents.length === 0) continue
+
+    if (!categoryNames.includes(category.name)) categoryNames.push(category.name)
+    const pointsScale = category.pointsForPlaces.split(',').map(Number)
+
+    for (const { eventId: prelimEventId, agegroupId: prelimAgegroupId } of matchingRelayEvents) {
+      const { eventId, agegroupId } = resolveToFinal(db, prelimEventId, prelimAgegroupId)
+
+      const results = db.prepare(
+        `SELECT r.swimtime, r.resultstatus,
+                COALESCE(c.name, c.code, '') AS clubname,
+                COALESCE(c.code, '') AS clubcode
+         FROM relay r
+         JOIN heat h ON r.heatid = h.heatid
+         LEFT JOIN club c ON r.clubid = c.clubid
+         WHERE r.swimeventid = ?
+           AND r.agegroupid = ?
+           AND r.swimtime IS NOT NULL
+           AND r.swimtime > 0
+           AND (r.resultstatus IS NULL OR r.resultstatus = 0)
+           AND h.racestatus = 5
+         ORDER BY r.swimtime ASC`
+      ).all(eventId, agegroupId) as Array<{
+        swimtime: number; resultstatus: number | null
+        clubname: string; clubcode: string
+      }>
+
+      let place = 0
+      let lastTime: number | null = null
+
+      for (let i = 0; i < results.length; i++) {
+        const r = results[i]
+        if (r.swimtime !== lastTime) {
+          place = i + 1
+          lastTime = r.swimtime
+        }
+
+        const pts = (place - 1 < pointsScale.length) ? pointsScale[place - 1] : 0
+        if (pts <= 0) continue
+
+        const key = r.clubcode || r.clubname
+        if (!clubPoints.has(key)) {
+          clubPoints.set(key, { clubName: r.clubname, clubCode: r.clubcode, totalPoints: 0, catPoints: new Map() })
+        }
+        const club = clubPoints.get(key)!
+        club.totalPoints += pts
+        club.catPoints.set(category.name, (club.catPoints.get(category.name) ?? 0) + pts)
       }
     }
   }
