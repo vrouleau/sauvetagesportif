@@ -41,7 +41,7 @@ vi.mock('../src/main/connectionManager', () => ({
 const {
   queryEventsWithAgeGroups, findMatchingEvents, regenerateCombinedEvents, resolveToFinal,
 } = await import('../src/main/combinedEvents')
-const { getCombinedResults } = await import('../src/main/db')
+const { getCombinedResults, getPointStandings } = await import('../src/main/db')
 
 beforeAll(() => {
   const userData = join(tmpdir(), 'sauvetagemeet-test-combined-events')
@@ -117,6 +117,35 @@ function seedPrelimFinalPair(db: DbBackend) {
   db.exec(`INSERT INTO swimresult (swimresultid, athleteid, swimeventid, agegroupid, heatid, swimtime) VALUES (2, 2, 100, 101, 100, 30000)`)
   db.exec(`INSERT INTO swimresult (swimresultid, athleteid, swimeventid, agegroupid, heatid, swimtime) VALUES (3, 1, 200, 201, 200, 29000)`)
   db.exec(`INSERT INTO swimresult (swimresultid, athleteid, swimeventid, agegroupid, heatid, swimtime) VALUES (4, 2, 200, 201, 200, 31000)`)
+}
+
+/**
+ * Reproduces the real-world bug found after the first beach meet (2026-08): combined-event
+ * point standings must only count individual results — relay results must never contribute,
+ * even when a relay event's age group matches a combined-events category. Two clubs, same
+ * category (19+ women): one has an individual result, the other only a relay result.
+ */
+function seedIndividualAndRelay(db: DbBackend) {
+  db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount) VALUES (1, 100, 'Freestyle', 1)`)
+  db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount) VALUES (2, 100, 'Freestyle Relay', 4)`)
+  db.exec(`INSERT INTO swimsession (swimsessionid, sessionnumber, name, course) VALUES (1, 1, 'Session 1', 1)`)
+
+  db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, sortcode, internalevent) VALUES (1, 1, 1, 1, 2, 1, 'F')`)
+  db.exec(`INSERT INTO agegroup (agegroupid, swimeventid, name, agemin, agemax, gender, sortcode) VALUES (10, 1, '19+F', 19, -1, 2, 1)`)
+
+  db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, sortcode, internalevent) VALUES (2, 1, 2, 2, 2, 2, 'F')`)
+  db.exec(`INSERT INTO agegroup (agegroupid, swimeventid, name, agemin, agemax, gender, sortcode) VALUES (20, 2, '19+F', 19, -1, 2, 1)`)
+
+  db.exec(`INSERT INTO club (clubid, code, name) VALUES (1, 'IND', 'Individual Club')`)
+  db.exec(`INSERT INTO club (clubid, code, name) VALUES (2, 'REL', 'Relay Club')`)
+
+  db.exec(`INSERT INTO athlete (athleteid, clubid, firstname, lastname, gender, birthdate) VALUES (1, 1, 'Solo', 'Swimmer', 2, '2000-01-01')`)
+
+  db.exec(`INSERT INTO heat (heatid, swimeventid, heatnumber, racestatus) VALUES (100, 1, 1, 5)`)
+  db.exec(`INSERT INTO heat (heatid, swimeventid, heatnumber, racestatus) VALUES (200, 2, 1, 5)`)
+
+  db.exec(`INSERT INTO swimresult (swimresultid, athleteid, swimeventid, agegroupid, heatid, swimtime) VALUES (1, 1, 1, 10, 100, 30000)`)
+  db.exec(`INSERT INTO relay (relayid, clubid, swimeventid, agegroupid, heatid, swimtime, resultstatus) VALUES (1, 2, 2, 20, 200, 28000, 0)`)
 }
 
 const cat1112: CategoryConfig = {
@@ -209,6 +238,20 @@ describe.each(BACKENDS)('combinedEvents [%s]', (kind) => {
       // combined-events points must reflect the final placement.
       expect(cat!.athletes[0].firstName).toBe('A')
       expect(cat!.athletes[0].totalPoints).toBeGreaterThan(cat!.athletes[1].totalPoints)
+    })
+  })
+
+  describe('relay exclusion', () => {
+    it('queryEventsWithAgeGroups excludes relay events (relaycount > 1)', () => {
+      seedIndividualAndRelay(db)
+      const events = queryEventsWithAgeGroups(db)
+      expect(events.map(e => e.swimeventid)).toEqual([1])
+    })
+
+    it('getPointStandings only awards combined points from the individual event, never the relay', () => {
+      seedIndividualAndRelay(db)
+      const { clubs } = getPointStandings([1, 2], db)
+      expect(clubs.map(c => c.clubCode)).toEqual(['IND'])
     })
   })
 })

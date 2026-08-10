@@ -3771,41 +3771,26 @@ export function getPointStandings(selectedEventIds: number[], injectedDb?: Retur
     // must be scoped to the age group matching this category, not the whole event.
     for (const { eventId: prelimEventId, agegroupId: prelimAgegroupId } of filteredEvents) {
       // If this event has been split into a Prelim + Final pair, score off the FINAL's
-      // results, not the prelim's heat times (see resolveToFinal doc comment). Relay-ness
-      // is checked against the prelim id since it can't change between rounds.
-      const isRelay = eventIsRelay(db, prelimEventId)
+      // results, not the prelim's heat times (see resolveToFinal doc comment).
+      // Combined-event categories are individual-only (queryEventsWithAgeGroups filters
+      // out relay events), so these are always swimresult rows, never relay ones.
       const { eventId, agegroupId } = resolveToFinal(db, prelimEventId, prelimAgegroupId)
 
-      // Relay results live in `relay` (clubid direct, no athlete), not `swimresult`.
       const results = db.prepare(
-        isRelay
-          ? `SELECT r.swimtime, r.resultstatus,
-                    COALESCE(c.name, c.code, '') AS clubname,
-                    COALESCE(c.code, '') AS clubcode
-             FROM relay r
-             JOIN heat h ON r.heatid = h.heatid
-             LEFT JOIN club c ON r.clubid = c.clubid
-             WHERE r.swimeventid = ?
-               AND r.agegroupid = ?
-               AND r.swimtime IS NOT NULL
-               AND r.swimtime > 0
-               AND (r.resultstatus IS NULL OR r.resultstatus = 0)
-               AND h.racestatus = 5
-             ORDER BY r.swimtime ASC`
-          : `SELECT r.swimtime, r.resultstatus,
-                    COALESCE(c.name, c.code, '') AS clubname,
-                    COALESCE(c.code, '') AS clubcode
-             FROM swimresult r
-             JOIN athlete a ON r.athleteid = a.athleteid
-             JOIN heat h ON r.heatid = h.heatid
-             LEFT JOIN club c ON a.clubid = c.clubid
-             WHERE r.swimeventid = ?
-               AND r.agegroupid = ?
-               AND r.swimtime IS NOT NULL
-               AND r.swimtime > 0
-               AND (r.resultstatus IS NULL OR r.resultstatus = 0)
-               AND h.racestatus = 5
-             ORDER BY r.swimtime ASC`
+        `SELECT r.swimtime, r.resultstatus,
+                COALESCE(c.name, c.code, '') AS clubname,
+                COALESCE(c.code, '') AS clubcode
+         FROM swimresult r
+         JOIN athlete a ON r.athleteid = a.athleteid
+         JOIN heat h ON r.heatid = h.heatid
+         LEFT JOIN club c ON a.clubid = c.clubid
+         WHERE r.swimeventid = ?
+           AND r.agegroupid = ?
+           AND r.swimtime IS NOT NULL
+           AND r.swimtime > 0
+           AND (r.resultstatus IS NULL OR r.resultstatus = 0)
+           AND h.racestatus = 5
+         ORDER BY r.swimtime ASC`
       ).all(eventId, agegroupId) as Array<{
         swimtime: number; resultstatus: number | null
         clubname: string; clubcode: string

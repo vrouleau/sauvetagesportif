@@ -135,9 +135,11 @@ export function queryEventsWithAgeGroups(db: Database.Database): EventWithAgeGro
 
   const distanceFilter = isBeach ? '' : 'AND ss.distance >= 25'
 
-  // Relay events are included too (needed for club point standings, per combined-events
-  // rules) — getCombinedResults (per-athlete) naturally ignores them since relay teams
-  // never get a swimresult row; getPointStandings (per-club) branches on eventIsRelay().
+  // Combined-event point standings (both per-athlete and per-club) are individual-only —
+  // confirmed after our first real beach meet (2026-08): relay results must not contribute
+  // combined points. Relay events are excluded here so neither getCombinedResults nor
+  // getPointStandings ever sees them, since both are driven off this same event list via
+  // the COMBINEDEVENTS XML.
   //
   // This intentionally returns the PRELIM's own swimeventid/agegroupid (not the final's)
   // — it's the stable "event slot" that exists whether or not a final has been created
@@ -154,6 +156,7 @@ export function queryEventsWithAgeGroups(db: Database.Database): EventWithAgeGro
        JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid
        WHERE 1=1
          ${distanceFilter}
+         AND ss.relaycount <= 1
          AND (e.internalevent IS NULL OR e.internalevent = 'F')
          AND e.eventnumber IS NOT NULL
          AND (e.preveventid IS NULL OR e.preveventid < 1)
