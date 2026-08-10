@@ -127,6 +127,29 @@ export function loadPointScoresConfig(): PointScoresConfig {
     }
   }
 
+  // Self-heal: a single all-encompassing {-1,-1} bucket is the shape every userData copy
+  // gets from the patch above (and from the original first-run copy, before per-age-bracket
+  // sections existed) — it's never a deliberate customization, since a real meet always wants
+  // Splash's native age-bracket sections (confirmed: a real meet's own userData copy was
+  // stuck on this exact shape after the bundled default was later updated to carry proper
+  // brackets — the report silently showed only "Cat. générale", never surfacing the newer
+  // brackets, because the check above only fires when splashPointScore is fully absent).
+  // Refresh just ageGroups from the bundled default so older copies pick up newer bracket
+  // definitions, without touching any points-value customization elsewhere in splashPointScore.
+  if (
+    config.splashPointScore &&
+    config.splashPointScore.ageGroups.length <= 1 &&
+    existsSync(bundledConfigPath)
+  ) {
+    const bundled = JSON.parse(readFileSync(bundledConfigPath, 'utf-8')) as PointScoresConfig
+    if (bundled.splashPointScore && bundled.splashPointScore.ageGroups.length > 1) {
+      config = { ...config, splashPointScore: { ...config.splashPointScore, ageGroups: bundled.splashPointScore.ageGroups } }
+      if (configPath === userConfigPath) {
+        writeFileSync(userConfigPath, JSON.stringify(config, null, 2), 'utf-8')
+      }
+    }
+  }
+
   return config
 }
 

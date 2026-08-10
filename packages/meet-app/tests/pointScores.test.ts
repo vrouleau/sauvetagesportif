@@ -120,4 +120,49 @@ describe('pointScores', () => {
       process.env.TEST_USER_DATA = prevUserData
     }
   })
+
+  it('self-heals a userData config stuck on the single {-1,-1} bucket from before per-age-bracket sections existed', () => {
+    // Reproduces a real bug found auditing a live beach meet: the userData copy had
+    // splashPointScore (so the "fully absent" self-heal above never fired) but its ageGroups
+    // was still the original single {-1,-1} catch-all bucket, from before the bundled default
+    // was updated to carry Splash's real 4-bracket structure (14 ans et moins / 15-18 / 19+ /
+    // Cat. générale). Splash's own report showed all 4 brackets correctly; meet-app's own
+    // "Point Standings" report silently showed only "Cat. générale" forever, with no way for
+    // the user to get the other 3 sections short of deleting the file by hand.
+    const staleUserData = join(tmpdir(), `sauvetagemeet-test-single-bucket-${randomBytes(4).toString('hex')}`)
+    mkdirSync(staleUserData, { recursive: true })
+    const staleConfigPath = join(staleUserData, 'point-scores-config.json')
+    writeFileSync(staleConfigPath, JSON.stringify({
+      description: 'old',
+      definitions: [],
+      assignments: [],
+      splashPointScore: {
+        pointscoreid: 1198,
+        name: 'Classement de sauvetage',
+        titleforprints: 'Classement aux points des clubs',
+        attributes: { pointsmaxtimonly: 'T' },
+        ageGroups: [{ from: -1, to: -1 }],
+        placePoints: [{ position: 1, individual: 99, relay: 99 }], // customized value — must survive
+      },
+    }), 'utf-8')
+
+    const prevUserData = process.env.TEST_USER_DATA
+    process.env.TEST_USER_DATA = staleUserData
+    try {
+      regeneratePointScores(db)
+
+      const row = db.prepare(`SELECT data FROM bsglobal WHERE name='POINTSCORE'`).get() as { data: string }
+      expect(row.data).toContain('<AGEGROUP from="-1" to="14" />')
+      expect(row.data).toContain('<AGEGROUP from="15" to="18" />')
+      expect(row.data).toContain('<AGEGROUP from="19" to="-1" />')
+      // The user's customized point value must survive the heal untouched.
+      expect(row.data).toContain('<PLACEPOINT position="1" individual="99" relay="99" />')
+
+      const healed = JSON.parse(readFileSync(staleConfigPath, 'utf-8'))
+      expect(healed.splashPointScore.ageGroups.length).toBeGreaterThan(1)
+      expect(healed.splashPointScore.placePoints).toEqual([{ position: 1, individual: 99, relay: 99 }])
+    } finally {
+      process.env.TEST_USER_DATA = prevUserData
+    }
+  })
 })

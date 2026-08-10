@@ -1090,14 +1090,48 @@ export async function swapLanes(
 /** Add a late entry: create a swimresult row and assign to heat/lane */
 export async function addLateEntry(
   athleteId: number, eventId: number, heatId: number, lane: number, entryTime: number | null,
+  injectedDb?: ReturnType<typeof getLocalDb>,
 ): Promise<number> {
-  const db = getLocalDb()
+  const db = injectedDb ?? getLocalDb()
   assertHeatIdNotValidated(db, heatId)
-  const id = nextId('swimresult', 'swimresultid')
+
+  // Resolve the athlete's age-group bracket for this event by birthdate — mirrors the
+  // fallback matching in the 'db:register' IPC handler (index.ts). Late entries skip the
+  // normal registration flow entirely, so nothing else ever computes this for them; leaving
+  // it NULL silently drops the athlete from their own category's point standings (the
+  // scoring query requires an exact agegroupid match) even though they have a real result.
+  const athlete = db.prepare(`SELECT birthdate FROM athlete WHERE athleteid = ?`).get(athleteId) as
+    { birthdate: string | number | null } | undefined
+  const ageGroups = db.prepare(
+    `SELECT agegroupid, agemin, agemax FROM agegroup WHERE swimeventid = ? ORDER BY sortcode`
+  ).all(eventId) as Array<{ agegroupid: number; agemin: number | null; agemax: number | null }>
+
+  let agegroupId: number | null = null
+  if (ageGroups.length === 1) {
+    agegroupId = ageGroups[0].agegroupid
+  } else if (ageGroups.length > 1 && athlete?.birthdate) {
+    const bd = typeof athlete.birthdate === 'string' ? new Date(athlete.birthdate) : null
+    if (bd && !isNaN(bd.getTime())) {
+      const now = new Date()
+      let age = now.getFullYear() - bd.getFullYear()
+      if (now.getMonth() < bd.getMonth() || (now.getMonth() === bd.getMonth() && now.getDate() < bd.getDate())) age--
+      for (const ag of ageGroups) {
+        const min = ag.agemin ?? 0
+        const max = ag.agemax == null || ag.agemax < 0 ? 999 : ag.agemax
+        if (age >= min && age <= max) {
+          agegroupId = ag.agegroupid
+          break
+        }
+      }
+    }
+  }
+  if (!agegroupId && ageGroups.length > 0) agegroupId = ageGroups[0].agegroupid
+
+  const id = nextId('swimresult', 'swimresultid', db)
   db.prepare(
-    `INSERT INTO swimresult (swimresultid, athleteid, swimeventid, heatid, lane, entrytime, lateentry, usetimetype)
-     VALUES (?, ?, ?, ?, ?, ?, 'T', 0)`
-  ).run(id, athleteId, eventId, heatId, lane, entryTime)
+    `INSERT INTO swimresult (swimresultid, athleteid, swimeventid, agegroupid, heatid, lane, entrytime, lateentry, usetimetype)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'T', 0)`
+  ).run(id, athleteId, eventId, agegroupId, heatId, lane, entryTime)
 
   // Assign beach number if beach meet
   const meetTypeRow = db.prepare(`SELECT data FROM bsglobal WHERE name = 'MEET_TYPE'`).get() as { data: string } | undefined

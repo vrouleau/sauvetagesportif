@@ -124,6 +124,157 @@ describe('LENEX importer', () => {
     expect(events.c).toBe(s1.events)
   })
 
+  // Regression test for a real bug found auditing a live beach meet (CQS Plage 2026):
+  // an athlete born right on an age-bracket boundary was first registered under the
+  // wrong division (Open) via team-app, then corrected to the right one (15-18) and
+  // re-exported. Re-importing that corrected entries LXF left the original "Open"
+  // registration behind as an orphan (no heat, no time, no status — invisible in the
+  // UI, but still counted as a registration) because the importer always minted a new
+  // swimresultid per <ENTRY> and never checked for an existing sibling-bracket row.
+  it('cleans up a stale sibling-age-bracket registration on category correction', () => {
+    const structureXml = `<?xml version="1.0" encoding="UTF-8"?>
+<LENEX version="3.0">
+  <MEETS>
+    <MEET name="Test Meet" city="Test City" nation="CAN" course="LCM">
+      <SESSIONS>
+        <SESSION number="1" name="Session 1">
+          <EVENTS>
+            <EVENT eventid="100" number="6" gender="F" round="TIM">
+              <SWIMSTYLE swimstyleid="601" distance="2000" relaycount="1" name="Course sur plage 2000m" />
+              <AGEGROUPS>
+                <AGEGROUP agegroupid="1000" name="15-18" agemin="15" agemax="18" gender="F" />
+              </AGEGROUPS>
+            </EVENT>
+            <EVENT eventid="101" number="8" gender="F" round="TIM">
+              <SWIMSTYLE swimstyleid="601" distance="2000" relaycount="1" name="Course sur plage 2000m" />
+              <AGEGROUPS>
+                <AGEGROUP agegroupid="1001" name="Open" agemin="19" agemax="-1" gender="F" />
+              </AGEGROUPS>
+            </EVENT>
+          </EVENTS>
+        </SESSION>
+      </SESSIONS>
+    </MEET>
+  </MEETS>
+</LENEX>`
+
+    function entriesXml(eventId: number, agegroupId: number): string {
+      return `<?xml version="1.0" encoding="UTF-8"?>
+<LENEX version="3.0">
+  <MEETS>
+    <MEET name="Test Meet" city="Test City" nation="CAN" course="LCM">
+      <CLUBS>
+        <CLUB clubid="1" code="TST" name="Test Club">
+          <ATHLETES>
+            <ATHLETE athleteid="500" firstname="Test" lastname="Athlete" birthdate="2008-06-25" gender="F">
+              <ENTRIES>
+                <ENTRY eventid="${eventId}" agegroupid="${agegroupId}" />
+              </ENTRIES>
+            </ATHLETE>
+          </ATHLETES>
+        </CLUB>
+      </CLUBS>
+    </MEET>
+  </MEETS>
+</LENEX>`
+    }
+
+    const structurePath = join(tmpdir(), `test-structure-${randomBytes(4).toString('hex')}.lxf`)
+    const openEntryPath = join(tmpdir(), `test-entry-open-${randomBytes(4).toString('hex')}.lxf`)
+    const correctedEntryPath = join(tmpdir(), `test-entry-1518-${randomBytes(4).toString('hex')}.lxf`)
+    writeZipSingleEntry(structurePath, 'meet.lef', structureXml)
+    writeZipSingleEntry(openEntryPath, 'entries.lef', entriesXml(101, 1001))
+    writeZipSingleEntry(correctedEntryPath, 'entries.lef', entriesXml(100, 1000))
+
+    try {
+      importLenex(structurePath, db)
+      importLenex(openEntryPath, db)      // registered under the wrong ("Open") bracket
+      importLenex(correctedEntryPath, db) // category corrected to "15-18"
+
+      const rows = db.prepare('SELECT swimeventid FROM swimresult WHERE athleteid = 500').all() as
+        Array<{ swimeventid: number }>
+      expect(rows).toHaveLength(1)
+      expect(rows[0].swimeventid).toBe(100)
+    } finally {
+      for (const p of [structurePath, openEntryPath, correctedEntryPath]) {
+        try { unlinkSync(p) } catch {}
+      }
+    }
+  })
+
+  it('never deletes a sibling registration that already has a heat/lane assigned', () => {
+    const structureXml = `<?xml version="1.0" encoding="UTF-8"?>
+<LENEX version="3.0">
+  <MEETS>
+    <MEET name="Test Meet" city="Test City" nation="CAN" course="LCM">
+      <SESSIONS>
+        <SESSION number="1" name="Session 1">
+          <EVENTS>
+            <EVENT eventid="100" number="6" gender="F" round="TIM">
+              <SWIMSTYLE swimstyleid="601" distance="2000" relaycount="1" name="Course sur plage 2000m" />
+              <AGEGROUPS>
+                <AGEGROUP agegroupid="1000" name="15-18" agemin="15" agemax="18" gender="F" />
+              </AGEGROUPS>
+            </EVENT>
+            <EVENT eventid="101" number="8" gender="F" round="TIM">
+              <SWIMSTYLE swimstyleid="601" distance="2000" relaycount="1" name="Course sur plage 2000m" />
+              <AGEGROUPS>
+                <AGEGROUP agegroupid="1001" name="Open" agemin="19" agemax="-1" gender="F" />
+              </AGEGROUPS>
+            </EVENT>
+          </EVENTS>
+        </SESSION>
+      </SESSIONS>
+    </MEET>
+  </MEETS>
+</LENEX>`
+
+    function entriesXml(eventId: number, agegroupId: number): string {
+      return `<?xml version="1.0" encoding="UTF-8"?>
+<LENEX version="3.0">
+  <MEETS>
+    <MEET name="Test Meet" city="Test City" nation="CAN" course="LCM">
+      <CLUBS>
+        <CLUB clubid="1" code="TST" name="Test Club">
+          <ATHLETES>
+            <ATHLETE athleteid="500" firstname="Test" lastname="Athlete" birthdate="2008-06-25" gender="F">
+              <ENTRIES>
+                <ENTRY eventid="${eventId}" agegroupid="${agegroupId}" />
+              </ENTRIES>
+            </ATHLETE>
+          </ATHLETES>
+        </CLUB>
+      </CLUBS>
+    </MEET>
+  </MEETS>
+</LENEX>`
+    }
+
+    const structurePath = join(tmpdir(), `test-structure-${randomBytes(4).toString('hex')}.lxf`)
+    const openEntryPath = join(tmpdir(), `test-entry-open-${randomBytes(4).toString('hex')}.lxf`)
+    const correctedEntryPath = join(tmpdir(), `test-entry-1518-${randomBytes(4).toString('hex')}.lxf`)
+    writeZipSingleEntry(structurePath, 'meet.lef', structureXml)
+    writeZipSingleEntry(openEntryPath, 'entries.lef', entriesXml(101, 1001))
+    writeZipSingleEntry(correctedEntryPath, 'entries.lef', entriesXml(100, 1000))
+
+    try {
+      importLenex(structurePath, db)
+      importLenex(openEntryPath, db)
+      // Simulate heat generation having already placed the athlete in a heat for the
+      // "Open" event before the category-correction entries file is imported.
+      db.prepare('UPDATE swimresult SET heatid=999, lane=3 WHERE athleteid=500 AND swimeventid=101').run()
+      importLenex(correctedEntryPath, db)
+
+      const rows = db.prepare('SELECT swimeventid FROM swimresult WHERE athleteid = 500 ORDER BY swimeventid').all() as
+        Array<{ swimeventid: number }>
+      expect(rows.map(r => r.swimeventid)).toEqual([100, 101])
+    } finally {
+      for (const p of [structurePath, openEntryPath, correctedEntryPath]) {
+        try { unlinkSync(p) } catch {}
+      }
+    }
+  })
+
   it('stores meet attributes in bsglobal', function () {
     if (!existsSync(FIXTURE_PATH)) {
       this.skip?.()

@@ -361,6 +361,23 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
          heatid=excluded.heatid, lane=excluded.lane, entrytime=excluded.entrytime,
          entrycourse=excluded.entrycourse, swimtime=excluded.swimtime,
          resultstatus=excluded.resultstatus, reactiontime=excluded.reactiontime`),
+    // An athlete belongs to at most one age-bracket division of a given event style
+    // at a time. If an earlier ENTRIES import registered them under a different
+    // division (e.g. before a late age-category correction in team-app), this clears
+    // that now-stale registration so it doesn't linger as an orphan (no heat, no time,
+    // no status — never touched) that's invisible everywhere heats/results are shown
+    // but still counted as a registration. Never touches a row that has any real
+    // heat/lane/time/status data.
+    clearStaleCategoryEntries: db.prepare(`
+      DELETE FROM swimresult
+      WHERE athleteid = ?
+        AND swimeventid != ?
+        AND heatid IS NULL AND lane IS NULL AND swimtime IS NULL AND resultstatus IS NULL
+        AND swimeventid IN (
+          SELECT swimeventid FROM swimevent
+          WHERE swimstyleid = (SELECT swimstyleid FROM swimevent WHERE swimeventid = ?)
+        )
+    `),
   }
 
   // ── Sessions → swimsession ─────────────────────────────────────────────
@@ -561,6 +578,7 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
         const entrycourse = ea2.entrycourse ? encodeCourse(ea2.entrycourse) : null
         const resId = nextId('swimresult', 'swimresultid')
         try {
+          stmts.clearStaleCategoryEntries.run(athId, eventId, eventId)
           stmts.upsertResult.run(
             resId, athId, eventId, agegroupid, null, null, entrytime, entrycourse,
             null, null, null
