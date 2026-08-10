@@ -122,7 +122,7 @@ jobs:
       - name: Start stack
         working-directory: packages/team-app
         run: |
-          docker compose -f docker-compose.yml -f docker-compose.postgres.yml -f docker-compose.test.yml \
+          docker compose -p team-app-test -f docker-compose.yml -f docker-compose.postgres.yml -f docker-compose.test.yml \
             --env-file tests/test.env up --build -d
           # Wait for backend to be healthy
           for i in $(seq 1 60); do
@@ -143,9 +143,9 @@ jobs:
       - name: Show logs on failure
         if: failure()
         working-directory: packages/team-app
-        run: docker compose -f docker-compose.yml -f docker-compose.postgres.yml -f docker-compose.test.yml logs
+        run: docker compose -p team-app-test -f docker-compose.yml -f docker-compose.postgres.yml -f docker-compose.test.yml logs
 
       - name: Tear down
         if: always()
         working-directory: packages/team-app
-        run: docker compose -f docker-compose.yml -f docker-compose.postgres.yml -f docker-compose.test.yml down -v
+        run: docker compose -p team-app-test -f docker-compose.yml -f docker-compose.postgres.yml -f docker-compose.test.yml down -v
