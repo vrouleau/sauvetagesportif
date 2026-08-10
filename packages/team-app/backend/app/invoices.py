@@ -32,6 +32,7 @@ from .models import (
     fee_dollars_to_cents, GENDER_M, GENDER_F,
 )
 from .models_team import TeamClub, Member, Relay, RelayPos
+from .meet_config import get_active_meetsid, _get_meet_config
 
 
 MEET_FEE_LABELS = {
@@ -53,8 +54,9 @@ def _meet_fees(db: Session) -> dict[str, int]:
     """
     # Primary: read from MEETVALUES (Splash interoperable)
     fees: dict[str, int] = {}
-    cfg = db.get(BsGlobal, "MEETVALUES")
-    if cfg and cfg.data:
+    _meetsid = get_active_meetsid(db)
+    mv_data = _get_meet_config(db, _meetsid, "MEETVALUES")
+    if mv_data:
         key_map = {
             "FEECLUB": "CLUB",
             "FEEPERSON": "ATHLETE",
@@ -62,7 +64,7 @@ def _meet_fees(db: Session) -> dict[str, int]:
             "FEELATEINDIVIDUAL": "LATEFEE",
             "FEELATERELAY": "LATERELAYFE",
         }
-        for line in cfg.data.split("\r\n"):
+        for line in mv_data.split("\r\n"):
             eq = line.find("=")
             if eq < 0:
                 continue
@@ -85,10 +87,10 @@ def _meet_fees(db: Session) -> dict[str, int]:
 
     # Fallback: read from meet_fees_json (LXF import legacy)
     if not fees:
-        cfg2 = db.get(BsGlobal, "meet_fees_json")
-        if cfg2 and cfg2.data:
+        fees_json = _get_meet_config(db, _meetsid, "meet_fees_json")
+        if fees_json:
             try:
-                data = json.loads(cfg2.data)
+                data = json.loads(fees_json)
                 fees = {k: int(v) for k, v in data.items() if isinstance(v, (int, float)) and v > 0}
             except ValueError:
                 pass
@@ -210,8 +212,7 @@ def _club_line_items(db: Session, club: TeamClub, meet_fees: dict[str, int]) -> 
     # is deleted (see create_relay_team in routers/api.py). Both sources must
     # be combined here or a club's relay fees vanish the moment its rosters
     # are actually built.
-    meet_id_cfg = db.get(BsGlobal, "current_meetsid")
-    meet_id = int(meet_id_cfg.data) if meet_id_cfg and meet_id_cfg.data else None
+    meet_id = get_active_meetsid(db)
     relay_query = db.query(Relay).filter(Relay.clubsid == club.clubsid)
     if meet_id:
         relay_query = relay_query.filter(Relay.meetsid == meet_id)
@@ -370,8 +371,8 @@ def _create_draft_for_club(club: TeamClub, items: list[dict], meet_name: str) ->
 
 
 def _meet_name(db: Session) -> str:
-    cfg = db.get(BsGlobal, "meet_name")
-    return cfg.data if cfg else "Compétition"
+    meetsid = get_active_meetsid(db)
+    return _get_meet_config(db, meetsid, "meet_name") or "Compétition"
 
 
 def create_invoice_for_club(db: Session, club_id: int) -> dict:

@@ -29,6 +29,7 @@ from .models import (
 )
 from .models_team import Meet, Session as TeamSession, Event as TeamEvent
 from .meet_parser import parse_meet_lxf, ParsedMeet
+from .meet_config import get_active_meetsid
 
 
 def _round_from_lenex(round_str: str) -> int:
@@ -42,29 +43,27 @@ def _load_from_parsed(db: Session, meet: ParsedMeet) -> int:
     count = 0
 
     # ── Also create a Meet row in the Team Manager schema ─────────────────
-    from sqlalchemy import func, text
+    from sqlalchemy import func
     next_meet_id = (db.query(func.max(Meet.meetsid)).scalar() or 0) + 1
     team_meet = Meet(
         meetsid=next_meet_id,
         name=meet.meet_name or "Current Meet",
         course={"LCM": 1, "SCM": 3, "SCY": 2}.get(meet.course, 1),
         meetstate=0,  # planned
+        # This becomes "the current meet" — see get_active_meetsid in
+        # meet_config.py, which resolves it instead of the old bsglobal
+        # current_meetsid pointer. meet_type isn't known here (callers set
+        # it explicitly afterward — see routers/api.py's _set_meet_type
+        # call sites).
+        registration_open=True,
     )
     db.add(team_meet)
-    db.flush()
-
-    # Store current meet ID in bsglobal
-    from .models import BsGlobal
-    cfg = db.get(BsGlobal, "current_meetsid")
-    if cfg:
-        cfg.data = str(team_meet.meetsid)
-    else:
-        db.add(BsGlobal(name="current_meetsid", data=str(team_meet.meetsid)))
     db.flush()
 
     for ses in meet.sessions:
         # Create session (old schema)
         session = SwimSession(
+            meetsid=team_meet.meetsid,
             sessionnumber=ses.number,
             name=ses.name,
             course=None,  # will be set from meet-level course if needed
@@ -101,6 +100,7 @@ def _load_from_parsed(db: Session, meet: ParsedMeet) -> int:
 
             event = SwimEvent(
                 swimeventid=ev.eventid,
+                meetsid=team_meet.meetsid,
                 swimsessionid=session.swimsessionid,
                 swimstyleid=ev.swimstyleid or None,
                 eventnumber=ev.number,
@@ -122,6 +122,7 @@ def _load_from_parsed(db: Session, meet: ParsedMeet) -> int:
             for ag in ev.agegroups:
                 db.add(AgeGroup(
                     agegroupid=ag.agegroupid,
+                    meetsid=team_meet.meetsid,
                     swimeventid=event.swimeventid,
                     agemin=ag.agemin,
                     agemax=ag.agemax,
@@ -154,8 +155,16 @@ def _load_from_parsed(db: Session, meet: ParsedMeet) -> int:
 
 
 def load_events(db: Session, lxf_path: Path) -> int:
-    """Load events from meet .lxf if table is empty. Returns count."""
-    if db.query(SwimEvent).first():
+    """Load events from meet .lxf on a genuinely empty install.
+
+    Must check for an already-active meet, not just an empty `swimevent`
+    table: a meet can be "current" (registration_open=True) with zero events
+    loaded yet (see "Empty meet state is supported" in team-app's CLAUDE.md).
+    Loading the template on top of that would create a second
+    registration_open=True row, and get_active_meetsid() would then resolve
+    to whichever one has the higher meetsid — not necessarily the real one.
+    """
+    if db.query(SwimEvent).first() or get_active_meetsid(db) is not None:
         return 0
     meet = parse_meet_lxf(lxf_path)
     return _load_from_parsed(db, meet)

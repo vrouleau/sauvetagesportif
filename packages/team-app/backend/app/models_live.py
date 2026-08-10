@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from sqlalchemy import (
-    Column, Integer, SmallInteger, String, Boolean, DateTime,
+    Column, Integer, SmallInteger, String, Boolean, DateTime, Date,
     ForeignKey, UniqueConstraint,
 )
 
@@ -40,6 +40,7 @@ class LiveEvent(Base):
     session_name = Column(String(100))
     event_number = Column(SmallInteger)
     event_name = Column(String(100), nullable=False)
+    session_date = Column(Date)
     gender = Column(String(1))
     distance = Column(SmallInteger)
     round = Column(String(5))

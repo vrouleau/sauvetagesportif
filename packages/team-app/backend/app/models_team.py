@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from sqlalchemy import (
     Column, Integer, SmallInteger, String, Text, DateTime, Float,
-    ForeignKey, Index, CheckConstraint,
+    ForeignKey, Index, CheckConstraint, Boolean,
 )
 from sqlalchemy.orm import relationship
 
@@ -82,6 +82,9 @@ class Meet(Base):
     maxrentries = Column(SmallInteger)
     deadline = Column(DateTime)
     data = Column(Text)                 # contact info (INI-style)
+    # --- Team-app extras (not in Splash) — see docs/CONCURRENT_MEETS_PLAN.md ---
+    meet_type = Column(String(5))       # 'POOL' or 'BEACH'
+    registration_open = Column(Boolean, default=False)
 
     # Relationships
     sessions = relationship("Session", back_populates="meet", cascade="all, delete-orphan")

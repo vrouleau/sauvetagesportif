@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 from ..database import get_db, is_sqlite
 from ..models import BsGlobal
 from ..models_live import LiveEvent, LiveResult, LiveSplit, LiveStartlist
+from ..meet_config import get_active_meetsid, _get_meet_config, _get_meet_type
 
 
 def _upsert(db: Session, model, conflict_columns: list[str], values: dict, update_values: dict):
@@ -266,12 +267,22 @@ async def push_events(data: dict, db: Session = Depends(get_db)):
         if not event_id:
             continue
 
+        session_date = None
+        raw_date = e.get("session_date")
+        if raw_date:
+            from datetime import date as _date
+            try:
+                session_date = _date.fromisoformat(raw_date)
+            except (ValueError, TypeError):
+                session_date = None
+
         stmt_values = dict(
             event_id=event_id,
             session_number=e.get("session_number"),
             session_name=e.get("session_name"),
             event_number=e.get("event_number"),
             event_name=e.get("event_name", ""),
+            session_date=session_date,
             gender=e.get("gender"),
             distance=e.get("distance"),
             round=e.get("round"),
@@ -283,6 +294,7 @@ async def push_events(data: dict, db: Session = Depends(get_db)):
             "session_name": e.get("session_name"),
             "event_number": e.get("event_number"),
             "event_name": e.get("event_name", ""),
+            "session_date": session_date,
             "gender": e.get("gender"),
             "distance": e.get("distance"),
             "round": e.get("round"),
@@ -425,7 +437,8 @@ def live_status(db: Session = Depends(get_db)):
     if enabled != "T":
         return {"active": False}
 
-    meet_name = _get_config(db, "meet_name") or "Competition"
+    meetsid = get_active_meetsid(db)
+    meet_name = _get_meet_config(db, meetsid, "meet_name") or "Competition"
     event_count = db.query(LiveEvent).count()
     last_push = _get_config(db, "LIVE_LAST_PUSH")
 
@@ -440,8 +453,17 @@ def live_status(db: Session = Depends(get_db)):
 
 @router.get("/events")
 def live_events(db: Session = Depends(get_db)):
-    """All events with completion progress."""
-    events = db.query(LiveEvent).order_by(
+    """Today's events with completion progress.
+
+    Scoped to today's session_date (not "everything pushed since live mode
+    was last enabled") — see docs/CONCURRENT_MEETS_PLAN.md item 6. Rows
+    pushed before meet-app started sending session_date, or from a stale
+    prior day, simply won't match and are cleared on the next finalize_meet.
+    """
+    from datetime import date as _date
+    events = db.query(LiveEvent).filter(
+        LiveEvent.session_date == _date.today()
+    ).order_by(
         LiveEvent.session_number, LiveEvent.event_number
     ).all()
 
@@ -523,11 +545,32 @@ def live_startlist_for_event(event_id: int, db: Session = Depends(get_db)):
 
 @router.post("/enable", dependencies=[Depends(_require_organizer_or_admin)])
 def enable_live_mode(db: Session = Depends(get_db)):
-    """Enable live mode — generates a new push secret."""
+    """Enable live mode — generates a new push secret.
+
+    Defense-in-depth backstop (not the primary safeguard — that's the
+    session-date exclusivity check, since two meets can't genuinely both be
+    "live" at once when their sessions can't share a calendar date): if a
+    previous meet's live data was never finalized or cleared, reject rather
+    than silently overwrite the secret and mix two meets' heats into one
+    table. See docs/CONCURRENT_MEETS_PLAN.md.
+    """
+    active_meetsid = get_active_meetsid(db)
+    prior_meetsid = _get_config(db, "LIVE_ACTIVE_MEETSID")
+    if prior_meetsid and prior_meetsid != str(active_meetsid):
+        stale = db.query(LiveEvent).first() is not None or db.query(LiveResult).first() is not None
+        if stale:
+            raise HTTPException(
+                409,
+                f"Meet {prior_meetsid}'s live results haven't been finalized — "
+                f"finalize or clear them first."
+            )
+
     # Generate a strong random token
     token = secrets.token_hex(16)  # 32-char hex string
     _set_config(db, "LIVE_PUSH_SECRET", token)
     _set_config(db, "LIVE_ENABLED", "T")
+    if active_meetsid:
+        _set_config(db, "LIVE_ACTIVE_MEETSID", str(active_meetsid))
     db.commit()
     return {"ok": True, "secret": token}
 
@@ -587,9 +630,10 @@ async def finalize_meet(db: Session = Depends(get_db)):
         raise HTTPException(400, "No live results to finalize")
 
     # 1. Create historical Meet row
-    meet_name = _get_config(db, "meet_name") or "Competition"
-    meet_city = _get_config(db, "meet_city") or ""
-    course_str = _get_config(db, "meet_course") or "LCM"
+    old_meetsid = get_active_meetsid(db)
+    meet_name = _get_meet_config(db, old_meetsid, "meet_name") or "Competition"
+    meet_city = _get_meet_config(db, old_meetsid, "meet_city") or ""
+    course_str = _get_meet_config(db, old_meetsid, "meet_course") or "LCM"
     course_int = {"LCM": 1, "SCY": 2, "SCM": 3}.get(course_str, 1)
 
     next_meet_id = (db.query(func.max(TeamMeet.meetsid)).scalar() or 0) + 1
@@ -599,6 +643,8 @@ async def finalize_meet(db: Session = Depends(get_db)):
         place=meet_city,
         course=course_int,
         meetstate=3,  # completed
+        meet_type=_get_meet_type(db),
+        registration_open=False,  # historical/closed, not accepting entries
     )
     db.add(new_meet)
     db.flush()
@@ -651,7 +697,7 @@ async def finalize_meet(db: Session = Depends(get_db)):
     _reset_for_next_meet(db)
 
     # 5. Clear live-specific bsglobal keys
-    for key in ("LIVE_PUSH_SECRET", "LIVE_ENABLED", "LIVE_LAST_PUSH"):
+    for key in ("LIVE_PUSH_SECRET", "LIVE_ENABLED", "LIVE_LAST_PUSH", "LIVE_ACTIVE_MEETSID"):
         cfg = db.get(BsGlobal, key)
         if cfg:
             db.delete(cfg)

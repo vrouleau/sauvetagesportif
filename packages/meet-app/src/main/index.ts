@@ -58,6 +58,7 @@ import {
   deleteAthlete,
   nextId,
   duplicateEvent,
+  parseOleDate,
   type SessionUpdate,
   type EventUpdate,
   type AgeGroupUpdate,
@@ -2241,7 +2242,7 @@ function _pushStartListsAfterGeneration(eventId?: number, sessionId?: number): v
     // Push event metadata
     const events = db.prepare(`
       SELECT e.swimeventid, e.eventnumber, e.gender, e.swimsessionid,
-             s.sessionnumber, s.name AS sessionname,
+             s.sessionnumber, s.name AS sessionname, s.startdate,
              st.distance, st.name AS stylename,
              e.round, e.daytime,
              (SELECT COUNT(*) FROM heat h WHERE h.swimeventid = e.swimeventid) AS total_heats
@@ -2252,7 +2253,8 @@ function _pushStartListsAfterGeneration(eventId?: number, sessionId?: number): v
       ORDER BY s.sessionnumber, e.sortcode
     `).all(...params) as Array<{
       swimeventid: number; eventnumber: number; gender: number; swimsessionid: number
-      sessionnumber: number; sessionname: string; distance: number; stylename: string
+      sessionnumber: number; sessionname: string; startdate: string | null
+      distance: number; stylename: string
       round: number; daytime: string | null; total_heats: number
     }>
 
@@ -2266,6 +2268,7 @@ function _pushStartListsAfterGeneration(eventId?: number, sessionId?: number): v
         session_name: e.sessionname || '',
         event_number: e.eventnumber,
         event_name: e.stylename || '',
+        session_date: e.startdate ? (parseOleDate(e.startdate) ?? null) : null,
         gender: genderMap[e.gender] || 'X',
         distance: e.distance,
         round: roundMap[e.round] || 'TIM',

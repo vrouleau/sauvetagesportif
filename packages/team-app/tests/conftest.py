@@ -234,3 +234,16 @@ def export_meet_lxf(headers: dict) -> zipfile.ZipFile:
     r = requests.get(f"{BASE_URL}/api/export/meet-lxf", headers=headers, timeout=30)
     r.raise_for_status()
     return zipfile.ZipFile(BytesIO(r.content))
+
+
+def exec_in_backend(python_code: str) -> str:
+    """Run `python_code` inside the running backend container and return stdout.
+
+    Escape hatch for the handful of scenarios Phase 1 concurrent-meets makes
+    real but doesn't yet expose any public endpoint to create — e.g. a second
+    registration_open=True meet (that's Phase 2's job). Everything else in
+    this suite stays pure black-box HTTP; use this only when there's
+    genuinely no other way to reach the precondition.
+    """
+    result = _run_compose(["exec", "-T", "backend", "python", "-c", python_code])
+    return result.stdout.decode("utf-8", errors="replace")

@@ -30,6 +30,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from .models import SwimStyle, BsGlobal
 from .models_team import Result, Member, TeamClub
+from .meet_config import get_active_meetsid, _get_meet_config
 
 
 # --- Core query functions ---
@@ -165,8 +166,7 @@ def get_public_best_times(db: Session, max_age_months: int = 18) -> dict:
         club["athletes"].sort(key=lambda a: a["name"])
 
     # Determine course (current meet's course, used to pick LCM vs SCM when both exist)
-    course_cfg = db.get(BsGlobal, "meet_course")
-    course = course_cfg.data if course_cfg and course_cfg.data else "LCM"
+    course = _get_meet_config(db, get_active_meetsid(db), "meet_course") or "LCM"
 
     return {"styles": styles, "clubs": clubs, "course": course}
 

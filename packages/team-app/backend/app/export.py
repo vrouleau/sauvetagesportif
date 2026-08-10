@@ -33,6 +33,7 @@ from .models import (
 from .models_team import TeamClub, Member, Relay, RelayPos
 from .models_team import gender_to_str as relay_gender_to_str
 from .best_times import get_best_time_date
+from .meet_config import get_active_meetsid, _get_meet_config
 
 
 def _ms_to_lenex(ms: int | None) -> str:
@@ -92,9 +93,9 @@ def _meet_struct_from_db(db: Session):
     """Build ParsedMeet from DB instead of requiring meet.lxf on disk."""
     from .meet_parser import ParsedMeet, MeetSession, MeetEvent, MeetAgeGroup
 
-    name_row = db.get(BsGlobal, "meet_name")
-    course_row = db.get(BsGlobal, "meet_course")
-    course = (course_row.data if course_row else None) or "LCM"
+    meetsid = get_active_meetsid(db)
+    meet_name = _get_meet_config(db, meetsid, "meet_name")
+    course = _get_meet_config(db, meetsid, "meet_course") or "LCM"
 
     gender_map = {1: "M", 2: "F", 3: "X"}
     round_map = {1: "PRE", 2: "SEM", 4: "FIN", 5: "TIM"}
@@ -135,7 +136,7 @@ def _meet_struct_from_db(db: Session):
         ))
 
     return ParsedMeet(
-        meet_name=(name_row.data if name_row else "") or "Inscription Export",
+        meet_name=meet_name or "Inscription Export",
         course=course,
         sessions=parsed_sessions,
     )
@@ -184,16 +185,17 @@ def generate_lxf(db: Session) -> bytes:
         "name": meet_struct.meet_name or "Inscription Export",
         "course": meet_struct.course or "LCM",
     }
-    # Add optional meet attributes from bsglobal
+    # Add optional meet attributes from meet_config
+    export_meetsid = get_active_meetsid(db)
     for key, attr_name in [("meet_city", "city"), ("meet_nation", "nation"),
                            ("meet_masters", "masters")]:
-        row = db.get(BsGlobal, key)
-        if row and row.data:
-            meet_attrs[attr_name] = row.data
+        val = _get_meet_config(db, export_meetsid, key)
+        if val:
+            meet_attrs[attr_name] = val
     # Read organizer/hostclub from MEETVALUES
-    mv_row = db.get(BsGlobal, "MEETVALUES")
-    if mv_row and mv_row.data:
-        for line in mv_row.data.replace("\\r", "").split("\n"):
+    mv_data = _get_meet_config(db, export_meetsid, "MEETVALUES")
+    if mv_data:
+        for line in mv_data.replace("\\r", "").split("\n"):
             line = line.strip("\r\n ")
             eq = line.find("=")
             if eq >= 0:
