@@ -38,7 +38,9 @@ export function ageGroupCodeFor(
     if (/master/i.test(name)) return 'Masters'
   }
   if (agemin != null && agemax != null) {
-    if (agemax <= 10) return '10-'
+    // agemax of -1 (or 99) means "no upper limit" (see CLAUDE.md), not "very young" —
+    // exclude it here so it falls through to the agemin>=19 / open-ended checks below.
+    if (agemax >= 0 && agemax <= 10) return '10-'
     if (agemin === 11 && agemax === 12) return '11-12'
     if (agemin === 13 && agemax === 14) return '13-14'
     if (agemin === 15 && agemax <= 18) return '15-18'
