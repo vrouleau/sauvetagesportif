@@ -42,6 +42,13 @@ from app.models_team import Meet as TeamMeet  # noqa: E402
 from app.routers.api import set_meet_config  # noqa: E402
 
 
+class _NoHeaderRequest:
+    """Stand-in for FastAPI's Request — set_meet_config only reads
+    request.headers.get("X-Meet-Id") (via resolve_meetsid), and a plain
+    dict already implements that."""
+    headers: dict = {}
+
+
 @pytest.fixture()
 def db_session():
     engine = create_engine("sqlite:///:memory:")
@@ -71,23 +78,23 @@ def _get_meetvalues(db_session) -> str:
 
 
 def test_agedate_syncs_to_age_base_date(db_session):
-    set_meet_config({"AGEDATE": {"type": "D", "value": "20260901000000000"}}, db=db_session)
+    set_meet_config({"AGEDATE": {"type": "D", "value": "20260901000000000"}}, request=_NoHeaderRequest(), db=db_session)
     assert _get_bsglobal(db_session, "age_base_date") == "2026-09-01"
 
 
 def test_agedate_still_written_to_meetvalues_blob(db_session):
     # The MEETVALUES sync (Splash/LENEX interop) must keep working alongside
     # the new age_base_date sync, not be replaced by it.
-    set_meet_config({"AGEDATE": {"type": "D", "value": "20260901000000000"}}, db=db_session)
+    set_meet_config({"AGEDATE": {"type": "D", "value": "20260901000000000"}}, request=_NoHeaderRequest(), db=db_session)
     assert "AGEDATE=D;20260901000000000" in _get_meetvalues(db_session)
 
 
 def test_clearing_agedate_clears_age_base_date(db_session):
-    set_meet_config({"AGEDATE": {"type": "D", "value": "20260901000000000"}}, db=db_session)
-    set_meet_config({"AGEDATE": {"type": "D", "value": ""}}, db=db_session)
+    set_meet_config({"AGEDATE": {"type": "D", "value": "20260901000000000"}}, request=_NoHeaderRequest(), db=db_session)
+    set_meet_config({"AGEDATE": {"type": "D", "value": ""}}, request=_NoHeaderRequest(), db=db_session)
     assert _get_bsglobal(db_session, "age_base_date") == ""
 
 
 def test_other_fields_unaffected(db_session):
-    set_meet_config({"NAME": {"type": "S", "value": "Championnat"}}, db=db_session)
+    set_meet_config({"NAME": {"type": "S", "value": "Championnat"}}, request=_NoHeaderRequest(), db=db_session)
     assert _get_bsglobal(db_session, "age_base_date") is None

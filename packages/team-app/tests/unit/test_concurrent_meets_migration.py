@@ -47,7 +47,8 @@ from app import models_serc  # noqa: F401
 from app.migrations.versions import m0001_concurrent_meets as migration
 from app.migrations.versions import m0003_swimevent_agegroup_composite_pk as m0003
 from app.migrations.runner import apply_pending
-from app.meet_config import get_active_meetsid, session_date_conflict
+from app.meet_config import get_active_meetsid, session_date_conflict, resolve_meetsid
+from fastapi import HTTPException
 from app.events import load_events
 
 POOL_TEMPLATE = Path(__file__).resolve().parent.parent.parent.parent.parent / "config" / "template_pool.lxf"
@@ -431,3 +432,65 @@ class TestSessionDateExclusivity:
 
         conflict = session_date_conflict(db_session, new_session, date(2027, 2, 6))
         assert conflict is None
+
+
+# ---------------------------------------------------------------------------
+# resolve_meetsid (Phase 2, stage 3 — X-Meet-Id header plumbing)
+# ---------------------------------------------------------------------------
+
+class _FakeRequest:
+    """Stand-in for FastAPI's Request — resolve_meetsid only reads
+    request.headers.get("X-Meet-Id")."""
+    def __init__(self, meet_id_header: str | None = None):
+        self.headers = {} if meet_id_header is None else {"X-Meet-Id": meet_id_header}
+
+
+class TestResolveMeetsid:
+    def test_no_header_no_open_meets_returns_none(self, db_session):
+        assert resolve_meetsid(_FakeRequest(), db_session) is None
+
+    def test_no_header_one_open_meet_returns_it(self, db_session):
+        db_session.add(TeamMeet(meetsid=1, name="Meet A", registration_open=True))
+        db_session.commit()
+        assert resolve_meetsid(_FakeRequest(), db_session) == 1
+
+    def test_no_header_two_open_meets_raises_409_with_candidates(self, db_session):
+        db_session.add_all([
+            TeamMeet(meetsid=1, name="Meet A", registration_open=True),
+            TeamMeet(meetsid=2, name="Meet B", registration_open=True),
+        ])
+        db_session.commit()
+        with pytest.raises(HTTPException) as exc_info:
+            resolve_meetsid(_FakeRequest(), db_session)
+        assert exc_info.value.status_code == 409
+        assert exc_info.value.detail["code"] == "multiple_open_meets"
+        assert {m["meet_id"] for m in exc_info.value.detail["meets"]} == {1, 2}
+
+    def test_header_matching_open_meet_returns_it(self, db_session):
+        db_session.add_all([
+            TeamMeet(meetsid=1, name="Meet A", registration_open=True),
+            TeamMeet(meetsid=2, name="Meet B", registration_open=True),
+        ])
+        db_session.commit()
+        assert resolve_meetsid(_FakeRequest("2"), db_session) == 2
+
+    def test_header_not_an_integer_raises_400(self, db_session):
+        db_session.add(TeamMeet(meetsid=1, name="Meet A", registration_open=True))
+        db_session.commit()
+        with pytest.raises(HTTPException) as exc_info:
+            resolve_meetsid(_FakeRequest("not-a-number"), db_session)
+        assert exc_info.value.status_code == 400
+
+    def test_header_for_closed_meet_raises_404(self, db_session):
+        db_session.add(TeamMeet(meetsid=1, name="Closed", registration_open=False))
+        db_session.commit()
+        with pytest.raises(HTTPException) as exc_info:
+            resolve_meetsid(_FakeRequest("1"), db_session)
+        assert exc_info.value.status_code == 404
+
+    def test_header_for_nonexistent_meet_raises_404(self, db_session):
+        db_session.add(TeamMeet(meetsid=1, name="Meet A", registration_open=True))
+        db_session.commit()
+        with pytest.raises(HTTPException) as exc_info:
+            resolve_meetsid(_FakeRequest("999"), db_session)
+        assert exc_info.value.status_code == 404

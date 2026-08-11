@@ -676,9 +676,13 @@ cutover):
      until Stage 7's admin dashboard can make "keep it open" an explicit
      choice instead of an implicit close.
 2. **`POST /api/auth` returns `meets: [{meet_id, name, role}]`** instead of
-   a flat `role` (finding #2). Backend only. Frontend keeps reading
-   `role`/`club_id`/`club_name` off the first/only entry for now — no
-   frontend change yet, so this stage ships without touching the UI.
+   a flat `role` (finding #2). **Done** — top-level `role`/`club_id`/
+   `club_name` kept for backward compatibility (mirrors the first/only
+   meet's role); admin's `meets` entries are all tagged `"admin"`, a club's
+   are resolved per-meet via `organizer_club_id`. No frontend change yet.
+   Covered by `TestAuth::test_admin_login_includes_meets_with_admin_role`,
+   `test_club_login_meets_role_matches_top_level_role`,
+   `test_organizer_club_gets_organizer_role_in_meets`.
 3. **`X-Meet-Id` header plumbing**: every endpoint that currently calls
    `get_active_meetsid(db)` reads `X-Meet-Id` when present (validating it
    against the caller's accessible meets) and falls back to today's
@@ -687,8 +691,38 @@ cutover):
    existing single-meet clients (old frontend build, meet-app's LXF
    import/export calls) keep working unchanged since they never send the
    header and there's only ever one open meet until stage 5 lands.
-4. **Session create-time exclusivity check** (finding #4) — small, bundle
-   into this stage since it touches the same `api.py` neighborhood.
+   **Done** — `resolve_meetsid(request, db)` added to `meet_config.py`,
+   wired into every "resolve the caller's target meet" call site across
+   `routers/api.py` (~25 route handlers), `seed.py`, `invoices.py`, and
+   `export.py` (helper functions gained an optional `meetsid` param,
+   defaulting to `get_active_meetsid(db)` when not given, matching the
+   `reuse_meetsid` pattern `_load_from_parsed` already established).
+   Deliberately left alone: `create_new_meet` (always creates new, nothing
+   to target), `flush_meet`/`_reset_for_next_meet`/`_reload_pool_template`
+   (operate on "every non-archived meet," a stage 7 concern), `live.py`
+   (singleton by design), `best_times.py`'s public endpoint, `main.py`'s
+   audit-log label. Also fixed a bug this sweep surfaced:
+   `_replace_current_meet_structure`'s `replace_meetsid` was re-deriving
+   via `get_active_meetsid(db)` after `_load_from_parsed` instead of
+   reusing `target_meetsid` — harmless with one meet, silently wrong once
+   two can be open (would send `meet_config` writes to whichever meet has
+   the higher meetsid, not necessarily the one being re-uploaded).
+   Follow-up not fixed here (flagged in `export_meet_lxf`'s docstring):
+   `MEET_STORAGE` is a single on-disk file, not meetsid-scoped, so its
+   "already uploaded" fast path ignores `X-Meet-Id` — low-stakes until
+   stage 7 makes a second open meet reachable, since only one upload can
+   exist to be stale about today. Covered by `TestResolveMeetsid` (7 unit
+   tests, `tests/unit/test_concurrent_meets_migration.py`) and
+   `TestConcurrentOpenMeetsStayIsolated` extended to assert `X-Meet-Id`
+   correctly disambiguates between two forced-open meets, and that no
+   header with two open meets 409s with both candidates instead of
+   guessing.
+4. **Session create-time exclusivity check** (finding #4) — **Done, and
+   turned out to be a non-issue**: `create_session` only ever accepts
+   `name`/`number`, never `startdate` — a session's date can only be set
+   afterward via `PUT /api/sessions/{id}`, which already ran the check.
+   Finding #4's premise didn't hold once actually re-checked against the
+   code; no fix needed, just confirmed.
 5. **Frontend plumbing**: `meet_id` in `localStorage`, meet context reads
    `meets[]` from the new `/auth` response, sends `X-Meet-Id` on every
    request. Still no visible UI change when there's one open meet.

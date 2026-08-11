@@ -100,6 +100,56 @@ class TestAuth:
         assert body["role"] == "coach"
         assert body["club_id"] == clubs[0]["id"]
 
+    def test_admin_login_includes_meets_with_admin_role(self, admin_headers, uploaded):
+        """Phase 2 stage 2: /auth returns meets: [{meet_id, name, role}] —
+        admin's role is the same ("admin") for every open meet."""
+        r = requests.post(f"{BASE_URL}/api/auth",
+                          json={"pin": admin_headers["X-Club-Pin"]}, timeout=5)
+        assert r.status_code == 200
+        body = r.json()
+        assert len(body["meets"]) == 1, "expected exactly one open meet in the test stack"
+        assert body["meets"][0]["role"] == "admin"
+        assert body["meets"][0]["name"]
+        assert isinstance(body["meets"][0]["meet_id"], int)
+
+    def test_club_login_meets_role_matches_top_level_role(self, clubs):
+        """The single-meet case: meets[0]'s role must match the back-compat
+        top-level role the frontend still reads until stage 5 lands."""
+        pin = clubs[0]["pin"]
+        r = requests.post(f"{BASE_URL}/api/auth", json={"pin": pin}, timeout=5)
+        assert r.status_code == 200
+        body = r.json()
+        assert len(body["meets"]) == 1
+        assert body["meets"][0]["role"] == body["role"] == "coach"
+
+    def test_organizer_club_gets_organizer_role_in_meets(self, clubs, admin_headers):
+        """A club assigned as organizer for the open meet must see role
+        'organizer' in both the top-level field and its meets[] entry —
+        proving the per-meet role resolution (not a login-time constant)."""
+        club = clubs[0]
+        try:
+            r = requests.post(f"{BASE_URL}/api/admin/set-organizer",
+                              json={"club_id": club["id"]}, headers=admin_headers, timeout=5)
+            assert r.status_code == 200
+
+            r = requests.post(f"{BASE_URL}/api/auth", json={"pin": club["pin"]}, timeout=5)
+            assert r.status_code == 200
+            body = r.json()
+            assert body["role"] == "organizer"
+            assert len(body["meets"]) == 1
+            assert body["meets"][0]["role"] == "organizer"
+        finally:
+            # No public endpoint clears organizer_club_id (set-organizer requires
+            # a real club_id) — same escape hatch as elsewhere in this suite.
+            exec_in_backend(
+                "from app.database import SessionLocal\n"
+                "from app.models import MeetConfig\n"
+                "from app.models_team import Meet\n"
+                "db = SessionLocal()\n"
+                "db.query(MeetConfig).filter(MeetConfig.name == 'organizer_club_id').delete()\n"
+                "db.commit()\n"
+            )
+
 
 # ---------------------------------------------------------------------------
 # Registration view: categories + suggestions
@@ -1029,6 +1079,17 @@ class TestSessionDateExclusivityEndpoint:
 
     @pytest.fixture(scope="class", autouse=True)
     def rival_meet(self, uploaded):
+        # Capture the real meet's id before the rival exists — once both are
+        # registration_open, GET /api/sessions with no X-Meet-Id is
+        # ambiguous (409) by design (docs/CONCURRENT_MEETS_PLAN.md, stage
+        # 3), so every HTTP call in this class must send the header
+        # explicitly to target the real meet, not the rival.
+        TestSessionDateExclusivityEndpoint.REAL_MEETSID = int(exec_in_backend(
+            "from app.meet_config import get_active_meetsid\n"
+            "from app.database import SessionLocal\n"
+            "db = SessionLocal()\n"
+            "print(get_active_meetsid(db))\n"
+        ).strip())
         exec_in_backend(
             "from app.database import SessionLocal\n"
             "from app.models_team import Meet\n"
@@ -1060,8 +1121,9 @@ class TestSessionDateExclusivityEndpoint:
         )
 
     @pytest.fixture(scope="class")
-    def a_session_id(self, uploaded) -> int:
-        r = requests.get(f"{BASE_URL}/api/sessions", timeout=10)
+    def a_session_id(self, rival_meet, admin_headers) -> int:
+        r = requests.get(f"{BASE_URL}/api/sessions",
+                         headers={**admin_headers, "X-Meet-Id": str(self.REAL_MEETSID)}, timeout=10)
         r.raise_for_status()
         return r.json()[0]["id"]
 
@@ -1069,7 +1131,7 @@ class TestSessionDateExclusivityEndpoint:
         r = requests.put(
             f"{BASE_URL}/api/sessions/{a_session_id}",
             json={"startdate": self.RIVAL_DATE},
-            headers=admin_headers, timeout=10,
+            headers={**admin_headers, "X-Meet-Id": str(self.REAL_MEETSID)}, timeout=10,
         )
         assert r.status_code == 409, f"Expected 409 on colliding session date, got {r.status_code}: {r.text}"
         assert "Rival Meet" in r.text
@@ -1078,7 +1140,7 @@ class TestSessionDateExclusivityEndpoint:
         r = requests.put(
             f"{BASE_URL}/api/sessions/{a_session_id}",
             json={"startdate": "2027-04-20"},
-            headers=admin_headers, timeout=10,
+            headers={**admin_headers, "X-Meet-Id": str(self.REAL_MEETSID)}, timeout=10,
         )
         assert r.status_code == 200, f"Non-colliding session date rejected: {r.text}"
 
@@ -3211,24 +3273,44 @@ class TestConcurrentOpenMeetsStayIsolated:
                 "create_new_meet's stub-then-delete step didn't run as designed"
             )
 
-            # get_active_meetsid() resolves to the higher meetsid when more than
-            # one is registration_open — that's meet B (empty) here, so these
-            # endpoints must show nothing, never meet A's 57 events/age-groups
-            # leaking through just because they happen to share numeric ids.
-            events_resp = requests.get(f"{BASE_URL}/api/events", headers=admin_headers, timeout=10)
+            # Stage 3: with two meets open and no X-Meet-Id, the ambiguity is
+            # now a 409 with both candidates, not a silent guess.
+            no_header_resp = requests.get(f"{BASE_URL}/api/events", headers=admin_headers, timeout=10)
+            assert no_header_resp.status_code == 409, (
+                f"Expected 409 (ambiguous — two meets open, no X-Meet-Id), got "
+                f"{no_header_resp.status_code}: {no_header_resp.text}"
+            )
+            candidate_ids = {m["meet_id"] for m in no_header_resp.json()["detail"]["meets"]}
+            assert candidate_ids == {meet_a_id, meet_b_id}
+
+            # X-Meet-Id: meet B must show nothing, never meet A's 57
+            # events/age-groups leaking through just because they happen to
+            # share numeric ids.
+            b_headers = {**admin_headers, "X-Meet-Id": str(meet_b_id)}
+            events_resp = requests.get(f"{BASE_URL}/api/events", headers=b_headers, timeout=10)
             events_resp.raise_for_status()
             assert events_resp.json() == [], (
-                "GET /api/events returned rows while meet B (the active one) is "
-                "supposed to be empty — likely leaking meet A's events, which "
+                "GET /api/events with X-Meet-Id=meet B returned rows while meet B "
+                "is supposed to be empty — likely leaking meet A's events, which "
                 "reuse the same swimeventid values"
             )
             assert not any(e["id"] in meet_a_event_ids for e in events_resp.json())
 
-            sessions_resp = requests.get(f"{BASE_URL}/api/sessions", headers=admin_headers, timeout=10)
+            sessions_resp = requests.get(f"{BASE_URL}/api/sessions", headers=b_headers, timeout=10)
             sessions_resp.raise_for_status()
             assert sessions_resp.json() == [], (
-                "GET /api/sessions returned rows while meet B (the active one) is "
-                "supposed to be empty — likely leaking meet A's sessions"
+                "GET /api/sessions with X-Meet-Id=meet B returned rows while meet "
+                "B is supposed to be empty — likely leaking meet A's sessions"
+            )
+
+            # X-Meet-Id: meet A must show exactly meet A's own events — the
+            # header, not just table contents, is what disambiguates once two
+            # meets are open.
+            a_headers = {**admin_headers, "X-Meet-Id": str(meet_a_id)}
+            events_resp_a = requests.get(f"{BASE_URL}/api/events", headers=a_headers, timeout=10)
+            events_resp_a.raise_for_status()
+            assert sorted(e["id"] for e in events_resp_a.json()) == meet_a_event_ids, (
+                "GET /api/events with X-Meet-Id=meet A did not return meet A's own events"
             )
 
             # And meet A's own events, still sitting in the same table at the same
