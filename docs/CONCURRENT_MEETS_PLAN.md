@@ -685,24 +685,21 @@ cutover):
 ## Decisions
 
 1. **Meet switching: persistent title-bar dropdown, not logout/re-pick.**
-   Settled — an organizer's club is routinely also a participant in a
-   concurrent meet, and admin manages all open meets at once, so switching
-   is routine behavior, not a rare edge case. A dropdown in `AuthLayout`
-   that recomputes `meetId` and the derived `canOrganizer`/`canAdmin` flags
-   is the right shape; logout/login would punish the exact users who need
-   this most.
+   Settled, and reconfirmed by Vincent 2026-08-11 — an organizer's club is
+   routinely also a participant in a concurrent meet, and admin manages all
+   open meets at once, so switching is routine behavior, not a rare edge
+   case. A dropdown in `AuthLayout` that recomputes `meetId` and the
+   derived `canOrganizer`/`canAdmin` flags is the right shape; logout/login
+   would punish the exact users who need this most.
 2. **Admin meets-dashboard scope** — still open: should recently-closed
    beach meets stay visible/undoable for a grace period, or does "close
    registration" delete immediately with no recovery window (matches "no
    results, throw it away" today, but worth confirming that's still fine
    now that it's a more visible, deliberate admin action rather than an
    end-of-cycle default)?
-3. **Meet-creation wipe scope (new, from the 2026-08-11 verification pass)**
-   — still open: when `X-Meet-Id` is present and matches an already-open
-   meet, treating it as "re-upload the structure for this meet" (scoped
-   wipe of just that meet) seems right for the organizer's own
-   re-upload-corrected-file case, but needs confirming against how meet-app
-   actually re-exports/re-uploads today — is there a real workflow where an
-   organizer re-uploads onto an already-open meet, or does every re-upload
-   in practice happen before the meet has any registrations yet (making the
-   scoped-wipe distinction moot in practice, just a safety net)?
+3. **Meet-creation wipe scope (new, from the 2026-08-11 verification pass).**
+   Settled by Vincent 2026-08-11 — `X-Meet-Id` present and matching an
+   already-open meet means "re-upload the structure for this meet" (scoped
+   wipe of just that meet's sessions/events/results/age-groups); `X-Meet-Id`
+   absent, or present but not matching any open meet, means "create a new
+   meet" (nothing to wipe). Implemented as stage 1 of the sequence above.
