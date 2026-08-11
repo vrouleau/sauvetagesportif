@@ -576,6 +576,112 @@ ships, with no frontend change.
   running late into the evening should still count as "today" by its
   `session_date`, not wall-clock time crossing midnight).
 
+## Verified against current code (2026-08-11) — corrections to the plan above
+
+Re-checked every assumption above against the actual Phase-1-merged code before
+starting implementation. Most of the plan holds; three things are materially
+different from what's described above, and one is a gap worth closing in the
+same pass:
+
+1. **The real blocker isn't a "pool-exclusivity guard clause" — it's a
+   blanket wipe.** The plan (§"Application-layer business rule") says to
+   remove a type-based guard from `create_new_meet`. That guard doesn't
+   exist. What actually runs today, in **both** meet-creation paths —
+   `create_new_meet` (`POST /admin/new-meet`, `api.py:553`) and
+   `_replace_current_meet_structure` (the LXF-structure-upload path used by
+   `POST /upload/meet`, `api.py:442` — this is how meets get created in
+   practice, via the organizer uploading meet-app's exported structure LXF)
+   — is an unconditional delete of **every** non-archived (`meetstate != 3`)
+   meet's sessions/events/results/age-groups before building the new one
+   (`api.py:457-467`). Today that's a no-op-looking cleanup because there's
+   only ever one non-archived meet. Under Phase 2 it would silently destroy
+   a second meet's live registrations the moment anyone opens a third. This
+   is the highest-risk change in Phase 2, bigger than the doc originally
+   implied — it needs its own design pass: stop scoping the wipe to "every
+   non-archived meet" and scope it to nothing (a brand-new `meets` row,
+   nothing to wipe) except for the genuine re-upload case (organizer
+   re-uploading a corrected structure LXF for the *same* still-open meet,
+   which legitimately should wipe that one meet's data). Needs a way to
+   distinguish "new meet" from "re-upload of the currently-selected meet" —
+   likely keyed off the incoming `X-Meet-Id` header once Phase 2 adds it:
+   present + matches an open meet → scoped re-upload wipe; absent → create a
+   new `meets` row.
+2. **`POST /api/auth` today returns exactly `{role, club_id, club_name}`**
+   (`api.py:416-435`, three branches: admin PIN / PIN matches
+   `organizer_club_id` config → `organizer` / else `coach`) with zero
+   meet-awareness — confirms the doc's description is accurate, just noting
+   the precise current shape the rework replaces.
+3. **`Admin.jsx` has no current-meet UI to convert.** It has no "current
+   meet" section at all today — the only meet-list UI in the file is
+   `HistoricalMeetsSection` (archived meets, unrelated). `meetApi.js`'s
+   `createMeet()` (line 201) is dead code — nothing in the frontend calls
+   it; meets are created server-side, either via the LXF-structure-upload
+   flow above or manually via `/admin/new-meet` (not yet exposed in any UI).
+   So the "meets dashboard" in Admin.jsx isn't a conversion of existing
+   markup, it's new UI end to end, and it needs its own "create meet"
+   button/form since one doesn't exist anywhere in the frontend today.
+4. **Gap to close alongside this:** `PUT /api/sessions/{id}` runs the
+   same-day exclusivity check (`_check_session_date_exclusivity`,
+   `api.py:1357`) when `startdate` changes, but `POST /api/sessions`
+   (session *create*, `api.py:1472`) does not — a brand-new session can be
+   created with a colliding date and only gets caught on the next edit.
+   Small fix, same helper, worth doing in the same pass as the rest of
+   Phase 2's meet-lifecycle work rather than filed separately.
+
+Everything else in the plan above matches current code exactly:
+`get_active_meetsid` (`meet_config.py:47`) already resolves off
+`registration_open`; `secret_links.meetsid` is already populated
+(`api.py:942`); the `LIVE_ACTIVE_MEETSID` guard in `enable_live_mode`
+(`live.py:557-566`) and the `PUT /api/sessions/{id}` exclusivity check both
+already work exactly as described — Phase 1 delivered the live-results
+side in full, Phase 2 needs no further work there beyond the create-endpoint
+gap in point 4.
+
+## Phase 2 implementation sequence
+
+Ordered so each stage is independently testable and the app stays in a
+working, single-meet-equivalent state after every stage (no big-bang
+cutover):
+
+1. **Fix the wipe-all-on-create bug** (finding #1 above). This has to land
+   first — every later stage assumes opening meet B is safe while meet A is
+   open, and today it isn't. Backend only; no visible behavior change in
+   the single-meet case (still exactly one meet exists, so the new
+   "scope the wipe to nothing" path and the old "wipe everything" path
+   produce the same result there).
+2. **`POST /api/auth` returns `meets: [{meet_id, name, role}]`** instead of
+   a flat `role` (finding #2). Backend only. Frontend keeps reading
+   `role`/`club_id`/`club_name` off the first/only entry for now — no
+   frontend change yet, so this stage ships without touching the UI.
+3. **`X-Meet-Id` header plumbing**: every endpoint that currently calls
+   `get_active_meetsid(db)` reads `X-Meet-Id` when present (validating it
+   against the caller's accessible meets) and falls back to today's
+   single-open-meet resolution when absent; 409-with-candidates when the
+   identity has >1 open meet and no header was sent. Backend only —
+   existing single-meet clients (old frontend build, meet-app's LXF
+   import/export calls) keep working unchanged since they never send the
+   header and there's only ever one open meet until stage 5 lands.
+4. **Session create-time exclusivity check** (finding #4) — small, bundle
+   into this stage since it touches the same `api.py` neighborhood.
+5. **Frontend plumbing**: `meet_id` in `localStorage`, meet context reads
+   `meets[]` from the new `/auth` response, sends `X-Meet-Id` on every
+   request. Still no visible UI change when there's one open meet.
+6. **Meet-switcher dropdown in `AuthLayout`** (`main.jsx:197`), wired to
+   recompute `canOrganizer`/`canAdmin` (`main.jsx:314-315`) per selected
+   meet instead of once at login. Invisible until stage 7 makes a second
+   open meet reachable.
+7. **Admin meets dashboard** — genuinely new UI (finding #3): list of open
+   meets, a "new meet" pool/beach flow finally exposed in the frontend
+   (wired to the now-safe `/admin/new-meet` from stage 1), per-meet
+   organizer-assignment and close-registration actions. This is the stage
+   that makes a second concurrently-open meet reachable in practice, so
+   land it last, once 1-6 have made it safe to.
+8. **Tests** per the "Testing" section above, plus regression coverage for
+   finding #1 specifically (open meet B via both `/admin/new-meet` and
+   `/upload/meet` while meet A has live registrations; assert meet A's
+   sessions/events/results are untouched) and finding #4 (colliding
+   session-create date rejected, not just colliding session-edit date).
+
 ## Decisions
 
 1. **Meet switching: persistent title-bar dropdown, not logout/re-pick.**
@@ -591,3 +697,12 @@ ships, with no frontend change.
    results, throw it away" today, but worth confirming that's still fine
    now that it's a more visible, deliberate admin action rather than an
    end-of-cycle default)?
+3. **Meet-creation wipe scope (new, from the 2026-08-11 verification pass)**
+   — still open: when `X-Meet-Id` is present and matches an already-open
+   meet, treating it as "re-upload the structure for this meet" (scoped
+   wipe of just that meet) seems right for the organizer's own
+   re-upload-corrected-file case, but needs confirming against how meet-app
+   actually re-exports/re-uploads today — is there a real workflow where an
+   organizer re-uploads onto an already-open meet, or does every re-upload
+   in practice happen before the meet has any registrations yet (making the
+   scoped-wipe distinction moot in practice, just a safety net)?
