@@ -676,9 +676,13 @@ cutover):
      until Stage 7's admin dashboard can make "keep it open" an explicit
      choice instead of an implicit close.
 2. **`POST /api/auth` returns `meets: [{meet_id, name, role}]`** instead of
-   a flat `role` (finding #2). Backend only. Frontend keeps reading
-   `role`/`club_id`/`club_name` off the first/only entry for now — no
-   frontend change yet, so this stage ships without touching the UI.
+   a flat `role` (finding #2). **Done** — top-level `role`/`club_id`/
+   `club_name` kept for backward compatibility (mirrors the first/only
+   meet's role); admin's `meets` entries are all tagged `"admin"`, a club's
+   are resolved per-meet via `organizer_club_id`. No frontend change yet.
+   Covered by `TestAuth::test_admin_login_includes_meets_with_admin_role`,
+   `test_club_login_meets_role_matches_top_level_role`,
+   `test_organizer_club_gets_organizer_role_in_meets`.
 3. **`X-Meet-Id` header plumbing**: every endpoint that currently calls
    `get_active_meetsid(db)` reads `X-Meet-Id` when present (validating it
    against the caller's accessible meets) and falls back to today's
@@ -687,21 +691,106 @@ cutover):
    existing single-meet clients (old frontend build, meet-app's LXF
    import/export calls) keep working unchanged since they never send the
    header and there's only ever one open meet until stage 5 lands.
-4. **Session create-time exclusivity check** (finding #4) — small, bundle
-   into this stage since it touches the same `api.py` neighborhood.
+   **Done** — `resolve_meetsid(request, db)` added to `meet_config.py`,
+   wired into every "resolve the caller's target meet" call site across
+   `routers/api.py` (~25 route handlers), `seed.py`, `invoices.py`, and
+   `export.py` (helper functions gained an optional `meetsid` param,
+   defaulting to `get_active_meetsid(db)` when not given, matching the
+   `reuse_meetsid` pattern `_load_from_parsed` already established).
+   Deliberately left alone: `create_new_meet` (always creates new, nothing
+   to target), `flush_meet`/`_reset_for_next_meet`/`_reload_pool_template`
+   (operate on "every non-archived meet," a stage 7 concern), `live.py`
+   (singleton by design), `best_times.py`'s public endpoint, `main.py`'s
+   audit-log label. Also fixed a bug this sweep surfaced:
+   `_replace_current_meet_structure`'s `replace_meetsid` was re-deriving
+   via `get_active_meetsid(db)` after `_load_from_parsed` instead of
+   reusing `target_meetsid` — harmless with one meet, silently wrong once
+   two can be open (would send `meet_config` writes to whichever meet has
+   the higher meetsid, not necessarily the one being re-uploaded).
+   Follow-up not fixed here (flagged in `export_meet_lxf`'s docstring):
+   `MEET_STORAGE` is a single on-disk file, not meetsid-scoped, so its
+   "already uploaded" fast path ignores `X-Meet-Id` — low-stakes until
+   stage 7 makes a second open meet reachable, since only one upload can
+   exist to be stale about today. Covered by `TestResolveMeetsid` (7 unit
+   tests, `tests/unit/test_concurrent_meets_migration.py`) and
+   `TestConcurrentOpenMeetsStayIsolated` extended to assert `X-Meet-Id`
+   correctly disambiguates between two forced-open meets, and that no
+   header with two open meets 409s with both candidates instead of
+   guessing.
+4. **Session create-time exclusivity check** (finding #4) — **Done, and
+   turned out to be a non-issue**: `create_session` only ever accepts
+   `name`/`number`, never `startdate` — a session's date can only be set
+   afterward via `PUT /api/sessions/{id}`, which already ran the check.
+   Finding #4's premise didn't hold once actually re-checked against the
+   code; no fix needed, just confirmed.
 5. **Frontend plumbing**: `meet_id` in `localStorage`, meet context reads
    `meets[]` from the new `/auth` response, sends `X-Meet-Id` on every
    request. Still no visible UI change when there's one open meet.
+   **Done** — `api.js`'s `headers()` helper (now exported) adds `X-Meet-Id`
+   alongside the existing `X-Club-Pin`; every request goes through it,
+   including the ~10 raw-`fetch` call sites across `Organizer.jsx`,
+   `Admin.jsx`, `meetApi.js`, `registrationApi.js`, and `main.jsx` that
+   previously hand-rolled just the pin header. Deliberately left
+   meet-agnostic (matches the backend's own Stage 3 scope split):
+   `ResultsPage.jsx`'s live results + its `/api/live/ws` WebSocket
+   (singleton by design), `SelfInvite.jsx`/`SercJudge.jsx` (public,
+   unauthenticated), `pushNotifications.js` (keyed by its own
+   `dsq_notify_pin`, not the auth session).
 6. **Meet-switcher dropdown in `AuthLayout`** (`main.jsx:197`), wired to
    recompute `canOrganizer`/`canAdmin` (`main.jsx:314-315`) per selected
    meet instead of once at login. Invisible until stage 7 makes a second
-   open meet reachable.
+   open meet reachable. **Done** — new `authMeet.js`'s `selectMeet(meetId)`
+   is the single write path for `meet_id`/`role` in `localStorage`, used
+   by both `Login.jsx` (first login) and the dropdown's `onMeetSwitch`
+   (later switches), so `role` always tracks the currently selected
+   meet's role rather than a static login-time value; `canOrganizer`/
+   `canAdmin` fall out of that automatically since they already derive
+   from `auth.role`. Dropdown only renders when `auth.meets.length > 1`,
+   so it's invisible today. Switching to a meet where the current route
+   (`/meet`, `/invitation`, `/serc`, `/admin`) is no longer permitted
+   redirects to `/`, per the 2026-08-11 decision. Verified: backend
+   `/api/auth` response shape confirmed live via curl, built bundle
+   confirmed to contain the new header logic, full backend suite still
+   green (338 passed, 4 skipped — no backend files touched). Browser
+   click-through (dropdown hidden with 1 meet, `X-Meet-Id` visible in
+   Network tab, `localStorage` keys correct) needs a manual check — no
+   browser-automation tool was available to do this end-to-end.
 7. **Admin meets dashboard** — genuinely new UI (finding #3): list of open
    meets, a "new meet" pool/beach flow finally exposed in the frontend
    (wired to the now-safe `/admin/new-meet` from stage 1), per-meet
    organizer-assignment and close-registration actions. This is the stage
    that makes a second concurrently-open meet reachable in practice, so
-   land it last, once 1-6 have made it safe to.
+   land it last, once 1-6 have made it safe to. **Done** — re-scoped after
+   investigation: `create_new_meet`'s own docstring already named the real
+   close-meet UX as "flush for beach / archive for pool" (the existing
+   `DELETE /registrations` Flush Meet button and the existing
+   `import-results-lxf` archival cycle), and both operated on "every
+   non-archived meet" — harmless with one meet, but the moment this stage
+   makes a second one reachable, either action would have silently deleted
+   the wrong meet's data. Fixed as part of this stage (mandatory, not
+   optional): `_flush_meet_data`/`_reset_for_next_meet` now take an
+   explicit target meetsid, `flush_meet` resolves it via `X-Meet-Id`
+   (`resolve_meetsid`), a new `DELETE /admin/meets/{id}` targets it
+   explicitly for the dashboard's per-row action, `import-results-lxf`
+   resolves the live meet being archived the same way. Both also only
+   recreate the "next meet" stub and regenerate club PINs when nothing
+   else is left open (regenerating PINs while another meet stays open
+   would otherwise silently lock that meet's clubs out — a club's PIN is
+   one shared credential across whichever meets are open, not per-meet).
+   New: `close_other_meets` param on `/admin/new-meet` (default `true`,
+   preserves every existing caller's behavior); `GET /admin/meets` listing
+   non-archived meets with organizer/counts; `POST /admin/meets/{id}/
+   close-registration` and `.../reopen-registration` (reopen blocked by
+   `session_date_conflict` against other open meets); `set-organizer`/
+   `get-organizer` gained explicit `meetsid` targeting. Frontend:
+   `OpenMeetsSection` in `Admin.jsx` (create/list/assign-organizer/close/
+   reopen/delete), `refreshAuth()` in `authMeet.js` + `auth-changed` event
+   so a newly created meet appears in the meet-switcher dropdown without a
+   fresh login. Covered by `TestAdminMeetsDashboard` (9 tests) plus two
+   isolated single-test classes for the two actions that legitimately
+   destroy the sole active meet (`TestStubMeetRecreatedWhenLastMeetFlushed`,
+   `TestImportResultsLxfResetScopedToTarget`) — full suite green (348
+   passed, 4 skipped). Resolves Decision #2 below.
 8. **Tests** per the "Testing" section above, plus regression coverage for
    finding #1 specifically (open meet B via both `/admin/new-meet` and
    `/upload/meet` while meet A has live registrations; assert meet A's
@@ -717,12 +806,18 @@ cutover):
    case. A dropdown in `AuthLayout` that recomputes `meetId` and the
    derived `canOrganizer`/`canAdmin` flags is the right shape; logout/login
    would punish the exact users who need this most.
-2. **Admin meets-dashboard scope** — still open: should recently-closed
-   beach meets stay visible/undoable for a grace period, or does "close
-   registration" delete immediately with no recovery window (matches "no
-   results, throw it away" today, but worth confirming that's still fine
-   now that it's a more visible, deliberate admin action rather than an
-   end-of-cycle default)?
+2. **Admin meets-dashboard scope — resolved 2026-08-11 during stage 7
+   implementation.** No time-based grace period, and no change to how
+   meets actually get archived/deleted. Three distinct, already
+   differently-scoped actions coexist: (a) new — "close registration" is
+   purely a non-destructive `registration_open` flag flip, data untouched,
+   reversible via a matching "reopen" action, useful for pausing a meet
+   without ending its lifecycle; (b) existing — Flush Meet
+   (`DELETE /registrations` / the dashboard's per-row delete) deletes live
+   data outright, unchanged in spirit, just now correctly scoped to one
+   meet; (c) existing — the results-import archival cycle, same scoping
+   fix. Nothing is ever auto-deleted on a timer, so there's no grace-period
+   question left to answer.
 3. **Meet-creation wipe scope (new, from the 2026-08-11 verification pass).**
    Settled by Vincent 2026-08-11 — `X-Meet-Id` present and matching an
    already-open meet means "re-upload the structure for this meet" (scoped

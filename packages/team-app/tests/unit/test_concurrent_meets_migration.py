@@ -46,8 +46,10 @@ from app import models_live  # noqa: F401
 from app import models_serc  # noqa: F401
 from app.migrations.versions import m0001_concurrent_meets as migration
 from app.migrations.versions import m0003_swimevent_agegroup_composite_pk as m0003
+from app.migrations.versions import m0004_club_meet_invites as m0004
 from app.migrations.runner import apply_pending
-from app.meet_config import get_active_meetsid, session_date_conflict
+from app.meet_config import get_active_meetsid, session_date_conflict, resolve_meetsid
+from fastapi import HTTPException
 from app.events import load_events
 
 POOL_TEMPLATE = Path(__file__).resolve().parent.parent.parent.parent.parent / "config" / "template_pool.lxf"
@@ -284,6 +286,102 @@ class TestCompositePkMigrationSqlite:
         m0003.upgrade(new_engine)  # must not raise
 
 
+def _build_pre_m0004_schema(engine) -> None:
+    """Minimal meets/clubs/swimresult shape from before club_meet_invites
+    existed — invite_send_count/stripe_send_count live directly on clubs,
+    no per-meet table yet. swimresult is needed for the migration's
+    "which open meet actually has registrations" backfill query."""
+    with engine.begin() as conn:
+        conn.execute(text("CREATE TABLE meets (meetsid INTEGER PRIMARY KEY, name VARCHAR(100), registration_open BOOLEAN)"))
+        conn.execute(text(
+            "CREATE TABLE clubs (clubsid INTEGER PRIMARY KEY, name VARCHAR(100), "
+            "invite_send_count INTEGER, stripe_send_count INTEGER)"
+        ))
+        conn.execute(text(
+            "CREATE TABLE swimresult (swimresultid INTEGER PRIMARY KEY, meetsid INTEGER, athleteid INTEGER)"
+        ))
+
+
+class TestClubMeetInvitesMigration:
+    """m0004: invite_send_count/stripe_send_count move from a single column
+    per club (shared across every meet) to a per-(club, meet) table — found
+    live while testing Phase 2 Stage 7 (docs/CONCURRENT_MEETS_PLAN.md): a
+    club invited for one open meet showed as already-invited on a second,
+    concurrently open one."""
+
+    def test_backfills_onto_the_open_meet_with_registrations_not_highest_id(self, new_engine):
+        """Real regression: a brand-new, empty second meet (higher meetsid)
+        was already open alongside the real, long-running one (lower
+        meetsid, months of registrations) by the time this migration ran —
+        "highest meetsid wins" silently attributed the real meet's invite
+        history to the empty one. Must pick the meet with registrations."""
+        _build_pre_m0004_schema(new_engine)
+        with new_engine.begin() as conn:
+            conn.execute(text("INSERT INTO meets (meetsid, name, registration_open) VALUES (1, 'Real Meet', 1)"))
+            conn.execute(text("INSERT INTO meets (meetsid, name, registration_open) VALUES (2, 'New Empty Meet', 1)"))
+            conn.execute(text(
+                "INSERT INTO clubs (clubsid, name, invite_send_count, stripe_send_count) VALUES (10, 'Club X', 3, 1)"
+            ))
+            conn.execute(text(
+                "INSERT INTO clubs (clubsid, name, invite_send_count, stripe_send_count) VALUES (11, 'Club Y', 0, 0)"
+            ))
+            conn.execute(text("INSERT INTO swimresult (swimresultid, meetsid, athleteid) VALUES (1, 1, 100)"))
+            conn.execute(text("INSERT INTO swimresult (swimresultid, meetsid, athleteid) VALUES (2, 1, 101)"))
+
+        m0004.upgrade(new_engine)
+
+        insp = inspect(new_engine)
+        assert "club_meet_invites" in insp.get_table_names()
+
+        with new_engine.connect() as conn:
+            rows = conn.execute(text(
+                "SELECT clubsid, meetsid, invite_send_count, stripe_send_count FROM club_meet_invites"
+            )).fetchall()
+        # Club Y had zero counts — nothing to backfill, no spurious row.
+        # Club X's counts land on meet 1 (has registrations), not meet 2
+        # (higher id, but empty) — the actual regression this fixes.
+        assert rows == [(10, 1, 3, 1)]
+
+    def test_ties_fall_back_to_highest_meetsid(self, new_engine):
+        """No registrations anywhere (e.g. right after upgrading, before any
+        club has registered) — falls back to the simpler highest-meetsid
+        heuristic rather than an arbitrary/undefined choice."""
+        _build_pre_m0004_schema(new_engine)
+        with new_engine.begin() as conn:
+            conn.execute(text("INSERT INTO meets (meetsid, name, registration_open) VALUES (1, 'Meet A', 1)"))
+            conn.execute(text("INSERT INTO meets (meetsid, name, registration_open) VALUES (2, 'Meet B', 1)"))
+            conn.execute(text(
+                "INSERT INTO clubs (clubsid, name, invite_send_count, stripe_send_count) VALUES (10, 'Club X', 3, 1)"
+            ))
+
+        m0004.upgrade(new_engine)
+
+        with new_engine.connect() as conn:
+            rows = conn.execute(text(
+                "SELECT clubsid, meetsid, invite_send_count, stripe_send_count FROM club_meet_invites"
+            )).fetchall()
+        assert rows == [(10, 2, 3, 1)]
+
+    def test_is_idempotent(self, new_engine):
+        _build_pre_m0004_schema(new_engine)
+        with new_engine.begin() as conn:
+            conn.execute(text("INSERT INTO meets (meetsid, name, registration_open) VALUES (1, 'Meet A', 1)"))
+            conn.execute(text(
+                "INSERT INTO clubs (clubsid, name, invite_send_count, stripe_send_count) VALUES (10, 'Club X', 2, 0)"
+            ))
+
+        m0004.upgrade(new_engine)
+        m0004.upgrade(new_engine)  # must not error or double-insert
+
+        with new_engine.connect() as conn:
+            count = conn.execute(text("SELECT COUNT(*) FROM club_meet_invites")).scalar()
+        assert count == 1
+
+    def test_fresh_install_noop(self, new_engine):
+        """No pre-existing clubs table → nothing to backfill."""
+        m0004.upgrade(new_engine)  # must not raise
+
+
 class TestLoadEventsStartupGuard:
     """Regression test: main.py's startup calls events.load_events(), which
     used to only check "is swimevent empty?" before loading the pool
@@ -323,6 +421,7 @@ class TestRunner:
             "0001_concurrent_meets",
             "0002_hc_results_status",
             "0003_swimevent_agegroup_composite_pk",
+            "0004_club_meet_invites",
         ]
 
         ran_second = apply_pending(new_engine)
@@ -330,7 +429,7 @@ class TestRunner:
 
         with new_engine.connect() as conn:
             count = conn.execute(text("SELECT COUNT(*) FROM schema_migrations")).scalar()
-        assert count == 3
+        assert count == 4
 
 
 # ---------------------------------------------------------------------------
@@ -431,3 +530,65 @@ class TestSessionDateExclusivity:
 
         conflict = session_date_conflict(db_session, new_session, date(2027, 2, 6))
         assert conflict is None
+
+
+# ---------------------------------------------------------------------------
+# resolve_meetsid (Phase 2, stage 3 — X-Meet-Id header plumbing)
+# ---------------------------------------------------------------------------
+
+class _FakeRequest:
+    """Stand-in for FastAPI's Request — resolve_meetsid only reads
+    request.headers.get("X-Meet-Id")."""
+    def __init__(self, meet_id_header: str | None = None):
+        self.headers = {} if meet_id_header is None else {"X-Meet-Id": meet_id_header}
+
+
+class TestResolveMeetsid:
+    def test_no_header_no_open_meets_returns_none(self, db_session):
+        assert resolve_meetsid(_FakeRequest(), db_session) is None
+
+    def test_no_header_one_open_meet_returns_it(self, db_session):
+        db_session.add(TeamMeet(meetsid=1, name="Meet A", registration_open=True))
+        db_session.commit()
+        assert resolve_meetsid(_FakeRequest(), db_session) == 1
+
+    def test_no_header_two_open_meets_raises_409_with_candidates(self, db_session):
+        db_session.add_all([
+            TeamMeet(meetsid=1, name="Meet A", registration_open=True),
+            TeamMeet(meetsid=2, name="Meet B", registration_open=True),
+        ])
+        db_session.commit()
+        with pytest.raises(HTTPException) as exc_info:
+            resolve_meetsid(_FakeRequest(), db_session)
+        assert exc_info.value.status_code == 409
+        assert exc_info.value.detail["code"] == "multiple_open_meets"
+        assert {m["meet_id"] for m in exc_info.value.detail["meets"]} == {1, 2}
+
+    def test_header_matching_open_meet_returns_it(self, db_session):
+        db_session.add_all([
+            TeamMeet(meetsid=1, name="Meet A", registration_open=True),
+            TeamMeet(meetsid=2, name="Meet B", registration_open=True),
+        ])
+        db_session.commit()
+        assert resolve_meetsid(_FakeRequest("2"), db_session) == 2
+
+    def test_header_not_an_integer_raises_400(self, db_session):
+        db_session.add(TeamMeet(meetsid=1, name="Meet A", registration_open=True))
+        db_session.commit()
+        with pytest.raises(HTTPException) as exc_info:
+            resolve_meetsid(_FakeRequest("not-a-number"), db_session)
+        assert exc_info.value.status_code == 400
+
+    def test_header_for_closed_meet_raises_404(self, db_session):
+        db_session.add(TeamMeet(meetsid=1, name="Closed", registration_open=False))
+        db_session.commit()
+        with pytest.raises(HTTPException) as exc_info:
+            resolve_meetsid(_FakeRequest("1"), db_session)
+        assert exc_info.value.status_code == 404
+
+    def test_header_for_nonexistent_meet_raises_404(self, db_session):
+        db_session.add(TeamMeet(meetsid=1, name="Meet A", registration_open=True))
+        db_session.commit()
+        with pytest.raises(HTTPException) as exc_info:
+            resolve_meetsid(_FakeRequest("999"), db_session)
+        assert exc_info.value.status_code == 404

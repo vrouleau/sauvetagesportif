@@ -26,11 +26,12 @@ invoices.py at module load time. See docs/CONCURRENT_MEETS_PLAN.md.
 """
 from __future__ import annotations
 
+from fastapi import HTTPException, Request
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .models import BsGlobal, MeetConfig, SwimSession
-from .models_team import Meet as TeamMeet
+from .models_team import ClubMeetInvite, Meet as TeamMeet
 
 
 def _get_config(db: Session, key: str) -> str | None:
@@ -60,6 +61,43 @@ def get_active_meetsid(db: Session) -> int | None:
         .first()
     )
     return meet.meetsid if meet else None
+
+
+def resolve_meetsid(request: Request, db: Session) -> int | None:
+    """Resolve the target meetsid for this request (docs/CONCURRENT_MEETS_PLAN.md,
+    Phase 2 stage 3).
+
+    Reads the `X-Meet-Id` header when present, validated against currently
+    open meets — every caller, club or admin, already has at least "coach"
+    access to every open meet per the stage 2 auth model, so validity is
+    just "is this meet open?", not a per-club allowlist. Falls back to
+    today's single-open-meet resolution when the header is absent — a
+    409-with-candidates only fires if the header is absent *and* more than
+    one meet is open, which can't happen yet (no endpoint opens a second
+    meet until stage 7) and won't happen once stage 6's meet switcher
+    always sends the header whenever there's a real choice.
+    """
+    open_meets = (
+        db.query(TeamMeet)
+        .filter(TeamMeet.registration_open == True)  # noqa: E712
+        .order_by(TeamMeet.meetsid)
+        .all()
+    )
+    header = request.headers.get("X-Meet-Id")
+    if header:
+        try:
+            requested = int(header)
+        except ValueError:
+            raise HTTPException(400, "X-Meet-Id must be an integer")
+        if not any(m.meetsid == requested for m in open_meets):
+            raise HTTPException(404, f"Meet {requested} is not currently open")
+        return requested
+    if len(open_meets) > 1:
+        raise HTTPException(409, {
+            "code": "multiple_open_meets",
+            "meets": [{"meet_id": m.meetsid, "name": m.name} for m in open_meets],
+        })
+    return open_meets[0].meetsid if open_meets else None
 
 
 def _get_meet_config(db: Session, meetsid: int | None, key: str) -> str | None:
@@ -167,3 +205,19 @@ def _set_organizer_club_id(db: Session, club_id, meetsid: int | None = None):
     meetsid = meetsid if meetsid is not None else get_active_meetsid(db)
     if meetsid:
         _set_meet_config(db, meetsid, "organizer_club_id", str(club_id))
+
+
+def increment_club_invite_send_count(db: Session, club_id: int, meetsid: int) -> None:
+    row = db.get(ClubMeetInvite, (club_id, meetsid))
+    if not row:
+        row = ClubMeetInvite(clubsid=club_id, meetsid=meetsid)
+        db.add(row)
+    row.invite_send_count = (row.invite_send_count or 0) + 1
+
+
+def increment_club_stripe_send_count(db: Session, club_id: int, meetsid: int) -> None:
+    row = db.get(ClubMeetInvite, (club_id, meetsid))
+    if not row:
+        row = ClubMeetInvite(clubsid=club_id, meetsid=meetsid)
+        db.add(row)
+    row.stripe_send_count = (row.stripe_send_count or 0) + 1

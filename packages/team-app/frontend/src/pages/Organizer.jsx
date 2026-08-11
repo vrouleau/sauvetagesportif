@@ -18,7 +18,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { useLang } from '../i18n'
-import api from '../api'
+import api, { headers } from '../api'
 import { newSwimstylesDetail, confirmNewSwimstyles } from '../newSwimstylesConfirm'
 
 export default function Organizer() {
@@ -28,6 +28,7 @@ export default function Organizer() {
   const [stripeStatus, setStripeStatus] = useState(null)
   const [msg, setMsg] = useState('')
   const [showImportConfirm, setShowImportConfirm] = useState(false)
+  const [showCloseConfirm, setShowCloseConfirm] = useState(false)
   const { t, lang } = useLang()
   const importResultsRef = useRef(null)
   const isAdmin = localStorage.getItem('role') === 'admin'
@@ -99,7 +100,7 @@ export default function Organizer() {
   async function _postImportResultsLxf(fd, force) {
     const res = await fetch(`/api/import-results-lxf${force ? '?force=true' : ''}`, {
       method: 'POST',
-      headers: { 'X-Club-Pin': localStorage.getItem('pin') || '' },
+      headers: headers(),
       body: fd,
     })
     const data = await res.json()
@@ -137,10 +138,35 @@ export default function Organizer() {
     }
   }
 
+  async function closeWithoutResults() {
+    setMsg(lang === 'fr' ? 'Fermeture...' : 'Closing...')
+    try {
+      const res = await fetch('/api/admin/close-meet-without-results', { method: 'POST', headers: headers() })
+      const data = await res.json()
+      if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : `${res.status}`)
+      if (data.role === 'organizer') {
+        setMsg(lang === 'fr'
+          ? `✓ Meet fermé : ${data.meet_name}. Déconnexion en cours…`
+          : `✓ Meet closed: ${data.meet_name}. Logging out…`)
+        setTimeout(() => {
+          localStorage.removeItem('pin')
+          localStorage.removeItem('role')
+          localStorage.removeItem('club_id')
+          localStorage.removeItem('club_name')
+          window.location.href = '/'
+        }, 2500)
+      } else {
+        setMsg(lang === 'fr' ? `✓ Meet fermé : ${data.meet_name}` : `✓ Meet closed: ${data.meet_name}`)
+        loadMeetInfo(); loadClubs()
+        window.dispatchEvent(new Event('meet-changed'))
+      }
+    } catch (err) { setMsg(err.message || 'Error') }
+  }
+
   async function exportLxf() {
     try {
       const res = await fetch('/api/export/registrations-lxf', {
-        headers: { 'X-Club-Pin': localStorage.getItem('pin') || '' }
+        headers: headers()
       })
       if (!res.ok) throw new Error(`${res.status}`)
       const blob = await res.blob()
@@ -228,7 +254,7 @@ export default function Organizer() {
     try {
       const res = await fetch('/api/invoices/pdf-zip', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Club-Pin': localStorage.getItem('pin') || '' },
+        headers: headers({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ club_ids: ids })
       })
       if (!res.ok) throw new Error(`${res.status}`)
@@ -314,6 +340,11 @@ export default function Organizer() {
           onClick={() => setShowImportConfirm(true)}
           className="px-3 py-1 bg-indigo-600 text-white text-xs rounded hover:bg-indigo-700">
           {lang === 'fr' ? 'Importer résultats' : 'Import Results'}
+        </button>
+        <button
+          onClick={() => setShowCloseConfirm(true)}
+          className="px-3 py-1 bg-gray-500 text-white text-xs rounded hover:bg-gray-600">
+          {lang === 'fr' ? 'Fermer sans résultats' : 'Close without results'}
         </button>
         {stripeStatus?.connected && (
           <>
@@ -428,6 +459,57 @@ export default function Organizer() {
           </div>
         </div>
       )}
+
+      {/* Close-without-results confirmation modal — for meets with nothing
+          worth archiving (e.g. no changes to preserve, beach position
+          history not relevant) */}
+      {showCloseConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md mx-4 p-6">
+            <h2 className="text-base font-semibold text-gray-900 mb-1">
+              {lang === 'fr' ? 'Fermer le meet sans résultats' : 'Close the Meet Without Results'}
+            </h2>
+            <p className="text-xs text-red-600 font-medium mb-3">
+              {lang === 'fr' ? 'Cette action est irréversible.' : 'This action cannot be undone.'}
+            </p>
+            <p className="text-xs text-gray-600 mb-2">
+              {lang === 'fr' ? 'Aucun résultat n’est archivé. En fermant le meet, vous allez :' : 'No results are archived. Closing the meet will:'}
+            </p>
+            <ul className="text-xs text-gray-700 space-y-1.5 mb-4 ml-2">
+              <li className="flex gap-2">
+                <span className="text-gray-400 shrink-0">1.</span>
+                <span>{lang === 'fr'
+                  ? 'Réinitialiser le meet actuel — toutes les inscriptions et la structure des épreuves seront effacées'
+                  : 'Reset the current meet — all registrations and event structure will be erased'}</span>
+              </li>
+              <li className="flex gap-2">
+                <span className="text-gray-400 shrink-0">2.</span>
+                <span>{lang === 'fr'
+                  ? "Régénérer les NIP de tous les clubs, si c'est votre dernier meet ouvert — les entraîneurs devront se reconnecter pour le prochain meet"
+                  : "Regenerate all club PINs, if this is your last open meet — coaches will need to log in again for the next meet"}</span>
+              </li>
+              <li className="flex gap-2">
+                <span className="text-gray-400 shrink-0">3.</span>
+                <span className="font-medium text-orange-700">{lang === 'fr'
+                  ? "Supprimer votre rôle d'organisateur et vous déconnecter — l'administrateur devra inviter un nouvel organisateur pour le prochain meet"
+                  : 'Remove your organizer role and log you out — an admin will need to invite a new organizer for the next meet'}</span>
+              </li>
+            </ul>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setShowCloseConfirm(false)}
+                className="px-4 py-1.5 text-xs rounded border border-gray-300 text-gray-700 hover:bg-gray-50">
+                {lang === 'fr' ? 'Annuler' : 'Cancel'}
+              </button>
+              <button
+                onClick={() => { setShowCloseConfirm(false); closeWithoutResults() }}
+                className="px-4 py-1.5 text-xs rounded bg-red-600 text-white hover:bg-red-700 font-medium">
+                {lang === 'fr' ? 'Oui, fermer sans résultats' : 'Yes, close without results'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -448,13 +530,12 @@ function LiveModeSection({ lang }) {
   const [config, setConfig] = useState(null)
   const [loading, setLoading] = useState(true)
   const [toggling, setToggling] = useState(false)
-  const pin = localStorage.getItem('pin') || ''
 
   useEffect(() => { loadConfig() }, [])
 
   async function loadConfig() {
     try {
-      const res = await fetch('/api/live/config', { headers: { 'X-Club-Pin': pin } })
+      const res = await fetch('/api/live/config', { headers: headers() })
       if (res.ok) setConfig(await res.json())
     } catch { /* ignore */ }
     setLoading(false)
@@ -466,7 +547,7 @@ function LiveModeSection({ lang }) {
     try {
       const res = await fetch(endpoint, {
         method: 'POST',
-        headers: { 'X-Club-Pin': pin },
+        headers: headers(),
       })
       if (res.ok) await loadConfig()
     } catch { /* ignore */ }

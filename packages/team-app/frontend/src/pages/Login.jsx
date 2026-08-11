@@ -20,6 +20,7 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router'
 import { useLang } from '../i18n'
 import api from '../api'
+import { selectMeet } from '../authMeet'
 
 export default function Login({ onLogin }) {
   const [pin, setPin] = useState('')
@@ -42,10 +43,12 @@ export default function Login({ onLogin }) {
     try {
       const r = await api.post('/auth', { pin })
       localStorage.setItem('pin', pin)
-      localStorage.setItem('role', r.data.role)
       localStorage.setItem('club_id', r.data.club_id || '')
       localStorage.setItem('club_name', r.data.club_name)
-      onLogin(r.data)
+      localStorage.setItem('meets', JSON.stringify(r.data.meets || []))
+      const meetId = r.data.meets?.[0]?.meet_id ?? ''
+      selectMeet(meetId)
+      onLogin({ ...r.data, meet_id: meetId })
     } catch {
       setError(t.invalid_pin)
     }

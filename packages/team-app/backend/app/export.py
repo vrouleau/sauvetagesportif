@@ -89,11 +89,11 @@ def _agegroup_for_code(age_groups, age_code: str, masters: bool):
     return None
 
 
-def _meet_struct_from_db(db: Session):
+def _meet_struct_from_db(db: Session, meetsid: int | None = None):
     """Build ParsedMeet from DB instead of requiring meet.lxf on disk."""
     from .meet_parser import ParsedMeet, MeetSession, MeetEvent, MeetAgeGroup
 
-    meetsid = get_active_meetsid(db)
+    meetsid = meetsid if meetsid is not None else get_active_meetsid(db)
     meet_name = _get_meet_config(db, meetsid, "meet_name")
     course = _get_meet_config(db, meetsid, "meet_course") or "LCM"
 
@@ -143,9 +143,10 @@ def _meet_struct_from_db(db: Session):
     )
 
 
-def generate_lxf(db: Session) -> bytes:
+def generate_lxf(db: Session, meetsid: int | None = None) -> bytes:
     """Generate a Lenex 3.0 .lxf zip from all registrations."""
-    meet_struct = _meet_struct_from_db(db)
+    meetsid = meetsid if meetsid is not None else get_active_meetsid(db)
+    meet_struct = _meet_struct_from_db(db, meetsid)
 
     cfg = db.get(BsGlobal, "age_base_date")
     age_base_date = cfg.data if cfg and cfg.data else date(date.today().year, 12, 31).isoformat()
@@ -155,7 +156,7 @@ def generate_lxf(db: Session) -> bytes:
         joinedload(SwimResult.member).joinedload(Member.club),
         joinedload(SwimResult.event).joinedload(SwimEvent.agegroups),
         joinedload(SwimResult.event).joinedload(SwimEvent.swimstyle),
-    ).filter(SwimResult.meetsid == get_active_meetsid(db)).all()
+    ).filter(SwimResult.meetsid == meetsid).all()
 
     # Group by club -> athlete -> entries
     clubs_map: dict[int, dict] = {}
@@ -187,7 +188,7 @@ def generate_lxf(db: Session) -> bytes:
         "course": meet_struct.course or "LCM",
     }
     # Add optional meet attributes from meet_config
-    export_meetsid = get_active_meetsid(db)
+    export_meetsid = meetsid
     for key, attr_name in [("meet_city", "city"), ("meet_nation", "nation"),
                            ("meet_masters", "masters")]:
         val = _get_meet_config(db, export_meetsid, key)
@@ -574,16 +575,17 @@ _GENDER_MAP = {1: "M", 2: "F", 3: "X"}
 _ROUND_MAP = {1: "PRE", 2: "SEM", 4: "FIN", 5: "TIM"}
 
 
-def generate_meet_lxf_from_db(db: Session) -> bytes:
+def generate_meet_lxf_from_db(db: Session, meetsid: int | None = None) -> bytes:
     """Generate a meet-structure .lxf (sessions + events) from DB, no file required."""
-    meet_struct = _meet_struct_from_db(db)
+    meetsid = meetsid if meetsid is not None else get_active_meetsid(db)
+    meet_struct = _meet_struct_from_db(db, meetsid)
 
     cfg = db.get(BsGlobal, "age_base_date")
     age_base_date = cfg.data if cfg and cfg.data else date(date.today().year, 12, 31).isoformat()
 
     db_sessions = (
         db.query(SwimSession)
-        .filter(SwimSession.meetsid == get_active_meetsid(db))
+        .filter(SwimSession.meetsid == meetsid)
         .order_by(SwimSession.sessionnumber, SwimSession.swimsessionid)
         .all()
     )

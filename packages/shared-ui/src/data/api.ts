@@ -229,6 +229,7 @@ export interface Club {
   id: number
   name: string
   athlete_count?: number
+  registered_athlete_count?: number
 }
 
 export interface AthleteListItem {

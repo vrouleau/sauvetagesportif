@@ -577,6 +577,11 @@ export default function IndividualEntryPage({ role, clubId, refreshKey, onImport
     ? filterToIndividualOnly(state.registrationData)
     : null
 
+  // Athletes with at least one individual entry — registered_athlete_count
+  // is already meetsid-scoped server-side (GET /clubs), so this reflects
+  // the currently selected meet, not a club's lifetime registration history.
+  const entriesCount = state.clubs.reduce((sum, c) => sum + (c.registered_athlete_count ?? 0), 0)
+
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Toolbar: search + add/delete buttons + import/export */}
@@ -588,6 +593,9 @@ export default function IndividualEntryPage({ role, clubId, refreshKey, onImport
           onChange={e => setFilterText(e.target.value)}
           className="border border-gray-300 px-2 py-0.5 rounded text-xs w-64"
         />
+        <span className="text-gray-500 bg-white border border-gray-300 rounded px-2 py-0.5">
+          {tr.entriesCount(entriesCount)}
+        </span>
         <button
           disabled={!selectedClubId}
           onClick={handleAddAthleteFromToolbar}

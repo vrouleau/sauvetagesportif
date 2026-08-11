@@ -18,14 +18,14 @@
 
 import { useState, useEffect } from 'react'
 import { useLang } from '../i18n'
-import api from '../api'
+import api, { headers } from '../api'
+import { refreshAuth } from '../authMeet'
 import { BUILD_TIMESTAMP } from '../buildInfo'
 import { newSwimstylesDetail, confirmNewSwimstyles } from '../newSwimstylesConfirm'
 
 export default function Admin() {
   const [status, setStatus] = useState(null)
   const [clubs, setClubs] = useState([])
-  const [selectedClubId, setSelectedClubId] = useState('')
   const [organizer, setOrganizer] = useState(null)
   const [newClubName, setNewClubName] = useState('')
   const [newClubCode, setNewClubCode] = useState('')
@@ -229,43 +229,10 @@ export default function Admin() {
           </button>
         </Section>
 
-        {/* Set Organizer */}
-        <Section title={t.set_organizer_title}>
-          {organizer?.club_id && (
-            <div className="flex items-center gap-2 mb-2">
-              <button className="px-3 py-1 bg-indigo-600 text-white text-xs rounded hover:bg-indigo-700"
-                onClick={async () => {
-                  try {
-                    await api.post(`/clubs/${organizer.club_id}/send-pin`, { lang })
-                    setMsg(`${t.send_invitation}: ${organizer.club_name} ✓`)
-                    loadClubs()
-                  } catch (e) { setMsg(e.detail || e.message || 'Error') }
-                }}>
-                {t.send_invitation} → {organizer.club_name}
-              </button>
-            </div>
-          )}
-          <div className="flex items-center gap-2">
-            <select className="border border-gray-300 px-2 py-0.5 rounded text-xs"
-              value={selectedClubId} onChange={e => setSelectedClubId(e.target.value)}>
-              <option value="">{lang === 'fr' ? '— Choisir —' : '— Select —'}</option>
-              {clubs.map(club => <option key={club.id} value={club.id}>{club.name}</option>)}
-            </select>
-            {selectedClubId && (
-              <button className="px-3 py-1 bg-purple-600 text-white text-xs rounded hover:bg-purple-700"
-                onClick={async () => {
-                  const club = clubs.find(c => String(c.id) === String(selectedClubId))
-                  try {
-                    await api.post('/admin/set-organizer', { club_id: Number(selectedClubId) })
-                    setMsg(`${club?.name} ${t.set_as_organizer_done}`)
-                    loadOrganizer()
-                  } catch (e) { setMsg(e.detail || e.message || 'Error') }
-                }}>
-                {t.set_as_organizer}
-              </button>
-            )}
-          </div>
-        </Section>
+        {/* Open Meets — Stage 7: list/create/close/reopen/delete + per-meet
+            organizer assignment, superseding the old single-target Set
+            Organizer control above (ambiguous once >1 meet can be open) */}
+        <OpenMeetsSection />
 
         {/* Database Backup */}
         <BackupSection />
@@ -513,6 +480,170 @@ function HistoricalMeetsSection() {
   )
 }
 
+function OpenMeetsSection() {
+  const [meets, setMeets] = useState([])
+  const [clubs, setClubs] = useState([])
+  const [orgSelections, setOrgSelections] = useState({})
+  const [closeOthers, setCloseOthers] = useState(false)
+  const [creating, setCreating] = useState(false)
+  const [msg, setMsg] = useState('')
+  const { lang } = useLang()
+
+  useEffect(() => { loadMeets(); loadClubs() }, [])
+
+  async function loadMeets() {
+    try {
+      const r = await api.get('/admin/meets')
+      setMeets(r.data)
+    } catch {}
+  }
+
+  async function loadClubs() {
+    try {
+      const r = await api.get('/clubs')
+      setClubs(r.data)
+    } catch {}
+  }
+
+  async function createMeet(meetType) {
+    setCreating(true)
+    try {
+      const r = await api.post('/admin/new-meet', { meet_type: meetType, close_other_meets: closeOthers })
+      setMsg(lang === 'fr' ? `Nouvelle compétition créée (#${r.data.meet_id})` : `New meet created (#${r.data.meet_id})`)
+      await refreshAuth()
+      loadMeets()
+    } catch (e) { setMsg(e.detail || e.message || 'Error') }
+    finally { setCreating(false) }
+  }
+
+  async function assignOrganizer(meetId) {
+    const clubId = orgSelections[meetId]
+    if (!clubId) return
+    try {
+      await api.post('/admin/set-organizer', { club_id: Number(clubId), meetsid: meetId })
+      setMsg(lang === 'fr' ? 'Organisateur assigné' : 'Organizer assigned')
+      loadMeets()
+    } catch (e) { setMsg(e.detail || e.message || 'Error') }
+  }
+
+  async function sendInvite(meet) {
+    try {
+      await api.post(`/clubs/${meet.organizer_club_id}/send-pin`, { lang })
+      setMsg(`${lang === 'fr' ? 'Invitation envoyée' : 'Invitation sent'}: ${meet.organizer_club_name} ✓`)
+    } catch (e) { setMsg(e.detail || e.message || 'Error') }
+  }
+
+  async function toggleRegistration(meet) {
+    const action = meet.registration_open ? 'close-registration' : 'reopen-registration'
+    try {
+      await api.post(`/admin/meets/${meet.meet_id}/${action}`, {})
+      loadMeets()
+      await refreshAuth()
+    } catch (e) { setMsg(e.detail || e.message || 'Error') }
+  }
+
+  async function deleteMeet(meet) {
+    const label = lang === 'fr'
+      ? `Supprimer "${meet.name}" et toutes ses inscriptions ? Irréversible.`
+      : `Delete "${meet.name}" and all its registrations? This cannot be undone.`
+    if (!confirm(label)) return
+    try {
+      await api.delete(`/admin/meets/${meet.meet_id}`)
+      setMsg(lang === 'fr' ? 'Compétition supprimée' : 'Meet deleted')
+      loadMeets()
+      await refreshAuth()
+    } catch (e) { setMsg(e.detail || e.message || 'Error') }
+  }
+
+  return (
+    <div className="border border-gray-300 rounded bg-white">
+      <div className="px-3 py-1.5 bg-gray-100 border-b border-gray-300 flex items-center justify-between flex-wrap gap-2">
+        <div>
+          <span className="text-xs font-semibold text-gray-700">
+            {lang === 'fr' ? 'Compétitions ouvertes' : 'Open Meets'}
+          </span>
+          {msg && <span className="ml-3 text-xs text-green-700">{msg}</span>}
+        </div>
+        <div className="flex items-center gap-3 flex-wrap">
+          <label className="flex items-center gap-1 text-xs text-gray-600">
+            <input type="checkbox" checked={closeOthers} onChange={e => setCloseOthers(e.target.checked)} />
+            {lang === 'fr' ? 'Fermer les autres compétitions ouvertes' : 'Close other open meets'}
+          </label>
+          <button disabled={creating} onClick={() => createMeet('pool')}
+            className={`px-3 py-1 text-xs rounded text-white ${creating ? 'bg-gray-400' : 'bg-blue-600 hover:bg-blue-700'}`}>
+            + {lang === 'fr' ? 'Nouvelle piscine' : 'New Pool Meet'}
+          </button>
+          <button disabled={creating} onClick={() => createMeet('beach')}
+            className={`px-3 py-1 text-xs rounded text-white ${creating ? 'bg-gray-400' : 'bg-orange-600 hover:bg-orange-700'}`}>
+            + {lang === 'fr' ? 'Nouvelle plage' : 'New Beach Meet'}
+          </button>
+        </div>
+      </div>
+      <div className="max-h-72 overflow-y-auto">
+        <table className="w-full text-xs border-collapse">
+          <thead className="sticky top-0 bg-gray-50 z-10">
+            <tr>
+              <th className="px-2 py-1 border-b border-gray-300 text-left font-medium">{lang === 'fr' ? 'Nom' : 'Name'}</th>
+              <th className="px-2 py-1 border-b border-gray-300 text-left font-medium w-14">Type</th>
+              <th className="px-2 py-1 border-b border-gray-300 text-center font-medium w-16">{lang === 'fr' ? 'Statut' : 'Status'}</th>
+              <th className="px-2 py-1 border-b border-gray-300 text-left font-medium">{lang === 'fr' ? 'Organisateur' : 'Organizer'}</th>
+              <th className="px-2 py-1 border-b border-gray-300 text-center font-medium w-10" title={lang === 'fr' ? 'Sessions' : 'Sessions'}>S</th>
+              <th className="px-2 py-1 border-b border-gray-300 text-center font-medium w-10" title={lang === 'fr' ? 'Épreuves' : 'Events'}>E</th>
+              <th className="px-2 py-1 border-b border-gray-300 text-center font-medium w-10" title={lang === 'fr' ? 'Inscriptions' : 'Registrations'}>R</th>
+              <th className="px-2 py-1 border-b border-gray-300 w-36"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {meets.map(m => (
+              <tr key={m.meet_id} className="border-b border-gray-200 hover:bg-blue-50">
+                <td className="px-2 py-0.5">{m.name}</td>
+                <td className="px-2 py-0.5 text-gray-600">{m.meet_type || '—'}</td>
+                <td className="px-2 py-0.5 text-center">
+                  <span className={m.registration_open ? 'text-green-700 font-semibold' : 'text-gray-400'}>
+                    {m.registration_open ? (lang === 'fr' ? 'Ouvert' : 'Open') : (lang === 'fr' ? 'Fermé' : 'Closed')}
+                  </span>
+                </td>
+                <td className="px-2 py-0.5">
+                  <div className="flex items-center gap-1 flex-wrap">
+                    <select className="border border-gray-300 px-1 py-0.5 rounded text-xs"
+                      value={orgSelections[m.meet_id] ?? (m.organizer_club_id || '')}
+                      onChange={e => setOrgSelections(s => ({ ...s, [m.meet_id]: e.target.value }))}>
+                      <option value="">{lang === 'fr' ? '— Choisir —' : '— Select —'}</option>
+                      {clubs.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                    <button className="text-purple-600 hover:underline" onClick={() => assignOrganizer(m.meet_id)}>
+                      {lang === 'fr' ? 'Assigner' : 'Assign'}
+                    </button>
+                    {m.organizer_club_id && (
+                      <button className="text-indigo-600 hover:underline" onClick={() => sendInvite(m)}>
+                        {lang === 'fr' ? 'Inviter' : 'Invite'}
+                      </button>
+                    )}
+                  </div>
+                </td>
+                <td className="px-2 py-0.5 text-center text-gray-500">{m.session_count}</td>
+                <td className="px-2 py-0.5 text-center text-gray-500">{m.event_count}</td>
+                <td className="px-2 py-0.5 text-center text-gray-500">{m.registration_count}</td>
+                <td className="px-2 py-0.5 text-right whitespace-nowrap">
+                  <button className="text-gray-600 hover:underline mr-2" onClick={() => toggleRegistration(m)}>
+                    {m.registration_open ? (lang === 'fr' ? 'Fermer' : 'Close') : (lang === 'fr' ? 'Rouvrir' : 'Reopen')}
+                  </button>
+                  <button className="text-red-500 hover:text-red-700" onClick={() => deleteMeet(m)}>✕</button>
+                </td>
+              </tr>
+            ))}
+            {meets.length === 0 && (
+              <tr><td colSpan={8} className="px-2 py-3 text-center text-gray-400">
+                {lang === 'fr' ? 'Aucune compétition' : 'No meets'}
+              </td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
 function BackupSection() {
   const [backups, setBackups] = useState([])
   const [config, setConfig] = useState({ interval_days: 1, max_count: 7 })
@@ -553,7 +684,7 @@ function BackupSection() {
 
   async function downloadBackup(filename) {
     const res = await fetch(`/api/admin/backups/${filename}`, {
-      headers: { 'X-Club-Pin': localStorage.getItem('pin') || '' }
+      headers: headers()
     })
     if (!res.ok) return
     const blob = await res.blob()

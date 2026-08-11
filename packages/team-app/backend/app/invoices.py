@@ -45,7 +45,7 @@ MEET_FEE_LABELS = {
 }
 
 
-def _meet_fees(db: Session) -> dict[str, int]:
+def _meet_fees(db: Session, meetsid: int | None = None) -> dict[str, int]:
     """Read meet-level fees from MEETVALUES (Splash-compatible format).
 
     Falls back to meet_fees_json for backward compatibility with LXF imports.
@@ -54,7 +54,7 @@ def _meet_fees(db: Session) -> dict[str, int]:
     """
     # Primary: read from MEETVALUES (Splash interoperable)
     fees: dict[str, int] = {}
-    _meetsid = get_active_meetsid(db)
+    _meetsid = meetsid if meetsid is not None else get_active_meetsid(db)
     mv_data = _get_meet_config(db, _meetsid, "MEETVALUES")
     if mv_data:
         key_map = {
@@ -105,7 +105,8 @@ def _stripe_client() -> None:
     stripe.api_key = key
 
 
-def _club_line_items(db: Session, club: TeamClub, meet_fees: dict[str, int]) -> list[dict]:
+def _club_line_items(db: Session, club: TeamClub, meet_fees: dict[str, int],
+                      meetsid: int | None = None) -> list[dict]:
     """Build one line item per athlete for a club.
 
     Individual event fees are summed onto the athlete's own line. Relay event
@@ -114,7 +115,7 @@ def _club_line_items(db: Session, club: TeamClub, meet_fees: dict[str, int]) -> 
     event fee — no revenue lost to rounding). No per-event detail is shown,
     only the athlete's individual/relay counts.
     """
-    meet_id = get_active_meetsid(db)
+    meet_id = meetsid if meetsid is not None else get_active_meetsid(db)
 
     # Build a map of event_number -> fee_cents
     all_events = db.query(SwimEvent).options(joinedload(SwimEvent.swimstyle)).filter(
@@ -376,28 +377,28 @@ def _create_draft_for_club(club: TeamClub, items: list[dict], meet_name: str) ->
     }
 
 
-def _meet_name(db: Session) -> str:
-    meetsid = get_active_meetsid(db)
+def _meet_name(db: Session, meetsid: int | None = None) -> str:
+    meetsid = meetsid if meetsid is not None else get_active_meetsid(db)
     return _get_meet_config(db, meetsid, "meet_name") or "Compétition"
 
 
-def create_invoice_for_club(db: Session, club_id: int) -> dict:
+def create_invoice_for_club(db: Session, club_id: int, meetsid: int | None = None) -> dict:
     """Create a single Stripe draft invoice for one club."""
     _stripe_client()
     club = db.query(TeamClub).options(joinedload(TeamClub.members)).get(club_id)
     if not club:
         raise ValueError(f"Club {club_id} not found")
-    items = _club_line_items(db, club, _meet_fees(db))
+    items = _club_line_items(db, club, _meet_fees(db, meetsid), meetsid=meetsid)
     if not items:
         raise ValueError("No billable items for this club")
-    return _create_draft_for_club(club, items, _meet_name(db))
+    return _create_draft_for_club(club, items, _meet_name(db, meetsid))
 
 
-def create_invoices_for_all_clubs(db: Session) -> dict:
+def create_invoices_for_all_clubs(db: Session, meetsid: int | None = None) -> dict:
     """Create Stripe draft invoices for every club with billable items."""
     _stripe_client()
-    meet_name = _meet_name(db)
-    meet_fees = _meet_fees(db)
+    meet_name = _meet_name(db, meetsid)
+    meet_fees = _meet_fees(db, meetsid)
     clubs = (
         db.query(TeamClub)
         .options(joinedload(TeamClub.members))
@@ -408,7 +409,7 @@ def create_invoices_for_all_clubs(db: Session) -> dict:
     skipped: list[str] = []
     errors: list[dict] = []
     for club in clubs:
-        items = _club_line_items(db, club, meet_fees)
+        items = _club_line_items(db, club, meet_fees, meetsid=meetsid)
         if not items:
             skipped.append(club.name)
             continue
@@ -423,7 +424,7 @@ def _money(cents: int) -> str:
     return f"${cents / 100:,.2f}"
 
 
-def generate_invoice_pdf(db: Session, club_id: int) -> bytes:
+def generate_invoice_pdf(db: Session, club_id: int, meetsid: int | None = None) -> bytes:
     """Generate a PDF invoice for a single club."""
     from reportlab.lib import colors
     from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
@@ -435,11 +436,11 @@ def generate_invoice_pdf(db: Session, club_id: int) -> bytes:
     club = db.get(TeamClub, club_id)
     if not club:
         raise ValueError(f"Club {club_id} not found")
-    items = _club_line_items(db, club, _meet_fees(db))
+    items = _club_line_items(db, club, _meet_fees(db, meetsid), meetsid=meetsid)
     if not items:
         raise ValueError("No billable items for this club")
 
-    meet_name = _meet_name(db)
+    meet_name = _meet_name(db, meetsid)
     issue_date = date.today()
     invoice_no = f"INV-{issue_date.strftime('%Y%m%d')}-{club.clubsid:04d}"
 

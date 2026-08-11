@@ -132,14 +132,14 @@ def parse_lxf(file_bytes: bytes) -> list[dict]:
     return clubs_data
 
 
-def seed_from_lxf(db: Session, file_bytes: bytes) -> dict:
+def seed_from_lxf(db: Session, file_bytes: bytes, meetsid: int | None = None) -> dict:
     """Parse .lxf and upsert clubs, athletes, and event entries. Returns counts."""
     clubs_data = parse_lxf(file_bytes)
     clubs_added = 0
     athletes_added = 0
     entries_added = 0
     entries_updated = 0
-    meetsid = get_active_meetsid(db)
+    meetsid = meetsid if meetsid is not None else get_active_meetsid(db)
 
     # Cache event masters flag and relay count to avoid per-entry queries
     _event_cache: dict[int, SwimEvent] = {}
