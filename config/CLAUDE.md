@@ -2,7 +2,7 @@
 
 ## Age Group Rules (`age-group-rules.json`)
 
-Single source of truth for the season-reference dates used to determine an athlete's age-group bracket, per *Règlements des compétitions de sauvetage sportif au Québec* (Édition septembre 2025), §1.1-1.3. Holds only the two constants the rule actually varies by — not a rules engine, the branching logic itself lives in each app's own reader:
+Single source of truth for the season-reference dates used to determine an athlete's age-group bracket, per *Règlements des compétitions de sauvetage sportif au Québec* (Édition septembre 2025), §1.1-1.3 — full text in `docs/Reglements-Competitions-Sauvetage-Sportif-Quebec-Edition-Septembre-2025.pdf`. Holds only the two constants the rule actually varies by — not a rules engine, the branching logic itself lives in each app's own reader:
 - `seasonStartDate` — `{month, day}` for `POOL` (1er septembre) and `BEACH` (1er mai). Used for the `10-` and `11-12` brackets.
 - `yearEndDate` — `{month, day}`, currently Dec 31 (ILS rule). Used for `13-14`, `15-18`, `Open` (Senior), `Masters`.
 - `seasonStartBrackets` — which bracket codes use the season-start date instead of year-end.

@@ -361,12 +361,25 @@ describe('LENEX exporter', () => {
     expect(xml).not.toMatch(/birthdate="\d+\.\d+"/)
   })
 
-  it('exportLenexResults writes an AGEDATE element from MEETVALUES.AGEDATE', () => {
+  it('exportLenexResults writes an AGEDATE element from this meet\'s own local bsglobal.AGEDATE', () => {
+    // computeAgeDate() is deliberately NOT read from the LENEX MEETVALUES blob — that value
+    // (a team-app organizer's own config, when present at all) isn't this meet's local season
+    // anchor. It's this database's own bsglobal.AGEDATE row (set by flushMeet() when the meet
+    // was created/reset on this computer — see ageGroupRules.ts's getSeasonYear).
     seedResultsFixture(db, dateToOle(2014, 7, 3))
-    db.exec(`INSERT INTO bsglobal (name, data) VALUES ('MEETVALUES', 'AGEDATE=D;20261231000000000')`)
+    db.exec(`INSERT INTO bsglobal (name, data) VALUES ('AGEDATE', 'D;20261231000000000')`)
     exportLenexResults(outPath, db)
     const xml = readLefXml(outPath)
     expect(xml).toContain('<AGEDATE value="2026-12-31" type="DATE" />')
+  })
+
+  it('exportLenexResults ignores a team-app-style AGEDATE parked in the MEETVALUES blob', () => {
+    seedResultsFixture(db, dateToOle(2014, 7, 3))
+    db.exec(`INSERT INTO bsglobal (name, data) VALUES ('MEETVALUES', 'AGEDATE=D;20200101000000000')`)
+    exportLenexResults(outPath, db)
+    const xml = readLefXml(outPath)
+    expect(xml).not.toContain('<AGEDATE value="2020-01-01" type="DATE" />')
+    expect(xml).toContain(`<AGEDATE value="${new Date().getFullYear()}-12-31" type="DATE" />`)
   })
 
   it('exportLenexResults falls back to Dec 31 of the current year when AGEDATE is not set', () => {
@@ -378,7 +391,7 @@ describe('LENEX exporter', () => {
 
   it('exportMeetLenex also writes a correct AGEDATE (regression guard for the shared computeAgeDate helper)', () => {
     seedResultsFixture(db, dateToOle(2014, 7, 3))
-    db.exec(`INSERT INTO bsglobal (name, data) VALUES ('MEETVALUES', 'AGEDATE=D;20261231000000000')`)
+    db.exec(`INSERT INTO bsglobal (name, data) VALUES ('AGEDATE', 'D;20261231000000000')`)
     exportMeetLenex(outPath, db)
     const xml = readLefXml(outPath)
     expect(xml).toContain('<AGEDATE value="2026-12-31" type="DATE" />')
