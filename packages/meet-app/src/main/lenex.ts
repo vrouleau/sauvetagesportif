@@ -22,6 +22,7 @@ import Database from 'better-sqlite3'
 import { saveGeminiKeys } from './ocrGemini'
 import { generateBeachNumbers } from './beachNumber'
 import { parseOleDate } from './db'
+import { getSeasonYear, loadAgeGroupRules } from './ageGroupRules'
 
 // ── ZIP reader ────────────────────────────────────────────────────────────────
 
@@ -880,20 +881,29 @@ export interface ExportSummary {
 // ── Main export function ──────────────────────────────────────────────────────
 
 /**
- * Age base date (LENEX <AGEDATE>) from MEETVALUES.AGEDATE (Splash format:
- * YYYYMMDDHHMMSSMMM), falling back to Dec 31 of the current year. Shared by
- * every LENEX export path so they can't drift apart the way exportMeetLenex
- * and exportLenexResults once did — the latter omitted <AGEDATE> entirely,
- * which made Splash fall back to its own internal sentinel reference date
- * (observed: age computed against year 1000) instead of erroring loudly.
+ * Age base date (LENEX <AGEDATE>) — the ILS year-end reference date (see
+ * config/age-group-rules.json) for this meet's own season year (from this
+ * database's local `bsglobal.AGEDATE`, i.e. whatever this computer recorded
+ * when the meet was created/reset — see ageGroupRules.ts's getSeasonYear).
+ * Deliberately NOT read from the LENEX MEETVALUES blob: that value (when
+ * present at all) would reflect whatever a team-app organizer had configured
+ * on their end, not this meet's own local season anchor, and Splash/LENEX's
+ * <AGEDATE> only supports a single flat reference date anyway — it has no
+ * concept of Québec's dual season-start/year-end rule (§1.1-1.3), so external
+ * interop always gets the ILS year-end date, same as before this function
+ * started reading the real season year instead of always defaulting to
+ * "today's calendar year." Shared by every LENEX export path so they can't
+ * drift apart the way exportMeetLenex and exportLenexResults once did — the
+ * latter omitted <AGEDATE> entirely, which made Splash fall back to its own
+ * internal sentinel reference date (observed: age computed against year
+ * 1000) instead of erroring loudly.
  */
-function computeAgeDate(mv: Record<string, string>): string {
-  const raw = mv['AGEDATE'] || ''
-  if (raw.length >= 8) {
-    const y = raw.slice(0, 4), m = raw.slice(4, 6), d = raw.slice(6, 8)
-    return `${y}-${m}-${d}`
-  }
-  return `${new Date().getFullYear()}-12-31`
+function computeAgeDate(db: Database.Database): string {
+  const year = getSeasonYear(db)
+  const { yearEndDate } = loadAgeGroupRules()
+  const mm = String(yearEndDate.month).padStart(2, '0')
+  const dd = String(yearEndDate.day).padStart(2, '0')
+  return `${year}-${mm}-${dd}`
 }
 
 export function exportLenexResults(filePath: string, db: Database.Database): ExportSummary {
@@ -922,7 +932,7 @@ export function exportLenexResults(filePath: string, db: Database.Database): Exp
   const meetCity = g['MeetCity'] || mv['CITY'] || ''
   const meetNation = g['MeetNation'] || mv['NATION'] || ''
   const meetCourse = decodeCourse(parseInt(g['MeetCourse'] || mv['COURSE'] || '1', 10))
-  const ageDate = computeAgeDate(mv)
+  const ageDate = computeAgeDate(db)
 
   // ── Sessions ────────────────────────────────────────────────────────────────
   const sessions = db.prepare(
@@ -1247,7 +1257,7 @@ export function exportMeetLenex(filePath: string, db: Database.Database): MeetEx
   const meetNation = g['MeetNation'] || mv['NATION'] || ''
   const meetCourse = decodeCourse(parseInt(g['MeetCourse'] || mv['COURSE'] || '1', 10))
 
-  const ageDate = computeAgeDate(mv)
+  const ageDate = computeAgeDate(db)
 
   const sessions = db.prepare(
     `SELECT swimsessionid, sessionnumber, name, course, startdate, lanemin, lanemax FROM swimsession ORDER BY sessionnumber`

@@ -23,7 +23,7 @@ import logging
 import os
 import secrets
 import string
-from datetime import datetime
+from datetime import datetime, date
 from pathlib import Path
 
 from fastapi import APIRouter, Body, Depends, UploadFile, File, HTTPException, Request
@@ -33,6 +33,7 @@ from sqlalchemy.exc import IntegrityError
 from collections import defaultdict
 import time as _time
 
+from ..age_group_rules import resolve_matching_age
 from ..database import get_db
 from pydantic import BaseModel, Field, field_validator
 from ..models import (
@@ -1941,10 +1942,9 @@ def get_registration(athlete_id: int, db: Session = Depends(get_db)):
     # Suggested age_code
     suggested_age_code = "Open"
     if member.birthdate:
-        from datetime import date as d
         age_base_val = _get_config(db, "age_base_date")
-        age_base = d.fromisoformat(age_base_val) if age_base_val else d(d.today().year, 12, 31)
-        age = age_base.year - member.birthdate.year
+        season_year = int(age_base_val[:4]) if age_base_val else date.today().year
+        age = resolve_matching_age(member.birthdate.date(), _get_meet_type(db), season_year)
         if age <= 10:
             suggested_age_code = "10-"
         elif 11 <= age <= 12:

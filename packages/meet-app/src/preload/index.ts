@@ -134,6 +134,8 @@ const api = {
       ipcRenderer.invoke('db:get-swim-styles'),
     getMeetType: () =>
       ipcRenderer.invoke('db:get-meet-type'),
+    getMatchingAge: (birthDate: string) =>
+      ipcRenderer.invoke('db:get-matching-age', birthDate),
     getDsqItems: () =>
       ipcRenderer.invoke('db:get-dsq-items'),
     register: (data: { athlete_id: number; event_id: number; entry_time_ms: number | null; age_code: string; is_hc?: boolean }) =>
