@@ -36,16 +36,21 @@ test_meet_config_sync.py.
 from __future__ import annotations
 
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import pytest
-from sqlalchemy import create_engine
+from fastapi import HTTPException
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "backend"))
 
-from app.models import Base, SwimSession, SwimEvent, AgeGroup  # noqa: E402
-from app.models_team import Meet as TeamMeet, Session as TeamSession, Event as TeamEvent  # noqa: E402
+from app.models import Base, SwimSession, SwimEvent, AgeGroup, SwimResult, SwimStyle, SecretLink  # noqa: E402
+from app.models_team import (  # noqa: E402
+    Meet as TeamMeet, Session as TeamSession, Event as TeamEvent,
+    Relay as TeamRelay, RelayPos as TeamRelayPos, TeamClub,
+)
 from app.routers import api  # noqa: E402
 from app.meet_config import get_active_meetsid  # noqa: E402
 
@@ -73,6 +78,37 @@ def db_session(tmp_path, monkeypatch):
     yield session
     session.close()
     engine.dispose()
+
+
+@pytest.fixture()
+def db_session_fk_enforced(tmp_path, monkeypatch):
+    """Same as db_session, but with SQLite's FK-enforcement pragma turned on
+    — matches the production engine (app/database.py sets `PRAGMA
+    foreign_keys=ON` on every connection). Plain create_engine("sqlite:///
+    :memory:") leaves FK enforcement off by default, which would silently
+    hide any bug that only manifests as a FOREIGN KEY constraint error."""
+    engine = create_engine("sqlite:///:memory:")
+
+    @event.listens_for(engine, "connect")
+    def _enable_fk(dbapi_conn, _connection_record):
+        dbapi_conn.execute("PRAGMA foreign_keys=ON")
+
+    Base.metadata.create_all(bind=engine)
+    TestSession = sessionmaker(bind=engine)
+    session = TestSession()
+    monkeypatch.setattr(api, "MEET_STORAGE", tmp_path / "meet.lxf")
+    monkeypatch.setenv("MEET_TEMPLATE_POOL", str(_TEMPLATE_POOL))
+    monkeypatch.setenv("MEET_TEMPLATE_BEACH", str(_TEMPLATE_BEACH))
+    yield session
+    session.close()
+    engine.dispose()
+
+
+class _FakeRequest:
+    """Stand-in for FastAPI's Request — resolve_meetsid only reads
+    request.headers.get("X-Meet-Id")."""
+    def __init__(self, meet_id_header: str | None = None):
+        self.headers = {} if meet_id_header is None else {"X-Meet-Id": meet_id_header}
 
 
 def _make_meet_with_data(db_session, meetsid: int, name: str) -> None:
@@ -188,3 +224,166 @@ def test_replace_current_meet_structure_default_reuses_active_meet(db_session):
     assert get_active_meetsid(db_session) == 300
     assert db_session.get(TeamMeet, 300) is not None
     assert db_session.query(SwimEvent).filter_by(meetsid=300).count() > 0
+
+
+# ---------------------------------------------------------------------------
+# /api/admin/meets/{id} deletion with leftover secret_links
+# ---------------------------------------------------------------------------
+
+class TestDeleteMeetWithSecretLinks:
+    """Regression test for a real WSL-logs incident: DELETE
+    /admin/meets/{id} (via _flush_meet_data) crashed with `sqlite3.
+    IntegrityError: FOREIGN KEY constraint failed` on any meet that had ever
+    had an invite email sent for it — every "send invite PIN" click
+    (/clubs/{id}/send-pin) writes a secret_links row scoped to meetsid, but
+    _flush_meet_data never deleted them and SecretLink.meetsid has no
+    ON DELETE CASCADE. Fixed by deleting secret_links explicitly in
+    _flush_meet_data.
+
+    Needs db_session_fk_enforced, not the plain db_session fixture — SQLite
+    doesn't enforce FK constraints by default, so the bug wouldn't have
+    raised anything on the un-enforced in-memory engine the other tests in
+    this file use. Only the production engine (app/database.py, `PRAGMA
+    foreign_keys=ON`) makes this a real crash, which is exactly why no
+    earlier unit test caught it.
+    """
+
+    def test_delete_meet_with_secret_links_does_not_raise(self, db_session_fk_enforced):
+        db = db_session_fk_enforced
+        db.add(TeamMeet(meetsid=600, name="Meet With Invites", meetstate=0, registration_open=True))
+        db.add(TeamClub(clubsid=1, name="Club A", pin="123456"))
+        db.commit()
+        db.add_all([
+            SecretLink(token="tok-1", club_id=1, meetsid=600,
+                       pin_encrypted="enc", expires_at=datetime.utcnow()),
+            SecretLink(token="tok-2", club_id=1, meetsid=600,
+                       pin_encrypted="enc", expires_at=datetime.utcnow()),
+        ])
+        db.commit()
+
+        api.delete_meet(600, db=db)  # must not raise IntegrityError
+
+        assert db.get(TeamMeet, 600) is None
+        assert db.query(SecretLink).filter_by(meetsid=600).count() == 0
+
+    def test_flush_meet_data_deletes_secret_links_scoped_to_target_meetsid(self, db_session_fk_enforced):
+        """A second meet's secret_links must survive — same wipe-scope
+        invariant as every other table _flush_meet_data touches."""
+        db = db_session_fk_enforced
+        db.add_all([
+            TeamMeet(meetsid=601, name="Meet A (untouched)", meetstate=0, registration_open=True),
+            TeamMeet(meetsid=602, name="Meet B (being deleted)", meetstate=0, registration_open=True),
+            TeamClub(clubsid=1, name="Club A", pin="123456"),
+        ])
+        db.commit()
+        db.add_all([
+            SecretLink(token="tok-a", club_id=1, meetsid=601,
+                       pin_encrypted="enc", expires_at=datetime.utcnow()),
+            SecretLink(token="tok-b", club_id=1, meetsid=602,
+                       pin_encrypted="enc", expires_at=datetime.utcnow()),
+        ])
+        db.commit()
+
+        api.delete_meet(602, db=db)
+
+        assert db.get(TeamMeet, 601) is not None
+        assert db.query(SecretLink).filter_by(meetsid=601).count() == 1
+        assert db.query(SecretLink).filter_by(meetsid=602).count() == 0
+
+
+# ---------------------------------------------------------------------------
+# /api/meet/reset — in-place full flush of the caller's own current meet
+# ---------------------------------------------------------------------------
+
+def _seed_entries(db_session, meetsid: int, event_id: int) -> None:
+    """Add one individual entry and one relay team (with a member) hanging
+    off an existing meet/event, for reset-wipe-scope assertions."""
+    db_session.add(SwimResult(meetsid=meetsid, swimeventid=event_id, athleteid=1, entrytime=None))
+    db_session.add(TeamRelay(relaysid=meetsid, meetsid=meetsid, clubsid=1, teamnumb=1,
+                              name="TestRelay", stylesid=530, eventnumb=1))
+    db_session.add(TeamRelayPos(relaysid=meetsid, numb=1, membersid=1))
+    db_session.commit()
+
+
+class TestResetMeet:
+    """/api/meet/reset — the organizer-facing "New Pool/Beach Meet" buttons
+    on the /meet page. Unlike /admin/new-meet (create_new_meet, above),
+    this never allocates a new meetsid: it's an in-place full flush of the
+    caller's own current meet (structure + individual + relay entries),
+    scoped via resolve_meetsid/X-Meet-Id so a second, independently-open
+    meet is untouched — the same wipe-scope invariant this whole file
+    guards for /admin/new-meet and /upload/meet.
+    """
+
+    def test_reset_keeps_same_meetsid(self, db_session):
+        _make_meet_with_data(db_session, meetsid=500, name="Meet To Reset")
+        _seed_entries(db_session, meetsid=500, event_id=500)
+
+        result = api.reset_meet(_FakeRequest(), {"meet_type": "pool"}, db=db_session)
+
+        assert result["meet_id"] == 500
+        assert db_session.get(TeamMeet, 500) is not None
+
+    def test_reset_wipes_structure_and_entries(self, db_session):
+        _make_meet_with_data(db_session, meetsid=501, name="Meet To Reset")
+        _seed_entries(db_session, meetsid=501, event_id=501)
+
+        api.reset_meet(_FakeRequest(), {"meet_type": "pool"}, db=db_session)
+
+        assert db_session.query(SwimSession).filter_by(meetsid=501).count() == 0
+        assert db_session.query(SwimEvent).filter_by(meetsid=501).count() == 0
+        assert db_session.query(AgeGroup).filter_by(meetsid=501).count() == 0
+        assert db_session.query(SwimResult).filter_by(meetsid=501).count() == 0
+        assert db_session.query(TeamRelay).filter_by(meetsid=501).count() == 0
+        assert db_session.query(TeamRelayPos).count() == 0
+
+    def test_reset_loads_blank_structure_not_template_stub_events(self, db_session):
+        """Matches create_new_meet's own semantics: the template's stub
+        events only exist to seed the SwimStyle catalog, then get stripped
+        — the organizer builds real structure from scratch afterward."""
+        _make_meet_with_data(db_session, meetsid=504, name="Meet To Reset")
+
+        api.reset_meet(_FakeRequest(), {"meet_type": "pool"}, db=db_session)
+
+        assert db_session.query(SwimEvent).filter_by(meetsid=504).count() == 0
+        assert db_session.query(SwimStyle).count() > 0
+
+    def test_reset_does_not_affect_a_second_open_meet(self, db_session):
+        _make_meet_with_data(db_session, meetsid=502, name="Meet A (untouched)")
+        _make_meet_with_data(db_session, meetsid=503, name="Meet B (being reset)")
+        _seed_entries(db_session, meetsid=502, event_id=502)
+        _seed_entries(db_session, meetsid=503, event_id=503)
+
+        api.reset_meet(_FakeRequest(meet_id_header="503"), {"meet_type": "pool"}, db=db_session)
+
+        # Meet A (a different, concurrently-open meet) is completely untouched.
+        assert db_session.get(TeamMeet, 502) is not None
+        assert db_session.query(SwimEvent).filter_by(meetsid=502).count() == 1
+        assert db_session.query(SwimResult).filter_by(meetsid=502).count() == 1
+        assert db_session.query(TeamRelay).filter_by(meetsid=502).count() == 1
+
+        # Meet B was fully wiped, but kept its identity.
+        assert db_session.get(TeamMeet, 503) is not None
+        assert db_session.query(SwimEvent).filter_by(meetsid=503).count() == 0
+        assert db_session.query(SwimResult).filter_by(meetsid=503).count() == 0
+        assert db_session.query(TeamRelay).filter_by(meetsid=503).count() == 0
+
+    def test_reset_beach_sets_meet_type(self, db_session):
+        _make_meet_with_data(db_session, meetsid=506, name="Meet To Reset")
+
+        result = api.reset_meet(_FakeRequest(), {"meet_type": "beach"}, db=db_session)
+
+        assert result["meet_type"] == "beach"
+        assert db_session.get(TeamMeet, 506).meet_type == "BEACH"
+
+    def test_reset_invalid_meet_type_raises_400(self, db_session):
+        _make_meet_with_data(db_session, meetsid=505, name="Meet")
+
+        with pytest.raises(HTTPException) as exc_info:
+            api.reset_meet(_FakeRequest(), {"meet_type": "ocean"}, db=db_session)
+        assert exc_info.value.status_code == 400
+
+    def test_reset_with_no_open_meet_raises_404(self, db_session):
+        with pytest.raises(HTTPException) as exc_info:
+            api.reset_meet(_FakeRequest(), {}, db=db_session)
+        assert exc_info.value.status_code == 404

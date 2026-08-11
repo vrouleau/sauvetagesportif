@@ -730,6 +730,127 @@ def create_new_meet(data: dict = Body(default={}), db: Session = Depends(get_db)
             "meet_type": meet_type, "meet_id": new_meetsid}
 
 
+@router.post("/meet/reset", dependencies=[Depends(require_organizer_or_admin)])
+def reset_meet(request: Request, data: dict = Body(default={}), db: Session = Depends(get_db)):
+    """Full in-place flush of the caller's own current meet — wipes its
+    structure (sessions/events/age groups) and all entries (individual
+    registrations + relay teams), then reloads a blank template into the
+    *same* meetsid. Unlike /admin/new-meet, this never allocates a new
+    meetsid: meet_config, secret_links, and organizer_club_id (all keyed by
+    meetsid) keep pointing at the same meet, and any other concurrently-open
+    meet is untouched. Scoped to the caller's own meet via X-Meet-Id /
+    resolve_meetsid, so an organizer can only reset the meet they're
+    already working on, not an arbitrary one — that's still /admin/new-meet
+    plus a separate delete, an admin-only combination.
+
+    Accepts optional JSON body: {"meet_type": "pool"|"beach"}, defaults to "pool".
+    """
+    meet_type = (data.get("meet_type") or "pool").lower()
+    if meet_type not in ("pool", "beach"):
+        raise HTTPException(400, f"Invalid meet_type: {meet_type}. Must be 'pool' or 'beach'.")
+
+    target_meetsid = resolve_meetsid(request, db)
+    if target_meetsid is None:
+        raise HTTPException(404, "No open meet to reset")
+
+    if meet_type == "beach":
+        env_var = "MEET_TEMPLATE_BEACH"
+        fallback = str(Path(__file__).resolve().parent.parent.parent.parent.parent / "config" / "template_beach.lxf")
+    else:
+        env_var = "MEET_TEMPLATE_POOL"
+        fallback = str(Path(__file__).resolve().parent.parent.parent.parent.parent / "config" / "template_pool.lxf")
+    template_path = Path(os.environ.get(env_var, fallback))
+    if not template_path.exists():
+        raise HTTPException(404, f"Meet template not found: {template_path}")
+
+    content = template_path.read_bytes()
+    from ..meet_parser import parse_meet_lxf
+    try:
+        meet = parse_meet_lxf(content)
+    except Exception as e:
+        raise HTTPException(400, f"Invalid template .lxf: {e}")
+
+    # Wipe this meet's entries and structure — deliberately not reusing
+    # _replace_current_meet_structure (shared by /upload/meet and
+    # /upload/entries): that helper also regenerates every club's PIN
+    # system-wide, a cross-meet side effect that doesn't belong in a
+    # single-meet flush now that meets can be concurrently open. Mirrors
+    # create_new_meet's own tail below, just scoped to reuse_meetsid instead
+    # of allocating a new one, plus the entry tables create_new_meet never
+    # has to touch (a brand-new meetsid starts with none).
+    from ..models_team import (
+        Event as TeamEvent, Session as TeamSession, MemberMeet as TeamMemberMeet,
+        Relay as TeamRelay, RelayPos as TeamRelayPos,
+    )
+    db.query(SwimResult).filter(SwimResult.meetsid == target_meetsid).delete(synchronize_session=False)
+    db.query(Heat).filter(Heat.meetsid == target_meetsid).delete(synchronize_session=False)
+    db.query(TeamMemberMeet).filter(TeamMemberMeet.meetsid == target_meetsid).delete(synchronize_session=False)
+    relay_subq = db.query(TeamRelay.relaysid).filter(TeamRelay.meetsid == target_meetsid)
+    db.query(TeamRelayPos).filter(TeamRelayPos.relaysid.in_(relay_subq)).delete(synchronize_session=False)
+    db.query(TeamRelay).filter(TeamRelay.meetsid == target_meetsid).delete(synchronize_session=False)
+    db.query(AgeGroup).filter(AgeGroup.meetsid == target_meetsid).delete(synchronize_session=False)
+    db.query(SwimEvent).filter(SwimEvent.meetsid == target_meetsid).delete(synchronize_session=False)
+    db.query(SwimSession).filter(SwimSession.meetsid == target_meetsid).delete(synchronize_session=False)
+    db.query(TeamEvent).filter(TeamEvent.meetsid == target_meetsid).delete(synchronize_session=False)
+    db.query(TeamSession).filter(TeamSession.meetsid == target_meetsid).delete(synchronize_session=False)
+    db.flush()
+
+    # Reload from template — seeds the SwimStyle catalog (each style is
+    # declared via a stub EVENT, since Lenex has no standalone style catalog
+    # outside of events) then immediately strips the stub session/events
+    # themselves, same as create_new_meet: real sessions/events are built by
+    # the organizer from here.
+    from ..events import _load_from_parsed
+    _load_from_parsed(db, meet, reuse_meetsid=target_meetsid)
+    db.query(AgeGroup).filter(AgeGroup.meetsid == target_meetsid).delete(synchronize_session=False)
+    db.query(SwimEvent).filter(SwimEvent.meetsid == target_meetsid).delete(synchronize_session=False)
+    db.query(SwimSession).filter(SwimSession.meetsid == target_meetsid).delete(synchronize_session=False)
+    db.query(TeamEvent).filter(TeamEvent.meetsid == target_meetsid).delete(synchronize_session=False)
+    db.query(TeamSession).filter(TeamSession.meetsid == target_meetsid).delete(synchronize_session=False)
+    db.flush()
+
+    # Store the template as the current meet file
+    MEET_STORAGE.parent.mkdir(parents=True, exist_ok=True)
+    MEET_STORAGE.write_bytes(content)
+
+    # Set meet type (dual-write: bsglobal + meets.meet_type)
+    _set_meet_type(db, meet_type.upper(), meetsid=target_meetsid)
+
+    # Track metadata (meet-scoped keys) plus age_base_date (stays app-level)
+    import json as _json
+    from datetime import date as _date
+    year = _date.today().year
+    for key, val in [("meet_filename", template_path.name),
+                     ("meet_uploaded_at", datetime.utcnow().isoformat()),
+                     ("meet_name", meet.meet_name),
+                     ("meet_course", meet.course),
+                     ("meet_masters", "T" if meet.masters else "F"),
+                     ("meet_currency", meet.currency or "CAD"),
+                     ("meet_fees_json", _json.dumps(meet.meet_fees))]:
+        _set_meet_config(db, target_meetsid, key, val)
+    _set_config(db, "age_base_date", f"{year}-12-31")
+
+    # Set AGEDATE in MEETVALUES so the UI picks it up
+    mv_data = _get_meet_config(db, target_meetsid, "MEETVALUES") or ""
+    lines = [l for l in mv_data.split("\r\n") if l and not l.startswith("AGEDATE=")]
+    lines.append(f"AGEDATE=D;{year}1231000000000")
+    _set_meet_config(db, target_meetsid, "MEETVALUES", "\r\n".join(lines))
+
+    # Sync meet name and course into MEETVALUES so EventsPage tree picks it up
+    if meet.meet_name:
+        _update_meetvalue(db, "NAME", f"S;{meet.meet_name}", meetsid=target_meetsid)
+    if meet.course:
+        course_map = {"LCM": "1", "SCM": "3", "SCY": "2"}
+        _update_meetvalue(db, "COURSE", f"I;{course_map.get(meet.course, '1')}", meetsid=target_meetsid)
+
+    # Reset closure date
+    _set_closure_date(db, "", meetsid=target_meetsid)
+    _update_meetvalue(db, "DEADLINE", "D;", meetsid=target_meetsid)
+
+    db.commit()
+    return {"events_loaded": 0, "meet_type": meet_type, "meet_id": target_meetsid}
+
+
 @router.get("/meet-info")
 def meet_info(request: Request, db: Session = Depends(get_db)):
     import json as _json
@@ -2618,6 +2739,9 @@ def _flush_meet_data(db: Session, meetsid: int) -> int:
     db.query(AgeGroup).filter(AgeGroup.meetsid == meetsid).delete(synchronize_session=False)
     db.query(SwimEvent).filter(SwimEvent.meetsid == meetsid).delete(synchronize_session=False)
     db.query(SwimSession).filter(SwimSession.meetsid == meetsid).delete(synchronize_session=False)
+    # SecretLink.meetsid has no ON DELETE CASCADE, so leftover invite-email
+    # links block the Meet delete below with a FOREIGN KEY constraint error.
+    db.query(SecretLink).filter(SecretLink.meetsid == meetsid).delete(synchronize_session=False)
     # Deleting the Meet row cascades to meet_config (ON DELETE CASCADE on
     # MeetConfig.meetsid) — no hardcoded meet-scoped bsglobal key list to
     # keep in sync.

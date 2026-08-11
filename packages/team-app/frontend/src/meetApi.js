@@ -199,8 +199,11 @@ export const meetApiHttp = {
   },
 
   async createMeet(meetType) {
+    // In-place full flush of the current meet (same meetsid) — distinct from
+    // the Admin page's "Open Meets" buttons, which create a brand-new meetsid
+    // via /admin/new-meet.
     try {
-      const r = await api.post('/admin/new-meet', { meet_type: meetType })
+      const r = await api.post('/meet/reset', { meet_type: meetType })
       window.dispatchEvent(new Event('meet-changed'))
       return { ok: true, meetType: r.data.meet_type }
     } catch (err) {
