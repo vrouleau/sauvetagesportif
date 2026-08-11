@@ -149,6 +149,43 @@ function seedIndividualAndRelay(db: DbBackend) {
   db.exec(`INSERT INTO relay (relayid, clubid, swimeventid, agegroupid, heatid, swimtime, resultstatus) VALUES (1, 2, 2, 20, 200, 28000, 0)`)
 }
 
+/**
+ * Règlements Québec §4.4.2.1: at CQS, 16 finalists split into Finale A
+ * (ranks 1-8, guaranteed) and Finale B (ranks 9-16), regardless of raw time —
+ * a B-finalist can swim faster than an A-finalist and still ranks behind
+ * them. autoQualify() writes 'A'/'B' to swimresult.qualcode (individual) or
+ * relay.qualcode (relay) for exactly this grouping; two athletes/teams per
+ * final here is enough to prove the ordering without needing real lane
+ * capacity.
+ */
+function seedFinaleAB(db: DbBackend) {
+  db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount) VALUES (1, 100, 'Freestyle', 1)`)
+  db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount) VALUES (2, 100, 'Freestyle Relay', 4)`)
+  db.exec(`INSERT INTO swimsession (swimsessionid, sessionnumber, name, course) VALUES (1, 1, 'Session 1', 1)`)
+
+  db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, sortcode, internalevent) VALUES (1, 1, 1, 1, 2, 1, 'F')`)
+  db.exec(`INSERT INTO agegroup (agegroupid, swimeventid, name, agemin, agemax, gender, sortcode) VALUES (10, 1, '19+F', 19, -1, 2, 1)`)
+
+  db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, sortcode, internalevent) VALUES (2, 1, 2, 2, 2, 2, 'F')`)
+  db.exec(`INSERT INTO agegroup (agegroupid, swimeventid, name, agemin, agemax, gender, sortcode) VALUES (20, 2, '19+F', 19, -1, 2, 1)`)
+
+  db.exec(`INSERT INTO club (clubid, code, name) VALUES (1, 'AAA', 'A Club')`)
+  db.exec(`INSERT INTO club (clubid, code, name) VALUES (2, 'BBB', 'B Club')`)
+
+  // Individual: Finale A athlete is slower (32000ms) than the Finale B one
+  // (20000ms), but must still outrank them.
+  db.exec(`INSERT INTO athlete (athleteid, clubid, firstname, lastname, gender, birthdate) VALUES (1, 1, 'A', 'Finalist', 2, '2000-01-01')`)
+  db.exec(`INSERT INTO athlete (athleteid, clubid, firstname, lastname, gender, birthdate) VALUES (2, 2, 'B', 'Finalist', 2, '2000-01-01')`)
+  db.exec(`INSERT INTO heat (heatid, swimeventid, heatnumber, racestatus) VALUES (100, 1, 1, 5)`)
+  db.exec(`INSERT INTO swimresult (swimresultid, athleteid, swimeventid, agegroupid, heatid, swimtime, qualcode) VALUES (1, 1, 1, 10, 100, 32000, 'A')`)
+  db.exec(`INSERT INTO swimresult (swimresultid, athleteid, swimeventid, agegroupid, heatid, swimtime, qualcode) VALUES (2, 2, 1, 10, 100, 20000, 'B')`)
+
+  // Relay: same setup, same clubs.
+  db.exec(`INSERT INTO heat (heatid, swimeventid, heatnumber, racestatus) VALUES (200, 2, 1, 5)`)
+  db.exec(`INSERT INTO relay (relayid, clubid, swimeventid, agegroupid, heatid, swimtime, resultstatus, qualcode) VALUES (1, 1, 2, 20, 200, 33000, 0, 'A')`)
+  db.exec(`INSERT INTO relay (relayid, clubid, swimeventid, agegroupid, heatid, swimtime, resultstatus, qualcode) VALUES (2, 2, 2, 20, 200, 21000, 0, 'B')`)
+}
+
 const cat1112: CategoryConfig = {
   ageMin: 11, ageMax: 12, gender: 2,
   name: 'Cumulatif 11-12 ans - filles',
@@ -263,6 +300,46 @@ describe.each(BACKENDS)('combinedEvents [%s]', (kind) => {
       const byCode = new Map(clubs.map(c => [c.clubCode, c.totalPoints]))
       expect(byCode.get('IND')).toBeGreaterThan(0)
       expect(byCode.get('REL')).toBeGreaterThan(0)
+    })
+  })
+
+  describe('Finale A/B qualification ordering (§4.4.2.1)', () => {
+    it('getCombinedResults ranks the Finale A athlete ahead of a faster Finale B athlete', () => {
+      seedFinaleAB(db)
+      const categories = getCombinedResults([1], db)
+      const cat = categories.find(c => c.name.includes('19 ans et plus') && c.name.includes('dames'))
+      expect(cat).toBeDefined()
+      // Athlete 1 (Finale A, 32000ms) must outrank athlete 2 (Finale B,
+      // 20000ms — the faster raw time) despite losing on time.
+      expect(cat!.athletes[0].firstName).toBe('A')
+      expect(cat!.athletes[0].totalPoints).toBeGreaterThan(cat!.athletes[1].totalPoints)
+    })
+
+    it('getPointStandings awards the Finale A club more points than the faster Finale B club (individual)', () => {
+      seedFinaleAB(db)
+      const { clubs } = getPointStandings([1], db)
+      const byCode = new Map(clubs.map(c => [c.clubCode, c.totalPoints]))
+      expect(byCode.get('AAA')).toBeGreaterThan(byCode.get('BBB') ?? 0)
+    })
+
+    it('getPointStandings applies the same Finale A/B ordering to relay results', () => {
+      seedFinaleAB(db)
+      const { clubs } = getPointStandings([2], db)
+      const byCode = new Map(clubs.map(c => [c.clubCode, c.totalPoints]))
+      // Club A's relay (Finale A, 33000ms) must outscore Club B's (Finale B,
+      // 21000ms — the faster raw time).
+      expect(byCode.get('AAA')).toBeGreaterThan(byCode.get('BBB') ?? 0)
+    })
+
+    it('falls back to pure time ordering when qualcode is unset (no A/B split in use)', () => {
+      // The vast majority of meets never call autoQualify/seedFinals, so
+      // qualcode is NULL on every row — confirm the fix is a no-op there via
+      // the existing prelim/final fixture, which never sets qualcode and
+      // still ranks the faster final time first.
+      seedPrelimFinalPair(db)
+      const categories = getCombinedResults([100], db)
+      const cat = categories.find(c => c.name.includes('19 ans et plus') && c.name.includes('hommes'))
+      expect(cat!.athletes[0].firstName).toBe('A') // 29000ms in the final, still fastest
     })
   })
 })

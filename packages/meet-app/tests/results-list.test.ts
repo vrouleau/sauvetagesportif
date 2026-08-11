@@ -79,4 +79,58 @@ describe('getResultsList age-group scoping', () => {
       cleanup()
     }
   })
+
+  it('ranks Finale A ahead of Finale B regardless of raw time (§4.4.2.1)', () => {
+    // Règlements Québec §4.4.2.1: at CQS, when 16 finalists split into Finale
+    // A (ranks 1-8) and Finale B (ranks 9-16), a B-finalist's time is never
+    // compared against an A-finalist's for placement/medals — A always wins,
+    // even if a B swimmer happened to post the faster raw time. autoQualify
+    // writes 'A'/'B'/... to swimresult.qualcode for exactly this grouping.
+    const { db, cleanup } = createTestDb()
+    try {
+      db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount) VALUES (1, 100, 'Freestyle', 1)`)
+      db.exec(`INSERT INTO swimsession (swimsessionid, sessionnumber, name, course) VALUES (1, 1, 'Session 1', 1)`)
+      db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, sortcode, internalevent) VALUES (1, 1, 1, 1, 1, 1, 'F')`)
+      db.exec(`INSERT INTO agegroup (agegroupid, swimeventid, name, agemin, agemax, gender, sortcode) VALUES (10, 1, '19+M', 19, -1, 1, 1)`)
+      db.exec(`INSERT INTO club (clubid, code, name) VALUES (1, 'TST', 'Test Club')`)
+      db.exec(`INSERT INTO heat (heatid, swimeventid, heatnumber, racestatus, sortcode) VALUES (1, 1, 1, 5, 1)`)
+
+      const athletes = [
+        { id: 1, name: 'ASlow1', qualcode: 'A', time: 35000 },
+        { id: 2, name: 'ASlow2', qualcode: 'A', time: 36000 },
+        { id: 3, name: 'BFast1', qualcode: 'B', time: 20000 }, // fastest overall, but Finale B
+        { id: 4, name: 'BFast2', qualcode: 'B', time: 21000 },
+      ]
+      for (const a of athletes) {
+        db.exec(`INSERT INTO athlete (athleteid, clubid, firstname, lastname, gender, birthdate) VALUES (${a.id}, 1, '${a.name}', 'Athlete', 1, '2000-01-01')`)
+        db.exec(`INSERT INTO swimresult (swimresultid, athleteid, swimeventid, agegroupid, heatid, swimtime, qualcode) VALUES (${a.id}, ${a.id}, 1, 10, 1, ${a.time}, '${a.qualcode}')`)
+      }
+
+      const events = getResultsList([1], db)
+      const ageGroup = events[0].ageGroups.find(ag => ag.agegroupId === 10)
+
+      // Both Finale A athletes rank ahead of both Finale B athletes, even
+      // though B athletes posted faster raw times.
+      expect(ageGroup?.athletes.map(a => a.athleteId)).toEqual([1, 2, 3, 4])
+    } finally {
+      cleanup()
+    }
+  })
+
+  it('falls back to pure time ordering when qualcode is unset (no A/B split in use)', () => {
+    const { db, cleanup } = createTestDb()
+    try {
+      seedSharedEvent(db)
+      db.exec(`INSERT INTO athlete (athleteid, clubid, firstname, lastname, gender, birthdate) VALUES (3, 1, 'Faster', 'Athlete', 2, '2013-01-01')`)
+      db.exec(`INSERT INTO swimresult (swimresultid, athleteid, swimeventid, agegroupid, heatid, swimtime) VALUES (3, 3, 1, 10, 1, 25000)`)
+
+      // No qualcode set anywhere (the common case for most meets) — ordering
+      // must remain purely time-based, unaffected by the §4.4.2.1 fix.
+      const events = getResultsList([1], db)
+      const junior = events[0].ageGroups.find(ag => ag.agegroupId === 10)
+      expect(junior?.athletes.map(a => a.athleteId)).toEqual([3, 1])
+    } finally {
+      cleanup()
+    }
+  })
 })
