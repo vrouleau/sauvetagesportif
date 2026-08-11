@@ -439,11 +439,21 @@ def auth(data: dict, request: Request, db: Session = Depends(get_db)):
 # Meet upload
 # ---------------------------------------------------------------------------
 
-def _replace_current_meet_structure(db: Session, meet, content: bytes, filename: str | None) -> int:
-    """Wipe the current (non-historical) meet structure and rebuild it from a
-    parsed meet. Shared by /upload/meet and /upload/entries — the latter
-    takes this path when its own EVENT/SWIMSTYLE elements describe a meet
-    structure not already in the local catalog (see upload_entries).
+def _replace_current_meet_structure(db: Session, meet, content: bytes, filename: str | None, target_meetsid: int | None = None) -> int:
+    """Wipe one meet's structure and rebuild it from a parsed meet, reusing
+    that meet's identity (same meetsid) rather than deleting and recreating
+    it. Shared by /upload/meet and /upload/entries — the latter takes this
+    path when its own EVENT/SWIMSTYLE elements describe a meet structure not
+    already in the local catalog (see upload_entries).
+
+    `target_meetsid` defaults to the currently active meet (today's
+    single-meet behavior: re-uploading replaces "the" current meet in
+    place). Only that one meet's data is wiped — until Phase 2 wires up
+    meet selection (X-Meet-Id), this is still always the sole open meet, but
+    scoping the wipe to one resolved meetsid instead of "every non-archived
+    meet" means a second, independently-open meet's registrations can no
+    longer be collaterally destroyed by an unrelated upload. See
+    docs/CONCURRENT_MEETS_PLAN.md ("wipe scope" decision).
 
     Archived meets (meetstate=3) and their results/events/sessions survive,
     same as _reset_for_next_meet.
@@ -451,25 +461,27 @@ def _replace_current_meet_structure(db: Session, meet, content: bytes, filename:
     MEET_STORAGE.parent.mkdir(parents=True, exist_ok=True)
     MEET_STORAGE.write_bytes(content)
 
-    # Wipe registrations (swimresults with entrytime) then events — current
-    # (non-historical) meet only.
-    from ..models_team import Event as TeamEvent, Session as TeamSession, Meet as TeamMeet, MemberMeet as TeamMemberMeet
-    current_ids = [r for r, in db.query(TeamMeet.meetsid).filter(TeamMeet.meetstate != 3).all()]
-    if current_ids:
-        db.query(SwimResult).filter(SwimResult.meetsid.in_(current_ids)).delete(synchronize_session=False)
-        db.query(AgeGroup).filter(AgeGroup.meetsid.in_(current_ids)).delete(synchronize_session=False)
-        db.query(SwimEvent).filter(SwimEvent.meetsid.in_(current_ids)).delete(synchronize_session=False)
-        db.query(SwimSession).filter(SwimSession.meetsid.in_(current_ids)).delete(synchronize_session=False)
+    target_meetsid = target_meetsid if target_meetsid is not None else get_active_meetsid(db)
+
+    # Wipe registrations (swimresults with entrytime) then events — the
+    # target meet's data only. The Meet row itself is kept (and reused below
+    # by _load_from_parsed) so meet_config/secret_links/organizer_club_id,
+    # all keyed by meetsid, keep pointing at the same meet.
+    from ..models_team import Event as TeamEvent, Session as TeamSession, MemberMeet as TeamMemberMeet
+    if target_meetsid is not None:
+        db.query(SwimResult).filter(SwimResult.meetsid == target_meetsid).delete(synchronize_session=False)
+        db.query(AgeGroup).filter(AgeGroup.meetsid == target_meetsid).delete(synchronize_session=False)
+        db.query(SwimEvent).filter(SwimEvent.meetsid == target_meetsid).delete(synchronize_session=False)
+        db.query(SwimSession).filter(SwimSession.meetsid == target_meetsid).delete(synchronize_session=False)
         # Clear Team Manager event tables BEFORE swimstyle (FK dependency)
-        db.query(TeamMemberMeet).filter(TeamMemberMeet.meetsid.in_(current_ids)).delete(synchronize_session=False)
-        db.query(TeamEvent).filter(TeamEvent.meetsid.in_(current_ids)).delete(synchronize_session=False)
-        db.query(TeamSession).filter(TeamSession.meetsid.in_(current_ids)).delete(synchronize_session=False)
-        db.query(TeamMeet).filter(TeamMeet.meetsid.in_(current_ids)).delete(synchronize_session=False)
+        db.query(TeamMemberMeet).filter(TeamMemberMeet.meetsid == target_meetsid).delete(synchronize_session=False)
+        db.query(TeamEvent).filter(TeamEvent.meetsid == target_meetsid).delete(synchronize_session=False)
+        db.query(TeamSession).filter(TeamSession.meetsid == target_meetsid).delete(synchronize_session=False)
     db.flush()
     # SwimStyle rows are upserted by id in _load_from_parsed (never deleted here) —
     # historical Event/Result rows keep referencing the same style IDs across meets.
     from ..events import _load_from_parsed
-    count = _load_from_parsed(db, meet)
+    count = _load_from_parsed(db, meet, reuse_meetsid=target_meetsid)
     replace_meetsid = get_active_meetsid(db)
 
     # Track metadata (meet-scoped keys) plus age_base_date (stays app-level)
@@ -552,7 +564,20 @@ async def upload_meet(file: UploadFile = File(...), force: bool = False, db: Ses
 
 @router.post("/admin/new-meet", dependencies=[Depends(require_organizer_or_admin)])
 def create_new_meet(data: dict = Body(default={}), db: Session = Depends(get_db)):
-    """Create a new meet by resetting all data and importing from the appropriate template.
+    """Create a brand new meet from the appropriate template, always as an
+    independent meetsid — never wipes another meet's data (see
+    docs/CONCURRENT_MEETS_PLAN.md, "wipe scope" decision: this endpoint's
+    whole job is to create something new, so there's nothing to reuse or
+    scope a wipe to).
+
+    Whatever meet was previously active gets closed (registration_open set
+    to False) but its data is left intact — until Phase 2's admin dashboard
+    (Stage 7) exists to let an operator explicitly keep it open alongside
+    the new one, closing it here is the only way to avoid silently leaving
+    an un-closeable, invisible second `registration_open=True` meet behind
+    (which would keep colliding with the new meet's session dates via
+    session_date_conflict). This is a deliberate stopgap, not the real
+    close-meet UX (flush for beach / archive for pool) — that's Stage 7.
 
     Accepts optional JSON body: {"meet_type": "pool"|"beach"}
     Defaults to "pool" if not specified.
@@ -579,21 +604,13 @@ def create_new_meet(data: dict = Body(default={}), db: Session = Depends(get_db)
     except Exception as e:
         raise HTTPException(400, f"Invalid template .lxf: {e}")
 
-    # Wipe existing data — current (non-historical) meet only. Archived meets
-    # (meetstate=3) and their results/events/sessions must survive, same as
-    # the organizer's end-of-meet reset (_reset_for_next_meet).
-    from ..models_team import Event as TeamEvent, Session as TeamSession, Meet as TeamMeet, MemberMeet as TeamMemberMeet
-    current_ids = [r for r, in db.query(TeamMeet.meetsid).filter(TeamMeet.meetstate != 3).all()]
-    if current_ids:
-        db.query(SwimResult).filter(SwimResult.meetsid.in_(current_ids)).delete(synchronize_session=False)
-        db.query(AgeGroup).filter(AgeGroup.meetsid.in_(current_ids)).delete(synchronize_session=False)
-        db.query(SwimEvent).filter(SwimEvent.meetsid.in_(current_ids)).delete(synchronize_session=False)
-        db.query(SwimSession).filter(SwimSession.meetsid.in_(current_ids)).delete(synchronize_session=False)
-        # Clear Team Manager event tables BEFORE swimstyle (FK dependency)
-        db.query(TeamMemberMeet).filter(TeamMemberMeet.meetsid.in_(current_ids)).delete(synchronize_session=False)
-        db.query(TeamEvent).filter(TeamEvent.meetsid.in_(current_ids)).delete(synchronize_session=False)
-        db.query(TeamSession).filter(TeamSession.meetsid.in_(current_ids)).delete(synchronize_session=False)
-        db.query(TeamMeet).filter(TeamMeet.meetsid.in_(current_ids)).delete(synchronize_session=False)
+    # Close (don't wipe) whatever meet was previously active — see docstring above.
+    from ..models_team import Event as TeamEvent, Session as TeamSession, Meet as TeamMeet
+    prior_meetsid = get_active_meetsid(db)
+    if prior_meetsid is not None:
+        prior_meet = db.get(TeamMeet, prior_meetsid)
+        if prior_meet is not None:
+            prior_meet.registration_open = False
     db.flush()
 
     # Import from template — this seeds the SwimStyle catalog (each style is declared via

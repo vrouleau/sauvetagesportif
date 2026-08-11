@@ -643,12 +643,35 @@ Ordered so each stage is independently testable and the app stays in a
 working, single-meet-equivalent state after every stage (no big-bang
 cutover):
 
-1. **Fix the wipe-all-on-create bug** (finding #1 above). This has to land
-   first — every later stage assumes opening meet B is safe while meet A is
-   open, and today it isn't. Backend only; no visible behavior change in
-   the single-meet case (still exactly one meet exists, so the new
-   "scope the wipe to nothing" path and the old "wipe everything" path
-   produce the same result there).
+1. **Fix the wipe-all-on-create bug** (finding #1 above). **Done** — see
+   `_replace_current_meet_structure`/`create_new_meet` in `api.py` and
+   `_load_from_parsed` in `events.py`. Landed first, as planned — every
+   later stage assumes opening meet B is safe while meet A is open, and
+   before this it wasn't. Backend only; no visible behavior change in the
+   single-meet case, verified by
+   `tests/unit/test_meet_creation_wipe_scope.py` (no Docker available in
+   this pass, so the existing Docker-backed integration regressions
+   — `TestNewMeetPreservesHistory`, `TestUploadMeetPreservesHistory`,
+   `test_swim_styles_filtered_to_current_meet_type` — still need a real run
+   before this is fully trusted). Two implementation decisions the plan
+   above didn't spell out:
+   - `_replace_current_meet_structure` (`/upload/meet`) now **reuses** its
+     target meet's identity (same meetsid) instead of deleting and
+     recreating it — `_load_from_parsed` gained a `reuse_meetsid` parameter
+     for this. Needed so meet_config/secret_links/organizer_club_id (all
+     keyed by meetsid) survive a routine re-upload instead of being
+     orphaned. Defaults to `get_active_meetsid(db)` when no explicit target
+     is given (no header yet), preserving today's single-meet behavior
+     exactly.
+   - `create_new_meet` (`/admin/new-meet`) always creates a genuinely new
+     meetsid (its whole job), and now **closes** (sets
+     `registration_open=False`) rather than deletes whatever meet was
+     previously active — deleting would still risk destroying a
+     concurrently-open meet's data; leaving it silently open would leave an
+     invisible second `registration_open=True` row colliding with the new
+     meet's session dates via `session_date_conflict`. This is a stopgap
+     until Stage 7's admin dashboard can make "keep it open" an explicit
+     choice instead of an implicit close.
 2. **`POST /api/auth` returns `meets: [{meet_id, name, role}]`** instead of
    a flat `role` (finding #2). Backend only. Frontend keeps reading
    `role`/`club_id`/`club_name` off the first/only entry for now — no
