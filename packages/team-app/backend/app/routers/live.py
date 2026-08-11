@@ -656,7 +656,7 @@ async def finalize_meet(db: Session = Depends(get_db)):
     for le in live_events_list:
         # Try to find the swimstyleid from swimevent table
         from ..models import SwimEvent
-        ev = db.get(SwimEvent, le.event_id)
+        ev = db.get(SwimEvent, (old_meetsid, le.event_id))
         event_style_map[le.event_id] = ev.swimstyleid if ev else None
 
     results_archived = 0

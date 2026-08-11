@@ -39,14 +39,17 @@ from sqlalchemy.orm import sessionmaker
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "backend"))
 
 from app.models import Base, SwimEvent, AgeGroup, SwimResult, SwimStyle
-from app.models_team import TeamClub, Member
+from app.models_team import TeamClub, Member, Meet
 from app.seed import seed_from_lxf
 
 
 def _make_db():
     engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine)
-    return sessionmaker(bind=engine)()
+    db = sessionmaker(bind=engine)()
+    db.add(Meet(meetsid=1, name="Test Meet", registration_open=True))
+    db.commit()
+    return db
 
 
 def _lxf(*, eventid: int, agegroupid: int | None) -> bytes:
@@ -72,7 +75,7 @@ def _lxf(*, eventid: int, agegroupid: int | None) -> bytes:
 
 def _add_event(db, eventid: int, *, masters: str = "F") -> None:
     db.add(SwimStyle(swimstyleid=501, name="50m Freestyle", distance=50, relaycount=1))
-    db.add(SwimEvent(swimeventid=eventid, swimstyleid=501, gender=2, masters=masters))
+    db.add(SwimEvent(swimeventid=eventid, meetsid=1, swimstyleid=501, gender=2, masters=masters))
     db.commit()
 
 
@@ -95,7 +98,7 @@ def test_entry_with_unknown_agegroup_does_not_crash():
 def test_entry_with_known_agegroup_still_resolves_age_code():
     db = _make_db()
     _add_event(db, eventid=1075)
-    db.add(AgeGroup(agegroupid=1076, agemin=11, agemax=12))
+    db.add(AgeGroup(agegroupid=1076, meetsid=1, agemin=11, agemax=12))
     db.commit()
     lxf = _lxf(eventid=1075, agegroupid=1076)
 

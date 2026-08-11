@@ -114,8 +114,12 @@ def _club_line_items(db: Session, club: TeamClub, meet_fees: dict[str, int]) -> 
     event fee — no revenue lost to rounding). No per-event detail is shown,
     only the athlete's individual/relay counts.
     """
+    meet_id = get_active_meetsid(db)
+
     # Build a map of event_number -> fee_cents
-    all_events = db.query(SwimEvent).options(joinedload(SwimEvent.swimstyle)).all()
+    all_events = db.query(SwimEvent).options(joinedload(SwimEvent.swimstyle)).filter(
+        SwimEvent.meetsid == meet_id
+    ).all()
     fee_by_number = {}
     for e in all_events:
         fee_cents = fee_dollars_to_cents(e.fee)
@@ -124,10 +128,10 @@ def _club_line_items(db: Session, club: TeamClub, meet_fees: dict[str, int]) -> 
 
     rows = (
         db.query(SwimResult, SwimEvent, Member)
-        .join(SwimEvent, SwimResult.swimeventid == SwimEvent.swimeventid)
+        .join(SwimEvent, (SwimResult.swimeventid == SwimEvent.swimeventid) & (SwimResult.meetsid == SwimEvent.meetsid))
         .join(Member, SwimResult.athleteid == Member.membersid)
         .join(SwimStyle, SwimEvent.swimstyleid == SwimStyle.swimstyleid)
-        .filter(Member.clubsid == club.clubsid)
+        .filter(SwimResult.meetsid == meet_id, Member.clubsid == club.clubsid)
         .all()
     )
 
@@ -149,12 +153,15 @@ def _club_line_items(db: Session, club: TeamClub, meet_fees: dict[str, int]) -> 
         if relay.eventnumb:
             event = (
                 db.query(SwimEvent)
-                .filter(SwimEvent.swimstyleid == relay.stylesid, SwimEvent.eventnumber == relay.eventnumb)
+                .filter(SwimEvent.meetsid == meet_id, SwimEvent.swimstyleid == relay.stylesid,
+                        SwimEvent.eventnumber == relay.eventnumb)
                 .first()
             )
         if not event:
             gender_str = "M" if relay.gender == GENDER_M else "F" if relay.gender == GENDER_F else "X"
-            for ev in db.query(SwimEvent).filter(SwimEvent.swimstyleid == relay.stylesid).all():
+            for ev in db.query(SwimEvent).filter(
+                SwimEvent.meetsid == meet_id, SwimEvent.swimstyleid == relay.stylesid
+            ).all():
                 ev_gender_str = "M" if ev.gender == GENDER_M else "F" if ev.gender == GENDER_F else "X"
                 if ev_gender_str == gender_str:
                     event = ev
@@ -212,7 +219,6 @@ def _club_line_items(db: Session, club: TeamClub, meet_fees: dict[str, int]) -> 
     # is deleted (see create_relay_team in routers/api.py). Both sources must
     # be combined here or a club's relay fees vanish the moment its rosters
     # are actually built.
-    meet_id = get_active_meetsid(db)
     relay_query = db.query(Relay).filter(Relay.clubsid == club.clubsid)
     if meet_id:
         relay_query = relay_query.filter(Relay.meetsid == meet_id)
@@ -282,16 +288,16 @@ def _club_line_items(db: Session, club: TeamClub, meet_fees: dict[str, int]) -> 
         athlete_count = (
             db.query(Member.membersid)
             .join(SwimResult, SwimResult.athleteid == Member.membersid)
-            .filter(Member.clubsid == club.clubsid)
+            .filter(SwimResult.meetsid == meet_id, Member.clubsid == club.clubsid)
             .distinct()
             .count()
         )
         relay_event_count = (
             db.query(SwimEvent.swimeventid)
-            .join(SwimResult, SwimResult.swimeventid == SwimEvent.swimeventid)
+            .join(SwimResult, (SwimResult.swimeventid == SwimEvent.swimeventid) & (SwimResult.meetsid == SwimEvent.meetsid))
             .join(Member, SwimResult.athleteid == Member.membersid)
             .join(SwimStyle, SwimEvent.swimstyleid == SwimStyle.swimstyleid)
-            .filter(Member.clubsid == club.clubsid, SwimStyle.relaycount > 1)
+            .filter(SwimResult.meetsid == meet_id, Member.clubsid == club.clubsid, SwimStyle.relaycount > 1)
             .distinct()
             .count()
         )

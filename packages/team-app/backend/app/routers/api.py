@@ -253,23 +253,27 @@ def _get_event_native_age_code(db: Session, stylesid: int, eventnumb: int | None
     priority as get_relay_teams: eventnumb first, falling back to style+gender for
     legacy rows without eventnumb). Returns None when the event can't be resolved,
     or has 0 or 2+ distinct age categories (ambiguous — anchor rule doesn't apply)."""
+    meetsid = get_active_meetsid(db)
     event = None
     if eventnumb:
         event = (
             db.query(SwimEvent)
-            .filter(SwimEvent.swimstyleid == stylesid, SwimEvent.eventnumber == eventnumb)
+            .filter(SwimEvent.meetsid == meetsid, SwimEvent.swimstyleid == stylesid,
+                    SwimEvent.eventnumber == eventnumb)
             .first()
         )
     if not event:
         gender_str = "M" if gender == GENDER_M else "F" if gender == GENDER_F else "X"
-        for ev in db.query(SwimEvent).filter(SwimEvent.swimstyleid == stylesid).all():
+        for ev in db.query(SwimEvent).filter(SwimEvent.meetsid == meetsid, SwimEvent.swimstyleid == stylesid).all():
             ev_gender_str = "M" if ev.gender == GENDER_M else "F" if ev.gender == GENDER_F else "X"
             if ev_gender_str == gender_str:
                 event = ev
                 break
     if not event:
         return None
-    rows = db.query(AgeGroup.agemin, AgeGroup.agemax).filter(AgeGroup.swimeventid == event.swimeventid).distinct().all()
+    rows = db.query(AgeGroup.agemin, AgeGroup.agemax).filter(
+        AgeGroup.meetsid == meetsid, AgeGroup.swimeventid == event.swimeventid
+    ).distinct().all()
     codes = {_age_group_code(r.agemin, r.agemax) for r in rows}
     codes.discard(None)
     return next(iter(codes)) if len(codes) == 1 else None
@@ -295,12 +299,14 @@ def _resolve_athlete_age_codes(db: Session, athlete_ids: list[int]) -> dict[int,
     if not athlete_ids:
         return {}
     from sqlalchemy import func as _sqla_func
+    meetsid = get_active_meetsid(db)
     result: dict[int, str] = {}
     ac_counts = (
         db.query(SwimResult.athleteid, SwimResult.age_code, _sqla_func.count().label("cnt"))
-        .join(SwimEvent, SwimResult.swimeventid == SwimEvent.swimeventid)
+        .join(SwimEvent, (SwimResult.swimeventid == SwimEvent.swimeventid) & (SwimResult.meetsid == SwimEvent.meetsid))
         .join(SwimStyle, SwimEvent.swimstyleid == SwimStyle.swimstyleid)
         .filter(
+            SwimResult.meetsid == meetsid,
             SwimResult.athleteid.in_(athlete_ids),
             SwimStyle.relaycount == 1,
             SwimResult.age_code.isnot(None),
@@ -317,10 +323,11 @@ def _resolve_athlete_age_codes(db: Session, athlete_ids: list[int]) -> dict[int,
     if remaining:
         ag_counts = (
             db.query(SwimResult.athleteid, AgeGroup.agemin, AgeGroup.agemax, _sqla_func.count().label("cnt"))
-            .join(AgeGroup, SwimResult.agegroupid == AgeGroup.agegroupid)
-            .join(SwimEvent, SwimResult.swimeventid == SwimEvent.swimeventid)
+            .join(AgeGroup, (SwimResult.agegroupid == AgeGroup.agegroupid) & (SwimResult.meetsid == AgeGroup.meetsid))
+            .join(SwimEvent, (SwimResult.swimeventid == SwimEvent.swimeventid) & (SwimResult.meetsid == SwimEvent.meetsid))
             .join(SwimStyle, SwimEvent.swimstyleid == SwimStyle.swimstyleid)
             .filter(
+                SwimResult.meetsid == meetsid,
                 SwimResult.athleteid.in_(remaining),
                 SwimStyle.relaycount == 1,
             )
@@ -1303,12 +1310,15 @@ def update_athlete(athlete_id: int, data: AthleteUpdate, request: Request, db: S
 
 @router.get("/sessions")
 def list_sessions(db: Session = Depends(get_db)):
-    sessions = db.query(SwimSession).order_by(SwimSession.sessionnumber).all()
+    meetsid = get_active_meetsid(db)
+    sessions = db.query(SwimSession).filter(SwimSession.meetsid == meetsid).order_by(SwimSession.sessionnumber).all()
     result = []
     for s in sessions:
         events_data = []
         for e in sorted(s.events, key=lambda x: x.sortcode or x.eventnumber or 0):
-            ags = db.query(AgeGroup).filter(AgeGroup.swimeventid == e.swimeventid).order_by(AgeGroup.sortcode).all()
+            ags = db.query(AgeGroup).filter(
+                AgeGroup.meetsid == meetsid, AgeGroup.swimeventid == e.swimeventid
+            ).order_by(AgeGroup.sortcode).all()
             is_admin = e.internalevent == "T" or e.swimstyleid is None
             name = (e.comment or "Pause") if is_admin else (e.roundname or (e.swimstyle.name if e.swimstyle else ""))
             events_data.append({
@@ -1445,7 +1455,7 @@ def update_session(session_id: int, data: dict = Body(default={}), db: Session =
 def list_events(db: Session = Depends(get_db)):
     events = db.query(SwimEvent).options(
         joinedload(SwimEvent.swimstyle)
-    ).order_by(SwimEvent.eventnumber).all()
+    ).filter(SwimEvent.meetsid == get_active_meetsid(db)).order_by(SwimEvent.eventnumber).all()
     return [{
         "id": e.swimeventid,
         "style_uid": e.swimstyleid,
@@ -1509,6 +1519,7 @@ def delete_session(session_id: int, db: Session = Depends(get_db)):
         raise HTTPException(404, "Session not found")
     # Delete events in this session (cascades to agegroups, heats, results)
     db.query(AgeGroup).filter(
+        AgeGroup.meetsid == session.meetsid,
         AgeGroup.swimeventid.in_(
             db.query(SwimEvent.swimeventid).filter(SwimEvent.swimsessionid == session_id)
         )
@@ -1573,7 +1584,7 @@ def create_event(data: dict = Body(default={}), db: Session = Depends(get_db)):
         # If all styles are used, pick the next one after the last event's style
         # in the target session (cycling through the style list).
         used_styles = [e.swimstyleid for e in db.query(SwimEvent).filter(
-            SwimEvent.swimstyleid.isnot(None)
+            SwimEvent.meetsid == get_active_meetsid(db), SwimEvent.swimstyleid.isnot(None)
         ).all()]
         used_set = set(used_styles)
 
@@ -1640,9 +1651,10 @@ def create_event(data: dict = Body(default={}), db: Session = Depends(get_db)):
 @router.put("/events/reorder", dependencies=[Depends(require_organizer_or_admin)])
 def reorder_events(data: dict = Body(default={}), db: Session = Depends(get_db)):
     """Reorder events: accepts {updates: [{eventId, sessionId, sortcode}]}."""
+    meetsid = get_active_meetsid(db)
     updates = data.get("updates", [])
     for u in updates:
-        event = db.get(SwimEvent, u["eventId"])
+        event = db.get(SwimEvent, (meetsid, u["eventId"]))
         if event:
             event.swimsessionid = u.get("sessionId", event.swimsessionid)
             event.sortcode = u["sortcode"]
@@ -1653,7 +1665,7 @@ def reorder_events(data: dict = Body(default={}), db: Session = Depends(get_db))
 @router.put("/events/{event_id}", dependencies=[Depends(require_organizer_or_admin)])
 def update_event(event_id: int, data: dict = Body(default={}), db: Session = Depends(get_db)):
     """Update event fields (gender, swimstyle, number, round, maxentries, etc.)."""
-    event = db.get(SwimEvent, event_id)
+    event = db.get(SwimEvent, (get_active_meetsid(db), event_id))
     if not event:
         raise HTTPException(404, "Event not found")
 
@@ -1692,10 +1704,11 @@ def update_event(event_id: int, data: dict = Body(default={}), db: Session = Dep
 @router.delete("/events/{event_id}", dependencies=[Depends(require_organizer_or_admin)])
 def delete_event(event_id: int, db: Session = Depends(get_db)):
     """Delete an event and its age groups."""
-    event = db.get(SwimEvent, event_id)
+    meetsid = get_active_meetsid(db)
+    event = db.get(SwimEvent, (meetsid, event_id))
     if not event:
         raise HTTPException(404, "Event not found")
-    db.query(AgeGroup).filter(AgeGroup.swimeventid == event_id).delete()
+    db.query(AgeGroup).filter(AgeGroup.meetsid == meetsid, AgeGroup.swimeventid == event_id).delete()
     db.delete(event)
     db.commit()
     return {"ok": True}
@@ -1709,6 +1722,7 @@ def create_age_group(data: dict = Body(default={}), db: Session = Depends(get_db
     if not event_id:
         raise HTTPException(400, "eventId required")
 
+    meetsid = get_active_meetsid(db)
     next_id = (db.query(func.max(AgeGroup.agegroupid)).scalar() or 0) + 1
     name = data.get("name", "")
     min_age = data.get("minAge", 0)
@@ -1717,12 +1731,12 @@ def create_age_group(data: dict = Body(default={}), db: Session = Depends(get_db
     gender_int = {"M": GENDER_M, "F": GENDER_F, "X": GENDER_MIXED}.get(gender_str, GENDER_MIXED)
 
     max_sort = db.query(func.max(AgeGroup.sortcode)).filter(
-        AgeGroup.swimeventid == event_id
+        AgeGroup.meetsid == meetsid, AgeGroup.swimeventid == event_id
     ).scalar() or 0
 
     ag = AgeGroup(
         agegroupid=next_id,
-        meetsid=get_active_meetsid(db),
+        meetsid=meetsid,
         swimeventid=event_id,
         name=name,
         agemin=min_age,
@@ -1738,7 +1752,7 @@ def create_age_group(data: dict = Body(default={}), db: Session = Depends(get_db
 @router.put("/age-groups/{agegroup_id}", dependencies=[Depends(require_organizer_or_admin)])
 def update_age_group(agegroup_id: int, data: dict = Body(default={}), db: Session = Depends(get_db)):
     """Update age group fields."""
-    ag = db.get(AgeGroup, agegroup_id)
+    ag = db.get(AgeGroup, (get_active_meetsid(db), agegroup_id))
     if not ag:
         raise HTTPException(404, "Age group not found")
     for key in ("name", "agemin", "agemax", "gender", "heatcount", "sortcode"):
@@ -1765,7 +1779,8 @@ def move_age_group(agegroup_id: int, data: dict = Body(default={}), db: Session 
     if not target_event_id:
         raise HTTPException(400, "targetEventId required")
 
-    ag = db.get(AgeGroup, agegroup_id)
+    meetsid = get_active_meetsid(db)
+    ag = db.get(AgeGroup, (meetsid, agegroup_id))
     if not ag:
         raise HTTPException(404, "Age group not found")
 
@@ -1773,8 +1788,8 @@ def move_age_group(agegroup_id: int, data: dict = Body(default={}), db: Session 
     if source_event_id == target_event_id:
         return {"ok": True}
 
-    source_event = db.get(SwimEvent, source_event_id)
-    target_event = db.get(SwimEvent, target_event_id)
+    source_event = db.get(SwimEvent, (meetsid, source_event_id))
+    target_event = db.get(SwimEvent, (meetsid, target_event_id))
     if not target_event:
         raise HTTPException(404, "Target event not found")
     if not source_event or source_event.swimstyleid != target_event.swimstyleid:
@@ -1796,6 +1811,7 @@ def move_age_group(agegroup_id: int, data: dict = Body(default={}), db: Session 
         raise HTTPException(400, "Cannot determine the age code for this age group")
 
     matching_query = db.query(SwimResult).join(Member, SwimResult.athleteid == Member.membersid).filter(
+        SwimResult.meetsid == meetsid,
         SwimResult.swimeventid == source_event_id,
         SwimResult.age_code == age_code,
     )
@@ -1823,7 +1839,9 @@ def move_age_group(agegroup_id: int, data: dict = Body(default={}), db: Session 
             raise HTTPException(409, "Cannot move: an athlete is already registered for this age bracket on the target event")
 
     from sqlalchemy import func
-    max_sort = db.query(func.max(AgeGroup.sortcode)).filter(AgeGroup.swimeventid == target_event_id).scalar() or 0
+    max_sort = db.query(func.max(AgeGroup.sortcode)).filter(
+        AgeGroup.meetsid == meetsid, AgeGroup.swimeventid == target_event_id
+    ).scalar() or 0
     ag.swimeventid = target_event_id
     ag.sortcode = max_sort + 1
 
@@ -1834,7 +1852,7 @@ def move_age_group(agegroup_id: int, data: dict = Body(default={}), db: Session 
 @router.delete("/age-groups/{agegroup_id}", dependencies=[Depends(require_organizer_or_admin)])
 def delete_age_group(agegroup_id: int, db: Session = Depends(get_db)):
     """Delete an age group."""
-    ag = db.get(AgeGroup, agegroup_id)
+    ag = db.get(AgeGroup, (get_active_meetsid(db), agegroup_id))
     if not ag:
         raise HTTPException(404, "Age group not found")
     db.delete(ag)
@@ -1852,8 +1870,11 @@ def get_registration(athlete_id: int, db: Session = Depends(get_db)):
     if not member:
         raise HTTPException(404, "Athlete not found")
 
+    meetsid = get_active_meetsid(db)
+
     # Get all registrations for this athlete
     regs = db.query(SwimResult).filter(
+        SwimResult.meetsid == meetsid,
         SwimResult.athleteid == athlete_id,
     ).all()
     reg_map = {(r.swimeventid, r.age_code): r for r in regs}
@@ -1874,7 +1895,7 @@ def get_registration(athlete_id: int, db: Session = Depends(get_db)):
     events = db.query(SwimEvent).options(
         joinedload(SwimEvent.agegroups),
         joinedload(SwimEvent.swimstyle),
-    ).order_by(SwimEvent.eventnumber).all()
+    ).filter(SwimEvent.meetsid == meetsid).order_by(SwimEvent.eventnumber).all()
 
     ath_gender_int = member.gender
 
@@ -1947,9 +1968,10 @@ def get_registration(athlete_id: int, db: Session = Depends(get_db)):
         other_relay_regs = (
             db.query(Member, SwimEvent)
             .join(SwimResult, SwimResult.athleteid == Member.membersid)
-            .join(SwimEvent, SwimResult.swimeventid == SwimEvent.swimeventid)
+            .join(SwimEvent, (SwimResult.swimeventid == SwimEvent.swimeventid) & (SwimResult.meetsid == SwimEvent.meetsid))
             .join(SwimStyle, SwimEvent.swimstyleid == SwimStyle.swimstyleid)
             .filter(
+                SwimResult.meetsid == meetsid,
                 Member.clubsid == member.clubsid,
                 Member.membersid != athlete_id,
                 SwimEvent.swimstyleid.in_(relay_uids),
@@ -2126,6 +2148,7 @@ def create_registration(data: RegistrationCreate, request: Request, db: Session 
     age_code = data.age_code
     entry_time_ms = data.entry_time_ms
 
+    meetsid = get_active_meetsid(db)
     caller_club = _caller_club_id(db, pin)
     member = db.get(Member, athlete_id)
     if not member:
@@ -2133,7 +2156,7 @@ def create_registration(data: RegistrationCreate, request: Request, db: Session 
     if caller_club is not None and member.clubsid != caller_club:
         raise HTTPException(403, "Cannot register athletes from another club")
 
-    event = db.get(SwimEvent, event_id)
+    event = db.get(SwimEvent, (meetsid, event_id))
     if not event:
         raise HTTPException(404, "Event not found")
 
@@ -2143,7 +2166,8 @@ def create_registration(data: RegistrationCreate, request: Request, db: Session 
             raise HTTPException(422, "Event does not accept Masters category")
     else:
         valid_codes = [_age_group_code(ag.agemin, ag.agemax)
-                       for ag in db.query(AgeGroup).filter(AgeGroup.swimeventid == event_id).all()]
+                       for ag in db.query(AgeGroup).filter(
+                           AgeGroup.meetsid == meetsid, AgeGroup.swimeventid == event_id).all()]
         if age_code not in valid_codes:
             raise HTTPException(422, f"age_code '{age_code}' not valid for this event")
 
@@ -2152,6 +2176,7 @@ def create_registration(data: RegistrationCreate, request: Request, db: Session 
     if style and style.relaycount and style.relaycount > 1:
         club_member_ids = [m.membersid for m in db.query(Member).filter(Member.clubsid == member.clubsid).all()]
         existing_relay = db.query(SwimResult).filter(
+            SwimResult.meetsid == meetsid,
             SwimResult.swimeventid == event_id,
             SwimResult.athleteid.in_(club_member_ids),
             SwimResult.athleteid != athlete_id,
@@ -2160,6 +2185,7 @@ def create_registration(data: RegistrationCreate, request: Request, db: Session 
             raise HTTPException(409, "Relay already has a registration from this club")
 
     existing = db.query(SwimResult).filter(
+        SwimResult.meetsid == meetsid,
         SwimResult.athleteid == athlete_id,
         SwimResult.swimeventid == event_id,
         SwimResult.age_code == age_code,
@@ -2178,7 +2204,7 @@ def create_registration(data: RegistrationCreate, request: Request, db: Session 
 
     result = SwimResult(
         athleteid=athlete_id,
-        meetsid=get_active_meetsid(db),
+        meetsid=meetsid,
         swimeventid=event_id,
         age_code=age_code,
         entrytime=entry_time_ms,
@@ -2282,7 +2308,9 @@ async def upload_entries(file: UploadFile = File(...), force: bool = False, db: 
     needs_reload = False
     missing_ids: set[int] = set()
     if events_meet and events_meet.all_events:
-        existing_ids = {eid for (eid,) in db.query(SwimEvent.swimeventid).all()}
+        existing_ids = {eid for (eid,) in db.query(SwimEvent.swimeventid).filter(
+            SwimEvent.meetsid == get_active_meetsid(db)
+        ).all()}
         file_ids = {ev.eventid for ses in events_meet.sessions for ev in ses.events}
         missing_ids = file_ids - existing_ids
         needs_reload = bool(missing_ids)
@@ -3410,16 +3438,18 @@ def _import_relays_from_lxf(db: "Session", file_bytes: bytes) -> int:
     # First try direct ID match (if IDs were preserved during seed)
     member_ids: set[int] = {m.membersid for m in db.query(Member.membersid).all()}
 
+    # Get current meet ID
+    meet_id = get_active_meetsid(db)
+
     # Build event swimstyleid/eventnumber lookups. eventnumber is needed so
     # get_relay_teams can disambiguate events that share the same style+gender.
     event_style: dict[int, int] = {}
     event_number: dict[int, int] = {}
-    for ev in db.query(SwimEvent).filter(SwimEvent.swimstyleid.isnot(None)).all():
+    for ev in db.query(SwimEvent).filter(
+        SwimEvent.meetsid == meet_id, SwimEvent.swimstyleid.isnot(None)
+    ).all():
         event_style[ev.swimeventid] = ev.swimstyleid
         event_number[ev.swimeventid] = ev.eventnumber
-
-    # Get current meet ID
-    meet_id = get_active_meetsid(db)
 
     # Find next relay ID
     from sqlalchemy import func as sqla_func
@@ -3608,6 +3638,7 @@ def get_relay_teams(request: Request, club_id: int | None = None, db: Session = 
         db.query(SwimEvent)
         .options(joinedload(SwimEvent.swimstyle), joinedload(SwimEvent.agegroups))
         .join(SwimStyle, SwimEvent.swimstyleid == SwimStyle.swimstyleid)
+        .filter(SwimEvent.meetsid == meet_id)
         .filter(SwimStyle.relaycount > 1)
         .filter(SwimEvent.round != ROUND_FIN)  # skip finals
         .order_by(SwimEvent.eventnumber)
@@ -3716,9 +3747,10 @@ def get_relay_teams(request: Request, club_id: int | None = None, db: Session = 
                 SwimResult.age_code,
                 sqla_func.count().label("cnt"),
             )
-            .join(SwimEvent, SwimResult.swimeventid == SwimEvent.swimeventid)
+            .join(SwimEvent, (SwimResult.swimeventid == SwimEvent.swimeventid) & (SwimResult.meetsid == SwimEvent.meetsid))
             .join(SwimStyle, SwimEvent.swimstyleid == SwimStyle.swimstyleid)
             .filter(
+                SwimResult.meetsid == meet_id,
                 SwimResult.athleteid.in_(list(member_ids_in_positions)),
                 SwimStyle.relaycount == 1,  # only individual events
                 SwimResult.age_code.isnot(None),
@@ -3744,10 +3776,11 @@ def get_relay_teams(request: Request, club_id: int | None = None, db: Session = 
                     AgeGroup.agemax,
                     sqla_func.count().label("cnt"),
                 )
-                .join(AgeGroup, SwimResult.agegroupid == AgeGroup.agegroupid)
-                .join(SwimEvent, SwimResult.swimeventid == SwimEvent.swimeventid)
+                .join(AgeGroup, (SwimResult.agegroupid == AgeGroup.agegroupid) & (SwimResult.meetsid == AgeGroup.meetsid))
+                .join(SwimEvent, (SwimResult.swimeventid == SwimEvent.swimeventid) & (SwimResult.meetsid == SwimEvent.meetsid))
                 .join(SwimStyle, SwimEvent.swimstyleid == SwimStyle.swimstyleid)
                 .filter(
+                    SwimResult.meetsid == meet_id,
                     SwimResult.athleteid.in_(remaining_ids),
                     SwimStyle.relaycount == 1,  # only individual events
                 )
@@ -3848,6 +3881,7 @@ def get_relay_teams(request: Request, club_id: int | None = None, db: Session = 
             sr_relay_locks = (
                 db.query(SwimResult)
                 .filter(
+                    SwimResult.meetsid == meet_id,
                     SwimResult.swimeventid.in_(relay_event_ids),
                     SwimResult.athleteid.in_(club_member_ids_list),
                 )
@@ -3857,7 +3891,7 @@ def get_relay_teams(request: Request, club_id: int | None = None, db: Session = 
             # Admin viewing all clubs — batch query all swimresults for relay events
             sr_relay_locks = (
                 db.query(SwimResult)
-                .filter(SwimResult.swimeventid.in_(relay_event_ids))
+                .filter(SwimResult.meetsid == meet_id, SwimResult.swimeventid.in_(relay_event_ids))
                 .all()
             )
 
@@ -3972,9 +4006,10 @@ def get_relay_teams(request: Request, club_id: int | None = None, db: Session = 
                     SwimResult.age_code,
                     sqla_func2.count().label("cnt"),
                 )
-                .join(SwimEvent, SwimResult.swimeventid == SwimEvent.swimeventid)
+                .join(SwimEvent, (SwimResult.swimeventid == SwimEvent.swimeventid) & (SwimResult.meetsid == SwimEvent.meetsid))
                 .join(SwimStyle, SwimEvent.swimstyleid == SwimStyle.swimstyleid)
                 .filter(
+                    SwimResult.meetsid == meet_id,
                     SwimResult.athleteid.in_(club_member_ids),
                     SwimStyle.relaycount == 1,  # only individual events
                     SwimResult.age_code.isnot(None),
@@ -4001,10 +4036,11 @@ def get_relay_teams(request: Request, club_id: int | None = None, db: Session = 
                         AgeGroup.agemax,
                         sqla_func2.count().label("cnt"),
                     )
-                    .join(AgeGroup, SwimResult.agegroupid == AgeGroup.agegroupid)
-                    .join(SwimEvent, SwimResult.swimeventid == SwimEvent.swimeventid)
+                    .join(AgeGroup, (SwimResult.agegroupid == AgeGroup.agegroupid) & (SwimResult.meetsid == AgeGroup.meetsid))
+                    .join(SwimEvent, (SwimResult.swimeventid == SwimEvent.swimeventid) & (SwimResult.meetsid == SwimEvent.meetsid))
                     .join(SwimStyle, SwimEvent.swimstyleid == SwimStyle.swimstyleid)
                     .filter(
+                        SwimResult.meetsid == meet_id,
                         SwimResult.athleteid.in_(remaining_ids),
                         SwimStyle.relaycount == 1,
                     )
@@ -4118,8 +4154,11 @@ def create_relay_team(data: RelayTeamCreate, request: Request, db: Session = Dep
     if not target_club_id:
         raise HTTPException(400, "Cannot determine club")
 
+    # Get current meet ID
+    meet_id = _get_current_meet_id(db)
+
     # Resolve event
-    event = db.query(SwimEvent).options(joinedload(SwimEvent.swimstyle)).get(data.event_id)
+    event = db.query(SwimEvent).options(joinedload(SwimEvent.swimstyle)).get((meet_id, data.event_id))
     if not event:
         raise HTTPException(404, "Event not found")
     style = event.swimstyle
@@ -4128,9 +4167,6 @@ def create_relay_team(data: RelayTeamCreate, request: Request, db: Session = Dep
 
     # Resolve age range
     age_min, age_max = _age_code_to_range(data.age_code)
-
-    # Get current meet ID
-    meet_id = _get_current_meet_id(db)
 
     # Determine next team number
     existing_teams = (
@@ -4159,6 +4195,7 @@ def create_relay_team(data: RelayTeamCreate, request: Request, db: Session = Dep
             sr_lock = (
                 db.query(SwimResult)
                 .filter(
+                    SwimResult.meetsid == meet_id,
                     SwimResult.swimeventid == data.event_id,
                     SwimResult.athleteid.in_(club_member_ids),
                     SwimResult.age_code == sr_age_code,
@@ -4311,7 +4348,7 @@ def set_relay_team_member(
             raise HTTPException(404, "Relay team not found (legacy lock missing)")
 
         # Resolve event and style
-        event = db.query(SwimEvent).options(joinedload(SwimEvent.swimstyle)).get(sr.swimeventid)
+        event = db.query(SwimEvent).options(joinedload(SwimEvent.swimstyle)).get((sr.meetsid, sr.swimeventid))
         if not event or not event.swimstyle:
             raise HTTPException(404, "Event not found for legacy relay lock")
         style = event.swimstyle
@@ -4518,8 +4555,9 @@ def set_relay_team_member(
         # already shown as position 1 on a virtual team — block the assignment.
         sr_conflict = (
             db.query(SwimResult)
-            .join(SwimEvent, SwimResult.swimeventid == SwimEvent.swimeventid)
+            .join(SwimEvent, (SwimResult.swimeventid == SwimEvent.swimeventid) & (SwimResult.meetsid == SwimEvent.meetsid))
             .filter(
+                SwimResult.meetsid == meet_id,
                 SwimEvent.swimstyleid == relay.stylesid,
                 SwimResult.athleteid == athlete_id,
                 SwimResult.age_code == _relay_age_code(relay.minage, relay.maxage),
@@ -4652,7 +4690,7 @@ def set_relay_team_name(
             raise HTTPException(404, "Relay team not found (legacy lock missing)")
 
         # Resolve event and style
-        event = db.query(SwimEvent).options(joinedload(SwimEvent.swimstyle)).get(sr.swimeventid)
+        event = db.query(SwimEvent).options(joinedload(SwimEvent.swimstyle)).get((sr.meetsid, sr.swimeventid))
         if not event or not event.swimstyle:
             raise HTTPException(404, "Event not found for legacy relay lock")
         style = event.swimstyle

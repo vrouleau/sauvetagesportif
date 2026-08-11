@@ -643,18 +643,21 @@ Ordered so each stage is independently testable and the app stays in a
 working, single-meet-equivalent state after every stage (no big-bang
 cutover):
 
-1. **Fix the wipe-all-on-create bug** (finding #1 above). **Done** — see
+1. **Fix the wipe-all-on-create bug** (finding #1 above). **Done, and
+   verified for real in WSL 2026-08-11** — see
    `_replace_current_meet_structure`/`create_new_meet` in `api.py` and
    `_load_from_parsed` in `events.py`. Landed first, as planned — every
    later stage assumes opening meet B is safe while meet A is open, and
    before this it wasn't. Backend only; no visible behavior change in the
-   single-meet case, verified by
-   `tests/unit/test_meet_creation_wipe_scope.py` (no Docker available in
-   this pass, so the existing Docker-backed integration regressions
-   — `TestNewMeetPreservesHistory`, `TestUploadMeetPreservesHistory`,
-   `test_swim_styles_filtered_to_current_meet_type` — still need a real run
-   before this is fully trusted). Two implementation decisions the plan
-   above didn't spell out:
+   single-meet case. The first real Docker-backed run (the "no Docker
+   available in this pass" gap the original note here flagged) surfaced a
+   second bug in the same neighborhood — see "Composite PK follow-up"
+   below — now fixed and covered by
+   `tests/unit/test_meet_creation_wipe_scope.py`,
+   `TestNewMeetPreservesHistory`, `TestUploadMeetPreservesHistory`,
+   `test_swim_styles_filtered_to_current_meet_type`, and the new
+   `TestConcurrentOpenMeetsStayIsolated`. Two implementation decisions the
+   plan above didn't spell out:
    - `_replace_current_meet_structure` (`/upload/meet`) now **reuses** its
      target meet's identity (same meetsid) instead of deleting and
      recreating it — `_load_from_parsed` gained a `reuse_meetsid` parameter
@@ -726,3 +729,72 @@ cutover):
    wipe of just that meet's sessions/events/results/age-groups); `X-Meet-Id`
    absent, or present but not matching any open meet, means "create a new
    meet" (nothing to wipe). Implemented as stage 1 of the sequence above.
+4. **`swimeventid`/`agegroupid` collisions: composite primary key, not id
+   remapping (new, from the 2026-08-11 WSL test run).** Settled by Vincent
+   2026-08-11. See "Composite PK follow-up" below for the full story —
+   `(meetsid, swimeventid)`/`(meetsid, agegroupid)` composite keys, not
+   remapping ids on load, so the LXF's literal ids stay meaningful per meet.
+
+## Composite PK follow-up (2026-08-11) — closing the "no Docker available" gap
+
+Stage 1 above was merged (`dd5d686`) without a real Docker-backed test run —
+the plan doc said so explicitly at the time. Running the full suite in WSL
+for the first time surfaced a real regression: `POST /admin/new-meet` and
+`POST /upload/meet` both 500'd with
+`psycopg2.errors.UniqueViolation: duplicate key value violates unique
+constraint "swimevent_pkey"`.
+
+**Root cause:** `swimevent.swimeventid`/`agegroup.agegroupid` are plain
+global integer primary keys, populated verbatim from the LXF templates
+(`config/template_pool.lxf`/`template_beach.lxf`) by
+`events.py::_load_from_parsed` — fixed ranges (1065-1234 / 1066-1236),
+identical every time a meet is created from the template. Before Stage 1, a
+new meet always wiped the previously active meet's rows first, so reusing
+those fixed ids was invisible. Stage 1 deliberately stopped wiping a
+still-open meet's data — the whole point of concurrent meets — so meet B's
+insert now collides with meet A's still-present rows at the same ids. This
+wasn't specific to genuinely *concurrent* meets either: it broke ordinary
+sequential meet creation too, the moment an *archived* meet's rows (also
+never wiped) occupied the same ids — `TestNewMeetPreservesHistory` is a
+direct regression test for that path and was failing before this fix.
+
+**Fix — composite primary key**, decided over remapping ids on load (see
+Decision #4 above): `swimevent`/`agegroup`'s primary key became
+`(meetsid, swimeventid)`/`(meetsid, agegroupid)` — `meetsid` already existed
+on both tables (added by `m0001_concurrent_meets`), so this reuses an
+existing column rather than adding one. Migration:
+`backend/app/migrations/versions/m0003_swimevent_agegroup_composite_pk.py`
+(drops the old single-column PK and dependent FKs, adds the composite PK,
+re-adds FKs as composite, widens `uq_swimresult_entry` to include
+`meetsid`). `models.py`'s `SwimEvent`/`AgeGroup`/`Heat`/`SwimResult` classes
+updated to match (`PrimaryKeyConstraint`/`ForeignKeyConstraint` in
+`__table_args__`, explicit `primaryjoin` on the `SwimEvent.agegroups`/
+`heats`/`results` relationships so SQLAlchemy joins on both columns, not
+just the numeric id).
+
+A full blast-radius audit turned up something bigger than the crash: most
+read paths that touch `SwimEvent`/`AgeGroup` had no `meetsid` filter at
+all, because until Stage 1 there was only ever one meet so it didn't
+matter. A composite PK alone stops the crash, but unscoped reads would
+still silently mix two concurrently-open meets' sessions, events,
+registrations, invoices, and exports — worse than the crash, since it
+wouldn't error. Fixed in the same pass: ~15 `db.get()`/`Query.get()`
+bare-id lookups (now `(meetsid, id)` tuples) and ~30 unscoped
+filter/join sites, across `routers/api.py`, `seed.py`, `routers/live.py`,
+`invoices.py`, and `export.py`.
+
+**New test**: `TestConcurrentOpenMeetsStayIsolated` in `tests/test_integration.py`
+— forces two `registration_open=True` meets at once (the real precondition;
+no endpoint exposes this yet — Stage 7's admin dashboard is what will),
+asserts meet A's own rows are byte-for-byte unchanged after meet B is
+created reusing the same numeric ids, and that `GET /api/events`/
+`/api/sessions` never leak meet A's rows into meet B's (empty) listing.
+
+**Known gap, not closed in this pass:** the migration's ALTER-heavy path
+(dropping/re-adding constraints on an existing install) is Postgres-specific
+syntax that can't be exercised by the SQLite-based unit tests the way
+`m0001`/`m0002`'s simpler `ADD COLUMN` migrations are — it's only verified
+by the Docker suite's fresh-install path (where `create_all` builds the
+composite-PK shape directly and the migration no-ops) and by code review.
+If Vincent has a real pre-Stage-1 production database to upgrade, run the
+migration against a copy of it first rather than trusting this blind.

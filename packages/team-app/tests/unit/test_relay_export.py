@@ -44,7 +44,7 @@ from sqlalchemy.orm import sessionmaker
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "backend"))
 
 from app.models import Base, SwimEvent, SwimSession, SwimStyle, BsGlobal, GENDER_M, GENDER_F, GENDER_MIXED
-from app.models_team import TeamClub, Member, Relay, RelayPos
+from app.models_team import TeamClub, Member, Relay, RelayPos, Meet
 from app.export import generate_lxf
 
 
@@ -63,6 +63,8 @@ def _seed_ambiguous_style_meet(db_session):
     """Two relay events sharing one swimstyleid, differing only by gender."""
     db_session.add(BsGlobal(name="age_base_date", data="2026-12-31"))
 
+    db_session.add(Meet(meetsid=1, name="Test Meet", registration_open=True))
+
     club = TeamClub(clubsid=1, name="Test Club", code="TST", nation="CAN", pin="111111")
     db_session.add(club)
 
@@ -70,14 +72,14 @@ def _seed_ambiguous_style_meet(db_session):
                        name="2x50 Relais Libre", code="2x50FR")
     db_session.add(style)
 
-    session = SwimSession(swimsessionid=1, name="Session 1", sessionnumber=1)
+    session = SwimSession(swimsessionid=1, meetsid=1, name="Session 1", sessionnumber=1)
     db_session.add(session)
 
     # Same style, same session — only gender/eventnumber differ, exactly the
     # real-world shape that used to collapse onto a single exported event.
-    event_m = SwimEvent(swimeventid=100, swimsessionid=1, swimstyleid=301,
+    event_m = SwimEvent(swimeventid=100, meetsid=1, swimsessionid=1, swimstyleid=301,
                          gender=GENDER_M, round=5, eventnumber=10)
-    event_f = SwimEvent(swimeventid=101, swimsessionid=1, swimstyleid=301,
+    event_f = SwimEvent(swimeventid=101, meetsid=1, swimsessionid=1, swimstyleid=301,
                          gender=GENDER_F, round=5, eventnumber=11)
     db_session.add_all([event_m, event_f])
 
@@ -110,7 +112,7 @@ class TestRelayExportEventMatching:
         not the M event's id just because it comes first in session order."""
         club, event_m, event_f = _seed_ambiguous_style_meet(db_session)
 
-        relay = Relay(relaysid=1, clubsid=club.clubsid, stylesid=301, teamnumb=1,
+        relay = Relay(relaysid=1, meetsid=1, clubsid=club.clubsid, stylesid=301, teamnumb=1,
                        eventnumb=event_f.eventnumber, gender=GENDER_F, minage=0, maxage=0)
         db_session.add(relay)
         db_session.add_all([
@@ -132,9 +134,9 @@ class TestRelayExportEventMatching:
         resolve to their own distinct swimeventid, not both collapse onto one."""
         club, event_m, event_f = _seed_ambiguous_style_meet(db_session)
 
-        relay_m = Relay(relaysid=1, clubsid=club.clubsid, stylesid=301, teamnumb=1,
+        relay_m = Relay(relaysid=1, meetsid=1, clubsid=club.clubsid, stylesid=301, teamnumb=1,
                          eventnumb=event_m.eventnumber, gender=GENDER_M, minage=0, maxage=0)
-        relay_f = Relay(relaysid=2, clubsid=club.clubsid, stylesid=301, teamnumb=1,
+        relay_f = Relay(relaysid=2, meetsid=1, clubsid=club.clubsid, stylesid=301, teamnumb=1,
                          eventnumb=event_f.eventnumber, gender=GENDER_F, minage=0, maxage=0)
         db_session.add_all([relay_m, relay_f])
         db_session.add_all([
@@ -154,7 +156,7 @@ class TestRelayExportEventMatching:
         """relay.gender=GENDER_MIXED must round-trip as "X", not silently become "F"."""
         club, event_m, event_f = _seed_ambiguous_style_meet(db_session)
 
-        relay = Relay(relaysid=1, clubsid=club.clubsid, stylesid=301, teamnumb=1,
+        relay = Relay(relaysid=1, meetsid=1, clubsid=club.clubsid, stylesid=301, teamnumb=1,
                        eventnumb=event_f.eventnumber, gender=GENDER_MIXED, minage=0, maxage=0)
         db_session.add(relay)
         db_session.add_all([

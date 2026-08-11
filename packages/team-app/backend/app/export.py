@@ -102,6 +102,7 @@ def _meet_struct_from_db(db: Session):
 
     db_sessions = (
         db.query(SwimSession)
+        .filter(SwimSession.meetsid == meetsid)
         .order_by(SwimSession.sessionnumber, SwimSession.swimsessionid)
         .all()
     )
@@ -154,7 +155,7 @@ def generate_lxf(db: Session) -> bytes:
         joinedload(SwimResult.member).joinedload(Member.club),
         joinedload(SwimResult.event).joinedload(SwimEvent.agegroups),
         joinedload(SwimResult.event).joinedload(SwimEvent.swimstyle),
-    ).all()
+    ).filter(SwimResult.meetsid == get_active_meetsid(db)).all()
 
     # Group by club -> athlete -> entries
     clubs_map: dict[int, dict] = {}
@@ -319,7 +320,7 @@ def generate_lxf(db: Session) -> bytes:
     # Query all relay teams and their positions, grouped by club
     relay_rows = (
         db.query(Relay)
-        .filter(Relay.clubsid.isnot(None))
+        .filter(Relay.clubsid.isnot(None), Relay.meetsid == export_meetsid)
         .order_by(Relay.clubsid, Relay.stylesid, Relay.teamnumb)
         .all()
     )
@@ -582,6 +583,7 @@ def generate_meet_lxf_from_db(db: Session) -> bytes:
 
     db_sessions = (
         db.query(SwimSession)
+        .filter(SwimSession.meetsid == get_active_meetsid(db))
         .order_by(SwimSession.sessionnumber, SwimSession.swimsessionid)
         .all()
     )
