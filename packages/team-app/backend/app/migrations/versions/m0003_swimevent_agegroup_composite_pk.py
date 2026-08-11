@@ -35,6 +35,17 @@ m0001_concurrent_meets) — this migration only changes constraints, no new
 columns except making `swimevent.meetsid`/`agegroup.meetsid` NOT NULL (a
 composite PK member can't be nullable).
 
+Two dialect-specific upgrade paths, since the local dev stack defaults to
+SQLite (docker-compose.yml) while the Docker test stack and any real
+deployment use Postgres:
+- Postgres supports ALTER TABLE ... DROP/ADD CONSTRAINT directly.
+- SQLite supports neither DROP CONSTRAINT nor ADD PRIMARY KEY/FOREIGN KEY
+  after the fact — the standard approach there is the "12-step" table
+  rebuild: create a new table with the target schema, copy the data across,
+  drop the old table, rename the new one into place. Column lists are
+  pulled from the live table via `inspect()` rather than hardcoded, so nothing
+  is silently dropped if the physical schema ever drifts from models.py.
+
 Idempotent: no-op on a fresh install (updated models.py + create_all
 already builds the composite-PK shape directly) and on a database whose
 swimevent PK is already composite.
@@ -42,6 +53,7 @@ swimevent PK is already composite.
 from __future__ import annotations
 
 from sqlalchemy import inspect, text
+from sqlalchemy.schema import CreateTable
 
 NAME = "0003_swimevent_agegroup_composite_pk"
 
@@ -66,17 +78,28 @@ def upgrade(engine) -> None:
     if "meetsid" in (pk.get("constrained_columns") or []):
         return  # already composite
 
+    if engine.dialect.name == "sqlite":
+        _upgrade_sqlite(engine)
+    else:
+        _upgrade_postgres(engine)
+
+
+def _backfill_null_meetsid(conn, meets_open_expr: str) -> None:
+    fallback = conn.execute(text(
+        f"SELECT meetsid FROM meets WHERE registration_open = {meets_open_expr} "
+        "ORDER BY meetsid LIMIT 1"
+    )).scalar()
+    if fallback is not None:
+        conn.execute(text("UPDATE swimevent SET meetsid = :m WHERE meetsid IS NULL"), {"m": fallback})
+        conn.execute(text("UPDATE agegroup SET meetsid = :m WHERE meetsid IS NULL"), {"m": fallback})
+
+
+def _upgrade_postgres(engine) -> None:
     with engine.begin() as conn:
         # Backfill any stray NULL meetsid (shouldn't exist post-Stage-1, but
         # a composite PK member can't be nullable, so be defensive) using
         # whichever meet is currently open.
-        fallback = conn.execute(text(
-            "SELECT meetsid FROM meets WHERE registration_open = true "
-            "ORDER BY meetsid LIMIT 1"
-        )).scalar()
-        if fallback is not None:
-            conn.execute(text("UPDATE swimevent SET meetsid = :m WHERE meetsid IS NULL"), {"m": fallback})
-            conn.execute(text("UPDATE agegroup SET meetsid = :m WHERE meetsid IS NULL"), {"m": fallback})
+        _backfill_null_meetsid(conn, "true")
 
         insp2 = inspect(conn)
 
@@ -141,3 +164,62 @@ def upgrade(engine) -> None:
             "ALTER TABLE swimresult ADD CONSTRAINT uq_swimresult_entry "
             "UNIQUE (meetsid, athleteid, swimeventid, age_code)"
         ))
+
+
+def _rebuild_table_sqlite(conn, insp, table_name: str, target_table) -> None:
+    """Rebuild `table_name` in place to match `target_table`'s schema
+    (composite PK/FK, from the current models.py), preserving every row.
+    Column list is read from the live table, not hardcoded, so nothing is
+    silently dropped if the physical schema ever drifts from models.py.
+    """
+    cols = [c["name"] for c in insp.get_columns(table_name)]
+    tmp_name = f"{table_name}__new"
+
+    # Clone into the *same* metadata target_table already belongs to (models.py's
+    # Base.metadata, shared by models_team.py — see models_team.py's "Use the
+    # same Base so FK references resolve" comment) rather than a fresh empty
+    # one, so string FK references to sibling tables (swimsession, swimstyle,
+    # meets, agegroup...) still resolve.
+    tmp_table = target_table.to_metadata(target_table.metadata, name=tmp_name)
+    conn.execute(text(str(CreateTable(tmp_table).compile(conn))))
+    # Drop the clone from the in-memory metadata immediately — it was only
+    # needed to compile the CREATE TABLE statement under the temp name, and
+    # leaving it registered would collide with a second call in the same
+    # process (e.g. running this migration twice in one test session).
+    target_table.metadata.remove(tmp_table)
+
+    col_list = ", ".join(cols)
+    conn.execute(text(f"INSERT INTO {tmp_name} ({col_list}) SELECT {col_list} FROM {table_name}"))
+    conn.execute(text(f"DROP TABLE {table_name}"))
+    conn.execute(text(f"ALTER TABLE {tmp_name} RENAME TO {table_name}"))
+
+
+def _upgrade_sqlite(engine) -> None:
+    from ...models import SwimEvent, AgeGroup, Heat, SwimResult
+    # SwimEvent.meetsid/AgeGroup.meetsid reference meets.meetsid (models_team.py,
+    # same shared Base.metadata) — must be imported so that table is registered
+    # before to_metadata() tries to resolve the FK (same pattern m0001 uses).
+    from ... import models_team  # noqa: F401
+
+    with engine.begin() as conn:
+        # PRAGMA foreign_keys is per-connection and SQLAlchemy's own event
+        # listener (database.py) turns it ON for every new connection,
+        # including this one — turn it back off for the duration of the
+        # rebuild so dropping tables that others reference doesn't trip
+        # enforcement mid-migration, then restore it before returning.
+        conn.exec_driver_sql("PRAGMA foreign_keys=OFF")
+
+        _backfill_null_meetsid(conn, "1")
+
+        insp2 = inspect(conn)
+        # Order matters: swimevent and agegroup must reach their final
+        # composite-PK shape before heat/swimresult are rebuilt, since the
+        # latters' composite FKs reference them by the final table name.
+        _rebuild_table_sqlite(conn, insp2, "swimevent", SwimEvent.__table__)
+        insp2 = inspect(conn)
+        _rebuild_table_sqlite(conn, insp2, "agegroup", AgeGroup.__table__)
+        insp2 = inspect(conn)
+        _rebuild_table_sqlite(conn, insp2, "heat", Heat.__table__)
+        _rebuild_table_sqlite(conn, insp2, "swimresult", SwimResult.__table__)
+
+        conn.exec_driver_sql("PRAGMA foreign_keys=ON")
