@@ -33,13 +33,15 @@ An event matches a category when its age group has:
 
 ## DSQ Codes (`dsq-codes.json` → `dsq.xml`)
 
-`dsq-codes.json` is the single source of truth for disqualification codes, organized by meet type (`pool`, `beach`). Each entry has a code, French/English names, and applicable options (`INDIVIDUAL`, `RELAY`).
+`dsq-codes.json` is the single source of truth for disqualification codes, organized by meet type (`pool`, `beach`) plus a `serc` list. Each entry has a code, French/English names, and applicable options (`INDIVIDUAL`, `RELAY`).
 
-`dsq.xml` is the generated Splash Meet Manager import file (Windows-1252, `<DSQITEMS>` format). Regenerate it with:
+`dsq.xml` is the generated Splash Meet Manager import file (Windows-1252, `<DSQITEMS>` format), built from the `pool`/`beach` lists only. Regenerate it with:
 
 ```bash
 python scripts/generate_dsq_xml.py [--lang fr|en] [--type pool|beach] [--output FILE]
 ```
+
+The `serc` list (4 codes, Règlements Québec Annexe 3 — §5.14.5) is a separate, fixed set never fed into `dsq.xml`: SERC is a team-app-only judged event with no Splash/meet-app path at all. It's read at runtime by team-app's `backend/app/routers/serc.py` (`GET /api/serc/dsq-codes`) the same way `age-group-rules.json` is read by `age_group_rules.py` — see that file's `_config_path()`-style loader — and backs `PUT /api/serc/disqualification`, which lets the organizer/chief-judge flag a team DQ'd for a given SERC draw. A DQ'd (draw, team) contributes 0 to that draw's total and is excluded from that draw's ranking (rank omitted, not just last), per §2.4's "no rank or time" rule; the team's overall total simply doesn't include that draw's contribution.
 
 ## Meet templates
 

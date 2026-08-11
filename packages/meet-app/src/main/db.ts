@@ -3327,9 +3327,15 @@ export function getCombinedResults(selectedEventIds: number[], injectedDb?: Retu
       // results, not the prelim's heat times (see resolveToFinal doc comment).
       const { eventId, agegroupId } = resolveToFinal(db, prelimEventId, prelimAgegroupId)
 
-      // Get all valid results for this event's specific age group, ordered by time.
-      // An event can host multiple age groups under the same swimeventid, so results
-      // must be scoped to the age group matching this category, not the whole event.
+      // Get all valid results for this event's specific age group, ordered by
+      // qualification code first (Finale A before Finale B before Finale C...,
+      // per §4.4.2.1 — a B-finalist can post a faster raw time than an
+      // A-finalist and must still rank behind them for points/medals), then by
+      // time within that group. Meets that never split into A/B finals leave
+      // qualcode NULL on every row, so this is a no-op tiebreaker there — pure
+      // time ordering, unchanged. An event can host multiple age groups under
+      // the same swimeventid, so results must be scoped to the age group
+      // matching this category, not the whole event.
       const results = db.prepare(`
         SELECT r.athleteid, r.swimtime, r.resultstatus,
                a.lastname, a.firstname, a.birthdate,
@@ -3344,7 +3350,7 @@ export function getCombinedResults(selectedEventIds: number[], injectedDb?: Retu
           AND r.swimtime > 0
           AND (r.resultstatus IS NULL OR r.resultstatus = 0)
           AND h.racestatus = 5
-        ORDER BY r.swimtime ASC
+        ORDER BY CASE WHEN r.qualcode IS NULL THEN 1 ELSE 0 END, r.qualcode ASC, r.swimtime ASC
       `).all(eventId, agegroupId) as Array<{
         athleteid: number; swimtime: number; resultstatus: number | null
         lastname: string; firstname: string; birthdate: string | number | null
@@ -3621,6 +3627,11 @@ export interface ResultsListEvent {
  * groups under the same swimeventid (e.g. 11-12 and 19+ swimming together), so
  * results must be grouped by agegroupid, not lumped into one list — same
  * scoping issue as the combined-events report.
+ *
+ * Rank order (array index within each age group) is qualcode first, time
+ * second — see the ORDER BY comment in getCombinedResults for why: a Finale B
+ * time never outranks a Finale A one, §4.4.2.1. This is the report medals are
+ * read off of, so it's the most direct place that rule has to hold.
  */
 export function getResultsList(selectedEventIds: number[], injectedDb?: ReturnType<typeof getLocalDb>): ResultsListEvent[] {
   if (selectedEventIds.length === 0) return []
@@ -3671,7 +3682,8 @@ export function getResultsList(selectedEventIds: number[], injectedDb?: ReturnTy
         AND r.swimtime IS NOT NULL AND r.swimtime > 0
         AND (r.resultstatus IS NULL OR r.resultstatus = 0)
         AND h.racestatus = 5
-      ORDER BY r.swimeventid, ag.sortcode, r.swimtime ASC
+      ORDER BY r.swimeventid, ag.sortcode,
+        CASE WHEN r.qualcode IS NULL THEN 1 ELSE 0 END, r.qualcode ASC, r.swimtime ASC
     `).all(...params) as Array<{
       eventId: number; agegroupId: number | null; ageMin: number | null; ageMax: number | null; sortcode: number | null
       athleteId: number; lastName: string | null; firstName: string | null; birthdate: string | number | null
@@ -3702,7 +3714,8 @@ export function getResultsList(selectedEventIds: number[], injectedDb?: ReturnTy
         AND r.swimtime IS NOT NULL AND r.swimtime > 0
         AND (r.resultstatus IS NULL OR r.resultstatus = 0)
         AND h.racestatus = 5
-      ORDER BY r.swimeventid, ag.sortcode, r.swimtime ASC
+      ORDER BY r.swimeventid, ag.sortcode,
+        CASE WHEN r.qualcode IS NULL THEN 1 ELSE 0 END, r.qualcode ASC, r.swimtime ASC
     `).all(...params) as Array<{
       relayId: number; eventId: number; agegroupId: number | null; ageMin: number | null; ageMax: number | null; sortcode: number | null
       teamName: string | null; clubName: string; swimtime: number
@@ -3836,7 +3849,7 @@ export function getPointStandings(selectedEventIds: number[], injectedDb?: Retur
            AND r.swimtime > 0
            AND (r.resultstatus IS NULL OR r.resultstatus = 0)
            AND h.racestatus = 5
-         ORDER BY r.swimtime ASC`
+         ORDER BY CASE WHEN r.qualcode IS NULL THEN 1 ELSE 0 END, r.qualcode ASC, r.swimtime ASC`
       ).all(eventId, agegroupId) as Array<{
         swimtime: number; resultstatus: number | null
         clubname: string; clubcode: string
@@ -3916,7 +3929,7 @@ export function getPointStandings(selectedEventIds: number[], injectedDb?: Retur
            AND r.swimtime > 0
            AND (r.resultstatus IS NULL OR r.resultstatus = 0)
            AND h.racestatus = 5
-         ORDER BY r.swimtime ASC`
+         ORDER BY CASE WHEN r.qualcode IS NULL THEN 1 ELSE 0 END, r.qualcode ASC, r.swimtime ASC`
       ).all(eventId, agegroupId) as Array<{
         swimtime: number; resultstatus: number | null
         clubname: string; clubcode: string

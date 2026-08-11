@@ -44,6 +44,7 @@ class SercConfig(Base):
 
     draw_orders = relationship("SercDrawOrder", back_populates="config", cascade="all, delete-orphan")
     scores = relationship("SercScore", back_populates="config", cascade="all, delete-orphan")
+    disqualifications = relationship("SercDisqualification", back_populates="config", cascade="all, delete-orphan")
 
 
 class SercDrawOrder(Base):
@@ -74,3 +75,22 @@ class SercScore(Base):
         UniqueConstraint("config_id", "draw_number", "relay_team_id", "section", "field",
                          name="uq_serc_score"),
     )
+
+
+class SercDisqualification(Base):
+    """A team disqualified for a given draw — Règlements Québec §5.14.5 / Annexe 3.
+
+    `code` is one of the 4 fixed SERC DSQ codes in config/dsq-codes.json's
+    "serc" list (stored as a string to match the pool/beach dsqitemid
+    convention). A DQ'd (draw, team) scores 0 for that draw and is excluded
+    from that draw's ranking — see get_results() in routers/serc.py.
+    """
+    __tablename__ = "serc_disqualification"
+    config_id = Column(Integer, ForeignKey("serc_config.id", ondelete="CASCADE"), primary_key=True)
+    draw_number = Column(SmallInteger, primary_key=True)
+    relay_team_id = Column(Integer, primary_key=True)
+    code = Column(String(4))
+    note = Column(Text)
+    created_at = Column(String(30))
+
+    config = relationship("SercConfig", back_populates="disqualifications")

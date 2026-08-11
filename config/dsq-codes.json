@@ -386,5 +386,31 @@
       "name_en": "Failure to complete the event and/or course as defined and described.",
       "options": "INDIVIDUAL,RELAY"
     }
+  ],
+  "serc": [
+    {
+      "code": "1",
+      "name_fr": "Recevoir une aide, une instruction ou un conseil de l'extérieur.",
+      "name_en": "Receiving outside help, instruction, or advice.",
+      "options": "RELAY"
+    },
+    {
+      "code": "2",
+      "name_fr": "Introduire un appareil de télécommunication en huis clos.",
+      "name_en": "Bringing a telecommunication device into the isolation area.",
+      "options": "RELAY"
+    },
+    {
+      "code": "3",
+      "name_fr": "Utiliser tout équipement non fourni dans le cadre de la compétition.",
+      "name_en": "Using any equipment not provided as part of the competition.",
+      "options": "RELAY"
+    },
+    {
+      "code": "4",
+      "name_fr": "Les sauveteurs qui agressent verbalement ou physiquement une victime peuvent se voir infliger une pénalité ou être disqualifiés.",
+      "name_en": "Lifesavers who verbally or physically assault a victim may be penalized or disqualified.",
+      "options": "RELAY"
+    }
   ]
 }

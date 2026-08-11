@@ -418,6 +418,8 @@ function ScoringPage({ teams, config, lang }) {
   const [order, setOrder] = useState([])
   const [drawMode, setDrawMode] = useState('random') // 'random' or 'final'
   const [showQR, setShowQR] = useState(false)
+  const [dsqCodes, setDsqCodes] = useState([])
+  const [dsq, setDsq] = useState({}) // { [relay_team_id]: dsqCode }
   const gridRef = useRef(null)
 
   useEffect(() => {
@@ -428,6 +430,30 @@ function ScoringPage({ teams, config, lang }) {
       setOrder(o.length ? o : teams.map(t => t.relay_team_id))
     }).catch(() => setOrder(teams.map(t => t.relay_team_id)))
   }, [teams])
+
+  useEffect(() => {
+    api.get(`/serc/dsq-codes?lang=${lang}`).then(r => setDsqCodes(r.data || [])).catch(() => {})
+  }, [lang])
+
+  useEffect(() => {
+    api.get('/serc/disqualifications').then(r => {
+      const m = {}
+      for (const d of r.data || []) {
+        if (d.draw === 1) m[d.relay_team_id] = d.code
+      }
+      setDsq(m)
+    }).catch(() => {})
+  }, [])
+
+  async function setTeamDsq(teamId, code) {
+    await api.put('/serc/disqualification', { draw: 1, relay_team_id: teamId, code: code || null })
+    setDsq(prev => {
+      const copy = { ...prev }
+      if (code) copy[teamId] = code
+      else delete copy[teamId]
+      return copy
+    })
+  }
 
   async function randomize() {
     const r = await api.post('/serc/draw-order/1/randomize')
@@ -564,7 +590,7 @@ function ScoringPage({ teams, config, lang }) {
               <th className="px-2 py-1 text-left sticky left-0 bg-gray-800 z-10 w-40">{lang === 'fr' ? 'Critère' : 'Criteria'}</th>
               <th className="px-1 py-1 text-center w-10">{lang === 'fr' ? 'Fact.' : 'Fact.'}</th>
               {orderedTeams.map((t, i) => (
-                <th key={t.relay_team_id} className="px-1 py-1 text-center min-w-[50px] max-w-[70px] truncate" title={t.name}>
+                <th key={t.relay_team_id} className={`px-1 py-1 text-center min-w-[50px] max-w-[70px] truncate ${dsq[t.relay_team_id] ? 'bg-red-900' : ''}`} title={t.name}>
                   {i + 1}. {t.name?.split('/')[0] || t.club}
                 </th>
               ))}
@@ -574,7 +600,29 @@ function ScoringPage({ teams, config, lang }) {
               <td className="px-2 py-1 sticky left-0 bg-blue-900 z-10">TOTAL</td>
               <td></td>
               {orderedTeams.map(t => (
-                <td key={t.relay_team_id} className="px-1 py-1 text-center">{calcTotal(t.relay_team_id).toFixed(1)}</td>
+                <td key={t.relay_team_id} className={`px-1 py-1 text-center ${dsq[t.relay_team_id] ? 'bg-red-900' : ''}`}>
+                  {dsq[t.relay_team_id] ? 'DSQ' : calcTotal(t.relay_team_id).toFixed(1)}
+                </td>
+              ))}
+            </tr>
+            {/* Disqualification row */}
+            <tr className="bg-red-50">
+              <td className="px-2 py-1 sticky left-0 bg-red-50 z-10 font-bold text-red-700">{lang === 'fr' ? 'DISQUALIFICATION' : 'DISQUALIFICATION'}</td>
+              <td></td>
+              {orderedTeams.map(t => (
+                <td key={t.relay_team_id} className="px-1 py-0.5 text-center">
+                  <select
+                    className={`w-full text-center border rounded px-0.5 py-0.5 text-[10px] ${dsq[t.relay_team_id] ? 'border-red-500 text-red-700 font-bold bg-red-100' : 'border-gray-200 text-gray-500'}`}
+                    value={dsq[t.relay_team_id] || ''}
+                    onChange={e => setTeamDsq(t.relay_team_id, e.target.value)}
+                    title={lang === 'fr' ? "Règlements Québec, §5.14.5 / Annexe 3" : 'Règlements Québec, §5.14.5 / Annexe 3'}
+                  >
+                    <option value="">—</option>
+                    {dsqCodes.map(c => (
+                      <option key={c.code} value={c.code}>DQ{c.code} — {c.name}</option>
+                    ))}
+                  </select>
+                </td>
               ))}
             </tr>
           </thead>
@@ -631,14 +679,20 @@ function ScoringPage({ teams, config, lang }) {
 
 function ResultsPage({ lang }) {
   const [results, setResults] = useState(null)
+  const [dsqCodes, setDsqCodes] = useState([])
 
   useEffect(() => {
     api.get('/serc/results').then(r => setResults(r.data)).catch(() => {})
   }, [])
 
+  useEffect(() => {
+    api.get(`/serc/dsq-codes?lang=${lang}`).then(r => setDsqCodes(r.data || [])).catch(() => {})
+  }, [lang])
+
   if (!results) return <div className="text-xs text-gray-500">{lang === 'fr' ? 'Chargement des résultats…' : 'Loading results…'}</div>
 
   const ranked = results.overall || []
+  const dsqLabel = code => dsqCodes.find(c => c.code === code)?.name || ''
 
   return (
     <div className="max-w-4xl space-y-4">
@@ -655,15 +709,24 @@ function ResultsPage({ lang }) {
         </thead>
         <tbody>
           {ranked.map(r => (
-            <tr key={r.relay_team_id} className="border-b border-gray-100 hover:bg-blue-50">
+            <tr key={r.relay_team_id} className={`border-b border-gray-100 hover:bg-blue-50 ${r.disqualified ? 'bg-red-50' : ''}`}>
               <td className="px-3 py-1.5">
-                <span className={`inline-flex w-6 h-6 items-center justify-center rounded-full text-white font-bold text-[10px] ${r.rank === 1 ? 'bg-amber-500' : r.rank === 2 ? 'bg-gray-400' : r.rank === 3 ? 'bg-amber-800' : 'bg-gray-700'}`}>
-                  {r.rank}
-                </span>
+                {r.disqualified ? (
+                  <span className="inline-flex px-1.5 h-6 items-center justify-center rounded-full text-white font-bold text-[9px] bg-red-700">DSQ</span>
+                ) : (
+                  <span className={`inline-flex w-6 h-6 items-center justify-center rounded-full text-white font-bold text-[10px] ${r.rank === 1 ? 'bg-amber-500' : r.rank === 2 ? 'bg-gray-400' : r.rank === 3 ? 'bg-amber-800' : 'bg-gray-700'}`}>
+                    {r.rank}
+                  </span>
+                )}
               </td>
-              <td className="px-3 py-1.5 font-bold">{r.name}</td>
+              <td className="px-3 py-1.5 font-bold">
+                {r.name}
+                {r.disqualified && (
+                  <div className="text-[10px] font-normal text-red-700">DQ{r.dsq_code} — {dsqLabel(r.dsq_code)}</div>
+                )}
+              </td>
               <td className="px-3 py-1.5 text-gray-600">{r.club}</td>
-              <td className="px-3 py-1.5 text-right font-bold text-lg">{r.total.toFixed(2)}</td>
+              <td className="px-3 py-1.5 text-right font-bold text-lg">{r.disqualified ? 'DSQ' : r.total.toFixed(2)}</td>
             </tr>
           ))}
         </tbody>
