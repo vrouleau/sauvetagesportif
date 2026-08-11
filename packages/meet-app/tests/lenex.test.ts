@@ -124,6 +124,97 @@ describe('LENEX importer', () => {
     expect(events.c).toBe(s1.events)
   })
 
+  // Regression test for a live bug: importLenex never read the <AGEDATE> element team-app's
+  // exporter writes (export.py:218) at all, so an imported team-app meet silently fell back
+  // to today's calendar year for season resolution (ageGroupRules.ts's getSeasonYear) and
+  // left the shared UI's "Date pour calcul de l'âge" field blank — getMeetValues() only
+  // reads the MEETVALUES blob, which this sync also populates alongside the standalone
+  // bsglobal.AGEDATE row getSeasonYear actually reads.
+  it('imports AGEDATE from a team-app-exported <AGEDATE> element into both bsglobal.AGEDATE and MEETVALUES', () => {
+    const lxfPath = join(tmpdir(), `test-agedate-import-${randomBytes(4).toString('hex')}.lxf`)
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<LENEX version="3.0">
+  <MEETS>
+    <MEET name="Test Meet" city="Test City" nation="CAN" course="LCM">
+      <AGEDATE value="2027-12-31" type="DATE" />
+      <SESSIONS>
+        <SESSION number="1" name="Session 1">
+          <EVENTS>
+            <EVENT eventid="1" number="1" gender="M" round="TIM">
+              <SWIMSTYLE swimstyleid="500" distance="50" relaycount="1" name="Test Style" />
+            </EVENT>
+          </EVENTS>
+        </SESSION>
+      </SESSIONS>
+    </MEET>
+  </MEETS>
+</LENEX>`
+    writeZipSingleEntry(lxfPath, 'meet.lef', xml)
+
+    try {
+      importLenex(lxfPath, db)
+
+      const ageDateRow = db.prepare(`SELECT data FROM bsglobal WHERE name='AGEDATE'`).get() as { data: string } | undefined
+      expect(ageDateRow?.data).toBe('D;20271231000000000')
+
+      const mvRow = db.prepare(`SELECT data FROM bsglobal WHERE name='MEETVALUES'`).get() as { data: string } | undefined
+      expect(mvRow?.data).toContain('AGEDATE=D;20271231000000000')
+    } finally {
+      try { unlinkSync(lxfPath) } catch {}
+    }
+  })
+
+  it('re-syncs AGEDATE even on an entries-only reimport (skipEventStructure path)', () => {
+    const structureXml = `<?xml version="1.0" encoding="UTF-8"?>
+<LENEX version="3.0">
+  <MEETS>
+    <MEET name="Test Meet" city="Test City" nation="CAN" course="LCM">
+      <AGEDATE value="2027-12-31" type="DATE" />
+      <SESSIONS>
+        <SESSION number="1" name="Session 1">
+          <EVENTS>
+            <EVENT eventid="1" number="1" gender="M" round="TIM">
+              <SWIMSTYLE swimstyleid="500" distance="50" relaycount="1" name="Test Style" />
+            </EVENT>
+          </EVENTS>
+        </SESSION>
+      </SESSIONS>
+    </MEET>
+  </MEETS>
+</LENEX>`
+    // No <ATHLETES> needed — just a <CLUB> is enough to flip hasClubs=true (importLenex's
+    // skipEventStructure check), which is the branch this test actually exercises.
+    const entriesXml = `<?xml version="1.0" encoding="UTF-8"?>
+<LENEX version="3.0">
+  <MEETS>
+    <MEET name="Test Meet" city="Test City" nation="CAN" course="LCM">
+      <AGEDATE value="2028-12-31" type="DATE" />
+      <CLUBS>
+        <CLUB clubid="1" code="TST" name="Test Club" />
+      </CLUBS>
+    </MEET>
+  </MEETS>
+</LENEX>`
+
+    const structurePath = join(tmpdir(), `test-agedate-struct-${randomBytes(4).toString('hex')}.lxf`)
+    const entriesPath = join(tmpdir(), `test-agedate-entries-${randomBytes(4).toString('hex')}.lxf`)
+    writeZipSingleEntry(structurePath, 'meet.lef', structureXml)
+    writeZipSingleEntry(entriesPath, 'meet.lef', entriesXml)
+
+    try {
+      importLenex(structurePath, db)
+      let ageDateRow = db.prepare(`SELECT data FROM bsglobal WHERE name='AGEDATE'`).get() as { data: string } | undefined
+      expect(ageDateRow?.data).toBe('D;20271231000000000')
+
+      importLenex(entriesPath, db)
+      ageDateRow = db.prepare(`SELECT data FROM bsglobal WHERE name='AGEDATE'`).get() as { data: string } | undefined
+      expect(ageDateRow?.data).toBe('D;20281231000000000')
+    } finally {
+      try { unlinkSync(structurePath) } catch {}
+      try { unlinkSync(entriesPath) } catch {}
+    }
+  })
+
   // Regression test for a real bug found auditing a live beach meet (CQS Plage 2026):
   // an athlete born right on an age-bracket boundary was first registered under the
   // wrong division (Open) via team-app, then corrected to the right one (15-18) and

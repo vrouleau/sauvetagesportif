@@ -271,6 +271,34 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
     bsglobalStmt.run('MEETVALUES', data)
   }
 
+  // AGEDATE — synced regardless of skipEventStructure: it's a meet-level
+  // date, not part of the event/session structure that flag protects, and
+  // team-app is the canonical upstream source for it at every LXF stage
+  // (meet, entries, and results exports all write it — see team-app's
+  // export.py). This was missing entirely: importLenex never read the
+  // <AGEDATE> element at all, so an imported team-app meet silently fell
+  // back to today's calendar year for season resolution (getSeasonYear)
+  // and left the shared UI's "Date pour calcul de l'âge" field blank
+  // (getMeetValues() only reads the MEETVALUES blob, which this also
+  // populates alongside the standalone bsglobal.AGEDATE row that
+  // getSeasonYear actually reads).
+  const ageDateElem = child(meet, 'AGEDATE')
+  const ageDateValue = ageDateElem?.attrs.value
+  if (ageDateValue && /^\d{4}-\d{2}-\d{2}$/.test(ageDateValue)) {
+    const digits = ageDateValue.replace(/-/g, '')
+    bsglobalStmt.run('AGEDATE', `D;${digits}000000000`)
+    const mvRow2 = db.prepare(`SELECT data FROM bsglobal WHERE name='MEETVALUES'`).get() as { data: string | null } | undefined
+    const mv: Record<string, string> = {}
+    if (mvRow2?.data) {
+      for (const line of mvRow2.data.split(/\r?\n/)) {
+        const eq = line.indexOf('=')
+        if (eq >= 0) mv[line.slice(0, eq)] = line.slice(eq + 1)
+      }
+    }
+    mv['AGEDATE'] = `D;${digits}000000000`
+    bsglobalStmt.run('MEETVALUES', Object.entries(mv).map(([k, v]) => `${k}=${v}`).join('\r\n'))
+  }
+
   // Pool info from POOL element
   const pool = child(meet, 'POOL')
   if (pool) {

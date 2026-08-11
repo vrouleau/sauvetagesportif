@@ -2297,7 +2297,14 @@ export async function flushMeet(): Promise<void> {
     if (row.data) upsert.run(row.name, row.data)
   }
   const year = new Date().getFullYear()
-  upsert.run('AGEDATE', `D;${year}1231000000000`)
+  const ageDate = `D;${year}1231000000000`
+  upsert.run('AGEDATE', ageDate)
+  // Also into MEETVALUES — bsglobal was fully cleared above, so this is a
+  // fresh blob with just this one line. Without it, getMeetValues() (what
+  // the shared UI's "Date pour calcul de l'âge" field reads) has nothing to
+  // show even though the standalone AGEDATE row above is set correctly and
+  // getSeasonYear() reads it fine — same disconnect importLenex had.
+  upsert.run('MEETVALUES', `AGEDATE=${ageDate}`)
 }
 
 
