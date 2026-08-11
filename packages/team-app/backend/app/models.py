@@ -27,7 +27,8 @@ from __future__ import annotations
 from datetime import datetime
 from sqlalchemy import (
     Column, Integer, SmallInteger, String, Text, Date, DateTime,
-    Float, ForeignKey, Boolean, UniqueConstraint,
+    Float, ForeignKey, ForeignKeyConstraint, PrimaryKeyConstraint,
+    Boolean, UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, relationship
 
@@ -95,8 +96,11 @@ class SwimSession(Base):
 
 class SwimEvent(Base):
     __tablename__ = "swimevent"
-    swimeventid = Column(Integer, primary_key=True)
-    meetsid = Column(Integer, ForeignKey("meets.meetsid"))
+    __table_args__ = (
+        PrimaryKeyConstraint("meetsid", "swimeventid"),
+    )
+    swimeventid = Column(Integer)
+    meetsid = Column(Integer, ForeignKey("meets.meetsid"), nullable=False)
     comment = Column(Text)
     daytime = Column(DateTime)
     duration = Column(DateTime)
@@ -139,11 +143,21 @@ class SwimEvent(Base):
 
     session = relationship("SwimSession", back_populates="events")
     swimstyle = relationship("SwimStyle")
-    agegroups = relationship("AgeGroup", back_populates="event",
-                             cascade="all, delete-orphan")
-    heats = relationship("Heat", back_populates="event",
-                         cascade="all, delete-orphan")
-    results = relationship("SwimResult", back_populates="event")
+    agegroups = relationship(
+        "AgeGroup", back_populates="event", cascade="all, delete-orphan",
+        primaryjoin="and_(SwimEvent.meetsid == AgeGroup.meetsid, "
+                    "SwimEvent.swimeventid == AgeGroup.swimeventid)",
+    )
+    heats = relationship(
+        "Heat", back_populates="event", cascade="all, delete-orphan",
+        primaryjoin="and_(SwimEvent.meetsid == Heat.meetsid, "
+                    "SwimEvent.swimeventid == Heat.swimeventid)",
+    )
+    results = relationship(
+        "SwimResult", back_populates="event",
+        primaryjoin="and_(SwimEvent.meetsid == SwimResult.meetsid, "
+                    "SwimEvent.swimeventid == SwimResult.swimeventid)",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -152,8 +166,16 @@ class SwimEvent(Base):
 
 class AgeGroup(Base):
     __tablename__ = "agegroup"
-    agegroupid = Column(Integer, primary_key=True)
-    meetsid = Column(Integer, ForeignKey("meets.meetsid"))
+    __table_args__ = (
+        PrimaryKeyConstraint("meetsid", "agegroupid"),
+        ForeignKeyConstraint(
+            ["meetsid", "swimeventid"],
+            ["swimevent.meetsid", "swimevent.swimeventid"],
+            ondelete="CASCADE",
+        ),
+    )
+    agegroupid = Column(Integer)
+    meetsid = Column(Integer, ForeignKey("meets.meetsid"), nullable=False)
     agebytotal = Column(String(1), default='F')
     agemax = Column(SmallInteger)
     agemax2 = Column(SmallInteger)
@@ -179,7 +201,7 @@ class AgeGroup(Base):
     scoretype = Column(SmallInteger)
     seedwithtsonly = Column(String(1), default='F')
     sortcode = Column(Integer)
-    swimeventid = Column(Integer, ForeignKey("swimevent.swimeventid", ondelete="CASCADE"))
+    swimeventid = Column(Integer)
     swimlevels = Column(String(255))
     useformedals = Column(String(1), default='F')
     useforscoring = Column(String(1), default='F')
@@ -203,7 +225,7 @@ class SwimResult(Base):
     swrabesttime = Column(Integer)
     swrsbestid = Column(Integer)
     swrsbesttime = Column(Integer)
-    agegroupid = Column(Integer, ForeignKey("agegroup.agegroupid"))
+    agegroupid = Column(Integer)
     backuptime1 = Column(Integer)
     backuptime2 = Column(Integer)
     backuptime3 = Column(Integer)
@@ -232,7 +254,7 @@ class SwimResult(Base):
     qualcode = Column(String(2))
     reactiontime = Column(SmallInteger)
     resultstatus = Column(SmallInteger)  # NULL/0=normal, 1=DNS, 2=DNF, 3=DSQ
-    swimeventid = Column(Integer, ForeignKey("swimevent.swimeventid"))
+    swimeventid = Column(Integer)
     swimtime = Column(Integer)  # ms, NULL = not swum yet
     usetimetype = Column(SmallInteger, default=0)
     dsqofficialid = Column(Integer)
@@ -245,12 +267,28 @@ class SwimResult(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     member = relationship("Member", back_populates="swim_results")
-    event = relationship("SwimEvent", back_populates="results")
-    agegroup = relationship("AgeGroup")
+    event = relationship(
+        "SwimEvent", back_populates="results",
+        primaryjoin="and_(SwimResult.meetsid == SwimEvent.meetsid, "
+                    "SwimResult.swimeventid == SwimEvent.swimeventid)",
+    )
+    agegroup = relationship(
+        "AgeGroup",
+        primaryjoin="and_(SwimResult.meetsid == AgeGroup.meetsid, "
+                    "SwimResult.agegroupid == AgeGroup.agegroupid)",
+    )
 
     __table_args__ = (
-        UniqueConstraint("athleteid", "swimeventid", "age_code",
+        UniqueConstraint("meetsid", "athleteid", "swimeventid", "age_code",
                          name="uq_swimresult_entry"),
+        ForeignKeyConstraint(
+            ["meetsid", "swimeventid"],
+            ["swimevent.meetsid", "swimevent.swimeventid"],
+        ),
+        ForeignKeyConstraint(
+            ["meetsid", "agegroupid"],
+            ["agegroup.meetsid", "agegroup.agegroupid"],
+        ),
     )
 
 
@@ -260,6 +298,17 @@ class SwimResult(Base):
 
 class Heat(Base):
     __tablename__ = "heat"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["meetsid", "swimeventid"],
+            ["swimevent.meetsid", "swimevent.swimeventid"],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["meetsid", "agegroupid"],
+            ["agegroup.meetsid", "agegroup.agegroupid"],
+        ),
+    )
     heatid = Column(Integer, primary_key=True)
     meetsid = Column(Integer, ForeignKey("meets.meetsid"))
     agegroupid = Column(Integer)
@@ -270,14 +319,18 @@ class Heat(Base):
     racestatus = Column(SmallInteger)  # 0=empty, 4=seeded, 5=validated, 8+=completed
     remarks = Column(Text)
     sortcode = Column(Integer)
-    swimeventid = Column(Integer, ForeignKey("swimevent.swimeventid", ondelete="CASCADE"))
+    swimeventid = Column(Integer)
     name = Column(String(50))
     seedeventid = Column(Integer)
     code = Column(String(10))
     reservecount = Column(SmallInteger)
     foreigncount = Column(SmallInteger)
 
-    event = relationship("SwimEvent", back_populates="heats")
+    event = relationship(
+        "SwimEvent", back_populates="heats",
+        primaryjoin="and_(Heat.meetsid == SwimEvent.meetsid, "
+                    "Heat.swimeventid == SwimEvent.swimeventid)",
+    )
 
 
 # ---------------------------------------------------------------------------

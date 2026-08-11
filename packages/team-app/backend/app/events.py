@@ -38,26 +38,38 @@ def _round_from_lenex(round_str: str) -> int:
     return mapping.get(round_str, ROUND_TIM)
 
 
-def _load_from_parsed(db: Session, meet: ParsedMeet) -> int:
-    """Insert events + age groups + swimstyles from a parsed meet. Returns event count."""
+def _load_from_parsed(db: Session, meet: ParsedMeet, reuse_meetsid: int | None = None) -> int:
+    """Insert events + age groups + swimstyles from a parsed meet. Returns event count.
+
+    `reuse_meetsid`, when given, updates that existing (open) Meet row in
+    place instead of allocating a new meetsid — used when re-uploading a
+    corrected structure onto the meet that's already open, so meet_config,
+    secret_links, and organizer_club_id (all keyed by meetsid) keep pointing
+    at the same meet rather than being orphaned. See docs/CONCURRENT_MEETS_PLAN.md.
+    """
     count = 0
 
-    # ── Also create a Meet row in the Team Manager schema ─────────────────
+    # ── Also create/reuse a Meet row in the Team Manager schema ───────────
     from sqlalchemy import func
-    next_meet_id = (db.query(func.max(Meet.meetsid)).scalar() or 0) + 1
-    team_meet = Meet(
-        meetsid=next_meet_id,
-        name=meet.meet_name or "Current Meet",
-        course={"LCM": 1, "SCM": 3, "SCY": 2}.get(meet.course, 1),
-        meetstate=0,  # planned
-        # This becomes "the current meet" — see get_active_meetsid in
-        # meet_config.py, which resolves it instead of the old bsglobal
-        # current_meetsid pointer. meet_type isn't known here (callers set
-        # it explicitly afterward — see routers/api.py's _set_meet_type
-        # call sites).
-        registration_open=True,
-    )
-    db.add(team_meet)
+    team_meet = db.get(Meet, reuse_meetsid) if reuse_meetsid is not None else None
+    if team_meet is not None:
+        team_meet.name = meet.meet_name or "Current Meet"
+        team_meet.course = {"LCM": 1, "SCM": 3, "SCY": 2}.get(meet.course, 1)
+    else:
+        next_meet_id = (db.query(func.max(Meet.meetsid)).scalar() or 0) + 1
+        team_meet = Meet(
+            meetsid=next_meet_id,
+            name=meet.meet_name or "Current Meet",
+            course={"LCM": 1, "SCM": 3, "SCY": 2}.get(meet.course, 1),
+            meetstate=0,  # planned
+            # This becomes "the current meet" — see get_active_meetsid in
+            # meet_config.py, which resolves it instead of the old bsglobal
+            # current_meetsid pointer. meet_type isn't known here (callers set
+            # it explicitly afterward — see routers/api.py's _set_meet_type
+            # call sites).
+            registration_open=True,
+        )
+        db.add(team_meet)
     db.flush()
 
     for ses in meet.sessions:

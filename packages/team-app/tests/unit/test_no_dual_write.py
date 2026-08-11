@@ -104,6 +104,8 @@ def seeded_event(db_session) -> SwimEvent:
     db_session.flush()
 
     event = SwimEvent(
+        swimeventid=1,
+        meetsid=1,
         swimsessionid=session.swimsessionid,
         swimstyleid=style.swimstyleid,
         gender=2,
@@ -113,6 +115,8 @@ def seeded_event(db_session) -> SwimEvent:
     db_session.flush()
 
     agegroup = AgeGroup(
+        agegroupid=1,
+        meetsid=1,
         swimeventid=event.swimeventid,
         agemin=18,
         agemax=25,

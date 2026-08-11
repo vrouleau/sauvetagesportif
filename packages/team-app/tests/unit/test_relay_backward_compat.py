@@ -154,12 +154,12 @@ def seed_data(db_session):
     db_session.add(style)
 
     # Relay event
-    event = SwimEvent(swimeventid=10, swimsessionid=1, swimstyleid=201,
+    event = SwimEvent(swimeventid=10, meetsid=1, swimsessionid=1, swimstyleid=201,
                       gender=GENDER_MIXED, round=5, eventnumber=5)
     db_session.add(event)
 
     # Age group for the event
-    agegroup = AgeGroup(agegroupid=1, swimeventid=10, agemin=13, agemax=14,
+    agegroup = AgeGroup(agegroupid=1, meetsid=1, swimeventid=10, agemin=13, agemax=14,
                         name="13-14", code="13-14")
     db_session.add(agegroup)
 
@@ -278,7 +278,7 @@ def _migrate_virtual_team(db_session, swimresult_id, position, athlete_id):
     if not sr:
         return None, False
 
-    event = db_session.get(SwimEvent, sr.swimeventid)
+    event = db_session.get(SwimEvent, (sr.meetsid, sr.swimeventid))
     if not event:
         return None, False
     style = db_session.get(SwimStyle, event.swimstyleid)
@@ -421,6 +421,7 @@ class TestRelayBackwardCompat:
         # Create swimresult relay lock
         sr = SwimResult(
             swimresultid=100,
+            meetsid=1,
             athleteid=1,
             swimeventid=10,
             agegroupid=1,
@@ -461,6 +462,7 @@ class TestRelayBackwardCompat:
         """Req 10.4: Migration keeps original lock athlete in position 1."""
         sr = SwimResult(
             swimresultid=101,
+            meetsid=1,
             athleteid=3,  # Charlie
             swimeventid=10,
             agegroupid=1,
@@ -538,6 +540,7 @@ class TestRelayBackwardCompat:
         # Two different swimresult locks
         sr1 = SwimResult(
             swimresultid=100,
+            meetsid=1,
             athleteid=1,
             swimeventid=10,
             agegroupid=1,
@@ -546,6 +549,7 @@ class TestRelayBackwardCompat:
         )
         sr2 = SwimResult(
             swimresultid=101,
+            meetsid=1,
             athleteid=2,
             swimeventid=10,
             agegroupid=1,
@@ -567,6 +571,7 @@ class TestRelayBackwardCompat:
         """Migration with athleteId=None removes position 1 lock athlete."""
         sr = SwimResult(
             swimresultid=100,
+            meetsid=1,
             athleteid=1,
             swimeventid=10,
             agegroupid=1,

@@ -1019,7 +1019,12 @@ class TestSessionDateExclusivityEndpoint:
     directly in the backend container via exec_in_backend(), same DB the
     running stack uses, then drives the actual assertion over plain HTTP."""
 
-    RIVAL_MEETSID = 999999
+    # Negative and far from any real meetsid — must never win
+    # get_active_meetsid()'s "highest registration_open meetsid" tie-break
+    # against the real meet created by `uploaded`, or GET /api/sessions
+    # (now correctly meetsid-scoped) would resolve to this rival meet
+    # instead of the real one the test is meant to operate on.
+    RIVAL_MEETSID = -999999
     RIVAL_DATE = "2027-03-15"
 
     @pytest.fixture(scope="class", autouse=True)
@@ -3080,6 +3085,187 @@ class TestUploadMeetPreservesHistory:
         assert meet_type.upper() == "POOL", (
             f"Pool meet misclassified as {meet_type} due to a historical beach style"
         )
+
+
+# ---------------------------------------------------------------------------
+# Concurrent open meets — swimevent/agegroup ids must not collide, and
+# meetsid-scoped listing endpoints must not mix the two meets' data
+# ---------------------------------------------------------------------------
+
+class TestConcurrentOpenMeetsStayIsolated:
+    """Regression test for the composite-PK fix (docs/CONCURRENT_MEETS_PLAN.md,
+    Phase 2 Stage 1 follow-up). `swimevent.swimeventid`/`agegroup.agegroupid`
+    are populated from fixed LXF-template id ranges every time a meet is
+    created, so a second meet used to collide on Postgres's swimevent_pkey
+    the moment its rows weren't wiped first. The fix makes the primary key
+    (meetsid, swimeventid)/(meetsid, agegroupid) instead — this proves two
+    meets can share those numeric ids without corrupting each other, and
+    that meetsid-scoped endpoints (GET /api/sessions, /api/events) only ever
+    show the currently-active meet's rows, never a mix of both.
+
+    /admin/new-meet has no way yet to leave the prior meet open (Phase 2's
+    admin dashboard, stage 7, isn't built) — it always closes it — so this
+    test forces both meets' registration_open=True directly in the DB via
+    exec_in_backend() afterward to reach the genuinely-concurrent
+    precondition, same escape hatch TestSessionDateExclusivityEndpoint uses.
+    """
+
+    @pytest.fixture(autouse=True, scope="class")
+    def _restore_current_meet(self, admin_headers):
+        yield
+        with open(MEET_TEMPLATE, "rb") as f:
+            requests.post(f"{BASE_URL}/api/upload/meet?force=true",
+                          files={"file": ("meet.lxf", f, "application/octet-stream")},
+                          headers=admin_headers, timeout=60)
+        if ENTRIES_FILE.exists():
+            with open(ENTRIES_FILE, "rb") as f:
+                requests.post(f"{BASE_URL}/api/upload/entries",
+                              files={"file": ("entries.lxf", f, "application/octet-stream")},
+                              headers=admin_headers, timeout=60)
+
+    def test_new_meet_alongside_open_meet_does_not_corrupt_either(self, uploaded, athletes, admin_headers):
+        meet_a_id = int(exec_in_backend(
+            "from app.meet_config import get_active_meetsid\n"
+            "from app.database import SessionLocal\n"
+            "db = SessionLocal()\n"
+            "print(get_active_meetsid(db))\n"
+        ).strip())
+
+        def _counts(meetsid: int) -> tuple[int, int, int]:
+            out = exec_in_backend(
+                "from app.database import SessionLocal\n"
+                "from app.models import SwimEvent, AgeGroup, SwimResult\n"
+                "from app.models_team import Meet\n"
+                "db = SessionLocal()\n"
+                f"m = {meetsid}\n"
+                "print(db.query(SwimEvent).filter(SwimEvent.meetsid == m).count())\n"
+                "print(db.query(AgeGroup).filter(AgeGroup.meetsid == m).count())\n"
+                "print(db.query(SwimResult).filter(SwimResult.meetsid == m).count())\n"
+            ).strip().splitlines()
+            return int(out[0]), int(out[1]), int(out[2])
+
+        # `uploaded` only imports athletes/clubs, no registrations — create one
+        # of meet A's own so there's real SwimResult data to protect. Inserted
+        # directly (not via POST /api/registrations) since age_code validation
+        # isn't what this test is about.
+        events = requests.get(f"{BASE_URL}/api/events", headers=admin_headers, timeout=10).json()
+        individual_event_id = next(e["id"] for e in events if e["relay_count"] == 1)
+        exec_in_backend(
+            "from app.database import SessionLocal\n"
+            "from app.models import SwimResult\n"
+            "from app.models_team import Meet\n"
+            "db = SessionLocal()\n"
+            "db.add(SwimResult(\n"
+            f"    athleteid={athletes[0]['id']}, meetsid={meet_a_id},\n"
+            f"    swimeventid={individual_event_id}, age_code='Open',\n"
+            "))\n"
+            "db.commit()\n"
+        )
+
+        before_events, before_agegroups, before_results = _counts(meet_a_id)
+        assert before_events > 0 and before_results > 0, "test setup produced no data to protect"
+        # Meet A's own swimeventids — these are the fixed 1065.. range from the
+        # LXF template, the exact values meet B's creation below will reuse.
+        meet_a_event_ids = sorted(e["id"] for e in events)
+
+        meet_b_id = None
+        try:
+            # Creates meet B from the same fixed-id-range template meet A used —
+            # this is exactly the collision the composite PK fix targets: before
+            # the fix, this 500s with a swimevent_pkey UniqueViolation the moment
+            # meet A's still-open rows occupy the same ids.
+            r = requests.post(f"{BASE_URL}/api/admin/new-meet", json={"meet_type": "pool"},
+                              headers=admin_headers, timeout=60)
+            assert r.status_code == 200, f"new-meet failed while meet A was open: {r.text}"
+            meet_b_id = int(exec_in_backend(
+                "from app.meet_config import get_active_meetsid\n"
+                "from app.database import SessionLocal\n"
+                "db = SessionLocal()\n"
+                "print(get_active_meetsid(db))\n"
+            ).strip())
+            assert meet_b_id != meet_a_id
+
+            # /admin/new-meet closes meet A as a stopgap (Phase 2 stage 7 not
+            # built yet) — force both open at once to reach the real precondition.
+            exec_in_backend(
+                "from app.database import SessionLocal\n"
+                "from app.models_team import Meet\n"
+                "db = SessionLocal()\n"
+                f"db.get(Meet, {meet_a_id}).registration_open = True\n"
+                "db.commit()\n"
+            )
+
+            after_events, after_agegroups, after_results = _counts(meet_a_id)
+            assert (after_events, after_agegroups, after_results) == (before_events, before_agegroups, before_results), (
+                "Meet A's own rows changed after meet B was created alongside it — "
+                "the composite PK isn't isolating the two meets"
+            )
+
+            # /admin/new-meet only uses the template to seed the global SwimStyle
+            # catalog (stub events at those same fixed ids, deleted right after) —
+            # a brand-new meet is deliberately empty (see api.py's create_new_meet
+            # docstring), so meet B itself should have zero events/age-groups.
+            b_events, b_agegroups, _ = _counts(meet_b_id)
+            assert (b_events, b_agegroups) == (0, 0), (
+                "Meet B unexpectedly has events/age-groups of its own — "
+                "create_new_meet's stub-then-delete step didn't run as designed"
+            )
+
+            # get_active_meetsid() resolves to the higher meetsid when more than
+            # one is registration_open — that's meet B (empty) here, so these
+            # endpoints must show nothing, never meet A's 57 events/age-groups
+            # leaking through just because they happen to share numeric ids.
+            events_resp = requests.get(f"{BASE_URL}/api/events", headers=admin_headers, timeout=10)
+            events_resp.raise_for_status()
+            assert events_resp.json() == [], (
+                "GET /api/events returned rows while meet B (the active one) is "
+                "supposed to be empty — likely leaking meet A's events, which "
+                "reuse the same swimeventid values"
+            )
+            assert not any(e["id"] in meet_a_event_ids for e in events_resp.json())
+
+            sessions_resp = requests.get(f"{BASE_URL}/api/sessions", headers=admin_headers, timeout=10)
+            sessions_resp.raise_for_status()
+            assert sessions_resp.json() == [], (
+                "GET /api/sessions returned rows while meet B (the active one) is "
+                "supposed to be empty — likely leaking meet A's sessions"
+            )
+
+            # And meet A's own events, still sitting in the same table at the same
+            # numeric ids, must still be exactly what they were before meet B existed.
+            db_meet_a_event_ids = sorted(int(x) for x in exec_in_backend(
+                "from app.database import SessionLocal\n"
+                "from app.models import SwimEvent\n"
+                "from app.models_team import Meet\n"
+                "db = SessionLocal()\n"
+                f"m = {meet_a_id}\n"
+                "for e in db.query(SwimEvent).filter(SwimEvent.meetsid == m).all():\n"
+                "    print(e.swimeventid)\n"
+            ).strip().splitlines())
+            assert db_meet_a_event_ids == meet_a_event_ids, (
+                "Meet A's swimeventid set changed after meet B reused the same "
+                "numeric ids under a different meetsid"
+            )
+        finally:
+            delete_meet_b = (
+                f"m = {meet_b_id}\n"
+                "db.query(SwimResult).filter(SwimResult.meetsid == m).delete()\n"
+                "db.query(AgeGroup).filter(AgeGroup.meetsid == m).delete()\n"
+                "db.query(SwimEvent).filter(SwimEvent.meetsid == m).delete()\n"
+                "db.query(SwimSession).filter(SwimSession.meetsid == m).delete()\n"
+                "db.query(Meet).filter(Meet.meetsid == m).delete()\n"
+            ) if meet_b_id is not None else ""
+            exec_in_backend(
+                "from app.database import SessionLocal\n"
+                "from app.models_team import Meet\n"
+                "from app.models import SwimSession, SwimEvent, AgeGroup, SwimResult\n"
+                "db = SessionLocal()\n"
+                + delete_meet_b +
+                f"a = db.get(Meet, {meet_a_id})\n"
+                "if a:\n"
+                "    a.registration_open = True\n"
+                "db.commit()\n"
+            )
 
 
 # ---------------------------------------------------------------------------
