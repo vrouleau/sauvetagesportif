@@ -500,40 +500,21 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
     // Convert the selected TIM event to Prelim + Final pair
     if (selected.type !== 'event') return
     const event = selected.event
+    const session = selected.session
     if (event.phase !== 'Finale directe') {
       window.alert('Only Timed Final events can be converted to Prelim + Final')
       return
-    }
-
-    // Find or create a Finals session
-    let finalsSession = localSessions.find(s =>
-      s.name.toLowerCase().includes('finale') || s.events.some(e => e.phase === 'Finale')
-    )
-    if (!finalsSession) {
-      // Create a new finals session
-      const maxNum = Math.max(...localSessions.map(s => s.number), 0)
-      try {
-        const result = await api.createSession('Finales', maxNum + 1)
-        // Reload to get the session object
-        const updatedSessions = await api.getSessions()
-        setLocalSessions(updatedSessions)
-        finalsSession = updatedSessions.find((s: Session) => s.id === result.id)
-        if (!finalsSession) return
-      } catch {
-        window.alert('Failed to create Finals session')
-        return
-      }
     }
 
     try {
       // 1. Convert original event: TIM → PRE (Eliminatoire)
       await api.updateEvent(event.id, { round: 1 })  // ROUND_PRE = 1
 
-      // 2. Create the Final event in the finals session, keeping the prelim's event
+      // 2. Create the Final event in the same session, keeping the prelim's event
       // number (Splash convention: prelim and final share the same event number,
       // differentiated by round — not by a new number).
       const result = await api.createEvent(
-        finalsSession.id,
+        session.id,
         event.number,
         event.gender,
         event.distance,
@@ -544,7 +525,14 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
       // 3. Link the final to the prelim via preveventid
       await api.updateEvent(result.id, { preveventid: event.id, swimstyleid: event.swimstyleId })
 
-      // 4. Reload
+      // 4. Position the final directly under the prelim (createEvent appends it
+      // at the end of the session, so it needs to be moved into place).
+      const ids = session.events.map(e => e.id)
+      const idx = ids.indexOf(event.id)
+      ids.splice(idx + 1, 0, result.id)
+      await api.reorderEvents(ids.map((id, i) => ({ eventId: id, sessionId: session.id, sortcode: i + 1 })))
+
+      // 5. Reload
       const updatedSessions = await api.getSessions()
       setLocalSessions(updatedSessions)
 
@@ -727,10 +715,18 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
       } else if (selected.type === 'event') {
         const { session, event } = selected
         await api.deleteEvent(event.id)
+        // Deleting a Final reverts its paired prelim back to a Timed Final,
+        // undoing the split done by handleConvertToFinal.
+        if (event.phase === 'Finale' && event.prevEventId != null) {
+          await api.updateEvent(event.prevEventId, { round: 5 })  // ROUND_TIM = 5
+        }
         setLocalSessions((prev) =>
-          prev.map((s) =>
-            s.id === session.id ? { ...s, events: s.events.filter((e) => e.id !== event.id) } : s
-          )
+          prev.map((s) => ({
+            ...s,
+            events: s.events
+              .filter((e) => e.id !== event.id)
+              .map((e) => (e.id === event.prevEventId ? { ...e, phase: 'Finale directe' } : e)),
+          }))
         )
         setSelected({ type: 'session', session })
       } else if (selected.type === 'agegroup') {

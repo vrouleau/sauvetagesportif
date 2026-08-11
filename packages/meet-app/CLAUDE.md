@@ -178,6 +178,13 @@ final to show up as an unrelated "Event 83". Because `eventnumber` can now be
 shared, timing-scan barcode matching keys on `swimeventid` instead — see
 "Barcode format" below.
 
+The Final is created in the *same* session as the prelim, placed directly
+after it (no separate "Finales" session is created). The link is `preveventid`
+on the Final row, pointing back at the prelim — exposed to the frontend as
+`CompetitionEvent.prevEventId`. Deleting a Final reverses the split: the
+paired prelim's `round` is set back to `5` (TIM/Finale directe), as if it had
+never been converted.
+
 ### LXF round-trip details
 
 **Import (`importLenex`):**

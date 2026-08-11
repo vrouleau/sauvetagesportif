@@ -1519,6 +1519,7 @@ def list_sessions(request: Request, db: Session = Depends(get_db)):
                 "phase": "Eliminatoire" if e.round == 1 else "Finale" if e.round == 4 else "Finale directe",
                 "isAdmin": is_admin,
                 "swimstyleId": e.swimstyleid,
+                "prevEventId": e.preveventid,
                 "fee": e.fee,
                 "masters": e.masters == "T",
                 "maxEntries": e.maxentries,

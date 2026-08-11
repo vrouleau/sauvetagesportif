@@ -341,6 +341,7 @@ export interface CompetitionEventRow {
   scheduledTime?: string
   duration?: string
   swimstyleId?: number | null
+  prevEventId?: number | null
   finalOrder?: number | null
   maxEntries?: number | null
   masters?: boolean
@@ -680,7 +681,7 @@ export async function getSessions(injectedDb?: ReturnType<typeof getLocalDb>): P
   const events = db.prepare(`
     SELECT e.swimeventid, e.swimsessionid, e.eventnumber, e.gender, e.round,
            e.internalevent, e.daytime, e.duration, e.roundname AS eventname, e.comment, e.swimstyleid,
-           e.finalorder, e.maxentries, e.masters, e.fee,
+           e.finalorder, e.maxentries, e.masters, e.fee, e.preveventid,
            ss.distance, ss.stroke, ss.name AS stylename
     FROM swimevent e
     LEFT JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid
@@ -692,7 +693,7 @@ export async function getSessions(injectedDb?: ReturnType<typeof getLocalDb>): P
     stroke: number | null; stylename: string | null; swimstyleid: number | null
     internalevent: string | null; daytime: string | number | null; duration: string | number | null
     eventname: string | null; comment: string | null; finalorder: number | null; maxentries: number | null
-    masters: string | null; fee: number | null
+    masters: string | null; fee: number | null; preveventid: number | null
   }>
 
   const eventIds = events.map(r => r.swimeventid)
@@ -743,6 +744,7 @@ export async function getSessions(injectedDb?: ReturnType<typeof getLocalDb>): P
       scheduledTime: formatDaytime(e.daytime),
       duration: formatDaytime(e.duration),
       swimstyleId: e.swimstyleid ?? null,
+      prevEventId: e.preveventid ?? null,
       finalOrder: e.finalorder,
       maxEntries: e.maxentries ?? null,
       masters: e.masters === 'T',

@@ -61,6 +61,7 @@ export interface CompetitionEvent {
   scheduledTime?: string
   duration?: string
   swimstyleId?: number | null
+  prevEventId?: number | null // for a 'Finale' event, the id of its paired 'Eliminatoire' prelim
   finalOrder?: number | null  // 1=fast-first (A swum first), 2=slow-first (A swum last, standard)
   maxEntries?: number | null  // beach: max participants per heat (overrides swimstyle.distance)
   fee?: number | null         // per-event entry fee in dollars (e.g., 5.00)
