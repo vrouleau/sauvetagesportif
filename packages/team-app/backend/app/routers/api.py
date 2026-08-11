@@ -768,6 +768,18 @@ def set_meet_config(entries: dict, db: Session = Depends(get_db)):
                 _set_closure_date(db, "", meetsid=meetsid)
         elif key == "DEADLINE" and not value:
             _set_closure_date(db, "", meetsid=meetsid)
+        # Sync AGEDATE → age_base_date — without this, the "Date for age calculation" UI
+        # field (shared EventsPage.tsx) only ever touched the MEETVALUES blob, leaving the
+        # actual age-group suggestion logic (resolve_matching_age, reads age_base_date)
+        # completely unaffected by an organizer's edit. Confirmed live at a real meet: this
+        # same disconnect also left Splash's own AGEDATE unset, which broke its Results tab
+        # age-group labels (see config/CLAUDE.md "Age Group Rules").
+        elif key == "AGEDATE" and value:
+            raw = value
+            if len(raw) >= 8:
+                _set_config(db, "age_base_date", f"{raw[:4]}-{raw[4:6]}-{raw[6:8]}")
+        elif key == "AGEDATE" and not value:
+            _set_config(db, "age_base_date", "")
     # Serialize back
     data = "\r\n".join(f"{k}={v}" for k, v in existing.items())
     if meetsid:
