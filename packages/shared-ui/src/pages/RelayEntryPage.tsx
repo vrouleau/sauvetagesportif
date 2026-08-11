@@ -648,6 +648,19 @@ export default function RelayEntryPage({ role, clubId, refreshKey }: RelayEntryP
     return false
   }, [pageData, flatEvents])
 
+  // Total team count across every event/age category currently visible
+  // (same scope as hasIncompleteTeams — respects the admin/organizer club filter).
+  const totalTeamsCount: number = useMemo(() => {
+    if (!pageData) return 0
+    let count = 0
+    for (const event of flatEvents) {
+      for (const ac of event.ageCodes) {
+        count += (pageData.teamsByEvent[`${event.eventId}-${ac}`] || []).length
+      }
+    }
+    return count
+  }, [pageData, flatEvents])
+
   // ─── Loading state ──────────────────────────────────────────────────────────
   if (loading && !pageData) {
     return (
@@ -678,6 +691,9 @@ export default function RelayEntryPage({ role, clubId, refreshKey }: RelayEntryP
       <div className="px-4 py-3 bg-white border-b border-gray-300 shrink-0 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <h2 className="text-sm font-semibold text-gray-800">{t.relay.pageTitle}</h2>
+          <span className="text-xs text-gray-500 bg-white border border-gray-300 rounded px-2 py-0.5">
+            {t.relay.teamsCount(totalTeamsCount)}
+          </span>
           {hasIncompleteTeams && (
             <span className="text-xs font-medium text-amber-700 bg-amber-100 border border-amber-300 rounded px-2 py-0.5">
               {t.relay.incompleteTeamsWarning}

@@ -20,7 +20,7 @@
  * MeetAPI adapter for the team-app (HTTP → FastAPI backend).
  * Implements the same MeetAPI interface as the Electron IPC adapter.
  */
-import api from './api'
+import api, { headers } from './api'
 import { newSwimstylesDetail, confirmNewSwimstyles } from './newSwimstylesConfirm'
 
 export const meetApiHttp = {
@@ -187,7 +187,7 @@ export const meetApiHttp = {
 
   async exportMeet() {
     const res = await fetch('/api/export/meet-lxf', {
-      headers: { 'X-Club-Pin': localStorage.getItem('pin') || '' }
+      headers: headers()
     })
     if (!res.ok) throw new Error(`Export failed: ${res.status}`)
     const blob = await res.blob()

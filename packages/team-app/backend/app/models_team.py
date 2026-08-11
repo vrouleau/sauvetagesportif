@@ -235,6 +235,20 @@ class MemberMeet(Base):
     changed = Column(DateTime)
 
 
+# ── CLUB_MEET_INVITES (per-club-per-meet invite/stripe send counts) ──────────
+# Supersedes TeamClub.invite_send_count/stripe_send_count, which are a single
+# counter shared across every meet a club has ever been invited to — wrong
+# once two meets can be concurrently open, since a club invited for meet A
+# would show as "already invited" on meet B too. Old columns are left in
+# place, unused, rather than dropped (see docs/CONCURRENT_MEETS_PLAN.md).
+class ClubMeetInvite(Base):
+    __tablename__ = "club_meet_invites"
+    clubsid = Column(Integer, ForeignKey("clubs.clubsid", ondelete="CASCADE"), primary_key=True)
+    meetsid = Column(Integer, ForeignKey("meets.meetsid", ondelete="CASCADE"), primary_key=True)
+    invite_send_count = Column(Integer, default=0)
+    stripe_send_count = Column(Integer, default=0)
+
+
 # ── RELAYS ────────────────────────────────────────────────────────────────────
 
 class Relay(Base):

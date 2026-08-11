@@ -339,9 +339,11 @@ const fr = {
     loading: 'Chargement...',
     importLxf: 'Importer (.lxf)',
     exportLxf: 'Exporter (.lxf)',
+    entriesCount: (n: number) => `${n} athlète${n !== 1 ? 's' : ''} inscrit${n !== 1 ? 's' : ''}`,
   },
   relay: {
     pageTitle: 'Inscriptions relais',
+    teamsCount: (n: number) => `${n} équipe${n !== 1 ? 's' : ''}`,
     addTeam: 'Ajouter une équipe',
     deleteConfirmation: 'Êtes-vous sûr de vouloir supprimer cette équipe?',
     closureMessage: 'Les inscriptions relais sont fermées',
@@ -685,9 +687,11 @@ const en = {
     loading: 'Loading...',
     importLxf: 'Import (.lxf)',
     exportLxf: 'Export (.lxf)',
+    entriesCount: (n: number) => `${n} athlete${n !== 1 ? 's' : ''} entered`,
   },
   relay: {
     pageTitle: 'Relay Entries',
+    teamsCount: (n: number) => `${n} team${n !== 1 ? 's' : ''}`,
     addTeam: 'Add Team',
     deleteConfirmation: 'Are you sure you want to delete this team?',
     closureMessage: 'Relay entries are closed',

@@ -31,7 +31,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .models import BsGlobal, MeetConfig, SwimSession
-from .models_team import Meet as TeamMeet
+from .models_team import ClubMeetInvite, Meet as TeamMeet
 
 
 def _get_config(db: Session, key: str) -> str | None:
@@ -205,3 +205,19 @@ def _set_organizer_club_id(db: Session, club_id, meetsid: int | None = None):
     meetsid = meetsid if meetsid is not None else get_active_meetsid(db)
     if meetsid:
         _set_meet_config(db, meetsid, "organizer_club_id", str(club_id))
+
+
+def increment_club_invite_send_count(db: Session, club_id: int, meetsid: int) -> None:
+    row = db.get(ClubMeetInvite, (club_id, meetsid))
+    if not row:
+        row = ClubMeetInvite(clubsid=club_id, meetsid=meetsid)
+        db.add(row)
+    row.invite_send_count = (row.invite_send_count or 0) + 1
+
+
+def increment_club_stripe_send_count(db: Session, club_id: int, meetsid: int) -> None:
+    row = db.get(ClubMeetInvite, (club_id, meetsid))
+    if not row:
+        row = ClubMeetInvite(clubsid=club_id, meetsid=meetsid)
+        db.add(row)
+    row.stripe_send_count = (row.stripe_send_count or 0) + 1

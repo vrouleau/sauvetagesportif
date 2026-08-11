@@ -49,6 +49,7 @@ from ..meet_config import (
     _get_closure_date, _set_closure_date,
     _get_organizer_club_id, _set_organizer_club_id,
     session_date_conflict,
+    increment_club_invite_send_count, increment_club_stripe_send_count,
 )
 from ..seed import seed_from_lxf
 from ..best_times import (
@@ -627,20 +628,19 @@ def create_new_meet(data: dict = Body(default={}), db: Session = Depends(get_db)
     scope a wipe to).
 
     Whatever meet was previously active gets closed (registration_open set
-    to False) but its data is left intact — until Phase 2's admin dashboard
-    (Stage 7) exists to let an operator explicitly keep it open alongside
-    the new one, closing it here is the only way to avoid silently leaving
-    an un-closeable, invisible second `registration_open=True` meet behind
-    (which would keep colliding with the new meet's session dates via
-    session_date_conflict). This is a deliberate stopgap, not the real
-    close-meet UX (flush for beach / archive for pool) — that's Stage 7.
+    to False) but its data is left intact, unless the caller explicitly
+    passes close_other_meets=false — Stage 7's admin dashboard is what
+    lets an operator make that choice; every other caller keeps today's
+    always-close behavior by omitting the field.
 
-    Accepts optional JSON body: {"meet_type": "pool"|"beach"}
-    Defaults to "pool" if not specified.
+    Accepts optional JSON body: {"meet_type": "pool"|"beach",
+    "close_other_meets": bool}. meet_type defaults to "pool",
+    close_other_meets defaults to true.
     """
     meet_type = (data.get("meet_type") or "pool").lower()
     if meet_type not in ("pool", "beach"):
         raise HTTPException(400, f"Invalid meet_type: {meet_type}. Must be 'pool' or 'beach'.")
+    close_other_meets = data.get("close_other_meets", True)
 
     # Resolve template path based on meet type
     if meet_type == "beach":
@@ -662,11 +662,12 @@ def create_new_meet(data: dict = Body(default={}), db: Session = Depends(get_db)
 
     # Close (don't wipe) whatever meet was previously active — see docstring above.
     from ..models_team import Event as TeamEvent, Session as TeamSession, Meet as TeamMeet
-    prior_meetsid = get_active_meetsid(db)
-    if prior_meetsid is not None:
-        prior_meet = db.get(TeamMeet, prior_meetsid)
-        if prior_meet is not None:
-            prior_meet.registration_open = False
+    if close_other_meets:
+        prior_meetsid = get_active_meetsid(db)
+        if prior_meetsid is not None:
+            prior_meet = db.get(TeamMeet, prior_meetsid)
+            if prior_meet is not None:
+                prior_meet.registration_open = False
     db.flush()
 
     # Import from template — this seeds the SwimStyle catalog (each style is declared via
@@ -725,7 +726,8 @@ def create_new_meet(data: dict = Body(default={}), db: Session = Depends(get_db)
     styles_loaded = db.query(SwimStyle).count()
 
     db.commit()
-    return {"events_loaded": 0, "styles_loaded": styles_loaded, "filename": template_path.name, "meet_type": meet_type}
+    return {"events_loaded": 0, "styles_loaded": styles_loaded, "filename": template_path.name,
+            "meet_type": meet_type, "meet_id": new_meetsid}
 
 
 @router.get("/meet-info")
@@ -882,26 +884,32 @@ def set_closure_date(data: ClosureDateUpdate, db: Session = Depends(get_db)):
 def list_clubs(request: Request, db: Session = Depends(get_db)):
     from sqlalchemy import func, distinct
     from ..invoices import _club_line_items, _meet_fees
-    from ..models_team import Relay, RelayPos
+    from ..models_team import Relay, RelayPos, ClubMeetInvite
 
     pin = request.headers.get("X-Club-Pin", "")
     role, _ = _resolve_role(pin, db)
+    meetsid = resolve_meetsid(request, db)
     clubs = db.query(TeamClub).order_by(TeamClub.name).all()
 
-    # Pre-compute athlete counts per club (from members table)
+    # Pre-compute athlete counts per club (from members table — not
+    # meet-scoped, a club's roster exists independent of any one meet)
     athlete_counts = dict(
         db.query(Member.clubsid, func.count(Member.membersid))
         .group_by(Member.clubsid)
         .all()
     )
 
-    # Pre-compute registered athlete counts per club
+    # Pre-compute registered athlete counts per club, scoped to the caller's
+    # target meet — SwimResult is meetsid-scoped, so without this filter a
+    # club's registration count leaks in from every meet it's ever
+    # registered for, not just the one currently selected.
     reg_counts = dict(
         db.query(Member.clubsid, func.count(distinct(Member.membersid)))
         .join(SwimResult, SwimResult.athleteid == Member.membersid)
+        .filter(SwimResult.meetsid == meetsid)
         .group_by(Member.clubsid)
         .all()
-    )
+    ) if meetsid else {}
 
     # Pre-compute incomplete relay team counts per club (a team is complete once
     # every position up to its style's relaycount has an assigned athlete)
@@ -915,24 +923,33 @@ def list_clubs(request: Request, db: Session = Depends(get_db)):
     incomplete_relay_counts: dict[int, int] = {}
     for relaysid, clubsid, stylesid in (
         db.query(Relay.relaysid, Relay.clubsid, Relay.stylesid)
-        .filter(Relay.clubsid.isnot(None))
+        .filter(Relay.clubsid.isnot(None), Relay.meetsid == meetsid)
         .all()
-    ):
+    ) if meetsid else []:
         needed = relay_style_counts.get(stylesid) or 1
         filled = filled_position_counts.get(relaysid, 0)
         if filled < needed:
             incomplete_relay_counts[clubsid] = incomplete_relay_counts.get(clubsid, 0) + 1
 
-    meet_fees = _meet_fees(db)
+    # Per-meet invite/stripe send counts (club_meet_invites) — see
+    # get_club_meet_invite_counts's docstring for why this is no longer a
+    # plain column on TeamClub.
+    invite_counts: dict[int, tuple[int, int]] = {}
+    if meetsid:
+        for row in db.query(ClubMeetInvite).filter(ClubMeetInvite.meetsid == meetsid).all():
+            invite_counts[row.clubsid] = (row.invite_send_count or 0, row.stripe_send_count or 0)
+
+    meet_fees = _meet_fees(db, meetsid=meetsid)
     result = []
     for c in clubs:
+        invite_count, stripe_count = invite_counts.get(c.clubsid, (0, 0))
         item = {"id": c.clubsid, "name": c.name, "code": c.code,
                 "athlete_count": athlete_counts.get(c.clubsid, 0),
                 "registered_athlete_count": reg_counts.get(c.clubsid, 0),
-                "invite_send_count": c.invite_send_count or 0,
-                "stripe_send_count": c.stripe_send_count or 0,
+                "invite_send_count": invite_count,
+                "stripe_send_count": stripe_count,
                 "incomplete_relay_count": incomplete_relay_counts.get(c.clubsid, 0)}
-        items = _club_line_items(db, c, meet_fees)
+        items = _club_line_items(db, c, meet_fees, meetsid=meetsid)
         item["total_fees_cents"] = sum(it["unit_cents"] * it["qty"] for it in items)
         if role in ("admin", "organizer"):
             item["email"] = c.email or ""
@@ -1029,7 +1046,7 @@ def send_pin(club_id: int, data: dict, request: Request, db: Session = Depends(g
     meet_name = (_get_meet_config(db, meetsid, "meet_name") if meetsid else None) or "Meet"
     closure_date = _get_meet_config(db, meetsid, "closure_date") if meetsid else None
 
-    org_cfg = _get_organizer_club_id(db)
+    org_cfg = _get_organizer_club_id(db, meetsid=meetsid)
     is_organizer = org_cfg and str(club.clubsid) == str(org_cfg)
 
     org_email = ""
@@ -1139,7 +1156,7 @@ def send_pin(club_id: int, data: dict, request: Request, db: Session = Depends(g
     if resp.status_code not in (200, 201):
         raise HTTPException(502, f"Resend error: {resp.text}")
 
-    club.invite_send_count = (club.invite_send_count or 0) + 1
+    increment_club_invite_send_count(db, club.clubsid, meetsid)
     db.commit()
 
     return {"message": f"Email sent to {club.email}"}
@@ -2534,6 +2551,37 @@ def delete_historical_meet(meet_id: int, db: Session = Depends(get_db)):
     return {"ok": True, "deleted_meet": meet.name}
 
 
+@router.get("/admin/meets", dependencies=[Depends(require_admin)])
+def list_open_meets(db: Session = Depends(get_db)):
+    """List non-archived meets (meetstate != 3) — Stage 7's admin dashboard.
+
+    Distinct from /admin/historical-meets (archived + oddly, today, also
+    the current meet — see docs/CONCURRENT_MEETS_PLAN.md): this is
+    specifically "meets an admin can still act on" (open or closed
+    registration, not yet archived), each with the per-meet metadata the
+    dashboard's per-row actions need.
+    """
+    from ..models_team import Meet as TeamMeet
+    meets = db.query(TeamMeet).filter(TeamMeet.meetstate != 3).order_by(TeamMeet.meetsid).all()
+    result = []
+    for m in meets:
+        org_id = _get_organizer_club_id(db, meetsid=m.meetsid)
+        org_club = db.get(TeamClub, int(org_id)) if org_id else None
+        result.append({
+            "meet_id": m.meetsid,
+            "name": m.name,
+            "meet_type": m.meet_type,
+            "registration_open": bool(m.registration_open),
+            "organizer_club_id": org_club.clubsid if org_club else None,
+            "organizer_club_name": org_club.name if org_club else None,
+            "closure_date": _get_closure_date(db, meetsid=m.meetsid),
+            "session_count": db.query(SwimSession).filter(SwimSession.meetsid == m.meetsid).count(),
+            "event_count": db.query(SwimEvent).filter(SwimEvent.meetsid == m.meetsid).count(),
+            "registration_count": db.query(SwimResult).filter(SwimResult.meetsid == m.meetsid).count(),
+        })
+    return result
+
+
 @router.get("/status")
 def status(db: Session = Depends(get_db)):
     from ..models_team import Result
@@ -2557,52 +2605,63 @@ def status(db: Session = Depends(get_db)):
     }
 
 
-@router.delete("/registrations", dependencies=[Depends(require_admin)])
-def flush_meet(db: Session = Depends(get_db)):
-    """Flush meet: delete registrations, events, meet config. Reloads pool template.
-
-    Current (non-historical) meet only — matches what the UI actually
-    promises ("delete the organizer designation, meet structure, and all
-    registrations"), same as _reset_for_next_meet. Used to blanket-delete
-    every TeamMeet row (and every SwimResult/AgeGroup/SwimEvent/SwimSession
-    row) including archived (meetstate=3) ones, silently destroying
-    historical results/events on every "Flush Meet" click — real data loss,
-    not the advertised behavior. Fixed here; see docs/CONCURRENT_MEETS_PLAN.md
-    for why these tables carry a meetsid at all now.
+def _flush_meet_data(db: Session, meetsid: int) -> int:
+    """Delete one meet's registrations, events, and meet config. Shared by
+    the header-resolved DELETE /registrations route (Admin's "Flush Meet"
+    button) and the dashboard's explicit-path DELETE /admin/meets/{id}
+    route. Scoped to exactly meetsid — archived (meetstate=3) meets and
+    any other concurrently-open meet's data are untouched.
     """
     from ..models_team import Event as TeamEvent, Session as TeamSession, Meet as TeamMeet
-    current_ids = [r for r, in db.query(TeamMeet.meetsid).filter(TeamMeet.meetstate != 3).all()]
-    reg_count = 0
-    if current_ids:
-        reg_count = db.query(SwimResult).filter(SwimResult.meetsid.in_(current_ids)).delete(synchronize_session=False)
-        db.query(Heat).filter(Heat.meetsid.in_(current_ids)).delete(synchronize_session=False)
-        db.query(AgeGroup).filter(AgeGroup.meetsid.in_(current_ids)).delete(synchronize_session=False)
-        db.query(SwimEvent).filter(SwimEvent.meetsid.in_(current_ids)).delete(synchronize_session=False)
-        db.query(SwimSession).filter(SwimSession.meetsid.in_(current_ids)).delete(synchronize_session=False)
-        # Clear Team Manager event tables for the current meet only — archived
-        # meets, and the SwimStyle catalog their Event/Result rows still
-        # reference, survive. Deleting the Meet row(s) cascades to meet_config
-        # (ON DELETE CASCADE on MeetConfig.meetsid) — no more hardcoded
-        # meet-scoped bsglobal key list to keep in sync.
-        db.query(TeamEvent).filter(TeamEvent.meetsid.in_(current_ids)).delete(synchronize_session=False)
-        db.query(TeamSession).filter(TeamSession.meetsid.in_(current_ids)).delete(synchronize_session=False)
-        db.query(TeamMeet).filter(TeamMeet.meetsid.in_(current_ids)).delete(synchronize_session=False)
-    # Reset age_base_date to Dec 31 of current year (app-level, stays in bsglobal)
+    reg_count = db.query(SwimResult).filter(SwimResult.meetsid == meetsid).delete(synchronize_session=False)
+    db.query(Heat).filter(Heat.meetsid == meetsid).delete(synchronize_session=False)
+    db.query(AgeGroup).filter(AgeGroup.meetsid == meetsid).delete(synchronize_session=False)
+    db.query(SwimEvent).filter(SwimEvent.meetsid == meetsid).delete(synchronize_session=False)
+    db.query(SwimSession).filter(SwimSession.meetsid == meetsid).delete(synchronize_session=False)
+    # Deleting the Meet row cascades to meet_config (ON DELETE CASCADE on
+    # MeetConfig.meetsid) — no hardcoded meet-scoped bsglobal key list to
+    # keep in sync.
+    db.query(TeamEvent).filter(TeamEvent.meetsid == meetsid).delete(synchronize_session=False)
+    db.query(TeamSession).filter(TeamSession.meetsid == meetsid).delete(synchronize_session=False)
+    db.query(TeamMeet).filter(TeamMeet.meetsid == meetsid).delete(synchronize_session=False)
+
     from datetime import date as _date
     year = _date.today().year
     _set_config(db, "age_base_date", f"{year}-12-31")
-    db.query(TeamClub).update({TeamClub.invite_send_count: 0, TeamClub.stripe_send_count: 0})
-    # Remove stored meet files
     if MEET_STORAGE.exists():
         MEET_STORAGE.unlink()
-    # Reload pool template's swimstyle catalog only (no events — see _reload_pool_template).
-    # AGEDATE must be set into the *new* stub meet's meet_config, so it has to
-    # happen after this creates it — setting it earlier (the pre-Phase-1
-    # ordering) would write to a meetsid that doesn't exist yet.
-    _reload_pool_template(db)
-    new_meetsid = get_active_meetsid(db)
-    if new_meetsid:
-        _set_meet_config(db, new_meetsid, "MEETVALUES", f"AGEDATE=D;{year}1231000000000")
+
+    # Only recreate the "next meet" stub when this was the last non-archived
+    # meet — with another meet still open, a stub would pollute the
+    # open-meets dashboard with a spurious empty entry.
+    if get_active_meetsid(db) is None:
+        _reload_pool_template(db)
+        new_meetsid = get_active_meetsid(db)
+        if new_meetsid:
+            _set_meet_config(db, new_meetsid, "MEETVALUES", f"AGEDATE=D;{year}1231000000000")
+    return reg_count
+
+
+@router.delete("/registrations", dependencies=[Depends(require_admin)])
+def flush_meet(request: Request, db: Session = Depends(get_db)):
+    """Flush the caller's target meet (X-Meet-Id, or today's single-open-meet
+    fallback via resolve_meetsid) — see _flush_meet_data."""
+    meetsid = resolve_meetsid(request, db)
+    reg_count = _flush_meet_data(db, meetsid) if meetsid else 0
+    db.commit()
+    return {"deleted": reg_count}
+
+
+@router.delete("/admin/meets/{meetsid}", dependencies=[Depends(require_admin)])
+def delete_meet(meetsid: int, db: Session = Depends(get_db)):
+    """Explicit-target variant of DELETE /registrations for the admin
+    dashboard's per-row Delete action — acts on meetsid directly rather
+    than via X-Meet-Id, so it can target a row that isn't the currently
+    selected meet."""
+    from ..models_team import Meet as TeamMeet
+    if not db.get(TeamMeet, meetsid):
+        raise HTTPException(404, "Meet not found")
+    reg_count = _flush_meet_data(db, meetsid)
     db.commit()
     return {"deleted": reg_count}
 
@@ -2636,26 +2695,27 @@ def _reload_pool_template(db: Session) -> None:
     print(f"Reloaded {styles_loaded} swimstyles from pool template (no events)")
 
 
-def _reset_for_next_meet(db: Session) -> None:
-    """Flush current meet and prepare system for the next meet cycle.
+def _reset_for_next_meet(db: Session, meetsid: int | None) -> None:
+    """Flush one meet and prepare the system for its next cycle.
 
-    Called after an organizer closes the meet by importing final results.
-    Preserves historical meets (meetstate=3), clubs, members, and best times.
+    Called after an organizer/admin closes a meet by importing final
+    results — meetsid is the live meet being archived (resolved from
+    X-Meet-Id by the caller), not "whatever's currently active." Preserves
+    historical meets (meetstate=3), any other concurrently-open meet,
+    clubs, members, and best times.
     """
     from ..models_team import (
         Event as TeamEvent, Session as TeamSession,
         Meet as TeamMeet, MemberMeet as TeamMemberMeet,
     )
-    current_ids = [r for r, in db.query(TeamMeet.meetsid).filter(TeamMeet.meetstate != 3).all()]
+    current_ids = [meetsid] if meetsid else []
 
     # Clear Meet Manager schema (registrations + event structure) first —
-    # scoped to the meet(s) just closed (current_ids), not a blanket delete,
-    # so a concurrently-open meet's own registrations survive. Today
-    # current_ids is always exactly the one meet being closed (no endpoint
-    # opens a second one yet — see docs/CONCURRENT_MEETS_PLAN.md), but this
-    # is the actual new capability Phase 1 delivers. SwimStyle is never wiped
-    # here — it's a shared catalog (upserted by id), and historical Team
-    # Manager Event/Result rows preserved below still reference it.
+    # scoped to the one meet being closed, not a blanket delete, so a
+    # concurrently-open meet's own registrations survive. SwimStyle is
+    # never wiped here — it's a shared catalog (upserted by id), and
+    # historical Team Manager Event/Result rows preserved below still
+    # reference it.
     #
     # Must run before the meets row itself is deleted below: these tables now
     # carry a meetsid FK to meets.meetsid (Phase 1), and Postgres enforces it
@@ -2687,23 +2747,24 @@ def _reset_for_next_meet(db: Session) -> None:
     year = _date.today().year
     _set_config(db, "age_base_date", f"{year}-12-31")
 
-    # Regenerate all club PINs and reset invite/payment counters
-    for club in db.query(TeamClub).all():
-        club.pin = ''.join(secrets.choice(string.digits) for _ in range(6))
-    db.query(TeamClub).update({TeamClub.invite_send_count: 0, TeamClub.stripe_send_count: 0})
-
     # Remove stored meet files so startup doesn't re-load them
     if MEET_STORAGE.exists():
         MEET_STORAGE.unlink()
 
-    # Reload pool template's swimstyle catalog only (no events — see _reload_pool_template).
-    # AGEDATE must be set into the *new* stub meet's meet_config, so it has to
-    # happen after this creates it — setting it earlier (the pre-Phase-1
-    # ordering) would write to a meetsid that doesn't exist yet.
-    _reload_pool_template(db)
-    new_meetsid = get_active_meetsid(db)
-    if new_meetsid:
-        _set_meet_config(db, new_meetsid, "MEETVALUES", f"AGEDATE=D;{year}1231000000000")
+    # Only regenerate club PINs and recreate the "next meet" stub when this
+    # was the last non-archived meet — see _flush_meet_data for why (a
+    # club's PIN is one shared credential across whichever meets are open,
+    # not per-meet; regenerating it while another meet stays open would
+    # silently lock that meet's clubs out). Invite/stripe counters need no
+    # equivalent reset — they live in club_meet_invites, keyed by meetsid,
+    # and are cascade-deleted with the meet row above.
+    if get_active_meetsid(db) is None:
+        for club in db.query(TeamClub).all():
+            club.pin = ''.join(secrets.choice(string.digits) for _ in range(6))
+        _reload_pool_template(db)
+        new_meetsid = get_active_meetsid(db)
+        if new_meetsid:
+            _set_meet_config(db, new_meetsid, "MEETVALUES", f"AGEDATE=D;{year}1231000000000")
 
 
 @router.post("/clubs/regenerate-pins", dependencies=[Depends(require_admin)])
@@ -2731,8 +2792,8 @@ def invite_all_clubs(data: dict, request: Request, db: Session = Depends(get_db)
 
 
 @router.get("/admin/organizer", dependencies=[Depends(require_admin)])
-def get_organizer(db: Session = Depends(get_db)):
-    cfg = _get_organizer_club_id(db)
+def get_organizer(meetsid: int | None = None, db: Session = Depends(get_db)):
+    cfg = _get_organizer_club_id(db, meetsid=meetsid)
     if not cfg:
         return {"club_id": None, "club_name": None}
     club = db.get(TeamClub, int(cfg))
@@ -2748,9 +2809,38 @@ def set_organizer(data: dict, db: Session = Depends(get_db)):
         raise HTTPException(400, "club_id required")
     if not db.get(TeamClub, club_id):
         raise HTTPException(404, "Club not found")
-    _set_organizer_club_id(db, club_id)
+    _set_organizer_club_id(db, club_id, meetsid=data.get("meetsid"))
     db.commit()
     return {"ok": True, "organizer_club_id": club_id}
+
+
+@router.post("/admin/meets/{meetsid}/close-registration", dependencies=[Depends(require_admin)])
+def close_meet_registration(meetsid: int, db: Session = Depends(get_db)):
+    """Non-destructive: make this meet unreachable to clubs/coaches without
+    touching its data — distinct from Flush/Delete (which deletes live data)
+    and from archiving via results import. Always reversible via reopen."""
+    from ..models_team import Meet as TeamMeet
+    meet = db.get(TeamMeet, meetsid)
+    if not meet:
+        raise HTTPException(404, "Meet not found")
+    meet.registration_open = False
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/admin/meets/{meetsid}/reopen-registration", dependencies=[Depends(require_admin)])
+def reopen_meet_registration(meetsid: int, db: Session = Depends(get_db)):
+    from ..models_team import Meet as TeamMeet
+    meet = db.get(TeamMeet, meetsid)
+    if not meet:
+        raise HTTPException(404, "Meet not found")
+    for session in db.query(SwimSession).filter(SwimSession.meetsid == meetsid).all():
+        if session.startdate is None:
+            continue
+        _check_session_date_exclusivity(db, session, session.startdate.date())
+    meet.registration_open = True
+    db.commit()
+    return {"ok": True}
 
 
 @router.post("/admin/change-pin", dependencies=[Depends(require_admin)])
@@ -2921,7 +3011,8 @@ def send_club_invoice(club_id: int, request: Request, db: Session = Depends(get_
     if not stripe.api_key:
         raise HTTPException(500, "STRIPE_API_KEY not configured")
 
-    org_cfg = _get_organizer_club_id(db)
+    meetsid = resolve_meetsid(request, db)
+    org_cfg = _get_organizer_club_id(db, meetsid=meetsid)
     if not org_cfg:
         raise HTTPException(400, "No organizer club set")
     org_club = db.get(TeamClub, int(org_cfg))
@@ -2933,7 +3024,6 @@ def send_club_invoice(club_id: int, request: Request, db: Session = Depends(get_
         raise HTTPException(404, "Club not found")
 
     from ..invoices import _club_line_items, _meet_fees, _meet_name
-    meetsid = resolve_meetsid(request, db)
     items = _club_line_items(db, club, _meet_fees(db, meetsid), meetsid=meetsid)
     if not items:
         raise HTTPException(400, "No billable items for this club")
@@ -2987,7 +3077,7 @@ def send_club_invoice(club_id: int, request: Request, db: Session = Depends(get_
     stripe.Invoice.finalize_invoice(invoice.id, stripe_account=acct)
     stripe.Invoice.send_invoice(invoice.id, stripe_account=acct)
 
-    club.stripe_send_count = (club.stripe_send_count or 0) + 1
+    increment_club_stripe_send_count(db, club.clubsid, meetsid)
     db.commit()
 
     return {
@@ -3394,6 +3484,13 @@ async def import_results_lxf(request: Request, file: UploadFile = File(...), for
     if len(content) > 50 * 1024 * 1024:
         raise HTTPException(413, "File too large (max 50MB)")
 
+    # Which *live* meet is being closed by this results file — resolved up
+    # front (X-Meet-Id, or today's single-open-meet fallback) so the reset
+    # below only ever touches this one meet, never a concurrently-open one.
+    # Independent of the historical archival below, which always creates a
+    # brand-new historical Meet row regardless of which live meet this is.
+    target_meetsid = resolve_meetsid(request, db)
+
     from ..lxf_to_team import import_lxf_as_meet
     from ..models_live import LiveResult, LiveSplit, LiveStartlist, LiveEvent
 
@@ -3425,7 +3522,7 @@ async def import_results_lxf(request: Request, file: UploadFile = File(...), for
     role, _ = _resolve_role(pin, db)
     did_reset = False
     if role in ("organizer", "admin"):
-        _reset_for_next_meet(db)
+        _reset_for_next_meet(db, target_meetsid)
         # Admin stays connected — restore organizer_club_id clearing only for organizer
         if role == "admin":
             # Admin doesn't lose their session; no organizer role to clear
@@ -3434,6 +3531,28 @@ async def import_results_lxf(request: Request, file: UploadFile = File(...), for
         did_reset = True
 
     return {"ok": True, **counts, "filename": file.filename, "reset": did_reset, "role": role}
+
+
+@router.post("/admin/close-meet-without-results", dependencies=[Depends(require_organizer_or_admin)])
+def close_meet_without_results(request: Request, db: Session = Depends(get_db)):
+    """Close the caller's target meet (X-Meet-Id, or today's single-open-meet
+    fallback) with no historical record — for meets with nothing worth
+    archiving (e.g. a beach meet run straight off the pre-loaded roster,
+    no changes worth preserving). Runs the same reset import-results-lxf
+    performs after archiving, minus the archive step. Role is guaranteed
+    organizer/admin by the route dependency, so — unlike import-results-lxf,
+    where a coach could theoretically hold the PIN in the request — no
+    conditional skip is needed here.
+    """
+    meetsid = resolve_meetsid(request, db)
+    if meetsid is None:
+        raise HTTPException(400, "No meet is currently open to close")
+    meet_name = _get_meet_config(db, meetsid, "meet_name") or ""
+    pin = request.headers.get("X-Club-Pin", "")
+    role, _ = _resolve_role(pin, db)
+    _reset_for_next_meet(db, meetsid)
+    db.commit()
+    return {"ok": True, "meet_name": meet_name, "role": role}
 
 
 # ---------------------------------------------------------------------------

@@ -20,7 +20,7 @@
  * RegistrationAPI adapter for the team-app (HTTP → FastAPI backend).
  * Implements the RegistrationAPI interface from shared-ui.
  */
-import api from './api'
+import api, { headers } from './api'
 
 /**
  * Simple in-memory cache with TTL to avoid redundant fetches on tab navigation.
@@ -44,14 +44,22 @@ function invalidateCache() {
   _cache.clear()
 }
 
+// This cache is a module-level Map, not React state — it survives page
+// remounts (main.jsx keys <Routes> on meet_id, but that doesn't reload
+// this module). Without this, switching meets can still serve a cached
+// response fetched under the previous meet's X-Meet-Id for up to
+// CACHE_TTL. 'meet-changed' fires on every switch; 'auth-changed' can
+// also change which meet_id is selected (e.g. right after creating a
+// meet), so both are covered.
+window.addEventListener('meet-changed', invalidateCache)
+window.addEventListener('auth-changed', invalidateCache)
+
 /**
  * Helper for relay mutation requests that need to surface error detail messages
  * from 409 Conflict, 403 Forbidden, and 400 Bad Request responses.
  */
 async function relayRequest(method, path, body) {
-  const pin = localStorage.getItem('pin') || ''
-  const headers = { 'X-Club-Pin': pin, 'Content-Type': 'application/json' }
-  const opts = { method, headers }
+  const opts = { method, headers: headers({ 'Content-Type': 'application/json' }) }
   if (body !== undefined) {
     opts.body = JSON.stringify(body)
   }

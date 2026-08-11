@@ -33,7 +33,8 @@ import AthletesListPageShared from '@shared/pages/AthletesListPage'
 import RegistrationPageShared from '@shared/pages/RegistrationPage'
 import { meetApiHttp } from './meetApi'
 import { registrationApiHttp } from './registrationApi'
-import api from './api'
+import api, { headers } from './api'
+import { selectMeet } from './authMeet'
 import Admin from './pages/Admin'
 import Organizer from './pages/Organizer'
 import SercPage from './pages/Serc'
@@ -131,7 +132,7 @@ function IndividualEntryPage({ role, clubId }) {
   async function handleExportLxf() {
     try {
       const res = await fetch('/api/export/registrations-lxf', {
-        headers: { 'X-Club-Pin': localStorage.getItem('pin') || '' }
+        headers: headers()
       })
       if (!res.ok) throw new Error(`${res.status}`)
       const blob = await res.blob()
@@ -194,10 +195,22 @@ function RegisterPage() {
   )
 }
 
-function AuthLayout({ children, canOrganizer, canAdmin, meetName, toggle, lang, logout, auth, t }) {
+function AuthLayout({ children, canOrganizer, canAdmin, meetName, toggle, lang, logout, auth, setAuth, t }) {
   const location = useLocation()
+  const navigate = useNavigate()
   const standalone = location.pathname === '/results'
   if (standalone) return children
+
+  function onMeetSwitch(meetId) {
+    const meet = selectMeet(meetId)
+    const role = meet ? meet.role : ''
+    setAuth(a => ({ ...a, meet_id: meetId, role }))
+    const organizerOnlyRoutes = ['/meet', '/invitation', '/serc']
+    const stillOrganizer = role === 'admin' || role === 'organizer'
+    if (organizerOnlyRoutes.includes(location.pathname) && !stillOrganizer) navigate('/')
+    if (location.pathname === '/admin' && role !== 'admin') navigate('/')
+    window.dispatchEvent(new Event('meet-changed'))
+  }
 
   const tabs = [
     { to: '/meet', label: t.tab_meet || 'Compétition', show: canOrganizer },
@@ -219,6 +232,17 @@ function AuthLayout({ children, canOrganizer, canAdmin, meetName, toggle, lang, 
           {lang === 'fr' ? 'Gestion des inscriptions' : 'Registration Management'}{meetName ? ` — ${meetName}` : ''}
         </span>
         <div className="ml-auto flex items-center gap-2 pr-3">
+          {auth.meets && auth.meets.length > 1 && (
+            <select
+              value={auth.meet_id}
+              onChange={e => onMeetSwitch(e.target.value)}
+              className="bg-gray-700 text-gray-200 text-xs border border-gray-600 rounded px-1 py-0.5"
+            >
+              {auth.meets.map(m => (
+                <option key={m.meet_id} value={m.meet_id}>{m.name}</option>
+              ))}
+            </select>
+          )}
           <span className="text-gray-400 text-xs">{auth.club_name}</span>
           <button
             onClick={() => { const next = lang === 'fr' ? 'en' : 'fr'; toggle() }}
@@ -274,7 +298,11 @@ function AppInner() {
     const pin = localStorage.getItem('pin')
     const role = localStorage.getItem('role')
     if (pin && role) {
-      setAuth({ role, club_id: localStorage.getItem('club_id'), club_name: localStorage.getItem('club_name') })
+      const meets = JSON.parse(localStorage.getItem('meets') || '[]')
+      setAuth({
+        role, club_id: localStorage.getItem('club_id'), club_name: localStorage.getItem('club_name'),
+        meets, meet_id: localStorage.getItem('meet_id') || '',
+      })
     }
     import('./api').then(m => m.default.get('/meet-info').then(r => setMeetName(r.data.meet_name || '')).catch(() => {}))
   }, [])
@@ -288,11 +316,29 @@ function AppInner() {
     return () => window.removeEventListener('meet-changed', onMeetChanged)
   }, [])
 
+  // Refresh auth.meets/meet_id/role after the admin dashboard creates a
+  // meet (refreshAuth() in authMeet.js re-fetches meets[] without a fresh
+  // login and dispatches this).
+  useEffect(() => {
+    function onAuthChanged() {
+      const meets = JSON.parse(localStorage.getItem('meets') || '[]')
+      setAuth(a => a && ({
+        ...a, meets,
+        meet_id: localStorage.getItem('meet_id') || '',
+        role: localStorage.getItem('role') || '',
+      }))
+    }
+    window.addEventListener('auth-changed', onAuthChanged)
+    return () => window.removeEventListener('auth-changed', onAuthChanged)
+  }, [])
+
   function logout() {
     localStorage.removeItem('pin')
     localStorage.removeItem('role')
     localStorage.removeItem('club_id')
     localStorage.removeItem('club_name')
+    localStorage.removeItem('meets')
+    localStorage.removeItem('meet_id')
     setAuth(null)
   }
 
@@ -316,8 +362,14 @@ function AppInner() {
 
   return (
     <BrowserRouter>
-      <AuthLayout canOrganizer={canOrganizer} canAdmin={canAdmin} meetName={meetName} toggle={toggle} lang={lang} logout={logout} auth={auth} t={t}>
-        <Routes>
+      <AuthLayout canOrganizer={canOrganizer} canAdmin={canAdmin} meetName={meetName} toggle={toggle} lang={lang} logout={logout} auth={auth} setAuth={setAuth} t={t}>
+        {/* Keyed on meet_id: pages like EventsPage/Organizer fetch their data
+            once on mount (empty-deps useEffect) and have no reason to know
+            about meet switching — remounting the whole routed subtree when
+            the selected meet changes is what makes them refetch, instead of
+            silently showing stale data from the previously selected meet
+            until a manual page reload. */}
+        <Routes key={auth.meet_id}>
           <Route path="/" element={<IndividualEntryPage role={auth.role} clubId={auth.club_id} />} />
           <Route path="/relay-entries" element={<RelayEntryPage role={auth.role} clubId={auth.club_id} />} />
           <Route path="/athletes/:id/register" element={<RegisterPage />} />

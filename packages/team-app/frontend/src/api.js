@@ -18,9 +18,10 @@
 
 const API = '/api'
 
-function headers(extra = {}) {
+export function headers(extra = {}) {
   const pin = localStorage.getItem('pin') || ''
-  return { 'X-Club-Pin': pin, ...extra }
+  const meetId = localStorage.getItem('meet_id') || ''
+  return { 'X-Club-Pin': pin, 'X-Meet-Id': meetId, ...extra }
 }
 
 const api = {

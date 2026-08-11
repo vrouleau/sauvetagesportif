@@ -3165,11 +3165,8 @@ class TestConcurrentOpenMeetsStayIsolated:
     that meetsid-scoped endpoints (GET /api/sessions, /api/events) only ever
     show the currently-active meet's rows, never a mix of both.
 
-    /admin/new-meet has no way yet to leave the prior meet open (Phase 2's
-    admin dashboard, stage 7, isn't built) — it always closes it — so this
-    test forces both meets' registration_open=True directly in the DB via
-    exec_in_backend() afterward to reach the genuinely-concurrent
-    precondition, same escape hatch TestSessionDateExclusivityEndpoint uses.
+    Opens meet B alongside meet A via /admin/new-meet's close_other_meets=false
+    (Stage 7) to reach the genuinely-concurrent precondition.
     """
 
     @pytest.fixture(autouse=True, scope="class")
@@ -3235,27 +3232,14 @@ class TestConcurrentOpenMeetsStayIsolated:
             # Creates meet B from the same fixed-id-range template meet A used —
             # this is exactly the collision the composite PK fix targets: before
             # the fix, this 500s with a swimevent_pkey UniqueViolation the moment
-            # meet A's still-open rows occupy the same ids.
-            r = requests.post(f"{BASE_URL}/api/admin/new-meet", json={"meet_type": "pool"},
+            # meet A's still-open rows occupy the same ids. close_other_meets=false
+            # (Stage 7) is what keeps meet A open alongside it.
+            r = requests.post(f"{BASE_URL}/api/admin/new-meet",
+                              json={"meet_type": "pool", "close_other_meets": False},
                               headers=admin_headers, timeout=60)
             assert r.status_code == 200, f"new-meet failed while meet A was open: {r.text}"
-            meet_b_id = int(exec_in_backend(
-                "from app.meet_config import get_active_meetsid\n"
-                "from app.database import SessionLocal\n"
-                "db = SessionLocal()\n"
-                "print(get_active_meetsid(db))\n"
-            ).strip())
+            meet_b_id = r.json()["meet_id"]
             assert meet_b_id != meet_a_id
-
-            # /admin/new-meet closes meet A as a stopgap (Phase 2 stage 7 not
-            # built yet) — force both open at once to reach the real precondition.
-            exec_in_backend(
-                "from app.database import SessionLocal\n"
-                "from app.models_team import Meet\n"
-                "db = SessionLocal()\n"
-                f"db.get(Meet, {meet_a_id}).registration_open = True\n"
-                "db.commit()\n"
-            )
 
             after_events, after_agegroups, after_results = _counts(meet_a_id)
             assert (after_events, after_agegroups, after_results) == (before_events, before_agegroups, before_results), (
@@ -3348,6 +3332,602 @@ class TestConcurrentOpenMeetsStayIsolated:
                 "    a.registration_open = True\n"
                 "db.commit()\n"
             )
+
+
+# ---------------------------------------------------------------------------
+# Admin Meets Dashboard (Phase 2 Stage 7) — scoped flush/reset/close/reopen/
+# organizer-assignment must never affect a concurrently-open second meet
+# ---------------------------------------------------------------------------
+
+class TestAdminMeetsDashboard:
+    """flush_meet, _reset_for_next_meet (import-results-lxf), and organizer
+    assignment used to operate on "every non-archived meet" / "whatever
+    get_active_meetsid picks" — harmless with one meet, dormant until Stage
+    7's close_other_meets=false made a second concurrently-open meet
+    actually reachable. This proves each action now only ever touches its
+    own explicit target."""
+
+    @pytest.fixture(autouse=True, scope="class")
+    def _restore_current_meet(self, admin_headers):
+        yield
+        with open(MEET_TEMPLATE, "rb") as f:
+            requests.post(f"{BASE_URL}/api/upload/meet?force=true",
+                          files={"file": ("meet.lxf", f, "application/octet-stream")},
+                          headers=admin_headers, timeout=60)
+        if ENTRIES_FILE.exists():
+            with open(ENTRIES_FILE, "rb") as f:
+                requests.post(f"{BASE_URL}/api/upload/entries",
+                              files={"file": ("entries.lxf", f, "application/octet-stream")},
+                              headers=admin_headers, timeout=60)
+
+    @staticmethod
+    def _meet_a_id() -> int:
+        return int(exec_in_backend(
+            "from app.meet_config import get_active_meetsid\n"
+            "from app.database import SessionLocal\n"
+            "db = SessionLocal()\n"
+            "print(get_active_meetsid(db))\n"
+        ).strip())
+
+    @staticmethod
+    def _open_meet_b(admin_headers, meet_type="pool", close_other_meets=False) -> int:
+        r = requests.post(f"{BASE_URL}/api/admin/new-meet",
+                          json={"meet_type": meet_type, "close_other_meets": close_other_meets},
+                          headers=admin_headers, timeout=60)
+        assert r.status_code == 200, f"new-meet failed: {r.text}"
+        return r.json()["meet_id"]
+
+    @staticmethod
+    def _cleanup_meet(meetsid: int):
+        exec_in_backend(
+            "from app.database import SessionLocal\n"
+            "from app.models_team import Meet\n"
+            "from app.models import SwimSession, SwimEvent, AgeGroup, SwimResult\n"
+            "db = SessionLocal()\n"
+            f"m = {meetsid}\n"
+            "db.query(SwimResult).filter(SwimResult.meetsid == m).delete()\n"
+            "db.query(AgeGroup).filter(AgeGroup.meetsid == m).delete()\n"
+            "db.query(SwimEvent).filter(SwimEvent.meetsid == m).delete()\n"
+            "db.query(SwimSession).filter(SwimSession.meetsid == m).delete()\n"
+            "db.query(Meet).filter(Meet.meetsid == m).delete()\n"
+            "db.commit()\n"
+        )
+
+    def test_new_meet_default_still_closes_prior_meet(self, uploaded, admin_headers):
+        """Regression guard: omitting close_other_meets must reproduce
+        today's exact single-meet behavior for every existing caller."""
+        meet_a_id = self._meet_a_id()
+        meet_b_id = None
+        try:
+            r = requests.post(f"{BASE_URL}/api/admin/new-meet", json={"meet_type": "pool"},
+                              headers=admin_headers, timeout=60)
+            assert r.status_code == 200, r.text
+            meet_b_id = r.json()["meet_id"]
+            a_open = exec_in_backend(
+                "from app.database import SessionLocal\n"
+                "from app.models_team import Meet\n"
+                "db = SessionLocal()\n"
+                f"print(db.get(Meet, {meet_a_id}).registration_open)\n"
+            ).strip()
+            assert a_open == "False", "Meet A should be closed when close_other_meets is omitted"
+        finally:
+            if meet_b_id is not None:
+                self._cleanup_meet(meet_b_id)
+            exec_in_backend(
+                "from app.database import SessionLocal\n"
+                "from app.models_team import Meet\n"
+                "db = SessionLocal()\n"
+                f"a = db.get(Meet, {meet_a_id})\n"
+                "if a:\n    a.registration_open = True\n"
+                "db.commit()\n"
+            )
+
+    def test_new_meet_close_other_meets_false_keeps_both_open_and_listed(self, uploaded, admin_headers):
+        meet_a_id = self._meet_a_id()
+        meet_b_id = None
+        try:
+            meet_b_id = self._open_meet_b(admin_headers)
+            r = requests.get(f"{BASE_URL}/api/admin/meets", headers=admin_headers, timeout=10)
+            r.raise_for_status()
+            by_id = {m["meet_id"]: m for m in r.json()}
+            assert meet_a_id in by_id and meet_b_id in by_id
+            assert by_id[meet_a_id]["registration_open"] is True
+            assert by_id[meet_b_id]["registration_open"] is True
+        finally:
+            if meet_b_id is not None:
+                self._cleanup_meet(meet_b_id)
+
+    def test_delete_registrations_scoped_via_x_meet_id(self, uploaded, admin_headers):
+        """DELETE /registrations (toolbar Flush Meet) must only ever touch
+        the X-Meet-Id target, never a concurrently-open second meet."""
+        meet_a_id = self._meet_a_id()
+        meet_b_id = None
+        try:
+            meet_b_id = self._open_meet_b(admin_headers)
+            b_headers = {**admin_headers, "X-Meet-Id": str(meet_b_id)}
+            requests.post(f"{BASE_URL}/api/sessions", json={"name": "S1", "number": 1},
+                          headers=b_headers, timeout=10).raise_for_status()
+
+            r = requests.delete(f"{BASE_URL}/api/registrations", headers=b_headers, timeout=30)
+            assert r.status_code == 200, f"scoped flush failed: {r.text}"
+
+            still_there = exec_in_backend(
+                "from app.database import SessionLocal\n"
+                "from app.models_team import Meet\n"
+                "db = SessionLocal()\n"
+                f"print(db.get(Meet, {meet_b_id}) is not None)\n"
+            ).strip()
+            assert still_there == "False", "DELETE /registrations with X-Meet-Id=B should have deleted meet B"
+            meet_b_id = None
+
+            a_sessions = requests.get(f"{BASE_URL}/api/sessions",
+                                       headers={**admin_headers, "X-Meet-Id": str(meet_a_id)}, timeout=10)
+            a_sessions.raise_for_status()
+            assert len(a_sessions.json()) > 0, "Meet A's sessions were wiped by a flush scoped to meet B"
+        finally:
+            if meet_b_id is not None:
+                self._cleanup_meet(meet_b_id)
+
+    def test_delete_admin_meets_explicit_path_scoped(self, uploaded, admin_headers):
+        meet_a_id = self._meet_a_id()
+        meet_b_id = None
+        try:
+            meet_b_id = self._open_meet_b(admin_headers)
+            r = requests.delete(f"{BASE_URL}/api/admin/meets/{meet_b_id}", headers=admin_headers, timeout=30)
+            assert r.status_code == 200, f"explicit delete failed: {r.text}"
+            meet_b_id = None
+
+            a_sessions = requests.get(f"{BASE_URL}/api/sessions",
+                                       headers={**admin_headers, "X-Meet-Id": str(meet_a_id)}, timeout=10)
+            a_sessions.raise_for_status()
+            assert len(a_sessions.json()) > 0
+        finally:
+            if meet_b_id is not None:
+                self._cleanup_meet(meet_b_id)
+
+    def test_stub_meet_not_recreated_while_another_meet_stays_open(self, uploaded, admin_headers):
+        """GET /admin/meets can legitimately show other closed-but-undeleted
+        meets left behind by other test classes elsewhere in this suite
+        (Stage 1's "close, don't delete" behavior) — so this compares the
+        meet_id set before/after, rather than asserting an absolute count,
+        to isolate just the effect of this test's own create+delete."""
+        meet_a_id = self._meet_a_id()
+        before_ids = {m["meet_id"] for m in
+                      requests.get(f"{BASE_URL}/api/admin/meets", headers=admin_headers, timeout=10).json()}
+
+        meet_b_id = self._open_meet_b(admin_headers)
+        r = requests.delete(f"{BASE_URL}/api/admin/meets/{meet_b_id}", headers=admin_headers, timeout=30)
+        assert r.status_code == 200, r.text
+
+        active = exec_in_backend(
+            "from app.meet_config import get_active_meetsid\n"
+            "from app.database import SessionLocal\n"
+            "db = SessionLocal()\n"
+            "print(get_active_meetsid(db))\n"
+        ).strip()
+        assert active == str(meet_a_id), (
+            "Deleting meet B while meet A stayed open should not recreate a "
+            "stub meet — get_active_meetsid should still resolve to meet A"
+        )
+        after_ids = {m["meet_id"] for m in
+                     requests.get(f"{BASE_URL}/api/admin/meets", headers=admin_headers, timeout=10).json()}
+        assert after_ids == before_ids, "A spurious stub meet was created even though meet A was still open"
+
+    def test_close_then_reopen_registration_roundtrip(self, uploaded, admin_headers):
+        meet_b_id = None
+        try:
+            meet_b_id = self._open_meet_b(admin_headers)
+
+            r = requests.post(f"{BASE_URL}/api/admin/meets/{meet_b_id}/close-registration",
+                              headers=admin_headers, timeout=10)
+            assert r.status_code == 200, r.text
+
+            # GET /admin/meets (not /api/auth — the PIN login endpoint is
+            # rate-limited, and this suite already exercises it heavily
+            # elsewhere) to confirm the flag actually flipped.
+            meets = requests.get(f"{BASE_URL}/api/admin/meets", headers=admin_headers, timeout=10).json()
+            b_entry = next(m for m in meets if m["meet_id"] == meet_b_id)
+            assert b_entry["registration_open"] is False
+
+            blocked = requests.get(f"{BASE_URL}/api/sessions",
+                                    headers={**admin_headers, "X-Meet-Id": str(meet_b_id)}, timeout=10)
+            assert blocked.status_code == 404
+
+            r2 = requests.post(f"{BASE_URL}/api/admin/meets/{meet_b_id}/reopen-registration",
+                               headers=admin_headers, timeout=10)
+            assert r2.status_code == 200, r2.text
+
+            meets2 = requests.get(f"{BASE_URL}/api/admin/meets", headers=admin_headers, timeout=10).json()
+            b_entry2 = next(m for m in meets2 if m["meet_id"] == meet_b_id)
+            assert b_entry2["registration_open"] is True
+        finally:
+            if meet_b_id is not None:
+                self._cleanup_meet(meet_b_id)
+
+    def test_reopen_blocked_by_session_date_conflict(self, uploaded, admin_headers):
+        meet_a_id = self._meet_a_id()
+        meet_b_id = None
+        try:
+            a_headers = {**admin_headers, "X-Meet-Id": str(meet_a_id)}
+            a_sessions = requests.get(f"{BASE_URL}/api/sessions", headers=a_headers, timeout=10).json()
+            a_session_id = a_sessions[0]["id"]
+            requests.put(f"{BASE_URL}/api/sessions/{a_session_id}",
+                        json={"startdate": "2027-06-01"}, headers=a_headers, timeout=10).raise_for_status()
+
+            # close_other_meets=True (the default) briefly closes meet A, so
+            # meet B can acquire the same date with no conflict yet — a
+            # dormant collision that should only surface when meet B tries
+            # to reopen alongside meet A later.
+            meet_b_id = self._open_meet_b(admin_headers, close_other_meets=True)
+            b_headers = {**admin_headers, "X-Meet-Id": str(meet_b_id)}
+            b_session = requests.post(f"{BASE_URL}/api/sessions", json={"name": "S1", "number": 1},
+                                      headers=b_headers, timeout=10).json()
+            requests.put(f"{BASE_URL}/api/sessions/{b_session['id']}",
+                        json={"startdate": "2027-06-01"}, headers=b_headers, timeout=10).raise_for_status()
+
+            requests.post(f"{BASE_URL}/api/admin/meets/{meet_b_id}/close-registration",
+                         headers=admin_headers, timeout=10).raise_for_status()
+            requests.post(f"{BASE_URL}/api/admin/meets/{meet_a_id}/reopen-registration",
+                         headers=admin_headers, timeout=10).raise_for_status()
+
+            r = requests.post(f"{BASE_URL}/api/admin/meets/{meet_b_id}/reopen-registration",
+                              headers=admin_headers, timeout=10)
+            assert r.status_code == 409, f"Expected 409 on colliding reopen, got {r.status_code}: {r.text}"
+        finally:
+            requests.post(f"{BASE_URL}/api/admin/meets/{meet_a_id}/reopen-registration",
+                          headers=admin_headers, timeout=10)
+            if meet_b_id is not None:
+                self._cleanup_meet(meet_b_id)
+
+    def test_set_and_get_organizer_explicit_meetsid(self, uploaded, clubs, admin_headers):
+        meet_a_id = self._meet_a_id()
+        meet_b_id = None
+        try:
+            meet_b_id = self._open_meet_b(admin_headers)
+            club_a = clubs[0]["id"]
+            club_b = clubs[1]["id"] if len(clubs) > 1 else clubs[0]["id"]
+
+            requests.post(f"{BASE_URL}/api/admin/set-organizer",
+                         json={"club_id": club_a, "meetsid": meet_a_id},
+                         headers=admin_headers, timeout=10).raise_for_status()
+            requests.post(f"{BASE_URL}/api/admin/set-organizer",
+                         json={"club_id": club_b, "meetsid": meet_b_id},
+                         headers=admin_headers, timeout=10).raise_for_status()
+
+            org_a = requests.get(f"{BASE_URL}/api/admin/organizer",
+                                 params={"meetsid": meet_a_id}, headers=admin_headers, timeout=10).json()
+            org_b = requests.get(f"{BASE_URL}/api/admin/organizer",
+                                 params={"meetsid": meet_b_id}, headers=admin_headers, timeout=10).json()
+            assert org_a["club_id"] == club_a
+            assert org_b["club_id"] == club_b
+        finally:
+            if meet_b_id is not None:
+                self._cleanup_meet(meet_b_id)
+            # meet B's organizer_club_id is cascade-deleted with its Meet
+            # row above; meet A survives, so its assignment needs explicit
+            # clearing (same escape hatch as TestAuth's organizer test).
+            exec_in_backend(
+                "from app.database import SessionLocal\n"
+                "from app.models import MeetConfig\n"
+                "from app.models_team import Meet\n"
+                "db = SessionLocal()\n"
+                f"db.query(MeetConfig).filter(MeetConfig.meetsid == {meet_a_id}, "
+                "MeetConfig.name == 'organizer_club_id').delete()\n"
+                "db.commit()\n"
+            )
+
+
+class TestCloseMeetWithoutResults:
+    """POST /admin/close-meet-without-results: resets the caller's target
+    meet (same _reset_for_next_meet a results import uses) without creating
+    any historical record — for meets with nothing worth archiving. Isolated
+    in its own class since it destroys the sole active meet (same reason as
+    TestStubMeetRecreatedWhenLastMeetFlushed/TestImportResultsLxfResetScopedToTarget)."""
+
+    @pytest.fixture(autouse=True, scope="class")
+    def _restore_current_meet(self, admin_headers):
+        yield
+        with open(MEET_TEMPLATE, "rb") as f:
+            requests.post(f"{BASE_URL}/api/upload/meet?force=true",
+                          files={"file": ("meet.lxf", f, "application/octet-stream")},
+                          headers=admin_headers, timeout=60)
+        if ENTRIES_FILE.exists():
+            with open(ENTRIES_FILE, "rb") as f:
+                requests.post(f"{BASE_URL}/api/upload/entries",
+                              files={"file": ("entries.lxf", f, "application/octet-stream")},
+                              headers=admin_headers, timeout=60)
+
+    def test_closes_without_creating_a_historical_record_and_leaves_other_meets_alone(self, uploaded, admin_headers):
+        meet_a_id = int(exec_in_backend(
+            "from app.meet_config import get_active_meetsid\n"
+            "from app.database import SessionLocal\n"
+            "db = SessionLocal()\n"
+            "print(get_active_meetsid(db))\n"
+        ).strip())
+
+        meet_b_id = None
+        try:
+            r = requests.post(f"{BASE_URL}/api/admin/new-meet",
+                              json={"meet_type": "pool", "close_other_meets": False},
+                              headers=admin_headers, timeout=60)
+            assert r.status_code == 200, r.text
+            meet_b_id = r.json()["meet_id"]
+            b_headers = {**admin_headers, "X-Meet-Id": str(meet_b_id)}
+            requests.post(f"{BASE_URL}/api/sessions", json={"name": "S1", "number": 1},
+                          headers=b_headers, timeout=10).raise_for_status()
+
+            # /admin/historical-meets has no meetstate/registration_open
+            # filter (see docs/CONCURRENT_MEETS_PLAN.md) — it lists every
+            # Meet row, open or archived. Snapshotting after meet B exists
+            # isolates just the close action's effect, instead of also
+            # picking up meet B's own creation as a spurious "new entry".
+            before_historical = {m["id"] for m in
+                                  requests.get(f"{BASE_URL}/api/admin/historical-meets", headers=admin_headers, timeout=10).json()}
+            assert meet_a_id in before_historical
+
+            r2 = requests.post(f"{BASE_URL}/api/admin/close-meet-without-results",
+                               headers={**admin_headers, "X-Meet-Id": str(meet_a_id)}, timeout=10)
+            assert r2.status_code == 200, r2.text
+            body = r2.json()
+            assert body["ok"] is True
+            assert body["role"] == "admin"
+
+            gone = exec_in_backend(
+                "from app.database import SessionLocal\n"
+                "from app.models_team import Meet\n"
+                "db = SessionLocal()\n"
+                f"print(db.get(Meet, {meet_a_id}) is not None)\n"
+            ).strip()
+            assert gone == "False", "Meet A's live TeamMeet row should be gone after closing"
+
+            after_historical = {m["id"] for m in
+                                 requests.get(f"{BASE_URL}/api/admin/historical-meets", headers=admin_headers, timeout=10).json()}
+            assert after_historical == before_historical - {meet_a_id}, (
+                "close-meet-without-results must not create any historical-meets entry — "
+                "meet A should simply be gone, not replaced by an archived record"
+            )
+
+            b_sessions = requests.get(f"{BASE_URL}/api/sessions", headers=b_headers, timeout=10)
+            b_sessions.raise_for_status()
+            assert len(b_sessions.json()) == 1, "Meet B's session vanished after meet A was closed"
+        finally:
+            if meet_b_id is not None:
+                exec_in_backend(
+                    "from app.database import SessionLocal\n"
+                    "from app.models_team import Meet\n"
+                    "from app.models import SwimSession, SwimEvent, AgeGroup, SwimResult\n"
+                    "db = SessionLocal()\n"
+                    f"m = {meet_b_id}\n"
+                    "db.query(SwimResult).filter(SwimResult.meetsid == m).delete()\n"
+                    "db.query(AgeGroup).filter(AgeGroup.meetsid == m).delete()\n"
+                    "db.query(SwimEvent).filter(SwimEvent.meetsid == m).delete()\n"
+                    "db.query(SwimSession).filter(SwimSession.meetsid == m).delete()\n"
+                    "db.query(Meet).filter(Meet.meetsid == m).delete()\n"
+                    "db.commit()\n"
+                )
+
+    def test_requires_organizer_or_admin(self, uploaded, clubs):
+        coach_headers = {"X-Club-Pin": clubs[0]["pin"]}
+        r = requests.post(f"{BASE_URL}/api/admin/close-meet-without-results",
+                          headers=coach_headers, timeout=10)
+        assert r.status_code == 403
+
+
+class TestClubInviteCountsScopedPerMeet:
+    """Regression test for a real bug found manually testing Phase 2 Stage 7
+    (docs/CONCURRENT_MEETS_PLAN.md): GET /clubs's invite_send_count/
+    stripe_send_count used to read straight off clubs.invite_send_count — a
+    single counter shared across every meet — so a club invited for meet A
+    showed as already-invited on meet B too. Fixed via a new club_meet_invites
+    table keyed by (clubsid, meetsid); this proves the same club's counts
+    are now genuinely independent per meet."""
+
+    @pytest.fixture(autouse=True, scope="class")
+    def _restore_current_meet(self, admin_headers):
+        yield
+        with open(MEET_TEMPLATE, "rb") as f:
+            requests.post(f"{BASE_URL}/api/upload/meet?force=true",
+                          files={"file": ("meet.lxf", f, "application/octet-stream")},
+                          headers=admin_headers, timeout=60)
+        if ENTRIES_FILE.exists():
+            with open(ENTRIES_FILE, "rb") as f:
+                requests.post(f"{BASE_URL}/api/upload/entries",
+                              files={"file": ("entries.lxf", f, "application/octet-stream")},
+                              headers=admin_headers, timeout=60)
+
+    def test_invite_count_does_not_leak_between_concurrently_open_meets(self, uploaded, clubs, admin_headers):
+        meet_a_id = int(exec_in_backend(
+            "from app.meet_config import get_active_meetsid\n"
+            "from app.database import SessionLocal\n"
+            "db = SessionLocal()\n"
+            "print(get_active_meetsid(db))\n"
+        ).strip())
+        club_id = clubs[0]["id"]
+        meet_b_id = None
+        try:
+            r = requests.post(f"{BASE_URL}/api/admin/new-meet",
+                              json={"meet_type": "pool", "close_other_meets": False},
+                              headers=admin_headers, timeout=60)
+            assert r.status_code == 200, r.text
+            meet_b_id = r.json()["meet_id"]
+
+            # Directly seed an invite count for meet A only — send-pin itself
+            # needs RESEND_API_KEY configured, which the test stack doesn't
+            # set up; this exercises the same increment path's data shape
+            # without depending on outbound email.
+            exec_in_backend(
+                "from app.database import SessionLocal\n"
+                "from app.meet_config import increment_club_invite_send_count\n"
+                "db = SessionLocal()\n"
+                f"increment_club_invite_send_count(db, {club_id}, {meet_a_id})\n"
+                "increment_club_invite_send_count(db, "
+                f"{club_id}, {meet_a_id})\n"  # twice — count should read back as 2
+                "db.commit()\n"
+            )
+
+            a_clubs = requests.get(f"{BASE_URL}/api/clubs",
+                                    headers={**admin_headers, "X-Meet-Id": str(meet_a_id)}, timeout=10).json()
+            b_clubs = requests.get(f"{BASE_URL}/api/clubs",
+                                    headers={**admin_headers, "X-Meet-Id": str(meet_b_id)}, timeout=10).json()
+            a_entry = next(c for c in a_clubs if c["id"] == club_id)
+            b_entry = next(c for c in b_clubs if c["id"] == club_id)
+            assert a_entry["invite_send_count"] == 2, "Meet A's own invite count should reflect the seeded sends"
+            assert b_entry["invite_send_count"] == 0, (
+                "Meet B shows meet A's invite count — the per-meet scoping isn't isolating them"
+            )
+        finally:
+            if meet_b_id is not None:
+                self._cleanup_meet(meet_b_id)
+            exec_in_backend(
+                "from app.database import SessionLocal\n"
+                "from app.models_team import ClubMeetInvite\n"
+                "db = SessionLocal()\n"
+                f"db.query(ClubMeetInvite).filter(ClubMeetInvite.meetsid == {meet_a_id}, "
+                f"ClubMeetInvite.clubsid == {club_id}).delete()\n"
+                "db.commit()\n"
+            )
+
+    @staticmethod
+    def _cleanup_meet(meetsid: int):
+        exec_in_backend(
+            "from app.database import SessionLocal\n"
+            "from app.models_team import Meet\n"
+            "from app.models import SwimSession, SwimEvent, AgeGroup, SwimResult\n"
+            "db = SessionLocal()\n"
+            f"m = {meetsid}\n"
+            "db.query(SwimResult).filter(SwimResult.meetsid == m).delete()\n"
+            "db.query(AgeGroup).filter(AgeGroup.meetsid == m).delete()\n"
+            "db.query(SwimEvent).filter(SwimEvent.meetsid == m).delete()\n"
+            "db.query(SwimSession).filter(SwimSession.meetsid == m).delete()\n"
+            "db.query(Meet).filter(Meet.meetsid == m).delete()\n"
+            "db.commit()\n"
+        )
+
+
+class TestStubMeetRecreatedWhenLastMeetFlushed:
+    """Isolated from TestAdminMeetsDashboard: this test deletes the only
+    currently-active meet outright (proving _flush_meet_data's stub-recreate
+    guard fires when nothing else is open), which no other test in this
+    file can share a class with — its own _restore_current_meet teardown
+    must run immediately after, before anything else assumes an active
+    meet exists."""
+
+    @pytest.fixture(autouse=True, scope="class")
+    def _restore_current_meet(self, admin_headers):
+        yield
+        with open(MEET_TEMPLATE, "rb") as f:
+            requests.post(f"{BASE_URL}/api/upload/meet?force=true",
+                          files={"file": ("meet.lxf", f, "application/octet-stream")},
+                          headers=admin_headers, timeout=60)
+        if ENTRIES_FILE.exists():
+            with open(ENTRIES_FILE, "rb") as f:
+                requests.post(f"{BASE_URL}/api/upload/entries",
+                              files={"file": ("entries.lxf", f, "application/octet-stream")},
+                              headers=admin_headers, timeout=60)
+
+    def test_stub_meet_recreated_when_last_meet_flushed(self, uploaded, admin_headers):
+        meet_a_id = int(exec_in_backend(
+            "from app.meet_config import get_active_meetsid\n"
+            "from app.database import SessionLocal\n"
+            "db = SessionLocal()\n"
+            "print(get_active_meetsid(db))\n"
+        ).strip())
+        r = requests.delete(f"{BASE_URL}/api/admin/meets/{meet_a_id}", headers=admin_headers, timeout=30)
+        assert r.status_code == 200, r.text
+        active = exec_in_backend(
+            "from app.meet_config import get_active_meetsid\n"
+            "from app.database import SessionLocal\n"
+            "db = SessionLocal()\n"
+            "print(get_active_meetsid(db))\n"
+        ).strip()
+        # Not "active != meet_a_id": the deleted meet is fully gone (cascade),
+        # so a fresh stub reusing the same numeric id is harmless and, when
+        # nothing else in the meets table has a higher id (e.g. running this
+        # test in isolation), is exactly what max(meetsid)+1 legitimately
+        # produces. What actually matters is that a genuinely empty stub
+        # exists — checked below via its session list.
+        assert active != "None", "A fresh stub meet should exist after the last open meet was flushed"
+        stub_sessions = requests.get(f"{BASE_URL}/api/sessions",
+                                      headers={**admin_headers, "X-Meet-Id": active}, timeout=10)
+        stub_sessions.raise_for_status()
+        assert stub_sessions.json() == [], "The recreated stub meet should be empty, not carry over old sessions"
+
+
+class TestImportResultsLxfResetScopedToTarget:
+    """Isolated from TestAdminMeetsDashboard for the same reason as
+    TestStubMeetRecreatedWhenLastMeetFlushed: this archives meet A's results
+    (deleting its live TeamMeet row) while meet B is concurrently open, so
+    _flush_meet_data's stub-recreate guard correctly does NOT fire — meet B
+    is still open — leaving zero meets once meet B is cleaned up afterward.
+    No other test in this file can safely assume an active meet exists
+    after this one runs within the same class."""
+
+    @pytest.fixture(autouse=True, scope="class")
+    def _restore_current_meet(self, admin_headers):
+        yield
+        with open(MEET_TEMPLATE, "rb") as f:
+            requests.post(f"{BASE_URL}/api/upload/meet?force=true",
+                          files={"file": ("meet.lxf", f, "application/octet-stream")},
+                          headers=admin_headers, timeout=60)
+        if ENTRIES_FILE.exists():
+            with open(ENTRIES_FILE, "rb") as f:
+                requests.post(f"{BASE_URL}/api/upload/entries",
+                              files={"file": ("entries.lxf", f, "application/octet-stream")},
+                              headers=admin_headers, timeout=60)
+
+    def test_import_results_lxf_reset_scoped_to_x_meet_id_target(self, uploaded, admin_headers):
+        """Uploading final results for meet A must reset only meet A's live
+        data — meet B, concurrently open, must be untouched."""
+        meet_a_id = int(exec_in_backend(
+            "from app.meet_config import get_active_meetsid\n"
+            "from app.database import SessionLocal\n"
+            "db = SessionLocal()\n"
+            "print(get_active_meetsid(db))\n"
+        ).strip())
+        meet_b_id = None
+        try:
+            r = requests.post(f"{BASE_URL}/api/admin/new-meet",
+                              json={"meet_type": "pool", "close_other_meets": False},
+                              headers=admin_headers, timeout=60)
+            assert r.status_code == 200, f"new-meet failed: {r.text}"
+            meet_b_id = r.json()["meet_id"]
+            b_headers = {**admin_headers, "X-Meet-Id": str(meet_b_id)}
+            requests.post(f"{BASE_URL}/api/sessions", json={"name": "S1", "number": 1},
+                          headers=b_headers, timeout=10).raise_for_status()
+
+            with open(RESULTS_FILE, "rb") as f:
+                r2 = requests.post(f"{BASE_URL}/api/import-results-lxf?force=true",
+                                   files={"file": ("results.lxf", f, "application/octet-stream")},
+                                   headers={**admin_headers, "X-Meet-Id": str(meet_a_id)}, timeout=30)
+            assert r2.status_code == 200, f"import-results-lxf failed: {r2.text}"
+            assert r2.json()["reset"] is True
+
+            gone = exec_in_backend(
+                "from app.database import SessionLocal\n"
+                "from app.models_team import Meet\n"
+                "db = SessionLocal()\n"
+                f"print(db.get(Meet, {meet_a_id}) is not None)\n"
+            ).strip()
+            assert gone == "False", "Meet A's live TeamMeet row should be gone after its results were archived"
+
+            b_sessions = requests.get(f"{BASE_URL}/api/sessions", headers=b_headers, timeout=10)
+            b_sessions.raise_for_status()
+            assert len(b_sessions.json()) == 1, "Meet B's session vanished after meet A's results were imported"
+        finally:
+            if meet_b_id is not None:
+                exec_in_backend(
+                    "from app.database import SessionLocal\n"
+                    "from app.models_team import Meet\n"
+                    "from app.models import SwimSession, SwimEvent, AgeGroup, SwimResult\n"
+                    "db = SessionLocal()\n"
+                    f"m = {meet_b_id}\n"
+                    "db.query(SwimResult).filter(SwimResult.meetsid == m).delete()\n"
+                    "db.query(AgeGroup).filter(AgeGroup.meetsid == m).delete()\n"
+                    "db.query(SwimEvent).filter(SwimEvent.meetsid == m).delete()\n"
+                    "db.query(SwimSession).filter(SwimSession.meetsid == m).delete()\n"
+                    "db.query(Meet).filter(Meet.meetsid == m).delete()\n"
+                    "db.commit()\n"
+                )
 
 
 # ---------------------------------------------------------------------------
