@@ -27,6 +27,7 @@ app.setName(app.isPackaged ? 'SauvetageMeet' : 'SauvetageMeet-Dev')
 
 import { QuantumBridge, type ActiveHeat, type ScheduleEvent } from './quantum'
 import { assignLateBeachNumber } from './beachNumber'
+import { resolveMatchingAge, getSeasonYear } from './ageGroupRules'
 import {
   getHeatListEvents, getHeatListSessions, getSessions, getAthletes,
   saveResult,
@@ -327,6 +328,18 @@ ipcMain.handle('db:get-meet-type', () => {
   return (row?.data || 'POOL').toUpperCase()
 })
 
+// Age to use for age-group matching, per §1.1-1.3 (see ageGroupRules.ts) — replaces the
+// renderer's old calcAge(), which computed age from wall-clock "today" instead of the
+// season's own reference dates.
+ipcMain.handle('db:get-matching-age', (_event, birthDate: string) => {
+  const db = getLocalDb()
+  const bd = new Date(birthDate)
+  if (isNaN(bd.getTime())) return null
+  const row = db.prepare(`SELECT data FROM bsglobal WHERE name = 'MEET_TYPE'`).get() as { data: string } | undefined
+  const meetType = (row?.data || 'POOL').toUpperCase() as 'POOL' | 'BEACH'
+  return resolveMatchingAge(bd, meetType, getSeasonYear(db))
+})
+
 ipcMain.handle('db:get-dsq-items', () => {
   const db = getLocalDb()
   try {
@@ -382,9 +395,9 @@ ipcMain.handle('db:register', (_event, data: { athlete_id: number; event_id: num
         // Fall back to matching by age range based on athlete's birthdate
         const bd = typeof athlete.birthdate === 'string' ? new Date(athlete.birthdate) : null
         if (bd && !isNaN(bd.getTime())) {
-          const now = new Date()
-          let age = now.getFullYear() - bd.getFullYear()
-          if (now.getMonth() < bd.getMonth() || (now.getMonth() === bd.getMonth() && now.getDate() < bd.getDate())) age--
+          const meetTypeRow = db.prepare(`SELECT data FROM bsglobal WHERE name = 'MEET_TYPE'`).get() as { data: string } | undefined
+          const meetType = (meetTypeRow?.data || 'POOL').toUpperCase() as 'POOL' | 'BEACH'
+          const age = resolveMatchingAge(bd, meetType, getSeasonYear(db))
           // Find matching age group
           for (const ag of ageGroups) {
             const min = ag.agemin ?? 0

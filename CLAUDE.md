@@ -54,6 +54,7 @@ python3 -m pytest tests/ -v
 ## Project structure
 ```
 config/
+  age-group-rules.json         — Shared age-group reference dates (both apps, see config/CLAUDE.md)
   combined-events-config.json  — Shared category/points config (both apps)
   template_pool.lxf            — Pool meet template (swimstyleids 500-531)
   template_beach.lxf           — Beach meet template (swimstyleids 601-624)

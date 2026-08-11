@@ -17,6 +17,7 @@
 // along with Sauvetage Sportif. If not, see <https://www.gnu.org/licenses/>.
 
 import { assignLateBeachNumber } from './beachNumber'
+import { resolveMatchingAge, getSeasonYear } from './ageGroupRules'
 import {
   regenerateCombinedEvents, resolveToFinal, loadCombinedEventsConfig,
   queryRelayEventsWithAgeGroups,
@@ -1117,15 +1118,16 @@ export async function addLateEntry(
     `SELECT agegroupid, agemin, agemax FROM agegroup WHERE swimeventid = ? ORDER BY sortcode`
   ).all(eventId) as Array<{ agegroupid: number; agemin: number | null; agemax: number | null }>
 
+  const meetTypeRow = db.prepare(`SELECT data FROM bsglobal WHERE name = 'MEET_TYPE'`).get() as { data: string } | undefined
+  const meetType = (meetTypeRow?.data || 'POOL').toUpperCase() as 'POOL' | 'BEACH'
+
   let agegroupId: number | null = null
   if (ageGroups.length === 1) {
     agegroupId = ageGroups[0].agegroupid
   } else if (ageGroups.length > 1 && athlete?.birthdate) {
     const bd = typeof athlete.birthdate === 'string' ? new Date(athlete.birthdate) : null
     if (bd && !isNaN(bd.getTime())) {
-      const now = new Date()
-      let age = now.getFullYear() - bd.getFullYear()
-      if (now.getMonth() < bd.getMonth() || (now.getMonth() === bd.getMonth() && now.getDate() < bd.getDate())) age--
+      const age = resolveMatchingAge(bd, meetType, getSeasonYear(db))
       for (const ag of ageGroups) {
         const min = ag.agemin ?? 0
         const max = ag.agemax == null || ag.agemax < 0 ? 999 : ag.agemax
@@ -1145,8 +1147,7 @@ export async function addLateEntry(
   ).run(id, athleteId, eventId, agegroupId, heatId, lane, entryTime)
 
   // Assign beach number if beach meet
-  const meetTypeRow = db.prepare(`SELECT data FROM bsglobal WHERE name = 'MEET_TYPE'`).get() as { data: string } | undefined
-  if ((meetTypeRow?.data || 'POOL').toUpperCase() === 'BEACH') {
+  if (meetType === 'BEACH') {
     assignLateBeachNumber(db, athleteId)
   }
 

@@ -168,7 +168,7 @@ export const registrationApiElectron: RegistrationAPI = {
     _lastAthleteId = athleteId
 
     const course = meetConfig.COURSE === '3' ? 'SCM' : 'LCM'
-    const age = calcAge(athlete.birthDate)
+    const age = (await ipc()?.getMatchingAge(athlete.birthDate)) as number | null ?? calcAge(athlete.birthDate)
     const suggestedAgeCode = suggestAgeCode(age)
 
     // Build registration styles from events

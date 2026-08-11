@@ -204,6 +204,7 @@ shared, timing-scan barcode matching keys on `swimeventid` instead — see
 | `db:set-relay-team-member` | Assign/remove member at position |
 | `db:set-relay-team-name` | Set custom team name |
 | `db:get-meet-type` | Get meet type (POOL/BEACH) from BSGLOBAL |
+| `db:get-matching-age` | Age to use for age-group matching (season-reference-date rules, see `config/CLAUDE.md`) |
 | `menu:open-guide` | Open in-app workflow guide (pool/beach) |
 | `db:register` | Register athlete for event (create swimresult) |
 | `db:unregister` | Unregister athlete from event (delete unseeded swimresult) |

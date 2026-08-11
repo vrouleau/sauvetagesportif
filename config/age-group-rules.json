@@ -1,0 +1,9 @@
+{
+  "$comment": "Age-group determination rules — Règlements des compétitions de sauvetage sportif au Québec (Édition septembre 2025), §1.1-1.3. '10-' and '11-12' use the season-start date (sticky for the whole season, capped by yearEndDate — an athlete who will turn 13 by yearEndDate is bumped to 13-14 for the season instead of staying in 11-12). '13-14', '15-18', 'Open' (Senior) and 'Masters' use yearEndDate (ILS rule), also locked for the whole season. Consumed by meet-app (src/main/ageGroupRules.ts) and team-app (backend/app/age_group_rules.py) — keep both readers' month/day semantics (1-indexed) in sync with this file.",
+  "seasonStartDate": {
+    "POOL": { "month": 9, "day": 1 },
+    "BEACH": { "month": 5, "day": 1 }
+  },
+  "yearEndDate": { "month": 12, "day": 31 },
+  "seasonStartBrackets": ["10-", "11-12"]
+}
