@@ -45,6 +45,7 @@ from app import models_team  # noqa: F401 — ensure all models are registered
 from app import models_live  # noqa: F401
 from app import models_serc  # noqa: F401
 from app.migrations.versions import m0001_concurrent_meets as migration
+from app.migrations.versions import m0003_swimevent_agegroup_composite_pk as m0003
 from app.migrations.runner import apply_pending
 from app.meet_config import get_active_meetsid, session_date_conflict
 from app.events import load_events
@@ -91,6 +92,65 @@ def _build_pre_phase1_schema(engine) -> None:
         conn.execute(text("CREATE TABLE heat (heatid INTEGER PRIMARY KEY, heatnumber INTEGER)"))
         conn.execute(text("CREATE TABLE secret_links (id INTEGER PRIMARY KEY, token VARCHAR(36))"))
         conn.execute(text("CREATE TABLE live_events (event_id INTEGER PRIMARY KEY, event_name VARCHAR(100))"))
+
+
+def _build_post_m0001_pre_m0003_schema(engine) -> None:
+    """Hand-build the schema shape after m0001 but before m0003: meetsid
+    columns exist (added by m0001) but swimevent/agegroup still have their
+    original single-column PK and single-column FKs — the exact shape a
+    real SQLite dev database is in right after upgrading from a pre-Phase-2
+    checkout. Mirrors a real production dump's `sqlite_master` output
+    closely enough for m0003's SQLite rebuild path to exercise for real —
+    this is the shape that crashed a real local dev environment (Postgres-
+    only `ALTER TABLE ... DROP CONSTRAINT` syntax on SQLite) before this
+    dialect split existed.
+    """
+    with engine.begin() as conn:
+        conn.execute(text("CREATE TABLE meets (meetsid INTEGER PRIMARY KEY, name VARCHAR(100), registration_open BOOLEAN)"))
+        conn.execute(text("CREATE TABLE swimsession (swimsessionid INTEGER PRIMARY KEY, meetsid INTEGER REFERENCES meets(meetsid), sessionnumber SMALLINT, name VARCHAR(100))"))
+        conn.execute(text("CREATE TABLE swimstyle (swimstyleid INTEGER PRIMARY KEY, name VARCHAR(50))"))
+        conn.execute(text("""
+            CREATE TABLE swimevent (
+                swimeventid INTEGER PRIMARY KEY,
+                meetsid INTEGER REFERENCES meets(meetsid),
+                eventnumber SMALLINT,
+                swimsessionid INTEGER REFERENCES swimsession(swimsessionid),
+                swimstyleid INTEGER REFERENCES swimstyle(swimstyleid)
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE agegroup (
+                agegroupid INTEGER PRIMARY KEY,
+                meetsid INTEGER REFERENCES meets(meetsid),
+                name VARCHAR(50),
+                agemin SMALLINT,
+                agemax SMALLINT,
+                swimeventid INTEGER REFERENCES swimevent(swimeventid) ON DELETE CASCADE
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE heat (
+                heatid INTEGER PRIMARY KEY,
+                meetsid INTEGER REFERENCES meets(meetsid),
+                agegroupid INTEGER,
+                heatnumber SMALLINT,
+                swimeventid INTEGER REFERENCES swimevent(swimeventid) ON DELETE CASCADE
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE swimresult (
+                swimresultid INTEGER PRIMARY KEY,
+                meetsid INTEGER REFERENCES meets(meetsid),
+                athleteid INTEGER,
+                swimeventid INTEGER REFERENCES swimevent(swimeventid),
+                agegroupid INTEGER REFERENCES agegroup(agegroupid),
+                age_code VARCHAR(10),
+                entrytime INTEGER,
+                swimtime INTEGER,
+                CONSTRAINT uq_swimresult_entry UNIQUE (athleteid, swimeventid, age_code)
+            )
+        """))
+        conn.execute(text("CREATE TABLE members (membersid INTEGER PRIMARY KEY)"))
 
 
 # ---------------------------------------------------------------------------
@@ -148,6 +208,80 @@ class TestMigration:
         assert "meetsid" in cols
         with new_engine.connect() as conn:
             assert conn.execute(text("SELECT COUNT(*) FROM meet_config")).scalar() == 0
+
+
+class TestCompositePkMigrationSqlite:
+    """m0003's SQLite rebuild path (table rename + CREATE + INSERT SELECT +
+    DROP, since SQLite has no ALTER TABLE ... DROP/ADD CONSTRAINT). Caught a
+    real bug: this migration originally only had a Postgres ALTER path and
+    crash-looped every SQLite dev backend on startup the moment an existing
+    (post-m0001) database needed it — see docs/CONCURRENT_MEETS_PLAN.md."""
+
+    def test_rebuilds_composite_pk_preserving_all_data(self, new_engine):
+        """Seeds data shaped like a real pre-Stage-1 database (single meet,
+        globally-unique swimeventid — a genuine id collision couldn't exist
+        yet under the OLD single-column PK, that's the whole bug), migrates,
+        then proves the fix: a second meet can now reuse the same numeric
+        id the first meet already has, which would have been a
+        UniqueViolation before this migration."""
+        _build_post_m0001_pre_m0003_schema(new_engine)
+        with new_engine.begin() as conn:
+            conn.execute(text("INSERT INTO meets (meetsid, name, registration_open) VALUES (1, 'Meet A', 1)"))
+            conn.execute(text("INSERT INTO swimstyle (swimstyleid, name) VALUES (601, 'Beach Flags')"))
+            conn.execute(text("INSERT INTO swimevent (swimeventid, meetsid, eventnumber, swimstyleid) VALUES (1065, 1, 1, 601)"))
+            conn.execute(text("INSERT INTO agegroup (agegroupid, meetsid, name, agemin, agemax, swimeventid) VALUES (1066, 1, '10-', 0, 10, 1065)"))
+            conn.execute(text("INSERT INTO members (membersid) VALUES (1)"))
+            conn.execute(text("INSERT INTO swimresult (swimresultid, meetsid, athleteid, swimeventid, agegroupid, age_code) VALUES (1, 1, 1, 1065, 1066, 'Open')"))
+            conn.execute(text("INSERT INTO heat (heatid, meetsid, agegroupid, heatnumber, swimeventid) VALUES (1, 1, 1066, 1, 1065)"))
+
+        m0003.upgrade(new_engine)
+
+        insp = inspect(new_engine)
+        pk = insp.get_pk_constraint("swimevent")
+        assert set(pk["constrained_columns"]) == {"meetsid", "swimeventid"}
+        pk = insp.get_pk_constraint("agegroup")
+        assert set(pk["constrained_columns"]) == {"meetsid", "agegroupid"}
+
+        with new_engine.connect() as conn:
+            assert conn.execute(text("SELECT COUNT(*) FROM swimevent")).scalar() == 1
+            assert conn.execute(text("SELECT COUNT(*) FROM agegroup")).scalar() == 1
+            assert conn.execute(text("SELECT COUNT(*) FROM swimresult")).scalar() == 1
+            assert conn.execute(text("SELECT COUNT(*) FROM heat")).scalar() == 1
+            row = conn.execute(text(
+                "SELECT meetsid, eventnumber, swimstyleid FROM swimevent WHERE swimeventid = 1065"
+            )).fetchone()
+            assert row == (1, 1, 601)
+
+        # The actual regression: a second meet reusing the same numeric id
+        # must now succeed — this raised a UniqueViolation before the fix.
+        with new_engine.begin() as conn:
+            conn.execute(text("INSERT INTO meets (meetsid, name, registration_open) VALUES (2, 'Meet B', 1)"))
+            conn.execute(text("INSERT INTO swimevent (swimeventid, meetsid, eventnumber, swimstyleid) VALUES (1065, 2, 1, 601)"))
+            conn.execute(text("INSERT INTO agegroup (agegroupid, meetsid, name, agemin, agemax, swimeventid) VALUES (1066, 2, '10-', 0, 10, 1065)"))
+
+        with new_engine.connect() as conn:
+            rows = conn.execute(text(
+                "SELECT meetsid, eventnumber FROM swimevent WHERE swimeventid = 1065 ORDER BY meetsid"
+            )).fetchall()
+            assert rows == [(1, 1), (2, 1)]
+
+    def test_is_idempotent(self, new_engine):
+        """Running m0003 twice must not error or double-apply the rebuild —
+        the second call sees the composite PK already in place and returns."""
+        _build_post_m0001_pre_m0003_schema(new_engine)
+        with new_engine.begin() as conn:
+            conn.execute(text("INSERT INTO meets (meetsid, name, registration_open) VALUES (1, 'Meet A', 1)"))
+            conn.execute(text("INSERT INTO swimevent (swimeventid, meetsid, eventnumber) VALUES (1065, 1, 1)"))
+
+        m0003.upgrade(new_engine)
+        m0003.upgrade(new_engine)  # must be a no-op, not an error
+
+        with new_engine.connect() as conn:
+            assert conn.execute(text("SELECT COUNT(*) FROM swimevent")).scalar() == 1
+
+    def test_fresh_install_noop(self, new_engine):
+        """No pre-existing swimevent table → nothing to rebuild."""
+        m0003.upgrade(new_engine)  # must not raise
 
 
 class TestLoadEventsStartupGuard:

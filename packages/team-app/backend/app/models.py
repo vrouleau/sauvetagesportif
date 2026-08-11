@@ -272,8 +272,13 @@ class SwimResult(Base):
         primaryjoin="and_(SwimResult.meetsid == SwimEvent.meetsid, "
                     "SwimResult.swimeventid == SwimEvent.swimeventid)",
     )
+    # viewonly: swimresult.meetsid is shared between this FK and the
+    # (meetsid, swimeventid) FK behind SwimResult.event/SwimEvent.results —
+    # nothing ever assigns through this relationship (every insert sets
+    # meetsid/agegroupid as plain columns), so there's no real ambiguity,
+    # just an ORM write-ownership warning to silence.
     agegroup = relationship(
-        "AgeGroup",
+        "AgeGroup", viewonly=True,
         primaryjoin="and_(SwimResult.meetsid == AgeGroup.meetsid, "
                     "SwimResult.agegroupid == AgeGroup.agegroupid)",
     )
