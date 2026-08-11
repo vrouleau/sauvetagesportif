@@ -23,13 +23,16 @@ Teams are pulled from relay entries for the SERC event (swimstyle 530).
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime
+from functools import lru_cache
+from pathlib import Path
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models_serc import SercConfig, SercDrawOrder, SercScore
+from ..models_serc import SercConfig, SercDrawOrder, SercScore, SercDisqualification
 from ..models_team import Relay, RelayPos, Member, TeamClub
 from ..models import SwimStyle
 
@@ -37,6 +40,30 @@ router = APIRouter(prefix="/api/serc")
 
 # SERC swimstyle ID (configured in template_pool.lxf)
 SERC_STYLE_ID = 530
+
+_DSQ_CODES_ENV = "DSQ_CODES_PATH"
+_DSQ_CODES_FILENAME = "dsq-codes.json"
+
+
+def _dsq_codes_path() -> Path:
+    override = os.environ.get(_DSQ_CODES_ENV)
+    if override:
+        return Path(override)
+    # Docker image: COPY config/dsq-codes.json . lands it next to the `app`
+    # package directory (see backend/Dockerfile), i.e. two levels above this
+    # file (routers -> app -> /app). Mirrors age_group_rules.py's pattern.
+    docker_path = Path(__file__).resolve().parent.parent.parent / _DSQ_CODES_FILENAME
+    if docker_path.exists():
+        return docker_path
+    # Local/dev fallback: actual monorepo layout.
+    return Path(__file__).resolve().parent.parent.parent.parent.parent.parent / "config" / _DSQ_CODES_FILENAME
+
+
+@lru_cache(maxsize=1)
+def _load_serc_dsq_codes() -> list[dict]:
+    with open(_dsq_codes_path(), "r", encoding="utf-8") as f:
+        data = json.load(f)
+    return data.get("serc", [])
 
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -252,6 +279,71 @@ def get_scores_for_draw(draw_number: int, db: Session = Depends(get_db)):
     return result
 
 
+# ── Disqualifications ────────────────────────────────────────────────────────
+
+@router.get("/dsq-codes")
+def get_dsq_codes(lang: str = Query("fr")):
+    """SERC disqualification reason codes (Règlements Québec, Annexe 3 / §5.14.5)."""
+    codes = _load_serc_dsq_codes()
+    name_key = "name_en" if lang == "en" else "name_fr"
+    return [{"code": c["code"], "name": c.get(name_key, c.get("name_fr", ""))} for c in codes]
+
+
+@router.get("/disqualifications")
+def get_disqualifications(db: Session = Depends(get_db)):
+    """List all recorded disqualifications for the current config."""
+    config = _get_config(db)
+    if not config:
+        return []
+    dqs = db.query(SercDisqualification).filter(SercDisqualification.config_id == config.id).all()
+    return [
+        {"draw": d.draw_number, "relay_team_id": d.relay_team_id, "code": d.code, "note": d.note}
+        for d in dqs
+    ]
+
+
+@router.put("/disqualification")
+def set_disqualification(data: dict = Body(default={}), db: Session = Depends(get_db)):
+    """Disqualify (or clear the disqualification of) a team for a specific draw.
+
+    Accepts {draw, relay_team_id, code, note}. A falsy `code` clears any
+    existing disqualification for that (draw, team) instead of setting one.
+    """
+    config = _get_or_create_config(db)
+    draw = int(data["draw"])
+    relay_team_id = int(data["relay_team_id"])
+    code = data.get("code")
+    note = data.get("note")
+
+    valid_codes = {c["code"] for c in _load_serc_dsq_codes()}
+    if code and str(code) not in valid_codes:
+        raise HTTPException(status_code=422, detail=f"Unknown SERC DSQ code: {code}")
+
+    existing = db.query(SercDisqualification).filter(
+        SercDisqualification.config_id == config.id,
+        SercDisqualification.draw_number == draw,
+        SercDisqualification.relay_team_id == relay_team_id,
+    ).first()
+
+    if not code:
+        if existing:
+            db.delete(existing)
+    elif existing:
+        existing.code = str(code)
+        existing.note = note
+    else:
+        db.add(SercDisqualification(
+            config_id=config.id,
+            draw_number=draw,
+            relay_team_id=relay_team_id,
+            code=str(code),
+            note=note,
+            created_at=datetime.utcnow().isoformat(),
+        ))
+    db.commit()
+    return {"ok": True}
+
+
 # ── Results ───────────────────────────────────────────────────────────────────
 
 @router.get("/results")
@@ -264,6 +356,10 @@ def get_results(db: Session = Depends(get_db)):
     # Get teams
     relays = db.query(Relay).filter(Relay.stylesid == SERC_STYLE_ID).all()
     all_scores = db.query(SercScore).filter(SercScore.config_id == config.id).all()
+    dq_map = {
+        (d.draw_number, d.relay_team_id): d.code
+        for d in db.query(SercDisqualification).filter(SercDisqualification.config_id == config.id).all()
+    }
 
     # Parse factors
     overall_factors = json.loads(config.overall_factors_json) if config.overall_factors_json else {}
@@ -292,6 +388,11 @@ def get_results(db: Session = Depends(get_db)):
         }
 
     def calc_team_draw(team_id: int, draw: int) -> float:
+        # A disqualified team contributes nothing for that draw — §2.4: "les
+        # résultats de l'épreuve ne comprendront pas de rang ou de temps".
+        if (draw, team_id) in dq_map:
+            return 0.0
+
         def section_scores(section: str, fields: tuple[str, ...]) -> dict[str, float]:
             return {f: score_map.get((draw, team_id, section, f), 0) or 0 for f in (*fields, "rough")}
 
@@ -303,28 +404,58 @@ def get_results(db: Session = Depends(get_db)):
 
         return compute_serc_total(scores, overall_factors, bystander_factors, victim_factors, config.has_bystander, config.num_victims)
 
-    # Per-draw results
+    # Per-draw results. Disqualified teams are shown (so officials can see
+    # them) but excluded from ranking entirely — no rank, not just last —
+    # per §2.4.
     draw_results = []
     for d in range(1, config.num_draws + 1):
         entries = []
         for relay in relays:
+            disqualified = (d, relay.relaysid) in dq_map
             total = calc_team_draw(relay.relaysid, d)
             info = team_info.get(relay.relaysid, {})
-            entries.append({"relay_team_id": relay.relaysid, "name": info.get("name", ""), "club": info.get("club", ""), "total": total})
-        entries.sort(key=lambda x: x["total"], reverse=True)
-        for i, e in enumerate(entries):
+            entries.append({
+                "relay_team_id": relay.relaysid,
+                "name": info.get("name", ""),
+                "club": info.get("club", ""),
+                "total": total,
+                "disqualified": disqualified,
+                "dsq_code": dq_map.get((d, relay.relaysid)),
+            })
+        ranked = sorted((e for e in entries if not e["disqualified"]), key=lambda x: x["total"], reverse=True)
+        for i, e in enumerate(ranked):
             e["rank"] = i + 1
-        draw_results.append({"draw": d, "results": entries})
+        disqualified_entries = [e for e in entries if e["disqualified"]]
+        for e in disqualified_entries:
+            e["rank"] = None
+        draw_results.append({"draw": d, "results": ranked + disqualified_entries})
 
-    # Overall
+    # Overall — sums each team's per-draw totals, which already zero out any
+    # disqualified draw. A team disqualified in any draw is excluded from the
+    # overall ranking too (no rank, sorted last) — the single-scoring-grid UI
+    # (Serc.jsx) treats "overall" as *the* results table, so it gets the same
+    # no-rank treatment as a per-draw result (§2.4).
     overall = []
     for relay in relays:
         total = sum(calc_team_draw(relay.relaysid, d) for d in range(1, config.num_draws + 1))
         info = team_info.get(relay.relaysid, {})
-        overall.append({"relay_team_id": relay.relaysid, "name": info.get("name", ""), "club": info.get("club", ""), "total": round(total, 2)})
-    overall.sort(key=lambda x: x["total"], reverse=True)
-    for i, e in enumerate(overall):
+        dq_draws = [d for d in range(1, config.num_draws + 1) if (d, relay.relaysid) in dq_map]
+        overall.append({
+            "relay_team_id": relay.relaysid,
+            "name": info.get("name", ""),
+            "club": info.get("club", ""),
+            "total": round(total, 2),
+            "disqualified": bool(dq_draws),
+            "disqualified_draws": dq_draws,
+            "dsq_code": dq_map.get((dq_draws[0], relay.relaysid)) if dq_draws else None,
+        })
+    ranked_overall = sorted((e for e in overall if not e["disqualified"]), key=lambda x: x["total"], reverse=True)
+    for i, e in enumerate(ranked_overall):
         e["rank"] = i + 1
+    disqualified_overall = [e for e in overall if e["disqualified"]]
+    for e in disqualified_overall:
+        e["rank"] = None
+    overall = ranked_overall + disqualified_overall
 
     return {"draws": draw_results, "overall": overall}
 

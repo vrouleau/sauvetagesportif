@@ -245,3 +245,106 @@ class TestSercRelayExemption:
         r = requests.get(f"{BASE_URL}/api/serc/print/sheets?lang=en", timeout=10)
         assert r.status_code == 200
         assert "JUDGE SCORING SHEET" in r.text or "No SERC configuration" not in r.text
+
+
+# ---------------------------------------------------------------------------
+# Test 5: Disqualifications (Règlements Québec §5.14.5 / Annexe 3)
+# ---------------------------------------------------------------------------
+
+class TestSercDisqualification:
+    """A team disqualified for a draw scores 0 and is excluded from ranking
+    for that draw (and from the overall table, since Serc.jsx's single-grid
+    UI always uses draw=1) — but is still listed, flagged, not silently
+    dropped."""
+
+    @pytest.fixture(autouse=True)
+    def _setup(self, serc_config, admin_headers):
+        self.headers = admin_headers
+        # Clear any leftover disqualification for team 9999 before each test
+        requests.put(f"{BASE_URL}/api/serc/disqualification", json={
+            "draw": 1, "relay_team_id": 9999, "code": None
+        }, timeout=10)
+
+    def test_dsq_codes_fixed_list(self):
+        """The 4 SERC DSQ codes from Annexe 3 are exposed, fr and en."""
+        r = requests.get(f"{BASE_URL}/api/serc/dsq-codes?lang=fr", timeout=10)
+        assert r.status_code == 200
+        codes = r.json()
+        assert len(codes) == 4
+        assert {c["code"] for c in codes} == {"1", "2", "3", "4"}
+
+        r_en = requests.get(f"{BASE_URL}/api/serc/dsq-codes?lang=en", timeout=10)
+        assert r_en.status_code == 200
+        assert r_en.json()[0]["name"] != r.json()[0]["name"]
+
+    def test_unknown_code_rejected(self):
+        r = requests.put(f"{BASE_URL}/api/serc/disqualification", json={
+            "draw": 1, "relay_team_id": 9999, "code": "99"
+        }, timeout=10)
+        assert r.status_code == 422
+
+    def test_set_and_list_disqualification(self):
+        r = requests.put(f"{BASE_URL}/api/serc/disqualification", json={
+            "draw": 1, "relay_team_id": 9999, "code": "2", "note": "phone found in isolation"
+        }, timeout=10)
+        assert r.status_code == 200
+
+        r = requests.get(f"{BASE_URL}/api/serc/disqualifications", timeout=10)
+        assert r.status_code == 200
+        entries = [d for d in r.json() if d["relay_team_id"] == 9999]
+        assert len(entries) == 1
+        assert entries[0]["code"] == "2"
+        assert entries[0]["note"] == "phone found in isolation"
+
+    def test_clear_disqualification(self):
+        requests.put(f"{BASE_URL}/api/serc/disqualification", json={
+            "draw": 1, "relay_team_id": 9999, "code": "1"
+        }, timeout=10)
+        r = requests.put(f"{BASE_URL}/api/serc/disqualification", json={
+            "draw": 1, "relay_team_id": 9999, "code": None
+        }, timeout=10)
+        assert r.status_code == 200
+
+        r = requests.get(f"{BASE_URL}/api/serc/disqualifications", timeout=10)
+        entries = [d for d in r.json() if d["relay_team_id"] == 9999]
+        assert entries == []
+
+    def test_disqualified_team_scores_zero_and_has_no_rank(self):
+        """A DQ'd team's per-draw result is zeroed and excluded from ranking
+        (rank omitted), not just ranked last — matches §2.4's "no rank or
+        time" rule. Uses a real relay team if the template has SERC (530)
+        events with existing teams; skips otherwise since results only
+        include actual relay entries."""
+        teams = requests.get(f"{BASE_URL}/api/serc/teams", timeout=10).json()
+        if not teams:
+            pytest.skip("No SERC relay teams in this meet template to exercise results ranking")
+        team_id = teams[0]["relay_team_id"]
+
+        # Give the team a strong score so it would rank first if not DQ'd
+        for section, field, value in [("overall", "assessment", 10), ("overall", "control", 10)]:
+            requests.put(f"{BASE_URL}/api/serc/score", json={
+                "draw": 1, "relay_team_id": team_id, "section": section, "field": field, "value": value
+            }, timeout=10)
+
+        requests.put(f"{BASE_URL}/api/serc/disqualification", json={
+            "draw": 1, "relay_team_id": team_id, "code": "4"
+        }, timeout=10)
+        try:
+            r = requests.get(f"{BASE_URL}/api/serc/results", timeout=10)
+            assert r.status_code == 200
+            data = r.json()
+
+            draw1 = next(d for d in data["draws"] if d["draw"] == 1)
+            entry = next(e for e in draw1["results"] if e["relay_team_id"] == team_id)
+            assert entry["disqualified"] is True
+            assert entry["dsq_code"] == "4"
+            assert entry["total"] == 0
+            assert entry["rank"] is None
+
+            overall_entry = next(e for e in data["overall"] if e["relay_team_id"] == team_id)
+            assert overall_entry["disqualified"] is True
+            assert overall_entry["rank"] is None
+        finally:
+            requests.put(f"{BASE_URL}/api/serc/disqualification", json={
+                "draw": 1, "relay_team_id": team_id, "code": None
+            }, timeout=10)
