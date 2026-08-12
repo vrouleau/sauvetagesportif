@@ -99,6 +99,45 @@ describe('LENEX importer', () => {
     }
   })
 
+  // Regression test for a live bug: importLenex never set swimstyle.uniqueid at all, so it
+  // stayed NULL for every custom style. Real Splash's own LXF importer treats the incoming
+  // swimstyleid as canonical and stores it in its own UNIQUEID column (confirmed against a
+  // real Splash-imported .mdb: SWIMSTYLEID=1060 [Splash's own auto-increment PK], UNIQUEID=500
+  // [our sent swimstyleid]). meet-app doesn't reassign its own PK, so uniqueid should equal
+  // swimstyleid — a NULL here is a state genuine Splash-imported data never has, and .smb
+  // export carried it into Splash verbatim (this exact NULL-vs-populated field already caused
+  // one real, documented Splash crash for a different code path — see scripts/generate-
+  // fixture-smb.ts's uniqueid history in this package's CLAUDE.md).
+  it('sets swimstyle.uniqueid to the swimstyleid, matching real Splash\'s own canonical-ID convention', () => {
+    const lxfPath = join(tmpdir(), `test-uniqueid-${randomBytes(4).toString('hex')}.lxf`)
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<LENEX version="3.0">
+  <MEETS>
+    <MEET name="Test Meet" city="Test City" nation="CAN" course="LCM">
+      <SESSIONS>
+        <SESSION number="1" name="Session 1">
+          <EVENTS>
+            <EVENT eventid="1" number="1" gender="M" round="TIM">
+              <SWIMSTYLE swimstyleid="504" distance="50" relaycount="1" name="50m Portage du mannequin plein" />
+            </EVENT>
+          </EVENTS>
+        </SESSION>
+      </SESSIONS>
+    </MEET>
+  </MEETS>
+</LENEX>`
+    writeZipSingleEntry(lxfPath, 'meet.lef', xml)
+
+    try {
+      importLenex(lxfPath, db)
+      const style = db.prepare('SELECT swimstyleid, uniqueid FROM swimstyle WHERE swimstyleid=504').get() as
+        { swimstyleid: number; uniqueid: number | null }
+      expect(style.uniqueid).toBe(504)
+    } finally {
+      try { unlinkSync(lxfPath) } catch {}
+    }
+  })
+
   it('imports age groups', function () {
     if (!existsSync(FIXTURE_PATH)) {
       this.skip?.()

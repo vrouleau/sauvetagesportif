@@ -342,9 +342,9 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
       `INSERT INTO swimsession (swimsessionid, sessionnumber, name, course, following, poolglobal, roundtotenths, lanemin, lanemax)
        VALUES (?,?,?,1,'F','F','F',?,?)`),
     upsertStyle: db.prepare(
-      `INSERT INTO swimstyle (swimstyleid, distance, relaycount, stroke, name, technique, code)
-       VALUES (?,?,?,?,?,?,?)
-       ON CONFLICT(swimstyleid) DO UPDATE SET distance=excluded.distance, relaycount=excluded.relaycount, stroke=excluded.stroke, name=excluded.name, technique=excluded.technique, code=excluded.code`),
+      `INSERT INTO swimstyle (swimstyleid, distance, relaycount, stroke, name, technique, code, uniqueid)
+       VALUES (?,?,?,?,?,?,?,?)
+       ON CONFLICT(swimstyleid) DO UPDATE SET distance=excluded.distance, relaycount=excluded.relaycount, stroke=excluded.stroke, name=excluded.name, technique=excluded.technique, code=excluded.code, uniqueid=excluded.uniqueid`),
     upsertEvent: db.prepare(
       `INSERT INTO swimevent
          (swimeventid, swimsessionid, eventnumber, gender, round, swimstyleid, sortcode,
@@ -465,7 +465,14 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
 
       if (styleId) {
         try {
-          stmts.upsertStyle.run(styleId, distance, relaycount, strokeCode, styleName, techniqueCode, codeValue)
+          // Real Splash's own LXF importer treats the incoming swimstyleid as the canonical
+          // ID and stores it in its own UNIQUEID column (its internal SWIMSTYLEID PK is a
+          // separate auto-increment value) — confirmed against a real Splash-imported .mdb.
+          // meet-app doesn't reassign its own PK the way Splash does, so uniqueid=styleId
+          // here reproduces the same "canonical ID present" state Splash's own import
+          // produces, instead of leaving uniqueid NULL (which .smb export would otherwise
+          // carry into Splash verbatim — a state genuine Splash-imported data never has).
+          stmts.upsertStyle.run(styleId, distance, relaycount, strokeCode, styleName, techniqueCode, codeValue, styleId)
         } catch (e) {
           summary.errors.push(`Swimstyle ${styleId}: ${e}`)
         }
