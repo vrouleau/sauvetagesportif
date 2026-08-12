@@ -53,6 +53,7 @@ class MeetEvent:
     agegroups: list[MeetAgeGroup] = field(default_factory=list)
     roundname: str = ""
     is_internal: bool = False
+    preveventid: int = -1
 
     @property
     def is_masters(self) -> bool:
@@ -166,6 +167,7 @@ def parse_meet_lxf(source) -> ParsedMeet:
                 fee_cents=fee_cents,
                 roundname=event_el.get("name", ""),
                 is_internal=is_internal,
+                preveventid=int(event_el.get("preveventid", -1)),
             )
             for ag_el in event_el.iter("AGEGROUP"):
                 ev.agegroups.append(MeetAgeGroup(

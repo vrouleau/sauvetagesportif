@@ -349,13 +349,13 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
       `INSERT INTO swimevent
          (swimeventid, swimsessionid, eventnumber, gender, round, swimstyleid, sortcode,
           internalevent, splashmecanedit, masters, pfineignore, seedbonuslast,
-          seedexhlast, seedlateentrylast, seedingglobal, twoperlane, combineagegroups, roundname, comment)
-       VALUES (?,?,?,?,?,?,?,?,'F',?,'F','F','F','F','F','F','F',?,?)
+          seedexhlast, seedlateentrylast, seedingglobal, twoperlane, combineagegroups, roundname, comment, preveventid)
+       VALUES (?,?,?,?,?,?,?,?,'F',?,'F','F','F','F','F','F','F',?,?,?)
        ON CONFLICT(swimeventid) DO UPDATE SET
          swimsessionid=excluded.swimsessionid, eventnumber=excluded.eventnumber,
          gender=excluded.gender, round=excluded.round, swimstyleid=excluded.swimstyleid,
          sortcode=excluded.sortcode, internalevent=excluded.internalevent,
-         masters=excluded.masters,
+         masters=excluded.masters, preveventid=excluded.preveventid,
          roundname=CASE WHEN excluded.roundname!='' THEN excluded.roundname ELSE swimevent.roundname END,
          comment=CASE WHEN excluded.comment!='' THEN excluded.comment ELSE swimevent.comment END`),
     upsertAgeGroup: db.prepare(
@@ -478,10 +478,14 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
       const isMasters = ea.type === 'MASTERS' ? 'T' : 'F'
       const evName = ea.name ?? styleName
       const evComment = isInternal === 'T' ? evName : ''
+      // preveventid links a FIN/SEM round back to its PRE round's eventid (Splash's own
+      // convention, -1 = no previous round) — without it, real Splash crashes when opening
+      // a final whose link never got reconstructed on import.
+      const prevEventId = ea.preveventid ? parseInt(ea.preveventid, 10) : -1
       try {
         stmts.upsertEvent.run(
           eventId, swimsessionid, parseInt(ea.number ?? '0', 10),
-          gender, round, styleId || null, sortcode, isInternal, isMasters, evName, evComment
+          gender, round, styleId || null, sortcode, isInternal, isMasters, evName, evComment, prevEventId
         )
         summary.events++
       } catch (e) {

@@ -124,6 +124,80 @@ describe('LENEX importer', () => {
     expect(events.c).toBe(s1.events)
   })
 
+  // Regression test for a live bug: importLenex never read a `preveventid` attribute off
+  // <EVENT>, so a final round imported from LXF always ended up unlinked from its prelim
+  // (preveventid left at the schema default instead of the prelim's swimeventid). That's
+  // silently tolerated inside meet-app itself, but the broken link propagates unchanged
+  // through smb.ts's .smb export/restore into real Splash, which crashes with an access
+  // violation when the user opens the final event — reproduced against a real Splash .mdb.
+  // team-app's export.py now emits `preveventid` (real Splash's own LXF export does too,
+  // confirmed against a genuine Splash-generated .lxf) — this checks the import side reads it.
+  it('links a FIN round back to its PRE round via preveventid', () => {
+    const lxfPath = join(tmpdir(), `test-preveventid-${randomBytes(4).toString('hex')}.lxf`)
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<LENEX version="3.0">
+  <MEETS>
+    <MEET name="Test Meet" city="Test City" nation="CAN" course="LCM">
+      <SESSIONS>
+        <SESSION number="1" name="Session 1">
+          <EVENTS>
+            <EVENT eventid="1060" number="1" gender="M" round="PRE" preveventid="-1">
+              <SWIMSTYLE swimstyleid="500" distance="100" relaycount="1" name="Test Style" />
+            </EVENT>
+            <EVENT eventid="1062" number="1" gender="M" round="FIN" preveventid="1060">
+              <SWIMSTYLE swimstyleid="500" distance="100" relaycount="1" name="Test Style" />
+            </EVENT>
+          </EVENTS>
+        </SESSION>
+      </SESSIONS>
+    </MEET>
+  </MEETS>
+</LENEX>`
+    writeZipSingleEntry(lxfPath, 'meet.lef', xml)
+
+    try {
+      importLenex(lxfPath, db)
+      const rows = db.prepare('SELECT swimeventid, round, preveventid FROM swimevent ORDER BY swimeventid').all() as
+        { swimeventid: number; round: number; preveventid: number | null }[]
+      const prelim = rows.find(r => r.swimeventid === 1060)
+      const final = rows.find(r => r.swimeventid === 1062)
+      expect(prelim?.preveventid).toBe(-1)
+      expect(final?.preveventid).toBe(1060)
+    } finally {
+      try { unlinkSync(lxfPath) } catch {}
+    }
+  })
+
+  it('defaults preveventid to -1 (Splash\'s own "no link" sentinel) when the attribute is absent', () => {
+    const lxfPath = join(tmpdir(), `test-preveventid-absent-${randomBytes(4).toString('hex')}.lxf`)
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<LENEX version="3.0">
+  <MEETS>
+    <MEET name="Test Meet" city="Test City" nation="CAN" course="LCM">
+      <SESSIONS>
+        <SESSION number="1" name="Session 1">
+          <EVENTS>
+            <EVENT eventid="1" number="1" gender="M" round="TIM">
+              <SWIMSTYLE swimstyleid="500" distance="100" relaycount="1" name="Test Style" />
+            </EVENT>
+          </EVENTS>
+        </SESSION>
+      </SESSIONS>
+    </MEET>
+  </MEETS>
+</LENEX>`
+    writeZipSingleEntry(lxfPath, 'meet.lef', xml)
+
+    try {
+      importLenex(lxfPath, db)
+      const row = db.prepare('SELECT preveventid FROM swimevent WHERE swimeventid=1').get() as
+        { preveventid: number | null }
+      expect(row.preveventid).toBe(-1)
+    } finally {
+      try { unlinkSync(lxfPath) } catch {}
+    }
+  })
+
   // Regression test for a live bug: importLenex never read the <AGEDATE> element team-app's
   // exporter writes (export.py:218) at all, so an imported team-app meet silently fell back
   // to today's calendar year for season resolution (ageGroupRules.ts's getSeasonYear) and

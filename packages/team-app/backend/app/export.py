@@ -46,6 +46,34 @@ def _ms_to_lenex(ms: int | None) -> str:
     return f"{h:02d}:{m:02d}:{s:02d}.{cs:02d}"
 
 
+_ROUND_LINK_ORDER = {"PRE": 0, "SEM": 1, "FIN": 2, "TIM": 0}
+
+
+def _compute_preveventids(events: list[tuple]) -> dict:
+    """Link prelim/semi/final rounds of the same event within one session.
+
+    Splash has no LENEX-standard way to express this — its own exporter adds
+    a proprietary `preveventid` EVENT attribute (round="FIN" -> the eventid of
+    that same event's round="PRE"/"SEM" row). Without it, Splash's importer
+    leaves finals unlinked (preveventid=-1), which crashes real Splash when
+    the final is opened in the UI (it dereferences the link unconditionally).
+
+    events: list of (eventid, number, gender, swimstyleid, round_str).
+    Returns {eventid: preveventid}, -1 for the first round of each group.
+    """
+    groups: dict[tuple, list] = {}
+    for eventid, number, gender, swimstyleid, round_str in events:
+        groups.setdefault((number, gender, swimstyleid), []).append((eventid, round_str))
+    result: dict[int, int] = {}
+    for group in groups.values():
+        group.sort(key=lambda item: _ROUND_LINK_ORDER.get(item[1], 0))
+        prev_id = -1
+        for eventid, _round_str in group:
+            result[eventid] = prev_id
+            prev_id = eventid
+    return result
+
+
 def _find_relay_event(meet_struct, relay: Relay):
     """Resolve the MeetEvent a relay team belongs to.
 
@@ -128,6 +156,11 @@ def _meet_struct_from_db(db: Session, meetsid: int | None = None):
                 roundname=ev.roundname or (ev.comment if ev.swimstyleid is None else "") or "",
                 is_internal=(ev.internalevent == 'T' or ev.swimstyleid is None),
             ))
+        preveventids = _compute_preveventids(
+            [(m.eventid, m.number, m.gender, m.swimstyleid, m.round) for m in events]
+        )
+        for m in events:
+            m.preveventid = preveventids[m.eventid]
         parsed_sessions.append(MeetSession(
             number=ses.sessionnumber or ses.swimsessionid,
             name=ses.name or "",
@@ -239,6 +272,7 @@ def generate_lxf(db: Session, meetsid: int | None = None) -> bytes:
                 "order": str(idx),
                 "gender": m_ev.gender,
                 "round": m_ev.round,
+                "preveventid": str(m_ev.preveventid),
             }
             if m_ev.roundname:
                 ev_attrs["name"] = m_ev.roundname
@@ -618,12 +652,19 @@ def generate_meet_lxf_from_db(db: Session, meetsid: int | None = None) -> bytes:
             ses_attrs["lanemax"] = str(ses.lanemax)
         ses_xml = ET.SubElement(sessions_xml, "SESSION", ses_attrs)
         evts_xml = ET.SubElement(ses_xml, "EVENTS")
-        for ev in sorted(ses.events, key=lambda e: e.sortcode or e.eventnumber or 0):
+        sorted_events = sorted(ses.events, key=lambda e: e.sortcode or e.eventnumber or 0)
+        preveventids = _compute_preveventids([
+            (ev.swimeventid, ev.eventnumber or 0, _GENDER_MAP.get(ev.gender, "X"),
+             ev.swimstyleid or 0, _ROUND_MAP.get(ev.round, "TIM"))
+            for ev in sorted_events
+        ])
+        for ev in sorted_events:
             ev_attrs = {
                 "eventid": str(ev.swimeventid),
                 "number": str(ev.eventnumber or 0),
                 "gender": _GENDER_MAP.get(ev.gender, "X"),
                 "round": _ROUND_MAP.get(ev.round, "TIM"),
+                "preveventid": str(preveventids[ev.swimeventid]),
             }
             if ev.masters == 'T':
                 ev_attrs["type"] = "MASTERS"
