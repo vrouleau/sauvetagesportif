@@ -3261,19 +3261,18 @@ def export_entries_lxf(db: Session = Depends(get_db)):
 
 @router.get("/export/meet-lxf", dependencies=[Depends(require_organizer_or_admin)])
 def export_meet_lxf(request: Request, db: Session = Depends(get_db)):
-    """Download the meet structure as a Lenex .lxf (stored file or generated from DB).
+    """Download the meet structure as a Lenex .lxf, generated fresh from the DB.
 
-    MEET_STORAGE is a single on-disk file, not meetsid-scoped — the fast
-    path below always serves whichever meet was uploaded/created most
-    recently, regardless of X-Meet-Id, once a second meet can be open at
-    the same time. Not fixed here (out of this stage's scope, flagged for
-    stage 7); the DB-generated fallback path is already meetsid-aware.
+    Previously had a "fast path" serving MEET_STORAGE — a single on-disk file
+    frozen at whatever was last uploaded (or the raw template, for a meet
+    created via /admin/new-meet) — instead of the live meet structure. Any
+    session/event/category edit made afterward never reached that file, so
+    this endpoint silently served stale (sometimes just-the-template)
+    content. Always generating from the DB also makes this meetsid-aware
+    (MEET_STORAGE was a single file, not scoped per meet).
     """
     from ..export import generate_meet_lxf_from_db
-    if MEET_STORAGE.exists():
-        content = MEET_STORAGE.read_bytes()
-    else:
-        content = generate_meet_lxf_from_db(db, meetsid=resolve_meetsid(request, db))
+    content = generate_meet_lxf_from_db(db, meetsid=resolve_meetsid(request, db))
     return Response(
         content=content,
         media_type="application/zip",

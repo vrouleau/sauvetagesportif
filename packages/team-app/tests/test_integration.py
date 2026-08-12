@@ -1644,6 +1644,30 @@ class TestExportMeetLxfEndpoint:
         r.raise_for_status()
         assert "zip" in r.headers.get("content-type", "").lower() or r.content[:2] == b"PK"
 
+    def test_reflects_edits_made_after_upload(self, uploaded, admin_headers):
+        """Regression test: this endpoint used to serve MEET_STORAGE, a single
+        on-disk file frozen at upload time, instead of the live DB — any
+        session/event edit made afterward (in the EventsPage UI) never
+        reached the export. Rename a session, then confirm the export
+        reflects the new name rather than whatever was originally uploaded.
+        """
+        sessions = requests.get(f"{BASE_URL}/api/sessions",
+                                 headers=admin_headers, timeout=10).json()
+        session_id = sessions[0]["id"]
+        new_name = "Regression Test Session Name"
+        requests.put(f"{BASE_URL}/api/sessions/{session_id}",
+                     json={"name": new_name},
+                     headers=admin_headers, timeout=10).raise_for_status()
+        try:
+            lxf = export_meet_lxf(admin_headers)
+            lef = lxf.read(next(n for n in lxf.namelist() if n.endswith(".lef"))).decode()
+            assert new_name in lef, \
+                "export/meet-lxf did not reflect a session rename — likely serving a stale cached file"
+        finally:
+            requests.put(f"{BASE_URL}/api/sessions/{session_id}",
+                         json={"name": sessions[0]["name"]},
+                         headers=admin_headers, timeout=10)
+
 
 # ---------------------------------------------------------------------------
 # Gemini key transport via inscription LXF
