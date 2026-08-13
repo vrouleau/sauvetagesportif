@@ -981,7 +981,7 @@ export function exportLenexResults(filePath: string, db: Database.Database): Exp
   // ── Events (include internal/break events with internalevent attribute) ──────
   const events = db.prepare(
     `SELECT e.swimeventid, e.swimsessionid, e.eventnumber, e.gender, e.round, e.roundname,
-            e.internalevent, e.sortcode, e.swimstyleid,
+            e.internalevent, e.sortcode, e.swimstyleid, e.preveventid,
             s.distance, s.stroke, s.relaycount, s.name AS stylename
      FROM swimevent e
      LEFT JOIN swimstyle s ON s.swimstyleid = e.swimstyleid
@@ -989,7 +989,7 @@ export function exportLenexResults(filePath: string, db: Database.Database): Exp
   ).all() as Array<{
     swimeventid: number; swimsessionid: number; eventnumber: number
     gender: number; round: number; roundname: string | null; internalevent: string | null
-    sortcode: number; swimstyleid: number | null; distance: number | null
+    sortcode: number; swimstyleid: number | null; preveventid: number | null; distance: number | null
     stroke: number | null; relaycount: number | null; stylename: string | null
   }>
 
@@ -1107,7 +1107,7 @@ export function exportLenexResults(filePath: string, db: Database.Database): Exp
     for (const ev of sessEvents) {
       const internalAttr = ev.internalevent === 'T' ? ' internalevent="T"' : ''
       const nameAttr = ev.internalevent === 'T' && ev.roundname ? attr('name', ev.roundname) : ''
-      lines.push(`            <EVENT${attr('eventid', ev.swimeventid)}${attr('number', ev.eventnumber)}${attr('gender', decodeGender(ev.gender))}${attr('round', decodeRound(ev.round))}${attr('order', ev.sortcode)}${internalAttr}${nameAttr}>`)
+      lines.push(`            <EVENT${attr('eventid', ev.swimeventid)}${attr('number', ev.eventnumber)}${attr('gender', decodeGender(ev.gender))}${attr('round', decodeRound(ev.round))}${attr('order', ev.sortcode)}${attr('preveventid', ev.preveventid ?? -1)}${internalAttr}${nameAttr}>`)
 
       // SWIMSTYLE (required by Splash even for pause/break events, hence code="ID0" placeholder)
       if (ev.swimstyleid) {
@@ -1304,7 +1304,7 @@ export function exportMeetLenex(filePath: string, db: Database.Database): MeetEx
 
   const events = db.prepare(
     `SELECT e.swimeventid, e.swimsessionid, e.eventnumber, e.gender, e.round, e.roundname,
-            e.internalevent, e.masters, e.sortcode, e.swimstyleid,
+            e.internalevent, e.masters, e.sortcode, e.swimstyleid, e.preveventid,
             s.distance, s.stroke, s.relaycount, s.name AS stylename
      FROM swimevent e
      LEFT JOIN swimstyle s ON s.swimstyleid = e.swimstyleid
@@ -1312,7 +1312,7 @@ export function exportMeetLenex(filePath: string, db: Database.Database): MeetEx
   ).all() as Array<{
     swimeventid: number; swimsessionid: number; eventnumber: number
     gender: number; round: number; roundname: string | null; internalevent: string | null
-    masters: string | null; sortcode: number; swimstyleid: number | null
+    masters: string | null; sortcode: number; swimstyleid: number | null; preveventid: number | null
     distance: number | null; stroke: number | null; relaycount: number | null; stylename: string | null
   }>
 
@@ -1350,6 +1350,7 @@ export function exportMeetLenex(filePath: string, db: Database.Database): MeetEx
         attr('gender', decodeGender(ev.gender)),
         attr('round', decodeRound(ev.round)),
         attr('order', ev.sortcode),
+        attr('preveventid', ev.preveventid ?? -1),
       ]
       if (ev.roundname) evAttrs.push(attr('name', ev.roundname))
       if (ev.internalevent === 'T') evAttrs.push(` internalevent="T"`)

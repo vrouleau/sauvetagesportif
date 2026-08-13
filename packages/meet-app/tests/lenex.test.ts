@@ -725,6 +725,31 @@ describe('LENEX exporter', () => {
       freshCleanup()
     }
   })
+
+  // Regression test for a live bug: exportMeetLenex/exportLenexResults never wrote the
+  // `preveventid` attribute at all (only importLenex read it, and only team-app's export.py
+  // wrote it — see a1e9d3e). A prelim/final pair created via "Convert to Final" in meet-app
+  // (swimevent.preveventid set locally) round-tripped through meet-app's own LXF export with
+  // that link silently dropped. Reproduced against real Splash: opening the final in the UI
+  // after importing such a file is an access violation crash, since Splash dereferences the
+  // link unconditionally.
+  it('exportMeetLenex writes preveventid linking a Final back to its Prelim', () => {
+    seedResultsFixture(db, dateToOle(2014, 7, 3))
+    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode, internalevent, preveventid) VALUES (2, 1, 1, 1, 1, 4, 2, 'F', 1)`)
+    exportMeetLenex(outPath, db)
+    const xml = readLefXml(outPath)
+    expect(xml).toMatch(/eventid="1"[^>]*preveventid="-1"/)
+    expect(xml).toMatch(/eventid="2"[^>]*preveventid="1"/)
+  })
+
+  it('exportLenexResults writes preveventid linking a Final back to its Prelim', () => {
+    seedResultsFixture(db, dateToOle(2014, 7, 3))
+    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode, internalevent, preveventid) VALUES (2, 1, 1, 1, 1, 4, 2, 'F', 1)`)
+    exportLenexResults(outPath, db)
+    const xml = readLefXml(outPath)
+    expect(xml).toMatch(/eventid="1"[^>]*preveventid="-1"/)
+    expect(xml).toMatch(/eventid="2"[^>]*preveventid="1"/)
+  })
 })
 
 // ── PostgreSQL backend parity ───────────────────────────────────────────────

@@ -193,10 +193,17 @@ never been converted.
 - Extracts MEETVALUES metadata from meet attributes (name, course, agedate, deadline, etc.)
 - Auto-detects `MEET_TYPE` from swim style IDs: if any `swimstyleid >= 600` → `BEACH`, else `POOL` (only when not already set)
 
-**Export (`exportMeetLenex`, `exportResultsLenex`):**
+**Export (`exportMeetLenex`, `exportLenexResults`):**
 - Includes pause event names in the output
 - Uses correct swimstyleids (canonical UIDs)
 - Writes meet-level attributes (course, agedate, organizer, etc.) from MEETVALUES
+- Writes `preveventid` on every `<EVENT>` (own row's value, or `-1` if unset) — real Splash
+  crashes with an access violation opening a Final whose `preveventid` link was never
+  established (see "Prelim/Final event numbering" above). This was missed when the
+  attribute was first added (only `importLenex`'s read side and team-app's export.py got it —
+  see a1e9d3e); a Final created via "Convert to Final" in meet-app and re-exported straight
+  to a real Splash `.mdb` reproduced the crash until both meet-app export functions were
+  fixed to write it too.
 | `timing:save-scan` | Store scanned image + barcode metadata |
 | `timing:get-scans-for-processing` | List scans by status filter |
 | `timing:run-ocr` | Run OCR engine on a scan (Gemini/Ollama/etc) |
