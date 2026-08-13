@@ -525,6 +525,12 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
       // 3. Link the final to the prelim via preveventid
       await api.updateEvent(result.id, { preveventid: event.id, swimstyleid: event.swimstyleId })
 
+      // 3b. createEvent starts the final with no age groups — copy the prelim's
+      // over so the final keeps the same categories (e.g. 15-18).
+      for (const ag of event.ageGroups) {
+        await api.createAgeGroup(result.id, ag.name, ag.minAge, ag.maxAge, ag.gender)
+      }
+
       // 4. Position the final directly under the prelim (createEvent appends it
       // at the end of the session, so it needs to be moved into place).
       const ids = session.events.map(e => e.id)
