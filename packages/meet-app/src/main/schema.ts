@@ -250,4 +250,15 @@ export function runSchemaInit(backend: DbBackend): void {
     backend.exec(ddl)
   }
   runColumnBackfills(backend)
+
+  // Real Splash creates a sequence named exactly this the moment it first connects to a
+  // Postgres database — nextId() (db.ts) draws every new row's id from it in PG mode, matching
+  // Splash's own single-shared-id-space convention (its MDB schema has the equivalent
+  // BSUIDTABLE row {NAME:'BS_GLOBAL_UID', LASTUID:<n>}). The documented normal workflow has
+  // Splash connect to a shared database first (which creates this for us), but IF NOT EXISTS
+  // means our own app doesn't depend on that ordering — it creates the sequence itself if it's
+  // the first to connect, and harmlessly no-ops (reusing Splash's own sequence) otherwise.
+  if (backend.type === 'pg') {
+    try { backend.exec(`CREATE SEQUENCE IF NOT EXISTS gen_bs_global_uid`) } catch { /* created concurrently by another station */ }
+  }
 }

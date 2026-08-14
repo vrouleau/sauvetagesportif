@@ -33,6 +33,7 @@ import {
 } from './helpers'
 import type { DbBackend } from '../src/main/dbBackend'
 import { runColumnBackfills } from '../src/main/schema'
+import { nextId } from '../src/main/db'
 
 const pgAvailable = await isPgTestAvailable()
 const BACKENDS: TestBackendKind[] = pgAvailable ? ['sqlite', 'pg'] : ['sqlite']
@@ -180,6 +181,37 @@ describe.each(BACKENDS)('Schema integrity [%s]', (kind) => {
 
       const row = db.prepare(`SELECT afinal8lanes FROM agegroup WHERE agegroupid = 1`).get() as { afinal8lanes: string | null }
       expect(row.afinal8lanes).toBe('F')
+    })
+  })
+
+  it('nextId() never returns an id already used by a different table', async () => {
+    // Real Splash's own id space is a single counter shared across every table (confirmed by
+    // directly querying a real Splash .mdb: BSUIDTABLE has a literal row
+    // {NAME:'BS_GLOBAL_UID', LASTUID:<n>}) — not independent per-table counters. Before this
+    // fix, nextId() computed MAX(pkCol)+1 scoped to just the one target table in SQLite mode, so
+    // two different tables could produce the same literal id (e.g. swimeventid=1 and
+    // agegroupid=1 coexisting). Confirmed live (2026-08-14) as the actual root cause of two real
+    // Splash "Invalid class typecast" crashes — converting an imported Timed Final into a
+    // Prelim/Final split, and deleting an already-split Final — both stopped once ids were
+    // forced non-colliding across tables.
+    await withDb((db) => {
+      // Simulate our own independently-numbered tables landing on the same literal id, as they
+      // do today for a small/fresh meet (swimeventid=1, agegroupid=1, swimsessionid=1, ...).
+      db.prepare(`INSERT INTO swimsession (swimsessionid, sessionnumber, name) VALUES (1, 1, 'S1')`).run()
+      db.prepare(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount, stroke) VALUES (1, 50, 'Free', 1, 1)`).run()
+      db.prepare(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode) VALUES (1, 1, 1, 1, 0, 5, 1)`).run()
+      db.prepare(`INSERT INTO agegroup (agegroupid, swimeventid, agemin, agemax, gender, sortcode) VALUES (1, 1, 10, 12, 0, 1)`).run()
+
+      const newEventId = nextId('swimevent', 'swimeventid', db)
+      db.prepare(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode) VALUES (?, 1, 1, 2, 0, 5, 2)`).run(newEventId)
+      const newAgeGroupId = nextId('agegroup', 'agegroupid', db)
+
+      // The new id must not collide with ANY existing id in ANY table, not just its own table —
+      // in particular, creating a new event must not hand out an id already used by agegroup
+      // (or vice versa), which is exactly what crashed real Splash.
+      expect(newEventId).not.toBe(1)
+      expect(newAgeGroupId).not.toBe(1)
+      expect(newAgeGroupId).not.toBe(newEventId)
     })
   })
 })

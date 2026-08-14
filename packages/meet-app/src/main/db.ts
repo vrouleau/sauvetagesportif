@@ -1228,6 +1228,23 @@ export async function swapRelayLanes(
 
 // ── Write: session CRUD ───────────────────────────────────────────────────────
 
+// Every table whose rows get an id from nextId() below — kept in sync with the actual
+// nextId(table, pkCol) call sites in this file. Used only by the SQLite branch to compute a
+// single id shared across all of them (see comment below); the PG branch draws straight from
+// Splash's own sequence and doesn't need this list.
+const NEXT_ID_TABLES: Array<{ table: string; pkCol: string }> = [
+  { table: 'swimstyle', pkCol: 'swimstyleid' },
+  { table: 'swimsession', pkCol: 'swimsessionid' },
+  { table: 'club', pkCol: 'clubid' },
+  { table: 'athlete', pkCol: 'athleteid' },
+  { table: 'swimevent', pkCol: 'swimeventid' },
+  { table: 'agegroup', pkCol: 'agegroupid' },
+  { table: 'heat', pkCol: 'heatid' },
+  { table: 'swimresult', pkCol: 'swimresultid' },
+  { table: 'dsqitem', pkCol: 'dsqitemid' },
+  { table: 'relay', pkCol: 'relayid' },
+]
+
 export function nextId(table: string, pkCol: string, injectedDb?: ReturnType<typeof getLocalDb>): number {
   const db = injectedDb ?? getLocalDb()
   // In PG mode, use Splash's global UID sequence to avoid ID conflicts
@@ -1235,7 +1252,20 @@ export function nextId(table: string, pkCol: string, injectedDb?: ReturnType<typ
     const row = db.prepare(`SELECT nextval('gen_bs_global_uid') AS next`).get() as { next: number | bigint }
     return Number(row.next)
   }
-  const row = db.prepare(`SELECT COALESCE(MAX(${pkCol}), 0) + 1 AS next FROM ${table}`).get() as { next: number }
+  // SQLite has no external sequence to piggyback on, unlike PG mode above — but real Splash's
+  // own id space is a single counter shared across every table regardless of backend (its own
+  // MDB schema has a literal BSUIDTABLE row {NAME:'BS_GLOBAL_UID', LASTUID:<n>}, confirmed by
+  // directly querying a real Splash .mdb). Our previous per-table `MAX(pkCol)+1` let two
+  // different tables produce the same literal id (e.g. swimeventid=1 and agegroupid=1
+  // coexisting) — real Splash's own object-identity/notification system assumes ids are
+  // globally unique and throws "Invalid class typecast", retrieving the wrong cached object
+  // type, the moment it hits a collision. Confirmed live (2026-08-14) against real Splash: both
+  // converting an imported Timed Final into a Prelim/Final split, and deleting an already-split
+  // Final, crashed with exactly that error and stopped once ids were forced non-colliding.
+  // Single Electron process, single writer in SQLite mode — no locking needed here, same as the
+  // per-table MAX+1 pattern this replaces.
+  const unioned = NEXT_ID_TABLES.map(t => `SELECT COALESCE(MAX(${t.pkCol}), 0) AS m FROM ${t.table}`).join(' UNION ALL ')
+  const row = db.prepare(`SELECT COALESCE(MAX(m), 0) + 1 AS next FROM (${unioned})`).get() as { next: number }
   return row.next
 }
 
@@ -1946,7 +1976,7 @@ function generateHeatsBeach(
     // signals that: create a single empty heat shell (so the event still
     // appears on the schedule) instead of distributing entries into heats.
     if (styleRow?.maxentries === 0) {
-      const heatId = (db.prepare(`SELECT COALESCE(MAX(heatid), 0) + 1 AS next FROM heat`).get() as { next: number }).next
+      const heatId = nextId('heat', 'heatid', db)
       db.prepare(
         `INSERT INTO heat (heatid, swimeventid, heatnumber, racestatus, sortcode)
          VALUES (?, ?, 1, 4, 100)`
@@ -1981,7 +2011,7 @@ function generateHeatsBeach(
     let idx = 0
     for (let h = 0; h < numHeats; h++) {
       const heatSize = baseSize + (h < remainder ? 1 : 0)
-      const heatId = (db.prepare(`SELECT COALESCE(MAX(heatid), 0) + 1 AS next FROM heat`).get() as { next: number }).next
+      const heatId = nextId('heat', 'heatid', db)
       const heatNumber = h + 1
 
       db.prepare(
@@ -2219,8 +2249,7 @@ function seedAndAssignHeats(
 
   for (let h = 0; h < heats.length; h++) {
     if (heats[h].length === 0) continue
-    const heatIdRow = db.prepare(`SELECT COALESCE(MAX(heatid), 0) + 1 AS next FROM heat`).get() as { next: number }
-    const heatId = heatIdRow.next
+    const heatId = nextId('heat', 'heatid', db)
     const heatNumber = heatNumberOffset + h + 1
     insertHeat.run(heatId, eventId, agegroupId, heatNumber, heatNumber)
     totalHeats++

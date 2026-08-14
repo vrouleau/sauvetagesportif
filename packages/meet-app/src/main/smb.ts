@@ -53,6 +53,9 @@ export interface ColDef {
   name: string
   type: 'I' | 'S' | 'D' | 'F' | 'M'
   size: number
+  // No backing column in our own schema — export-only, generated per row at save time
+  // (e.g. Splash's own per-row sync GUID columns). Never read from or written to our DB.
+  synthetic?: boolean
 }
 
 // Tables to include in SMB backup (order matters for FK dependencies).
@@ -93,6 +96,15 @@ const SMB_TABLES: { name: string; cols: ColDef[]; stub?: boolean }[] = [
       { name: 'SORTCODE', type: 'I', size: 32 },
       { name: 'TECHNIQUE', type: 'I', size: 16 },
       { name: 'UNIQUEID', type: 'I', size: 16 },
+      // Real Splash column (Microsoft.ACE.OLEDB.12.0 GetSchema: S;36, matches randomUUID()'s
+      // dashed format), always a real unique value in every genuine Splash-native .mdb sampled —
+      // never blank. Re-added 2026-08-14 after being tried once (2026-08-13) and reverted for not
+      // fixing a *different*, earlier-in-the-flow access-violation crash (see smb_beach_results_
+      // crash_investigation memory / meet-app CLAUDE.md) — new evidence (a distinct "Invalid class
+      // typecast" crash surfacing deeper in Splash's own delete-final routine, in its generic
+      // items/notification dispatch layer, once the earlier crash was fixed) makes an object-
+      // identity mismatch from blank/duplicate GUIDs a live hypothesis again for THIS crash.
+      { name: 'SWIMSTYLEGUID', type: 'S', size: 36, synthetic: true },
     ]
   },
   {
@@ -122,6 +134,7 @@ const SMB_TABLES: { name: string; cols: ColDef[]; stub?: boolean }[] = [
       { name: 'TOUCHPADMODE', type: 'I', size: 16 },
       { name: 'WARMUPFROM', type: 'D', size: 32 },
       { name: 'WARMUPUNTIL', type: 'D', size: 32 },
+      { name: 'SWIMSESSIONGUID', type: 'S', size: 36, synthetic: true },  // see SWIMSTYLEGUID comment above
     ]
   },
   {
@@ -230,6 +243,7 @@ const SMB_TABLES: { name: string; cols: ColDef[]; stub?: boolean }[] = [
       { name: 'COMBINEAGEGROUPS', type: 'S', size: 1 },
       { name: 'ROUNDONE', type: 'S', size: 20 },
       { name: 'INTERNALEVENT', type: 'S', size: 1 },
+      { name: 'SWIMEVENTGUID', type: 'S', size: 36, synthetic: true },  // see SWIMSTYLEGUID comment above
     ]
   },
   {
@@ -268,6 +282,7 @@ const SMB_TABLES: { name: string; cols: ColDef[]; stub?: boolean }[] = [
       { name: 'FOREIGNCOUNT', type: 'I', size: 16 },
       { name: 'FINALSEEDTYPE', type: 'I', size: 16 },
       { name: 'AFINAL8LANES', type: 'S', size: 1 }, // real Splash column, found missing via full schema diff against a genuine Splash-native .smb export
+      { name: 'AGEGROUPGUID', type: 'S', size: 36, synthetic: true },  // see SWIMSTYLEGUID comment above
     ]
   },
   // Real column defs captured from a populated Splash mdb via GetSchema("Columns") —
@@ -832,9 +847,21 @@ export function saveSMB(filePath: string, db: DbBackend): { tables: number; rows
 
   for (const tableDef of SMB_TABLES) {
     const tableName = tableDef.name.toLowerCase()
-    const colNames = tableDef.cols.map(c => c.name.toLowerCase()).join(', ')
+    const dbCols = tableDef.cols.filter(c => !c.synthetic)
+    const syntheticCols = tableDef.cols.filter(c => c.synthetic)
+    const colNames = dbCols.map(c => c.name.toLowerCase()).join(', ')
     // stub tables have no backing table in our schema — always export empty (see comment above SMB_TABLES)
     let rows = tableDef.stub ? [] : db.prepare(`SELECT ${colNames} FROM ${tableName}`).all() as Record<string, unknown>[]
+
+    // Synthetic columns (e.g. Splash's own per-row sync GUIDs) have no backing DB column —
+    // generate a fresh value per row at export time.
+    if (syntheticCols.length > 0) {
+      rows = rows.map(row => {
+        const extra: Record<string, unknown> = {}
+        for (const c of syntheticCols) extra[c.name.toLowerCase()] = randomUUID()
+        return { ...row, ...extra }
+      })
+    }
 
     // RECORDAGEGROUP is the one stub table real Splash always populates even with zero configured
     // records: every real, populated Splash database sampled had exactly one row
@@ -856,6 +883,31 @@ export function saveSMB(filePath: string, db: DbBackend): { tables: number; rows
         else if (round === 1) newRow = { ...newRow, round: 2 }   // PRE → MDB 2 (eventnumber/gender kept — Splash stores real values on both PRE and FIN)
         else if (round === 4) newRow = { ...newRow, round: 9 }   // FIN → MDB 9
         else if (round === 5) newRow = { ...newRow, round: 1 }   // TIM → MDB 1
+        // preveventid: our own schema leaves this NULL for every event that isn't itself a
+        // Final (the vast majority). Real Splash never stores NULL here — sampled across three
+        // populated Splash-native .mdb files (84 SWIMEVENT rows total): always either -1 ("no
+        // parent") or a real linked event id, never NULL. Confirmed via a live crash repro
+        // (2026-08-14): deleting a Final in Splash after restoring one of our own .smb exports
+        // left the target .mdb mid-operation (prelim's round already reverted PRE→TIM, but the
+        // Final row not yet removed) — consistent with Splash's delete-final routine walking
+        // every SWIMEVENT row's PREVEVENTID and choking on a NULL Access field read into a
+        // non-nullable Integer. Same fix already applied on the LXF export path (lenex.ts's
+        // `ev.preveventid ?? -1`) but never ported here.
+        if (newRow['preveventid'] == null) newRow = { ...newRow, preveventid: -1 }
+        return newRow
+      })
+    }
+
+    // agegroup.agemax/agemin: our own app normalizes Splash's -1/>=99 "Open" sentinel to NULL
+    // internally (see db.ts's `normalizedMaxAge` comment: "agemax uses -1 or >=99 as a Splash
+    // 'Open' sentinel — normalize to null"), but never converts back on the way out. Real Splash
+    // never stores NULL in either column (confirmed: 0/90 NULL rows sampled across a real
+    // populated .mdb) — restore this sentinel on export, same bug class as preveventid above.
+    if (tableName === 'agegroup') {
+      rows = rows.map(row => {
+        let newRow = row
+        if (newRow['agemax'] == null) newRow = { ...newRow, agemax: -1 }
+        if (newRow['agemin'] == null) newRow = { ...newRow, agemin: -1 }
         return newRow
       })
     }
@@ -1043,8 +1095,10 @@ export function restoreSMB(filePath: string, db: DbBackend): { tables: number; r
       // Use intersection of file columns and our expected columns for INSERT.
       // ON CONFLICT DO NOTHING is portable — SQLite (3.24+, bundled by better-sqlite3)
       // and Postgres both support the bare (no conflict target) form.
+      // Synthetic columns (e.g. Splash's own per-row sync GUIDs) have no backing DB column on
+      // our side — never insert them, whether this file came from us or genuine Splash.
       const fileColNames = new Set(fileCols.map(c => c.name.toLowerCase()))
-      const colNames = tableDef.cols.map(c => c.name.toLowerCase()).filter(c => fileColNames.has(c))
+      const colNames = tableDef.cols.filter(c => !c.synthetic).map(c => c.name.toLowerCase()).filter(c => fileColNames.has(c))
       const placeholders = colNames.map(() => '?').join(', ')
       const insertSql = `INSERT INTO ${tableDef.name.toLowerCase()} (${colNames.join(', ')}) VALUES (${placeholders}) ON CONFLICT DO NOTHING`
       const stmt = db.prepare(insertSql)
@@ -1155,6 +1209,14 @@ function normalizeRoundEncoding(db: DbBackend): void {
 
   // Mark round=11 (Break/Pause) events as internal
   db.prepare(`UPDATE swimevent SET internalevent = 'T' WHERE round = 11`).run()
+
+  // preveventid: real Splash (and, since the export-side fix above, our own re-exported files
+  // too) always stores -1 for "no parent", never NULL — our own internal convention is NULL.
+  // Some of our own code checks this truthily (e.g. `if (finalEvent?.preveventid)` in db.ts),
+  // which would wrongly treat a literal -1 as "has a parent" and go looking for an event with
+  // swimeventid=-1. Canonicalize on restore, same as the round remap above, so every downstream
+  // read only ever sees our own null-means-no-parent convention.
+  db.prepare(`UPDATE swimevent SET preveventid = NULL WHERE preveventid <= 0`).run()
 
   // Fix PRE events that have gender=0 and/or eventnumber=0.
   // In Splash MDB, prelim events store gender=0 and eventnumber=0 because
