@@ -474,7 +474,10 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
       const allNums = localSessions.flatMap((s) => s.events.map((e) => e.number))
       const newNum = Math.max(...allNums, 0) + 1
       try {
-        const result = await api.createEvent(targetSession.id, newNum, 'X', 0, phase, '')
+        // 'ALL' is a safe default even if this event turns out to be a relay once a
+        // style is picked — EventPropertiesPanel's style-select handler clamps an
+        // invalid gender ('ALL' isn't a valid relay value) to 'X' at that point.
+        const result = await api.createEvent(targetSession.id, newNum, 'ALL', 0, phase, '')
         realId = result.id
       } catch {
         window.alert("Erreur lors de la création de l'épreuve")
@@ -1587,51 +1590,37 @@ function AgeGroupPropertiesPanel({ group, event, sessions, onMoveAgeGroup }: { g
       <table className="w-full border-collapse">
         <tbody>
           {/* Général */}
-          {moveCandidates.length > 0 && (
-            <>
-              <SectionHeader title={t.events.props.general} />
-              {!collapsed.has(t.events.props.general) && (
-                <tr className="border-b border-gray-100 hover:bg-gray-50">
-                  <td className="px-4 py-0.5 text-gray-600 w-64">{t.events.props.moveToEvent}</td>
-                  <td className="px-2 py-0.5 flex items-center gap-1">
-                    <select
-                      className="border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
-                      value={moveTargetId}
-                      onChange={(e) => setMoveTargetId(e.target.value ? Number(e.target.value) : '')}
-                    >
-                      <option value="">{t.events.props.moveNoTarget}</option>
-                      {moveCandidates.map(({ event: e, sessionNumber }) => (
-                        <option key={e.id} value={e.id}>
-                          {sessionNumber}.{e.number} — {e.nameFr}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      type="button"
-                      disabled={!moveTargetId}
-                      onClick={handleMoveClick}
-                      className="px-2 py-0 border border-gray-300 rounded text-xs bg-white hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
-                    >
-                      {t.events.props.moveButton}
-                    </button>
-                  </td>
-                </tr>
-              )}
-            </>
-          )}
-
-          {/* Filtres supplémentaires */}
-          <SectionHeader title={t.events.props.additionalFilters} />
-          {!collapsed.has(t.events.props.additionalFilters) && (
-            <>
-              <Row label={t.events.props.nationalityLimit} value={null} />
-              <Row label={t.events.props.nationsOnly} value={t.events.allNations} />
-              <Row label={t.events.props.clubsOnly} value={t.events.allClubs} />
-              <Row label={t.events.props.athleteLevels} value={null} />
-              <Row label={t.events.props.fastestTime} value={null} />
-              <Row label={t.events.props.slowestTime} value={null} />
-              <Row label={t.events.props.paranation} value={null} />
-            </>
+          <SectionHeader title={t.events.props.general} />
+          {!collapsed.has(t.events.props.general) && (
+            moveCandidates.length > 0 ? (
+              <tr className="border-b border-gray-100 hover:bg-gray-50">
+                <td className="px-4 py-0.5 text-gray-600 w-64">{t.events.props.moveToEvent}</td>
+                <td className="px-2 py-0.5 flex items-center gap-1">
+                  <select
+                    className="border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
+                    value={moveTargetId}
+                    onChange={(e) => setMoveTargetId(e.target.value ? Number(e.target.value) : '')}
+                  >
+                    <option value="">{t.events.props.moveNoTarget}</option>
+                    {moveCandidates.map(({ event: e, sessionNumber }) => (
+                      <option key={e.id} value={e.id}>
+                        {sessionNumber}.{e.number} — {e.nameFr}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    disabled={!moveTargetId}
+                    onClick={handleMoveClick}
+                    className="px-2 py-0 border border-gray-300 rounded text-xs bg-white hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    {t.events.props.moveButton}
+                  </button>
+                </td>
+              </tr>
+            ) : (
+              <Row label={t.events.props.moveToEvent} value={null} />
+            )
           )}
 
           {/* Complément */}
@@ -1681,16 +1670,6 @@ function AgeGroupPropertiesPanel({ group, event, sessions, onMoveAgeGroup }: { g
             </>
           )}
 
-          {/* Autre */}
-          <SectionHeader title={t.events.props.other} />
-          {!collapsed.has(t.events.props.other) && (
-            <>
-              <Row label={t.events.props.name} value={null} />
-              <Row label={t.events.props.abbreviation} value={null} />
-              <Row label={t.events.props.winnerComment} value={null} />
-              <Row label={t.events.props.externalId} value={null} />
-            </>
-          )}
         </tbody>
       </table>
     </div>
