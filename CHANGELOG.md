@@ -1,5 +1,83 @@
 # Changelog
 
+## [0.5.0] - 2026-08-14
+
+### 📝 Documentation
+
+- summarize timing console integration research (Quantum, OmniSport) (`4e828ce`)
+
+### 🔧 Chores
+
+- use -p team-app-test for the integration-test docker stack (`bf78216`)
+- maxentries=0 skips heat distribution, creates one empty heat (`bcde79f`)
+
+### Other
+
+- Merge pull request #17 from vrouleau/claude/sex-gender-ui-simplification-sipglh (`64ea87b`)
+- Move age groups between event pairs, not just within one prelim/final split (`1587d5c`)
+- Merge pull request #16 from vrouleau/claude/sex-gender-ui-simplification-sipglh (`739ae7e`)
+- Fix prelim age groups still counting for medals/scoring after Final split (`d7978ec`)
+- Simplify gender labels, remove redundant tree text, translate seed method (`35b7114`)
+- Fix real Splash crashes from cross-table/cross-system id collisions (`f33e2aa`)
+- Merge Complément into Général: drop its 6 always-static fields (`9b8ba29`)
+- Fix new events stuck at gender=X, restore Déplacer vers, drop dead panel rows (`dd29116`)
+- Fix CI: widen integration test gender assertions to include ALL (`707ef39`)
+- Add docs/AGE_GROUP_GENDER_MODEL.md: gender simplification design doc (`6cc8ea7`)
+- Simplify event/age-group sex model, add LENEX ALL/MIXED support (`c80b448`)
+- Write preveventid on meet-app's own LXF exports, not just team-app's (`e0f6944`)
+- Fix convert-to-final losing the prelim's age groups (`21fcd81`)
+- Fix /api/export/meet-lxf serving a stale cached file instead of the live meet (`24fd25a`)
+- Set swimstyle.uniqueid on LXF import, matching real Splash's canonical-ID convention (`c5bd8ac`)
+- Link prelim/final rounds via preveventid on LXF export and import (`a1e9d3e`)
+- Convert-to-final: keep Final in prelim's session, revert prelim on delete (`e4d6297`)
+- Fix AGEDATE never syncing on LXF import, or from flushMeet, into MEETVALUES (`da1d14a`)
+- Add /api/meet/reset for in-place organizer meet flush, fix secret_links delete FK crash (`ac1237d`)
+- Merge pull request #15 from vrouleau/claude/concurrent-meet-phase2-stage2 (`0917b52`)
+- Phase 2 Stages 5-7: meet_id plumbing, meet-switcher, admin dashboard (`95e60b1`)
+- Phase 2 Stages 2-4: meets[] in /auth, X-Meet-Id header plumbing (`07fea29`)
+- Merge pull request #14 from vrouleau/claude/fix-sqlite-composite-pk-migration (`9ee4664`)
+- Fix m0003 composite-PK migration crash-looping on SQLite (`1d0351d`)
+- Merge pull request #13 from vrouleau/claude/concurrent-meet-phase-2-b7hx7g (`6bd8d65`)
+- Fix swimevent/agegroup id collisions across concurrent meets (`2e61079`)
+- Phase 2 Stage 1: stop wiping every open meet on meet creation/re-upload (`dd5d686`)
+- Record Phase 2 decisions: dropdown switcher confirmed, wipe scope settled (`12bc5e2`)
+- Ground Phase 2 plan in verified current code, sequence the implementation (`a24dfb2`)
+- Merge pull request #12 from vrouleau/claude/reglement-quebec-audit-x0b7vb (`66c5319`)
+- Rank Finale A ahead of Finale B in results/points, regardless of time (§4.4.2.1) (`4a69775`)
+- Add SERC disqualification support (Règlements Québec §5.14.5 / Annexe 3) (`d55fc57`)
+- Sync AGEDATE into age_base_date so the meet-config UI field actually works (`1a5afdc`)
+- Merge pull request #11 from vrouleau/claude/age-group-branch-9blm7n (`d1f517c`)
+- Anchor LENEX AGEDATE export to the meet's own local season year (`3ef0caa`)
+- Fix age-group determination to match §1.1-1.3 season reference dates (`1db43a7`)
+- Localize result-status labels (DNS/DNF/DSQ/EXH) to French (`3f2c408`)
+- Implement hors concours (HC/EXH) result status (`aadb2cb`)
+- HC design: resolve data-model question via real Splash .mdb inspection (`16e1cff`)
+- Add design notes for hors concours (HC) feature, paused pending Splash research (`84fe6c5`)
+- Include relay results in club "Classement aux points" standings (`b77e1bb`)
+- Fix three data-integrity bugs found auditing a live beach meet (`d282538`)
+- Exclude relay events from combined-event point standings (`e13e4ae`)
+- Group club points-standings report by age bracket (`9bbfaea`)
+- Merge branch 'main' of github.com:vrouleau/sauvetagesportif into main (`a7c8237`)
+- Beach template: zero out maxentries fallback for Beach Flag and Sprint 90m (`a4418ab`)
+- Merge pull request #8 from vrouleau/claude/beach-id-number-schema-p8c36d (`7619255`)
+- Merge pull request #7 from vrouleau/claude/beach-event-heat-generation-0vaavx (`e46ff28`)
+- Merge branch 'claude/concurrent-meets-phase1-data-model' into main (`e5292cf`)
+- Hardcode beach number category codes by age bracket + sex (`762e023`)
+- Update ILS reference and DSQ catalog spec for the beach codes fix (`b7de7e6`)
+- Replace beach DSQ codes with the actual ILS rule book list (`a440c83`)
+- Fix two Phase 1 regressions found via live/Postgres testing, add coverage (`f737e1b`)
+- Add concurrent meets Phase 1: meetsid scoping for the Meet Manager schema (`777868f`)
+- Merge pull request #6 from vrouleau/fix/reload-pool-template-historical-data-loss (`8488208`)
+- Fix historical meet data loss on Reset Meet and repeated meet resets (`dc860ca`)
+- Merge pull request #5 from vrouleau/claude/quantum-swiss-timing-api-fa8joa (`a04f218`)
+- Merge pull request #4 from vrouleau/claude/concurrent-meet-registrations-3crz32 (`b1d944d`)
+- Fold in independent live-page fix: scope to today's session (`5258870`)
+- Simplify live-results design: stays a singleton, on purpose (`8e905cf`)
+- Add live-results feed as a fourth singleton needing meetsid scoping (`5c77569`)
+- Drop pool-exclusivity assumption from concurrent meets plan (`23adcfb`)
+- Revise Phase 2 meet-switching design: persistent dropdown, not login-time picker (`2d69da5`)
+- Add concurrent meets plan (Phase 1 data model, Phase 2 UI) (`9a81e3e`)
+
 ## [0.4.0] - 2026-08-04
 
 ### Other
