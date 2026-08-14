@@ -219,6 +219,44 @@ on the Final row, pointing back at the prelim — exposed to the frontend as
 paired prelim's `round` is set back to `5` (TIM/Finale directe), as if it had
 never been converted.
 
+**Prelim's age groups stop counting for medals/scoring once split (found 2026-08-14).**
+The user noticed real Splash shows a "star" marker on an event's tree icon that's
+missing from the prelim (but present on the final) after converting to Final —
+either natively in Splash or via our LXF import — but present on *both* after an
+`.smb` round-trip through our own app. Root-caused by directly sampling a live
+Splash-native `.mdb` (`Microsoft.ACE.OLEDB.12.0`, same technique used for the ID
+crash investigation above): a freshly-split PRE/FIN pair has
+`AGEGROUP.UseForMedals`/`UseForScoring` = `'F'`/`'F'` on the **prelim's** age
+group(s) and `'T'`/`'T'` on the final's — real Splash's own convention once a
+final exists, the final's placement is what counts, not the prelim's. Our own
+`createAgeGroup` and `importLenex`'s `upsertAgeGroup` always hardcode `'T'`/`'T'`
+regardless of round, so nothing ever flipped the prelim's flags — explaining why
+`.smb` (a raw column copy of our own always-`'T'` data) shows both events
+matching, while native Splash and our LXF import (which encodes an already-split
+PRE/FIN pair) diverge from what our app itself produces.
+
+Fixed with a cascade in two places, both reusing the same
+`UPDATE agegroup SET useformedals='F', useforscoring='F' WHERE swimeventid=<prelim>`
+pattern:
+- `updateEvent` (`db.ts`): whenever `preveventid` is set to a real (`>0`) id,
+  flip that prelim's age groups to `'F'`/`'F'` — covers `handleConvertToFinal`'s
+  step 3 (linking the new Final to its prelim). The reverse also lives here:
+  whenever `round` is set to `5` (TIM), flip that event's own age groups back to
+  `'T'`/`'T'` — covers deleting a Final (which reverts the prelim's round to TIM,
+  see above).
+- `importLenex` (`lenex.ts`): a post-pass after every session/event/agegroup in
+  the file is inserted — for every `swimevent` row with a real `preveventid`,
+  flip its linked prelim's age groups. Needed because an incoming LXF can already
+  encode a PRE/FIN split (from our own export, or a real Splash export) with no
+  `updateEvent` call involved.
+
+Regression tests: `tests/event-fields.test.ts` (`updateEvent` cascade, both
+directions) and `tests/lenex.test.ts` ("flips a prelim's age groups off for
+medals/scoring when the imported FIN links to it via preveventid").
+`smb.ts` needed no change — it always copies whatever `useformedals`/`useforscoring`
+already sit in our own table, so once they're set correctly at creation/import
+time, `.smb` export carries them through correctly too.
+
 ### LXF round-trip details
 
 **Import (`importLenex`):**

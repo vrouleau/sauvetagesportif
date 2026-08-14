@@ -559,6 +559,22 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
     }
   }
 
+  // ── Prelim/Final scoring cascade ───────────────────────────────────────────────
+  // Real Splash's own "Convert to Final" (and, confirmed against a real Splash-native
+  // .mdb, its own LXF importer too) stops counting the prelim's age group(s) for
+  // medals/scoring once a final exists for it — the final's placement is what counts.
+  // upsertAgeGroup above always writes 'T'/'T', so an incoming file that already
+  // encodes a PRE/FIN split (preveventid set) needs this applied as a post-pass once
+  // every event/agegroup in the file has been inserted — mirrors updateEvent's
+  // equivalent cascade in db.ts (used by handleConvertToFinal).
+  {
+    const finalLinks = db.prepare(
+      `SELECT preveventid FROM swimevent WHERE preveventid IS NOT NULL AND preveventid > 0`
+    ).all() as Array<{ preveventid: number }>
+    const flipPrelim = db.prepare(`UPDATE agegroup SET useformedals='F', useforscoring='F' WHERE swimeventid=?`)
+    for (const link of finalLinks) flipPrelim.run(link.preveventid)
+  }
+
   // ── Auto-detect meet type from swim style IDs ─────────────────────────────────
   // If no MEET_TYPE is already set, infer from imported styles: IDs >= 600 are beach events
   {

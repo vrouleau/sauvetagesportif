@@ -2511,6 +2511,21 @@ export async function updateEvent(eventId: number, data: EventUpdate, injectedDb
     db.prepare(`UPDATE agegroup SET gender=? WHERE swimeventid=?`).run(data.gender, eventId)
   }
 
+  // Real Splash's own "Convert to Final" stops counting the prelim's age group(s) for
+  // medals/scoring once a final exists for it — the final's placement is what counts,
+  // not the prelim's. Confirmed against a real Splash-native .mdb: a freshly-split
+  // PRE/FIN pair has UseForMedals/UseForScoring 'F' on the PRE's age group, 'T' on the
+  // FIN's (our own event/agegroup creation always defaults both to 'T', so this needs
+  // to be applied explicitly wherever a final gets linked to its prelim).
+  if (data.preveventid !== undefined && data.preveventid != null && data.preveventid > 0) {
+    db.prepare(`UPDATE agegroup SET useformedals='F', useforscoring='F' WHERE swimeventid=?`).run(data.preveventid)
+  }
+  // Deleting a Final reverts its prelim's round back to TIM (see EventsPage.tsx's
+  // delete handler) — undo the flip above so the now-unsplit event counts again.
+  if (data.round !== undefined && data.round === 5) {
+    db.prepare(`UPDATE agegroup SET useformedals='T', useforscoring='T' WHERE swimeventid=?`).run(eventId)
+  }
+
   // Regenerate combined events when relevant fields change
   if (data.gender !== undefined || data.swimstyleid !== undefined) {
     regenerateCombinedEvents(db)

@@ -409,6 +409,56 @@ describe('LENEX importer', () => {
     }
   })
 
+  // Regression test for a live bug found by comparing a real Splash-native .mdb: a
+  // freshly-split PRE/FIN pair has UseForMedals/UseForScoring 'F' on the PRE's age
+  // group and 'T' on the FIN's (the final's placement is what counts, not the
+  // prelim's) — but upsertAgeGroup above always writes 'T'/'T', so an imported LXF
+  // that already encodes the split (preveventid set) needs the prelim's age groups
+  // flipped explicitly. See the matching cascade in db.ts's updateEvent.
+  it('flips a prelim\'s age groups off for medals/scoring when the imported FIN links to it via preveventid', () => {
+    const lxfPath = join(tmpdir(), `test-prelim-scoring-${randomBytes(4).toString('hex')}.lxf`)
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<LENEX version="3.0">
+  <MEETS>
+    <MEET name="Test Meet" city="Test City" nation="CAN" course="LCM">
+      <SESSIONS>
+        <SESSION number="1" name="Session 1">
+          <EVENTS>
+            <EVENT eventid="1060" number="1" gender="M" round="PRE" preveventid="-1">
+              <SWIMSTYLE swimstyleid="500" distance="100" relaycount="1" name="Test Style" />
+              <AGEGROUPS>
+                <AGEGROUP agegroupid="1061" agemin="15" agemax="18" />
+              </AGEGROUPS>
+            </EVENT>
+            <EVENT eventid="1062" number="1" gender="M" round="FIN" preveventid="1060">
+              <SWIMSTYLE swimstyleid="500" distance="100" relaycount="1" name="Test Style" />
+              <AGEGROUPS>
+                <AGEGROUP agegroupid="1063" agemin="15" agemax="18" />
+              </AGEGROUPS>
+            </EVENT>
+          </EVENTS>
+        </SESSION>
+      </SESSIONS>
+    </MEET>
+  </MEETS>
+</LENEX>`
+    writeZipSingleEntry(lxfPath, 'meet.lef', xml)
+
+    try {
+      importLenex(lxfPath, db)
+      const prelimAg = db.prepare('SELECT useformedals, useforscoring FROM agegroup WHERE agegroupid=1061').get() as
+        { useformedals: string; useforscoring: string }
+      const finalAg = db.prepare('SELECT useformedals, useforscoring FROM agegroup WHERE agegroupid=1063').get() as
+        { useformedals: string; useforscoring: string }
+      expect(prelimAg.useformedals).toBe('F')
+      expect(prelimAg.useforscoring).toBe('F')
+      expect(finalAg.useformedals).toBe('T')
+      expect(finalAg.useforscoring).toBe('T')
+    } finally {
+      try { unlinkSync(lxfPath) } catch {}
+    }
+  })
+
   it('defaults preveventid to -1 (Splash\'s own "no link" sentinel) when the attribute is absent', () => {
     const lxfPath = join(tmpdir(), `test-preveventid-absent-${randomBytes(4).toString('hex')}.lxf`)
     const xml = `<?xml version="1.0" encoding="UTF-8"?>
