@@ -1556,23 +1556,6 @@ function AgeGroupPropertiesPanel({ group, event, sessions, onMoveAgeGroup }: { g
     )
   }
 
-  function Row({ label, value }: { label: string; value?: string | boolean | number | null }) {
-    return (
-      <tr className="border-b border-gray-100 hover:bg-gray-50">
-        <td className="px-4 py-0.5 text-gray-600 w-64">{label}</td>
-        <td className="px-2 py-0.5">
-          {value === true ? (
-            <span className="text-blue-600">✓</span>
-          ) : value === false || value === null || value === undefined || value === '' ? (
-            <span className="text-gray-300">—</span>
-          ) : (
-            String(value)
-          )}
-        </td>
-      </tr>
-    )
-  }
-
   return (
     <div className="text-xs">
       <div className="flex items-center h-7 bg-gray-50 border-b border-gray-200 px-3 font-semibold text-gray-700 sticky top-0">
@@ -1589,47 +1572,41 @@ function AgeGroupPropertiesPanel({ group, event, sessions, onMoveAgeGroup }: { g
 
       <table className="w-full border-collapse">
         <tbody>
-          {/* Général */}
+          {/* Général — only real, editable settings: move-to-event (when there's
+              somewhere to move to), heat count, and final seed type. Everything
+              else this panel used to show (ranking, medal/combined flags, lane
+              order, nationality/level filters, name/abbreviation/comment) was
+              always a static placeholder, never backed by real or editable data. */}
           <SectionHeader title={t.events.props.general} />
           {!collapsed.has(t.events.props.general) && (
-            moveCandidates.length > 0 ? (
-              <tr className="border-b border-gray-100 hover:bg-gray-50">
-                <td className="px-4 py-0.5 text-gray-600 w-64">{t.events.props.moveToEvent}</td>
-                <td className="px-2 py-0.5 flex items-center gap-1">
-                  <select
-                    className="border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
-                    value={moveTargetId}
-                    onChange={(e) => setMoveTargetId(e.target.value ? Number(e.target.value) : '')}
-                  >
-                    <option value="">{t.events.props.moveNoTarget}</option>
-                    {moveCandidates.map(({ event: e, sessionNumber }) => (
-                      <option key={e.id} value={e.id}>
-                        {sessionNumber}.{e.number} — {e.nameFr}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    type="button"
-                    disabled={!moveTargetId}
-                    onClick={handleMoveClick}
-                    className="px-2 py-0 border border-gray-300 rounded text-xs bg-white hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
-                  >
-                    {t.events.props.moveButton}
-                  </button>
-                </td>
-              </tr>
-            ) : (
-              <Row label={t.events.props.moveToEvent} value={null} />
-            )
-          )}
-
-          {/* Complément */}
-          <SectionHeader title={t.events.props.complement} />
-          {!collapsed.has(t.events.props.complement) && (
             <>
-              <Row label={t.events.props.ranking} value={group.ranking ?? t.events.defaultRanking} />
-              <Row label={t.events.props.countForMedals} value={group.countForMedalStats} />
-              <Row label={t.events.props.usedForCombined} value={group.usedForCombined} />
+              {moveCandidates.length > 0 && (
+                <tr className="border-b border-gray-100 hover:bg-gray-50">
+                  <td className="px-4 py-0.5 text-gray-600 w-64">{t.events.props.moveToEvent}</td>
+                  <td className="px-2 py-0.5 flex items-center gap-1">
+                    <select
+                      className="border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
+                      value={moveTargetId}
+                      onChange={(e) => setMoveTargetId(e.target.value ? Number(e.target.value) : '')}
+                    >
+                      <option value="">{t.events.props.moveNoTarget}</option>
+                      {moveCandidates.map(({ event: e, sessionNumber }) => (
+                        <option key={e.id} value={e.id}>
+                          {sessionNumber}.{e.number} — {e.nameFr}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      disabled={!moveTargetId}
+                      onClick={handleMoveClick}
+                      className="px-2 py-0 border border-gray-300 rounded text-xs bg-white hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      {t.events.props.moveButton}
+                    </button>
+                  </td>
+                </tr>
+              )}
               <tr className="border-b border-gray-100 hover:bg-gray-50">
                 <td className="px-4 py-0.5 text-gray-600 w-64">{t.events.props.numHeats}</td>
                 <td className="px-2 py-0.5">
@@ -1664,9 +1641,6 @@ function AgeGroupPropertiesPanel({ group, event, sessions, onMoveAgeGroup }: { g
                   </select>
                 </td>
               </tr>
-              <Row label={t.events.props.alwaysSwimPrelims} value={group.alwaysSwimPrelims} />
-              <Row label={t.events.props.advanceByTime} value={group.advanceByTime} />
-              <Row label={t.events.props.laneOrderFinals} value={group.laneOrderInFinals} />
             </>
           )}
 
