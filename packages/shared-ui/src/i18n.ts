@@ -35,11 +35,12 @@ const fr = {
     youthGenderLabel: (g: string) => g === 'ALL' ? 'Tous' : g === 'M' ? 'Garçons' : g === 'F' ? 'Filles' : 'Mixte',
     // Dropdown option text — no age context available there (one event can span
     // several age brackets), so adult/youth wording is combined into one label.
-    genderOptionLabel: (g: string) => g === 'ALL' ? 'Tous' : g === 'M' ? 'Homme, garçon' : g === 'F' ? 'Femme, fille' : 'Mixte',
+    genderOptionLabel: (g: string) => g === 'ALL' ? 'Tous' : g === 'M' ? 'Homme' : g === 'F' ? 'Femme' : 'Mixte',
     ageRangeLabel: (minAge: number | null, maxAge: number | null, genderLabel: string) => {
-      if (maxAge == null) return `${minAge ?? 0} ans et plus, ${genderLabel}`
-      if (minAge == null) return `${maxAge} ans et moins, ${genderLabel}`
-      return `${minAge} - ${maxAge} ans, ${genderLabel}`
+      const suffix = genderLabel ? `, ${genderLabel}` : ''
+      if (maxAge == null) return `${minAge ?? 0} ans et plus${suffix}`
+      if (minAge == null) return `${maxAge} ans et moins${suffix}`
+      return `${minAge} - ${maxAge} ans${suffix}`
     },
     phaseLabel: (p: string) => p,
     poolUnit: (s: number) => `${s}m`,
@@ -76,6 +77,12 @@ const fr = {
       designation: 'Désignation',
       value: 'Valeur',
       numHeats: 'Nombre de séries',
+      // Controls the seeding method used whenever heats are (re)generated for this age group —
+      // not specifically how A/B finals get seeded (a separate mechanism), hence no "(finales)"
+      // in the label, which was misleading.
+      seedMethod: 'Méthode de répartition',
+      seedMethodCircle: 'Circulaire (répartition uniforme)',
+      seedMethodPyramid: 'Pyramidale (rapides en dernière série)',
       moveToEvent: "Déplacer vers une autre épreuve",
       moveButton: 'Déplacer',
       moveNoTarget: '— choisir —',
@@ -358,11 +365,12 @@ const en = {
     youthGenderLabel: (g: string) => g === 'ALL' ? 'All' : g === 'M' ? 'Boys' : g === 'F' ? 'Girls' : 'Mixed',
     // Dropdown option text — no age context available there (one event can span
     // several age brackets), so adult/youth wording is combined into one label.
-    genderOptionLabel: (g: string) => g === 'ALL' ? 'All' : g === 'M' ? 'Man, Boy' : g === 'F' ? 'Woman, Girl' : 'Mixed',
+    genderOptionLabel: (g: string) => g === 'ALL' ? 'All' : g === 'M' ? 'Man' : g === 'F' ? 'Woman' : 'Mixed',
     ageRangeLabel: (minAge: number | null, maxAge: number | null, genderLabel: string) => {
-      if (maxAge == null) return `${minAge ?? 0} and older, ${genderLabel}`
-      if (minAge == null) return `${maxAge} and younger, ${genderLabel}`
-      return `${minAge} - ${maxAge}, ${genderLabel}`
+      const suffix = genderLabel ? `, ${genderLabel}` : ''
+      if (maxAge == null) return `${minAge ?? 0} and older${suffix}`
+      if (minAge == null) return `${maxAge} and younger${suffix}`
+      return `${minAge} - ${maxAge}${suffix}`
     },
     phaseLabel: (p: string) =>
       p === 'Eliminatoire' ? 'Prelims' : p === 'Finale' ? 'Final' : p === 'Finale directe' ? 'Direct Final' : p,
@@ -400,6 +408,9 @@ const en = {
       designation: 'Designation',
       value: 'Value',
       numHeats: 'Number of heats',
+      seedMethod: 'Seeding method',
+      seedMethodCircle: 'Circle (even distribution)',
+      seedMethodPyramid: 'Pyramid (fastest in last heat)',
       moveToEvent: 'Move to another event',
       moveButton: 'Move',
       moveNoTarget: '— choose —',

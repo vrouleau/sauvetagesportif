@@ -1327,14 +1327,9 @@ function SortableEventItem({
                 </svg>
               </span>
               <span className="flex-1 truncate">
-                {group.number}. {ageRangeLabel(
-                  t,
-                  group.minAge,
-                  group.maxAge,
-                  isYouthCategory(group.maxAge)
-                    ? t.events.youthGenderLabel(group.gender)
-                    : t.events.genderLabel(group.gender)
-                )}
+                {/* No gender suffix here — the event row directly above already shows it,
+                    and repeating it on every age group under an expanded event is redundant. */}
+                {group.number}. {ageRangeLabel(t, group.minAge, group.maxAge, '')}
               </span>
               <span className="w-28" />
               <span className="w-14" />
@@ -1626,7 +1621,7 @@ function AgeGroupPropertiesPanel({ group, event, sessions, onMoveAgeGroup }: { g
                 </td>
               </tr>
               <tr className="border-b border-gray-100 hover:bg-gray-50">
-                <td className="px-4 py-0.5 text-gray-600 w-64">Type de répartition (finales)</td>
+                <td className="px-4 py-0.5 text-gray-600 w-64">{t.events.props.seedMethod}</td>
                 <td className="px-2 py-0.5">
                   <select
                     className="border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
@@ -1636,8 +1631,8 @@ function AgeGroupPropertiesPanel({ group, event, sessions, onMoveAgeGroup }: { g
                       api.updateAgeGroup(group.id, { finalseedtype: v } as unknown as Record<string, unknown>)
                     }}
                   >
-                    <option value={0}>Éliminatoires (circle seed)</option>
-                    <option value={1}>Finales (rapides en dernière série)</option>
+                    <option value={0}>{t.events.props.seedMethodCircle}</option>
+                    <option value={1}>{t.events.props.seedMethodPyramid}</option>
                   </select>
                 </td>
               </tr>
