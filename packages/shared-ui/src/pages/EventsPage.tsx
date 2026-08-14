@@ -36,6 +36,7 @@ import { CSS } from '@dnd-kit/utilities'
 import type { Session, CompetitionEvent, AgeGroup, SwimStyle } from '../data/api'
 import { useApi } from '../context/ApiContext'
 import { useLang } from '../context/LangContext'
+import { buildEventGroups, findEventGroup, sameShape, findSiblingAgeGroup } from '../logic/eventGroups'
 
 type SelectedItem =
   | { type: 'competition' }
@@ -922,23 +923,65 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
     }
   }
 
-  async function handleMoveAgeGroup(agegroupId: number, targetEventId: number) {
+  // Moves an age group between two "event groups" of the same swim style — a
+  // plain Finale directe is a group of one, a Prelim+Final split is a group of
+  // two (see logic/eventGroups.ts). When the source is split, its Prelim and
+  // Final each carry their own agegroup row for the same bracket, so both need
+  // to move together into the matching phase on the target side.
+  async function handleMoveAgeGroup(group: AgeGroup, sourceEvent: CompetitionEvent, targetRootEventId: number) {
     if (!api.moveAgeGroup) return
+
+    const groups = buildEventGroups(localSessions)
+    const sourceGroup = findEventGroup(groups, sourceEvent.id)
+    const targetGroup = groups.find((g) => g.rootEvent.id === targetRootEventId)
+    if (!sourceGroup || !targetGroup) return
+
+    // Resolve the full move plan up front — if any phase can't be matched, bail
+    // out before touching anything rather than leaving a half-moved bracket.
+    const plan: { agegroupId: number; fromEventId: number; targetEventId: number }[] = []
+    for (const srcEvent of sourceGroup.events) {
+      const targetEvent = targetGroup.events.find((e) => e.phase === srcEvent.phase)
+      if (!targetEvent) {
+        window.alert('Target event is missing a matching Prelim/Final phase for this age group.')
+        return
+      }
+      const ag = srcEvent.id === sourceEvent.id ? group : findSiblingAgeGroup(srcEvent, group)
+      if (!ag) {
+        window.alert('Could not find the matching age group bracket on the linked Prelim/Final event.')
+        return
+      }
+      plan.push({ agegroupId: ag.id, fromEventId: srcEvent.id, targetEventId: targetEvent.id })
+    }
+
+    const completed: typeof plan = []
     try {
-      await api.moveAgeGroup(agegroupId, targetEventId)
+      for (const step of plan) {
+        await api.moveAgeGroup(step.agegroupId, step.targetEventId)
+        completed.push(step)
+      }
     } catch (err) {
+      // Best-effort rollback of whatever already moved, so a mid-plan failure
+      // (e.g. validated heats on the second half) doesn't strand the bracket
+      // split across two different events.
+      for (const step of completed.reverse()) {
+        try { await api.moveAgeGroup(step.agegroupId, step.fromEventId) } catch { /* rollback is best-effort */ }
+      }
       window.alert(err instanceof Error ? err.message : String(err))
       return
     }
+
     const updatedSessions = await api.getSessions()
     setLocalSessions(updatedSessions)
-    // Re-select the moved age group under its new event
-    for (const s of updatedSessions) {
-      const ev = s.events.find((e: CompetitionEvent) => e.id === targetEventId)
-      if (ev) {
-        const grp = ev.ageGroups.find((g: AgeGroup) => g.id === agegroupId)
-        if (grp) setSelected({ type: 'agegroup', group: grp, event: ev })
-        break
+    // Re-select the moved age group under its new event (the half matching sourceEvent's own phase)
+    const primaryMove = plan.find((step) => step.fromEventId === sourceEvent.id)
+    if (primaryMove) {
+      for (const s of updatedSessions) {
+        const ev = s.events.find((e: CompetitionEvent) => e.id === primaryMove.targetEventId)
+        if (ev) {
+          const grp = ev.ageGroups.find((g: AgeGroup) => g.id === primaryMove.agegroupId)
+          if (grp) setSelected({ type: 'agegroup', group: grp, event: ev })
+          break
+        }
       }
     }
   }
@@ -1477,7 +1520,7 @@ function ContextMenu({
 
 // ─── Properties Panel ─────────────────────────────────────────────────────────
 
-function PropertiesPanel({ selected, sessions, onUpdateSession, onUpdateEvent, onMoveAgeGroup, onMeetNameChange, configVersion }: { selected: SelectedItem; sessions: Session[]; onUpdateSession: (sessionId: number, data: Record<string, unknown>) => void; onUpdateEvent: (eventId: number, sessionId: number, data: Record<string, unknown>) => void; onMoveAgeGroup: (agegroupId: number, targetEventId: number) => void; onMeetNameChange: (name: string) => void; configVersion: number }) {
+function PropertiesPanel({ selected, sessions, onUpdateSession, onUpdateEvent, onMoveAgeGroup, onMeetNameChange, configVersion }: { selected: SelectedItem; sessions: Session[]; onUpdateSession: (sessionId: number, data: Record<string, unknown>) => void; onUpdateEvent: (eventId: number, sessionId: number, data: Record<string, unknown>) => void; onMoveAgeGroup: (group: AgeGroup, sourceEvent: CompetitionEvent, targetRootEventId: number) => void; onMeetNameChange: (name: string) => void; configVersion: number }) {
   if (selected.type === 'competition') {
     return <CompetitionPropertiesPanel key={configVersion} onMeetNameChange={onMeetNameChange} />
   }
@@ -1501,7 +1544,7 @@ function PropertiesPanel({ selected, sessions, onUpdateSession, onUpdateEvent, o
 
 // ─── Age Group Properties Panel (editable) ───────────────────────────────────
 
-function AgeGroupPropertiesPanel({ group, event, sessions, onMoveAgeGroup }: { group: AgeGroup; event: CompetitionEvent; sessions: Session[]; onMoveAgeGroup: (agegroupId: number, targetEventId: number) => void }) {
+function AgeGroupPropertiesPanel({ group, event, sessions, onMoveAgeGroup }: { group: AgeGroup; event: CompetitionEvent; sessions: Session[]; onMoveAgeGroup: (group: AgeGroup, sourceEvent: CompetitionEvent, targetRootEventId: number) => void }) {
   const { t } = useLang()
   const api = useApi()
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
@@ -1513,19 +1556,31 @@ function AgeGroupPropertiesPanel({ group, event, sessions, onMoveAgeGroup }: { g
     setMoveTargetId('')
   }, [group.id, group.numHeats])
 
-  // Other events of the same swim style — valid move targets for this age group
-  const moveCandidates = sessions
-    .flatMap((s) => s.events.map((e) => ({ event: e, sessionNumber: s.number })))
-    .filter(({ event: e }) => !e.isAdmin && e.id !== event.id && e.swimstyleId != null && e.swimstyleId === event.swimstyleId)
+  // Other "event groups" (a Prelim+Final split moves as a pair) of the same
+  // swim style and same phase shape — valid move targets for this age group.
+  // A plain Finale directe can only be combined with another plain Finale
+  // directe; a Prelim+Final pair only with another Prelim+Final pair, so both
+  // halves of the bracket always land on a matching phase on the other side.
+  const eventGroups = buildEventGroups(sessions)
+  const sourceGroup = findEventGroup(eventGroups, event.id)
+  const moveCandidates = sourceGroup
+    ? eventGroups.filter((g) =>
+        g !== sourceGroup &&
+        g.rootEvent.swimstyleId != null &&
+        g.rootEvent.swimstyleId === event.swimstyleId &&
+        sameShape(g, sourceGroup)
+      )
+    : []
 
   function handleMoveClick() {
     if (!moveTargetId) return
-    const target = moveCandidates.find(({ event: e }) => e.id === moveTargetId)
+    const target = moveCandidates.find((g) => g.rootEvent.id === moveTargetId)
     if (!target) return
     const groupLabel = group.name || ageRangeLabel(t, group.minAge, group.maxAge, t.events.genderLabel(group.gender))
-    const eventLabel = `${target.event.number}. ${target.event.nameFr}`
+    const eventLabel = `${target.rootEvent.number}. ${target.rootEvent.nameFr}` +
+      (target.events.length > 1 ? ` (${target.events.map((e) => t.events.phaseLabel(e.phase)).join(' + ')})` : '')
     if (!window.confirm(t.events.props.moveConfirm(groupLabel, eventLabel))) return
-    onMoveAgeGroup(group.id, moveTargetId)
+    onMoveAgeGroup(group, event, moveTargetId)
   }
 
   function toggleSection(title: string) {
@@ -1585,9 +1640,10 @@ function AgeGroupPropertiesPanel({ group, event, sessions, onMoveAgeGroup }: { g
                       onChange={(e) => setMoveTargetId(e.target.value ? Number(e.target.value) : '')}
                     >
                       <option value="">{t.events.props.moveNoTarget}</option>
-                      {moveCandidates.map(({ event: e, sessionNumber }) => (
-                        <option key={e.id} value={e.id}>
-                          {sessionNumber}.{e.number} — {e.nameFr}
+                      {moveCandidates.map(({ rootEvent, sessionNumber, events }) => (
+                        <option key={rootEvent.id} value={rootEvent.id}>
+                          {sessionNumber}.{rootEvent.number} — {rootEvent.nameFr}
+                          {events.length > 1 ? ` (${events.map((e) => t.events.phaseLabel(e.phase)).join(' + ')})` : ''}
                         </option>
                       ))}
                     </select>
