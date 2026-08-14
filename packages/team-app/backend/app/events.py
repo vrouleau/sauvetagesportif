@@ -138,6 +138,10 @@ def _load_from_parsed(db: Session, meet: ParsedMeet, reuse_meetsid: int | None =
                     swimeventid=event.swimeventid,
                     agemin=ag.agemin,
                     agemax=ag.agemax,
+                    # An age group's gender is never independently set — it always
+                    # mirrors its parent event's (see routers/api.py's update_event
+                    # cascade for the same invariant on the edit path).
+                    gender=ev.gender_int,
                 ))
                 if ag.agemin >= 0:
                     if minage is None or ag.agemin < minage:

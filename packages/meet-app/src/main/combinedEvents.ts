@@ -283,7 +283,12 @@ export function findMatchingEvents(
     if (!ageMatch) continue
 
     // Check gender match
-    // Mixed category (gender=0): matches events with event-level gender=0 (mixed)
+    // Combined/open category (gender=0, e.g. "10 and under - girls and boys"): matches
+    // an individual event's own gender=0 (ALL). Combined events are individual-only
+    // (relaycount=1, see config/CLAUDE.md), so an individual event can never legitimately
+    // be gender=3 today — but older meets created before ALL existed as an option may still
+    // have an "open" individual event stored as gender=3 (Mixed was the only non-M/F choice
+    // available in the UI back then), so that's matched here too for backward compatibility.
     // Gendered category: matches age groups with same gender
     const genderMatch = category.gender === 0
       ? (event.eventgender === 0 || event.eventgender === 3)

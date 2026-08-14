@@ -38,22 +38,27 @@ from .models import Base  # Use the same Base so FK references resolve
 
 GENDER_M = 1
 GENDER_F = 2
+GENDER_MIXED = 3
 
 
+# Relay gender only: relay events never use "ALL" (see docs/RELAY_TEAM_RULES.md),
+# so unrecognized/absent always means Mixed here. "MIXED" is the real LENEX enum
+# value; "X" is also accepted since our own exporter used to write it (non-conformant).
 def gender_to_str(g: int | None) -> str:
     if g == GENDER_M:
         return "M"
     if g == GENDER_F:
         return "F"
-    return "X"
+    return "MIXED"
 
 
 def gender_from_str(s: str) -> int:
-    if s == "M":
+    v = (s or "").upper()
+    if v == "M":
         return GENDER_M
-    if s == "F":
+    if v == "F":
         return GENDER_F
-    return 0
+    return GENDER_MIXED
 
 
 # ── SWIMSTYLE and BSGLOBAL already defined in models.py (same Base) ───────────

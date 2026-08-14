@@ -649,10 +649,6 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
     setExpandedEvents((prev) => new Set([...prev, targetEvent.id]))
   }
 
-  async function handleAddCategory() {
-    await handleAddCategoryPresets([{ name: 'Nouvelle catégorie', minAge: 0, maxAge: null }])
-  }
-
   async function handleAddCategory1518() {
     await handleAddCategoryPresets([{ name: '15-18', minAge: 15, maxAge: 18 }])
   }
@@ -870,7 +866,7 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
         else if (key === 'maxentries') localUpdate.maxEntries = val as number | null
         else if (key === 'gender') {
           const g = val as number | string
-          localUpdate.gender = typeof g === 'number' ? (g === 1 ? 'M' : g === 2 ? 'F' : 'X') : g
+          localUpdate.gender = typeof g === 'number' ? (g === 0 ? 'ALL' : g === 1 ? 'M' : g === 2 ? 'F' : 'X') : g
         }
       }
 
@@ -890,16 +886,33 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
         return
       }
 
-      // Update local state
+      // Update local state — an age group's gender always mirrors its parent event's
+      // (the backend cascades this too), so a gender change must update every age
+      // group under this event, not just the event row itself.
+      function applyUpdate(e: CompetitionEvent): CompetitionEvent {
+        const updated = { ...e, ...localUpdate } as CompetitionEvent
+        if ('gender' in localUpdate) {
+          updated.ageGroups = e.ageGroups.map((g) => ({ ...g, gender: localUpdate.gender as string }))
+        }
+        return updated
+      }
       setLocalSessions((prev) =>
         prev.map((s) => s.id === sessionId ? {
           ...s,
-          events: s.events.map((e) => e.id === eventId ? { ...e, ...localUpdate } : e),
+          events: s.events.map((e) => e.id === eventId ? applyUpdate(e) : e),
         } : s)
       )
       // Update selected if it's the same event
       if (selected.type === 'event' && selected.event.id === eventId) {
-        setSelected({ type: 'event', event: { ...selected.event, ...localUpdate } as CompetitionEvent, session: selected.session })
+        setSelected({ type: 'event', event: applyUpdate(selected.event), session: selected.session })
+      }
+      // If the selected age group belongs to this event, refresh its gender too
+      if (selected.type === 'agegroup' && selected.event.id === eventId && 'gender' in localUpdate) {
+        setSelected({
+          type: 'agegroup',
+          group: { ...selected.group, gender: localUpdate.gender as string },
+          event: applyUpdate(selected.event),
+        })
       }
     } catch {
       // silently fail
@@ -930,7 +943,6 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
   // Contextual toolbar button enable logic
   const canAddSession = selected.type === 'competition' || selected.type === 'session'
   const canAddEvent = selected.type === 'session' || selected.type === 'event'
-  const canAddCategory = selected.type === 'event' || selected.type === 'agegroup'
   const canAddBreak = selected.type === 'session' || selected.type === 'event'
   const canDelete = selected.type !== 'competition'
 
@@ -947,11 +959,6 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
           label={t.events.toolbar.addEvent}
           enabled={canAddEvent}
           onClick={() => handleAddEventWithPhase('Finale directe')}
-        />
-        <ToolbarBtn
-          label={t.events.toolbar.addCategory}
-          enabled={canAddCategory}
-          onClick={handleAddCategory}
         />
         <ToolbarBtn
           label={t.events.toolbar.addBreak}
@@ -1155,7 +1162,6 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
             else if (action === 'addFinal') handleConvertToFinal()
             else if (action === 'addAward') handleAddAward()
             else if (action === 'addBreak') handleAddBreak()
-            else if (action === 'addCategory') handleAddCategory()
             else if (action === 'addCategory10') handleAddCategoryPresets([{ name: '10-', minAge: 0, maxAge: 10 }])
             else if (action === 'addCategory1112') handleAddCategoryPresets([{ name: '11-12', minAge: 11, maxAge: 12 }])
             else if (action === 'addCategory1314') handleAddCategoryPresets([{ name: '13-14', minAge: 13, maxAge: 14 }])
@@ -1373,7 +1379,7 @@ type MenuAction =
   | 'addSession'
   | 'addDirectFinal' | 'addFinal' | 'addAward'
   | 'addBreak'
-  | 'addCategory' | 'addCategory10' | 'addCategory1112'
+  | 'addCategory10' | 'addCategory1112'
   | 'addCategory1314' | 'addCategory1518' | 'addCategory1518Open' | 'addCategoryOpen' | 'addCategoryMaster'
   | 'delete'
 
@@ -1458,7 +1464,6 @@ function ContextMenu({
       {item(t.events.menu.addAward, !canAddEvent, 'addAward')}
       {item(t.events.menu.addBreak, !canAddEvent, 'addBreak')}
       <div className="my-1 border-t border-gray-200" />
-      {item(t.events.menu.addCategory, !canAddCategory, 'addCategory')}
       {item(t.events.menu.addCategory10, !canAddCategory, 'addCategory10')}
       {item(t.events.menu.addCategory1112, !canAddCategory, 'addCategory1112')}
       {item(t.events.menu.addCategory1314, !canAddCategory, 'addCategory1314')}
@@ -1502,19 +1507,13 @@ function AgeGroupPropertiesPanel({ group, event, sessions, onMoveAgeGroup }: { g
   const { t } = useLang()
   const api = useApi()
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
-  const [minAge, setMinAge] = useState(group.minAge)
-  const [maxAge, setMaxAge] = useState<number | null>(group.maxAge)
-  const [gender, setGender] = useState(group.gender)
   const [numHeats, setNumHeats] = useState(group.numHeats)
   const [moveTargetId, setMoveTargetId] = useState<number | ''>('')
 
   useEffect(() => {
-    setMinAge(group.minAge)
-    setMaxAge(group.maxAge)
-    setGender(group.gender)
     setNumHeats(group.numHeats)
     setMoveTargetId('')
-  }, [group.id, group.minAge, group.maxAge, group.gender, group.numHeats])
+  }, [group.id, group.numHeats])
 
   // Other events of the same swim style — valid move targets for this age group
   const moveCandidates = sessions
@@ -1539,18 +1538,8 @@ function AgeGroupPropertiesPanel({ group, event, sessions, onMoveAgeGroup }: { g
     })
   }
 
-  function save(data: Record<string, unknown>) {
-    api.updateAgeGroup(group.id, data)
-  }
-
   const gLabel = t.events.genderLabel(event.gender)
   const headerTitle = `${t.events.props.general} - ${event.number}. ${gLabel}, ${event.nameFr} / ${event.nameEn}, ${t.events.phaseLabel(event.phase)}`
-
-  const genderOptions = [
-    { value: 'M', label: 'M', intVal: 1 },
-    { value: 'F', label: 'F', intVal: 2 },
-    { value: 'X', label: 'X', intVal: 3 },
-  ]
 
   function SectionHeader({ title }: { title: string }) {
     const isCollapsed = collapsed.has(title)
@@ -1598,66 +1587,10 @@ function AgeGroupPropertiesPanel({ group, event, sessions, onMoveAgeGroup }: { g
       <table className="w-full border-collapse">
         <tbody>
           {/* Général */}
-          <SectionHeader title={t.events.props.general} />
-          {!collapsed.has(t.events.props.general) && (
+          {moveCandidates.length > 0 && (
             <>
-              <tr className="border-b border-gray-100 hover:bg-gray-50">
-                <td className="px-4 py-0.5 text-gray-600 w-64">{t.events.props.ageFrom}</td>
-                <td className="px-2 py-0.5">
-                  <input
-                    type="number"
-                    min={5}
-                    max={99}
-                    className="w-16 border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
-                    value={minAge}
-                    onChange={(e) => {
-                      const v = Math.max(5, Math.min(99, Number(e.target.value) || 5))
-                      setMinAge(v)
-                    }}
-                    onBlur={() => save({ agemin: minAge })}
-                    onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-                  />
-                </td>
-              </tr>
-              <tr className="border-b border-gray-100 hover:bg-gray-50">
-                <td className="px-4 py-0.5 text-gray-600 w-64">{t.events.props.ageTo}</td>
-                <td className="px-2 py-0.5">
-                  <input
-                    type="number"
-                    min={5}
-                    max={99}
-                    placeholder="et plus"
-                    className="w-16 border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
-                    value={maxAge ?? ''}
-                    onChange={(e) => {
-                      if (e.target.value === '') { setMaxAge(null); return }
-                      const v = Math.max(5, Math.min(99, Number(e.target.value) || 5))
-                      setMaxAge(v)
-                    }}
-                    onBlur={() => save({ agemax: maxAge })}
-                    onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-                  />
-                </td>
-              </tr>
-              <tr className="border-b border-gray-100 hover:bg-gray-50">
-                <td className="px-4 py-0.5 text-gray-600 w-64">{t.events.props.gender}</td>
-                <td className="px-2 py-0.5">
-                  <select
-                    className="border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
-                    value={gender}
-                    onChange={(e) => {
-                      setGender(e.target.value)
-                      const opt = genderOptions.find((o) => o.value === e.target.value)
-                      save({ gender: opt?.intVal ?? 3 })
-                    }}
-                  >
-                    {genderOptions.map((o) => (
-                      <option key={o.value} value={o.value}>{o.label}</option>
-                    ))}
-                  </select>
-                </td>
-              </tr>
-              {moveCandidates.length > 0 && (
+              <SectionHeader title={t.events.props.general} />
+              {!collapsed.has(t.events.props.general) && (
                 <tr className="border-b border-gray-100 hover:bg-gray-50">
                   <td className="px-4 py-0.5 text-gray-600 w-64">{t.events.props.moveToEvent}</td>
                   <td className="px-2 py-0.5 flex items-center gap-1">
@@ -1917,11 +1850,12 @@ function EventPropertiesPanel({ event, onUpdate }: { event: CompetitionEvent; on
     )
   }
 
-  const genderOptions = [
-    { value: 'M', label: 'M' },
-    { value: 'F', label: 'F' },
-    { value: 'X', label: 'X' },
-  ]
+  // Individual events: All/M/F. Relay events: Mixed(X)/M/F — Mixed only ever means
+  // "this relay team must be 2M+2F", it's not a valid individual-event sex.
+  const isRelay = (swimStyles.find((s) => s.id === selectedStyleId)?.relaycount ?? 1) > 1
+  const genderValuesFor = (relay: boolean) => (relay ? ['X', 'M', 'F'] : ['ALL', 'M', 'F'])
+  const genderOptions = genderValuesFor(isRelay).map((v) => ({ value: v, label: t.events.genderOptionLabel(v) }))
+  const encodeGender = (v: string) => (v === 'ALL' ? 0 : v === 'M' ? 1 : v === 'F' ? 2 : 3)
 
   const gLabel = t.events.genderLabel(event.gender)
   const headerTitle = `${event.number}. ${gLabel}, ${event.nameFr} / ${event.nameEn}`
@@ -1968,7 +1902,16 @@ function EventPropertiesPanel({ event, onUpdate }: { event: CompetitionEvent; on
                     onChange={(e) => {
                       const id = e.target.value ? Number(e.target.value) : null
                       setSelectedStyleId(id)
-                      if (id) save({ swimstyleid: id })
+                      if (id) {
+                        const data: Record<string, unknown> = { swimstyleid: id }
+                        const newIsRelay = (swimStyles.find((s) => s.id === id)?.relaycount ?? 1) > 1
+                        if (!genderValuesFor(newIsRelay).includes(evGender)) {
+                          const clamped = newIsRelay ? 'X' : 'ALL'
+                          setEvGender(clamped)
+                          data.gender = encodeGender(clamped)
+                        }
+                        save(data)
+                      }
                     }}
                   >
                     {swimStyles.map((s) => (
@@ -1984,9 +1927,9 @@ function EventPropertiesPanel({ event, onUpdate }: { event: CompetitionEvent; on
                     className="border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
                     value={evGender}
                     onChange={(e) => {
-                      const v = e.target.value as 'M' | 'F' | 'X'
+                      const v = e.target.value as 'ALL' | 'M' | 'F' | 'X'
                       setEvGender(v)
-                      save({ gender: v === 'M' ? 1 : v === 'F' ? 2 : 3 })
+                      save({ gender: encodeGender(v) })
                     }}
                   >
                     {genderOptions.map((o) => (

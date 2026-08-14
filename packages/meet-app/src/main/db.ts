@@ -67,7 +67,8 @@ export function closeLocalDb(): void {
 
 // ── Decode helpers ─────────────────────────────────────────────────────────────
 
-function decodeGender(g: number | null): 'M' | 'F' | 'X' {
+function decodeGender(g: number | null): 'M' | 'F' | 'X' | 'ALL' {
+  if (g === 0) return 'ALL'
   if (g === 1) return 'M'
   if (g === 2) return 'F'
   return 'X'
@@ -291,7 +292,7 @@ export interface HeatListEventRow {
   number: number
   nameFr: string
   nameEn: string
-  gender: 'M' | 'F' | 'X'
+  gender: 'ALL' | 'M' | 'F' | 'X'
   distance: number
   maxEntries?: number | null
   phase: 'Finale' | 'Eliminatoire' | 'Finale directe'
@@ -334,7 +335,7 @@ export interface CompetitionEventRow {
   number: number
   nameFr: string
   nameEn: string
-  gender: 'M' | 'F' | 'X'
+  gender: 'ALL' | 'M' | 'F' | 'X'
   distance: number
   phase: 'Finale' | 'Eliminatoire' | 'Finale directe'
   isAdmin?: boolean
@@ -1336,14 +1337,14 @@ export async function createBreak(
 export async function createEvent(
   sessionId: number,
   eventnumber: number,
-  gender: 'M' | 'F' | 'X',
+  gender: 'M' | 'F' | 'X' | 'ALL',
   distance: number,
   phase: 'Finale' | 'Eliminatoire' | 'Finale directe',
   styleName: string,
 ): Promise<number> {
   const db = getLocalDb()
   const id = nextId('swimevent', 'swimeventid')
-  const gNum = gender === 'M' ? 1 : gender === 'F' ? 2 : 3
+  const gNum = gender === 'ALL' ? 0 : gender === 'M' ? 1 : gender === 'F' ? 2 : 3
   const round = phase === 'Eliminatoire' ? 1 : phase === 'Finale' ? 4 : 5
 
   const styleRow = distance > 0
@@ -1493,11 +1494,11 @@ export async function createAgeGroup(
   name: string,
   minAge: number,
   maxAge: number | null,
-  gender: 'M' | 'F' | 'X',
+  gender: 'M' | 'F' | 'X' | 'ALL',
 ): Promise<number> {
   const db = getLocalDb()
   const id = nextId('agegroup', 'agegroupid')
-  const gNum = gender === 'M' ? 1 : gender === 'F' ? 2 : 3
+  const gNum = gender === 'ALL' ? 0 : gender === 'M' ? 1 : gender === 'F' ? 2 : 3
   const sortRow = db.prepare(
     `SELECT MAX(sortcode) AS maxsort FROM agegroup WHERE swimeventid=?`
   ).get(eventId) as { maxsort: number | null }
@@ -2474,6 +2475,13 @@ export async function updateEvent(eventId: number, data: EventUpdate, injectedDb
   vals.push(eventId)
   db.prepare(`UPDATE swimevent SET ${sets.join(', ')} WHERE swimeventid=?`).run(...vals)
 
+  // An age group's gender is no longer independently editable in the UI — it always
+  // mirrors its parent event's, so changing the event's gender must trickle down to
+  // every age group under it (they're never allowed to drift apart).
+  if (data.gender !== undefined) {
+    db.prepare(`UPDATE agegroup SET gender=? WHERE swimeventid=?`).run(data.gender, eventId)
+  }
+
   // Regenerate combined events when relevant fields change
   if (data.gender !== undefined || data.swimstyleid !== undefined) {
     regenerateCombinedEvents(db)
@@ -2583,7 +2591,7 @@ export interface FinalEventRow {
   eventId: number
   eventNumber: number
   eventName: string
-  gender: 'M' | 'F' | 'X'
+  gender: 'ALL' | 'M' | 'F' | 'X'
   sessionId: number
   sessionNumber: number
   sessionName: string

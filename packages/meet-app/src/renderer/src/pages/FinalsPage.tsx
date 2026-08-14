@@ -26,7 +26,7 @@ interface FinalEvent {
   eventId: number
   eventNumber: number
   eventName: string
-  gender: 'M' | 'F' | 'X'
+  gender: 'ALL' | 'M' | 'F' | 'X'
   sessionId: number
   sessionNumber: number
   sessionName: string
@@ -221,8 +221,8 @@ export default function FinalsPage({ refreshKey = 0, meetType = 'POOL' }: { refr
 
   const genderLabel = (g: string) =>
     lang === 'en'
-      ? (g === 'M' ? 'Men' : g === 'F' ? 'Women' : 'Mixed')
-      : (g === 'M' ? 'H' : g === 'F' ? 'F' : 'X')
+      ? (g === 'ALL' ? 'All' : g === 'M' ? 'Men' : g === 'F' ? 'Women' : 'Mixed')
+      : (g === 'ALL' ? 'Tous' : g === 'M' ? 'H' : g === 'F' ? 'F' : 'X')
 
   // Group events by session
   const sessionGroups = events.reduce<Map<number, { sessionNumber: number; sessionName: string; events: FinalEvent[] }>>((map, ev) => {

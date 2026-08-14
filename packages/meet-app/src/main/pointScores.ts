@@ -43,7 +43,7 @@ export interface PointScoreDefinition {
 export interface PointScoreAssignment {
   ageMin: number
   ageMax: number // -1 = no upper limit
-  gender: number // 0=mixed, 1=male, 2=female
+  gender: number // 0=all/open (e.g. combined boys+girls for the youngest bracket), 1=male, 2=female
   pointscoreid: number
 }
 

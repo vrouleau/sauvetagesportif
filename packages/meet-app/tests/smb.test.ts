@@ -193,6 +193,46 @@ describe('SMB save/restore', () => {
     expect(finEvent.round).toBe(4)  // Restored to canonical FIN
   })
 
+  // gender=0 is Splash's own "derive from the paired Timed Final" placeholder on PRE
+  // rounds (see comment above the fixup in smb.ts) — and, separately, our own encoding
+  // for "ALL" (unrestricted). Both cases must resolve correctly: a real placeholder gets
+  // backfilled from its TIM sibling, and a PRE round whose sibling is genuinely ALL stays
+  // at 0/ALL rather than being corrupted into some other value.
+  it('backfills PRE event gender=0 from its paired TIM event on restore', () => {
+    db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount, stroke) VALUES (1, 100, 'Freestyle', 1, 1)`)
+    db.exec(`INSERT INTO swimsession (swimsessionid, sessionnumber, name, course) VALUES (1, 1, 'Session 1', 1)`)
+    // TIM event, real gender (M=1), immediately precedes the PRE event (sortcode-1)
+    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode, internalevent) VALUES (100, 1, 1, 10, 1, 5, 1, 'F')`)
+    // PRE event, Splash-style placeholder gender=0
+    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode, internalevent, preveventid) VALUES (200, 1, 1, 11, 0, 1, 2, 'F', -1)`)
+
+    saveSMB(smbPath, backend)
+    db.exec('DELETE FROM swimevent')
+    db.exec('DELETE FROM swimsession')
+    db.exec('DELETE FROM swimstyle')
+    restoreSMB(smbPath, backend)
+
+    const preEvent = db.prepare('SELECT gender FROM swimevent WHERE swimeventid=200').get() as { gender: number }
+    expect(preEvent.gender).toBe(1) // backfilled from the TIM sibling, not left at 0
+  })
+
+  it('leaves a PRE event gender at 0 (ALL) when its paired TIM event is genuinely ALL, not just unset', () => {
+    db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount, stroke) VALUES (1, 100, 'Freestyle', 1, 1)`)
+    db.exec(`INSERT INTO swimsession (swimsessionid, sessionnumber, name, course) VALUES (1, 1, 'Session 1', 1)`)
+    // TIM event is genuinely ALL (gender=0), not a placeholder
+    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode, internalevent) VALUES (100, 1, 1, 10, 0, 5, 1, 'F')`)
+    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode, internalevent, preveventid) VALUES (200, 1, 1, 11, 0, 1, 2, 'F', -1)`)
+
+    saveSMB(smbPath, backend)
+    db.exec('DELETE FROM swimevent')
+    db.exec('DELETE FROM swimsession')
+    db.exec('DELETE FROM swimstyle')
+    restoreSMB(smbPath, backend)
+
+    const preEvent = db.prepare('SELECT gender FROM swimevent WHERE swimeventid=200').get() as { gender: number }
+    expect(preEvent.gender).toBe(0) // still ALL, not corrupted by the backfill-skip
+  })
+
   it('rewrites dsqitem.options to the safe default instead of overflowing OPTIONS;S;5', () => {
     // Our own dsqitem.options stores a human-readable tag list (see config/dsq-codes.json),
     // consumed by scripts/generate_dsq_xml.py — but that overflows Splash's real 5-char

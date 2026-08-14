@@ -104,10 +104,15 @@ function children(elem: XmlElem, tag: string): XmlElem[] {
 
 // ── Encoding helpers ──────────────────────────────────────────────────────────
 
+// LENEX's GENDER enum is ALL|M|F|MIXED. Our own exports historically wrote "X" for
+// Mixed (non-conformant — see decodeGender below); "X" is still accepted here so
+// files we've already exported keep importing correctly.
 function encodeGender(g: string | undefined): number {
-  if (g === 'F') return 2
-  if (g === 'M') return 1
-  return 3
+  const v = (g ?? '').toUpperCase()
+  if (v === 'ALL') return 0
+  if (v === 'M') return 1
+  if (v === 'F') return 2
+  return 3 // MIXED, legacy "X", or unrecognized/blank
 }
 
 function encodeStroke(s: string | undefined): number {
@@ -745,9 +750,10 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
 // ── Decode helpers (reverse of encode*) ───────────────────────────────────────
 
 function decodeGender(g: number | null): string {
+  if (g === 0) return 'ALL'
   if (g === 1) return 'M'
   if (g === 2) return 'F'
-  return 'X'
+  return 'MIXED'
 }
 
 function decodeStroke(s: number | null): string {

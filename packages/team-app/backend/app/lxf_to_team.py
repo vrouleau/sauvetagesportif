@@ -200,8 +200,10 @@ def import_lxf_as_meet(db: DbSession, content: bytes, force: bool = False) -> di
                 ))
                 db.flush()
             # Create Event row
+            # LENEX's GENDER enum is ALL|M|F|MIXED; "X" is also accepted since our own
+            # exporter used to write it for Mixed (non-conformant, fixed in export.py).
             ev_gender_str = ev_el.get("gender", "X")
-            ev_gender = {"M": 1, "F": 2, "X": 3}.get(ev_gender_str.upper(), 3)
+            ev_gender = {"ALL": 0, "M": 1, "F": 2, "MIXED": 3, "X": 3}.get(ev_gender_str.upper(), 3)
             new_ev_id = _next_id(db, Event, Event.eventsid)
             db.add(Event(
                 eventsid=new_ev_id,

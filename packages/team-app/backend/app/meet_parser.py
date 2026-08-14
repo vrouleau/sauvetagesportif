@@ -42,7 +42,7 @@ class MeetAgeGroup:
 class MeetEvent:
     eventid: int
     number: int
-    gender: str  # "F", "M", "X"
+    gender: str  # LENEX GENDER enum: "ALL", "F", "M", "MIXED" ("X" also accepted, legacy)
     round: str  # "TIM", "PRE", "FIN"
     event_type: str  # "MASTERS" or ""
     swimstyleid: int
@@ -65,7 +65,9 @@ class MeetEvent:
 
     @property
     def gender_int(self) -> int:
-        return {"M": 1, "F": 2, "X": 3}.get(self.gender, 0)
+        # "ALL" and any unrecognized/blank value both fall through to 0 (ALL) —
+        # matching our own gender encoding (0=All, 1=M, 2=F, 3=Mixed).
+        return {"M": 1, "F": 2, "MIXED": 3, "X": 3}.get(self.gender.upper(), 0)
 
 
 @dataclass

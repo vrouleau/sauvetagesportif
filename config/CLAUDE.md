@@ -29,7 +29,7 @@ Single source of truth for cumulative point standings, consumed by meet-app (Typ
 An event matches a category when its age group has:
 - Same `agemin` as the category
 - Same `agemax` (with -1 meaning no upper limit)
-- Same gender (or event gender=0/3 for mixed categories)
+- Same gender (or event gender=0 for a combined/open category, e.g. "10 and under - girls and boys" — an individual event's gender=0 means ALL/unrestricted; gender=3, Mixed, is also matched here for backward compatibility with pre-ALL meets, since Mixed was the only non-M/F choice available for an individual event before ALL existed as an option)
 
 ## DSQ Codes (`dsq-codes.json` → `dsq.xml`)
 

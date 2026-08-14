@@ -31,8 +31,11 @@ const fr = {
   },
   events: {
     columns: { name: 'Nom', datePhase: 'Date / Phase', time: 'Heure', pool: 'Bassin' },
-    genderLabel: (g: string) => g === 'M' ? 'Messieurs' : g === 'F' ? 'Dames' : 'Mixte',
-    youthGenderLabel: (g: string) => g === 'M' ? 'Garçons' : g === 'F' ? 'Filles' : 'Mixte',
+    genderLabel: (g: string) => g === 'ALL' ? 'Tous' : g === 'M' ? 'Messieurs' : g === 'F' ? 'Dames' : 'Mixte',
+    youthGenderLabel: (g: string) => g === 'ALL' ? 'Tous' : g === 'M' ? 'Garçons' : g === 'F' ? 'Filles' : 'Mixte',
+    // Dropdown option text — no age context available there (one event can span
+    // several age brackets), so adult/youth wording is combined into one label.
+    genderOptionLabel: (g: string) => g === 'ALL' ? 'Tous' : g === 'M' ? 'Homme, garçon' : g === 'F' ? 'Femme, fille' : 'Mixte',
     ageRangeLabel: (minAge: number | null, maxAge: number | null, genderLabel: string) => {
       if (maxAge == null) return `${minAge ?? 0} ans et plus, ${genderLabel}`
       if (minAge == null) return `${maxAge} ans et moins, ${genderLabel}`
@@ -48,7 +51,6 @@ const fr = {
       addFinal: 'Ajouter une finale',
       addAward: 'Ajouter une remise de prix',
       addBreak: 'Ajouter une pause',
-      addCategory: 'Ajouter une catégorie',
       addCategory10: 'Ajouter catégorie 10-',
       addCategory1112: 'Ajouter catégorie 11-12',
       addCategory1314: 'Ajouter catégorie 13-14',
@@ -61,7 +63,6 @@ const fr = {
     toolbar: {
       addSession: '+ Session',
       addEvent: '+ Épreuve',
-      addCategory: '+ Catégorie',
       addBreak: '+ Pause',
       delete: 'Effacer',
       importMeet: 'Importer (.lxf)',
@@ -77,9 +78,6 @@ const fr = {
       other: 'Autres',
       designation: 'Désignation',
       value: 'Valeur',
-      ageFrom: 'Age de',
-      ageTo: 'Age à',
-      gender: 'Sexe',
       nationalityLimit: 'Nationalité (athlètes) limitée à',
       nationsOnly: 'Nations / Régions seulement (club)',
       clubsOnly: 'Clubs seulement',
@@ -214,7 +212,7 @@ const fr = {
     heatNo: 'Série',
     timingSystems: 'Systèmes de chronométrage',
     noHeatSelected: 'Sélectionnez une série dans la liste ci-dessus',
-    genderLabel: (g: string) => g === 'M' ? 'Messieurs' : g === 'F' ? 'Dames' : 'Mixte',
+    genderLabel: (g: string) => g === 'ALL' ? 'Tous' : g === 'M' ? 'Messieurs' : g === 'F' ? 'Dames' : 'Mixte',
     adminLabel: 'Pause',
     heatLabel: 'Série',
     columns: {
@@ -378,8 +376,11 @@ const en = {
   },
   events: {
     columns: { name: 'Name', datePhase: 'Date / Phase', time: 'Time', pool: 'Pool' },
-    genderLabel: (g: string) => g === 'M' ? 'Men' : g === 'F' ? 'Women' : 'Mixed',
-    youthGenderLabel: (g: string) => g === 'M' ? 'Boys' : g === 'F' ? 'Girls' : 'Mixed',
+    genderLabel: (g: string) => g === 'ALL' ? 'All' : g === 'M' ? 'Men' : g === 'F' ? 'Women' : 'Mixed',
+    youthGenderLabel: (g: string) => g === 'ALL' ? 'All' : g === 'M' ? 'Boys' : g === 'F' ? 'Girls' : 'Mixed',
+    // Dropdown option text — no age context available there (one event can span
+    // several age brackets), so adult/youth wording is combined into one label.
+    genderOptionLabel: (g: string) => g === 'ALL' ? 'All' : g === 'M' ? 'Man, Boy' : g === 'F' ? 'Woman, Girl' : 'Mixed',
     ageRangeLabel: (minAge: number | null, maxAge: number | null, genderLabel: string) => {
       if (maxAge == null) return `${minAge ?? 0} and older, ${genderLabel}`
       if (minAge == null) return `${maxAge} and younger, ${genderLabel}`
@@ -396,7 +397,6 @@ const en = {
       addFinal: 'Add final',
       addAward: 'Add award ceremony',
       addBreak: 'Add break',
-      addCategory: 'Add category',
       addCategory10: 'Add category 10-',
       addCategory1112: 'Add category 11-12',
       addCategory1314: 'Add category 13-14',
@@ -409,7 +409,6 @@ const en = {
     toolbar: {
       addSession: '+ Session',
       addEvent: '+ Event',
-      addCategory: '+ Category',
       addBreak: '+ Break',
       delete: 'Delete',
       importMeet: 'Import (.lxf)',
@@ -425,9 +424,6 @@ const en = {
       other: 'Other',
       designation: 'Designation',
       value: 'Value',
-      ageFrom: 'Age from',
-      ageTo: 'Age to',
-      gender: 'Gender',
       nationalityLimit: 'Nationality (athletes) limited to',
       nationsOnly: 'Nations / Regions only (club)',
       clubsOnly: 'Clubs only',
@@ -562,7 +558,7 @@ const en = {
     heatNo: 'Heat',
     timingSystems: 'Timing systems',
     noHeatSelected: 'Select a heat from the list above',
-    genderLabel: (g: string) => g === 'M' ? 'Men' : g === 'F' ? 'Women' : 'Mixed',
+    genderLabel: (g: string) => g === 'ALL' ? 'All' : g === 'M' ? 'Men' : g === 'F' ? 'Women' : 'Mixed',
     adminLabel: 'Break',
     heatLabel: 'Heat',
     columns: {

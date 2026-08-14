@@ -117,7 +117,7 @@ function RelayEventCard({
         </h4>
         <div className="flex items-center gap-3">
           <span className="text-xs text-gray-500">
-            {event.relaycount}x | {event.gender === 'M' ? 'M' : event.gender === 'F' ? 'F' : 'X'}
+            {event.relaycount}x | {t.events.genderOptionLabel(event.gender)}
           </span>
           <button
             type="button"

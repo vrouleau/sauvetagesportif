@@ -125,7 +125,7 @@ def _meet_struct_from_db(db: Session, meetsid: int | None = None):
     meet_name = _get_meet_config(db, meetsid, "meet_name")
     course = _get_meet_config(db, meetsid, "meet_course") or "LCM"
 
-    gender_map = {1: "M", 2: "F", 3: "X"}
+    gender_map = {0: "ALL", 1: "M", 2: "F", 3: "MIXED"}
     round_map = {1: "PRE", 2: "SEM", 4: "FIN", 5: "TIM"}
 
     db_sessions = (
@@ -145,7 +145,7 @@ def _meet_struct_from_db(db: Session, meetsid: int | None = None):
             events.append(MeetEvent(
                 eventid=ev.swimeventid,
                 number=ev.eventnumber or 0,
-                gender=gender_map.get(ev.gender, "X"),
+                gender=gender_map.get(ev.gender, "MIXED"),
                 round=round_map.get(ev.round, "TIM"),
                 event_type="MASTERS" if ev.masters == 'T' else "",
                 swimstyleid=ev.swimstyleid or 0,
@@ -605,7 +605,9 @@ def generate_lxf(db: Session, meetsid: int | None = None) -> bytes:
 
 
 _STROKE_MAP = {1: "FREE", 2: "BACK", 3: "BREAST", 4: "FLY", 5: "MEDLEY", 6: "FREE", 7: "MEDLEY"}
-_GENDER_MAP = {1: "M", 2: "F", 3: "X"}
+# LENEX's GENDER enum is ALL|M|F|MIXED — "X" (our own former non-conformant output for
+# Mixed) is no longer written, only accepted on import (lxf_to_team.py, historical_import.py).
+_GENDER_MAP = {0: "ALL", 1: "M", 2: "F", 3: "MIXED"}
 _ROUND_MAP = {1: "PRE", 2: "SEM", 4: "FIN", 5: "TIM"}
 
 
@@ -654,7 +656,7 @@ def generate_meet_lxf_from_db(db: Session, meetsid: int | None = None) -> bytes:
         evts_xml = ET.SubElement(ses_xml, "EVENTS")
         sorted_events = sorted(ses.events, key=lambda e: e.sortcode or e.eventnumber or 0)
         preveventids = _compute_preveventids([
-            (ev.swimeventid, ev.eventnumber or 0, _GENDER_MAP.get(ev.gender, "X"),
+            (ev.swimeventid, ev.eventnumber or 0, _GENDER_MAP.get(ev.gender, "MIXED"),
              ev.swimstyleid or 0, _ROUND_MAP.get(ev.round, "TIM"))
             for ev in sorted_events
         ])
@@ -662,7 +664,7 @@ def generate_meet_lxf_from_db(db: Session, meetsid: int | None = None) -> bytes:
             ev_attrs = {
                 "eventid": str(ev.swimeventid),
                 "number": str(ev.eventnumber or 0),
-                "gender": _GENDER_MAP.get(ev.gender, "X"),
+                "gender": _GENDER_MAP.get(ev.gender, "MIXED"),
                 "round": _ROUND_MAP.get(ev.round, "TIM"),
                 "preveventid": str(preveventids[ev.swimeventid]),
             }

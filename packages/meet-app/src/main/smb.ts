@@ -1161,6 +1161,12 @@ function normalizeRoundEncoding(db: DbBackend): void {
   // the display values are derived from the paired Timed Final event.
   // The TIM event always immediately precedes its PRE event (sortcode - 1).
   // Fallback: use the FIN event that references this PRE via preveventid.
+  //
+  // gender=0 is also our own encoding for "ALL" (unrestricted) — that doesn't create a
+  // conflict here: when the paired TIM/FIN is itself genuinely ALL (gender=0), the
+  // `!== 0` guards below skip the backfill and leave this PRE row at its already-0
+  // value, which is the correct outcome either way (still-unresolved-placeholder and
+  // genuinely-ALL both resolve to 0). Nothing here ever needs to distinguish the two.
   const preEvents = db.prepare(`
     SELECT e.swimeventid, e.swimsessionid, e.swimstyleid, e.eventnumber, e.gender, e.sortcode
     FROM swimevent e

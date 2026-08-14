@@ -128,7 +128,9 @@ def import_historical_meet(db: Session, file_bytes: bytes, force: bool = False) 
     for event_el in root.iter("EVENT"):
         eid = event_el.get("eventid", "")
         enumber = int(event_el.get("number", "0") or "0")
-        egender = {"M": 1, "F": 2}.get(event_el.get("gender", ""), 0)
+        # LENEX's GENDER enum is ALL|M|F|MIXED ("X" also accepted — our own exporter
+        # used to write it for Mixed). Unrecognized/absent defaults to 0 (ALL).
+        egender = {"M": 1, "F": 2, "MIXED": 3, "X": 3}.get((event_el.get("gender") or "").upper(), 0)
         event_number[eid] = enumber
         event_gender[eid] = egender
 

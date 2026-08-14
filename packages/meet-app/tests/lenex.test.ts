@@ -237,6 +237,48 @@ describe('LENEX importer', () => {
     }
   })
 
+  // LENEX's GENDER enum is ALL|M|F|MIXED (not the "X" our own exports used to write for
+  // Mixed) — a real Splash-exported "ALL" (unrestricted) event used to silently collapse
+  // into Mixed because encodeGender only recognized M/F and defaulted everything else to 3.
+  it('imports gender="ALL" as 0 and gender="MIXED" as 3, per the real LENEX spec', () => {
+    const lxfPath = join(tmpdir(), `test-gender-all-mixed-${randomBytes(4).toString('hex')}.lxf`)
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<LENEX version="3.0">
+  <MEETS>
+    <MEET name="Test Meet" city="Test City" nation="CAN" course="LCM">
+      <SESSIONS>
+        <SESSION number="1" name="Session 1">
+          <EVENTS>
+            <EVENT eventid="1" number="1" gender="ALL" round="TIM">
+              <SWIMSTYLE swimstyleid="500" distance="100" relaycount="1" name="Test Style" />
+              <AGEGROUPS>
+                <AGEGROUP agegroupid="1" name="Open" agemin="19" agemax="-1" gender="ALL" />
+              </AGEGROUPS>
+            </EVENT>
+            <EVENT eventid="2" number="2" gender="MIXED" round="TIM">
+              <SWIMSTYLE swimstyleid="530" distance="100" relaycount="4" name="Test Relay" />
+            </EVENT>
+          </EVENTS>
+        </SESSION>
+      </SESSIONS>
+    </MEET>
+  </MEETS>
+</LENEX>`
+    writeZipSingleEntry(lxfPath, 'meet.lef', xml)
+
+    try {
+      importLenex(lxfPath, db)
+      const events = db.prepare('SELECT swimeventid, gender FROM swimevent ORDER BY swimeventid').all() as
+        { swimeventid: number; gender: number }[]
+      expect(events.find(e => e.swimeventid === 1)?.gender).toBe(0)
+      expect(events.find(e => e.swimeventid === 2)?.gender).toBe(3)
+      const ag = db.prepare('SELECT gender FROM agegroup WHERE agegroupid=1').get() as { gender: number }
+      expect(ag.gender).toBe(0)
+    } finally {
+      try { unlinkSync(lxfPath) } catch {}
+    }
+  })
+
   // Regression test for a live bug: importLenex never read the <AGEDATE> element team-app's
   // exporter writes (export.py:218) at all, so an imported team-app meet silently fell back
   // to today's calendar year for season resolution (ageGroupRules.ts's getSeasonYear) and
@@ -749,6 +791,22 @@ describe('LENEX exporter', () => {
     const xml = readLefXml(outPath)
     expect(xml).toMatch(/eventid="1"[^>]*preveventid="-1"/)
     expect(xml).toMatch(/eventid="2"[^>]*preveventid="1"/)
+  })
+
+  // Regression guard: decodeGender used to write "X" for Mixed, which isn't a value the
+  // real LENEX GENDER enum (ALL|M|F|MIXED) defines — a real Splash import of our own file
+  // could fail to recognize it. gender=0 (ALL) is a separate new value that never had an
+  // export path at all before this fix.
+  it('exportMeetLenex writes gender="ALL" and gender="MIXED", not "X", per the real LENEX spec', () => {
+    seedResultsFixture(db, dateToOle(2014, 7, 3))
+    db.exec(`UPDATE swimevent SET gender=0 WHERE swimeventid=1`)
+    db.exec(`UPDATE agegroup SET gender=0 WHERE swimeventid=1`)
+    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode, internalevent) VALUES (2, 1, 1, 2, 3, 5, 2, 'F')`)
+    exportMeetLenex(outPath, db)
+    const xml = readLefXml(outPath)
+    expect(xml).toMatch(/eventid="1"[^>]*gender="ALL"/)
+    expect(xml).toMatch(/eventid="2"[^>]*gender="MIXED"/)
+    expect(xml).not.toMatch(/gender="X"/)
   })
 })
 

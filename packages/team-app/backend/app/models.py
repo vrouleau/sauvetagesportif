@@ -110,7 +110,7 @@ class SwimEvent(Base):
     externalid = Column(String(40))
     fee = Column(Float)
     finalorder = Column(SmallInteger)
-    gender = Column(SmallInteger)  # 1=M, 2=F, 3=Mixed
+    gender = Column(SmallInteger)  # 0=All, 1=M, 2=F, 3=Mixed (relay only)
     lanemax = Column(SmallInteger)
     lytentrylist = Column(Integer)
     lytstartlist = Column(Integer)
@@ -393,6 +393,7 @@ class SecretLink(Base):
 # Helper constants
 # ---------------------------------------------------------------------------
 
+GENDER_ALL = 0
 GENDER_M = 1
 GENDER_F = 2
 GENDER_MIXED = 3
