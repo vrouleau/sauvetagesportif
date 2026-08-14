@@ -100,4 +100,32 @@ describe('Event field round-trip (getSessions <-> updateEvent)', () => {
     expect(ev.fee).toBe(5)
     expect(ev.masters).toBe(true)
   })
+
+  it('flips a prelim\'s age groups off for medals/scoring when a final links to it via preveventid, and back on when the final is deleted (round reverts to TIM)', async () => {
+    // Simulate age groups created the normal way (createAgeGroup/importLenex always
+    // default to 'T'/'T' — seedMeet's raw INSERT relies on the schema default, 'F').
+    db.exec(`UPDATE agegroup SET useformedals='T', useforscoring='T' WHERE swimeventid=1`)
+
+    // Convert event 1 (TIM) into a PRE, and link a new FIN event to it — mirrors
+    // handleConvertToFinal's step 1 (round -> PRE) and step 3 (preveventid link).
+    await updateEvent(1, { round: 1 }, db)
+    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode, internalevent) VALUES (4, 1, 1, 1, 1, 4, 3, 'F')`)
+    await updateEvent(4, { preveventid: 1 }, db)
+
+    const flags = db.prepare(`SELECT useformedals, useforscoring FROM agegroup WHERE swimeventid=1`).all() as Array<{ useformedals: string; useforscoring: string }>
+    expect(flags.length).toBeGreaterThan(0)
+    for (const f of flags) {
+      expect(f.useformedals).toBe('F')
+      expect(f.useforscoring).toBe('F')
+    }
+
+    // Deleting the final reverts the prelim's round back to TIM — its age groups
+    // must count again, matching a plain (never-split) Timed Final.
+    await updateEvent(1, { round: 5 }, db)
+    const flagsAfter = db.prepare(`SELECT useformedals, useforscoring FROM agegroup WHERE swimeventid=1`).all() as Array<{ useformedals: string; useforscoring: string }>
+    for (const f of flagsAfter) {
+      expect(f.useformedals).toBe('T')
+      expect(f.useforscoring).toBe('T')
+    }
+  })
 })

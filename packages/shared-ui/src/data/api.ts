@@ -54,7 +54,8 @@ export interface CompetitionEvent {
   number: number
   nameFr: string
   nameEn: string
-  gender: 'M' | 'F' | 'X'
+  /** Individual events: 'ALL' | 'M' | 'F'. Relay events: 'X' (Mixed) | 'M' | 'F'. */
+  gender: 'ALL' | 'M' | 'F' | 'X'
   distance: number
   phase: 'Finale' | 'Eliminatoire' | 'Finale directe'
   isAdmin?: boolean
@@ -75,6 +76,7 @@ export interface AgeGroup {
   name: string
   minAge: number
   maxAge: number | null
+  /** Always mirrors the parent event's gender — never independently editable. */
   gender: string
   numHeats: number
   ranking: string

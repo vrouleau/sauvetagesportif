@@ -40,7 +40,7 @@ from ..models import (
     SwimEvent, SwimStyle, SwimSession, AgeGroup, SwimResult, BsGlobal, SecretLink,
     Heat, Split,
     gender_to_str, gender_from_str, fee_dollars_to_cents, fee_cents_to_dollars,
-    GENDER_M, GENDER_F, GENDER_MIXED, ROUND_FIN, ROUND_TIM, ROUND_PRE,
+    GENDER_ALL, GENDER_M, GENDER_F, GENDER_MIXED, ROUND_FIN, ROUND_TIM, ROUND_PRE,
 )
 from ..models_team import TeamClub, Member, Meet as TeamMeet
 from ..meet_config import (
@@ -1514,7 +1514,7 @@ def list_sessions(request: Request, db: Session = Depends(get_db)):
                 "number": e.eventnumber or 0,
                 "nameFr": name,
                 "nameEn": name,
-                "gender": "M" if e.gender == 1 else "F" if e.gender == 2 else "X",
+                "gender": "ALL" if e.gender == 0 else "M" if e.gender == 1 else "F" if e.gender == 2 else "X",
                 "distance": e.swimstyle.distance if e.swimstyle else 0,
                 "phase": "Eliminatoire" if e.round == 1 else "Finale" if e.round == 4 else "Finale directe",
                 "isAdmin": is_admin,
@@ -1533,7 +1533,7 @@ def list_sessions(request: Request, db: Session = Depends(get_db)):
                     "minAge": ag.agemin or 0,
                     # agemax uses -1 or >=99 as a Splash "Open" (no upper limit) sentinel — normalize to null
                     "maxAge": None if ag.agemax is None or ag.agemax < 0 or ag.agemax >= 99 else ag.agemax,
-                    "gender": "M" if ag.gender == 1 else "F" if ag.gender == 2 else ("M" if e.gender == 1 else "F" if e.gender == 2 else "X"),
+                    "gender": "ALL" if ag.gender == 0 else "M" if ag.gender == 1 else "F" if ag.gender == 2 else "X",
                     "numHeats": ag.heatcount or 1,
                     "ranking": "By time",
                     "countForMedalStats": ag.useformedals == "T",
@@ -1736,7 +1736,7 @@ def create_event(request: Request, data: dict = Body(default={}), db: Session = 
 
     number = data.get("number", 1)
     gender_str = data.get("gender", "X")
-    gender_int = {"M": GENDER_M, "F": GENDER_F, "X": GENDER_MIXED}.get(gender_str, GENDER_MIXED)
+    gender_int = {"ALL": GENDER_ALL, "M": GENDER_M, "F": GENDER_F, "MIXED": GENDER_MIXED, "X": GENDER_MIXED}.get(gender_str, GENDER_MIXED)
     phase = data.get("phase", "Finale directe")
     round_int = {"Eliminatoire": 1, "Finale": 4, "Finale directe": 5}.get(phase, 5)
 
@@ -1880,11 +1880,19 @@ def update_event(event_id: int, request: Request, data: dict = Body(default={}),
             val = data[key]
             # Convert gender string to int if needed
             if key == "gender" and isinstance(val, str):
-                val = {"M": 1, "F": 2, "X": 0}.get(val, 0)
+                val = {"ALL": GENDER_ALL, "M": GENDER_M, "F": GENDER_F, "MIXED": GENDER_MIXED, "X": GENDER_MIXED}.get(val, GENDER_MIXED)
             elif key in ("daytime", "duration") and val:
                 if ":" in str(val) and "-" not in str(val):
                     val = datetime(2000, 1, 1, *[int(x) for x in str(val).split(":")[:2]])
             setattr(event, col, val)
+
+    # An age group's gender is no longer independently editable in the UI — it always
+    # mirrors its parent event's, so changing the event's gender must trickle down to
+    # every age group under it (they're never allowed to drift apart).
+    if "gender" in data:
+        db.query(AgeGroup).filter(
+            AgeGroup.meetsid == event.meetsid, AgeGroup.swimeventid == event_id
+        ).update({"gender": event.gender})
 
     db.commit()
     return {"ok": True}
@@ -1917,7 +1925,7 @@ def create_age_group(request: Request, data: dict = Body(default={}), db: Sessio
     min_age = data.get("minAge", 0)
     max_age = data.get("maxAge")
     gender_str = data.get("gender", "X")
-    gender_int = {"M": GENDER_M, "F": GENDER_F, "X": GENDER_MIXED}.get(gender_str, GENDER_MIXED)
+    gender_int = {"ALL": GENDER_ALL, "M": GENDER_M, "F": GENDER_F, "MIXED": GENDER_MIXED, "X": GENDER_MIXED}.get(gender_str, GENDER_MIXED)
 
     max_sort = db.query(func.max(AgeGroup.sortcode)).filter(
         AgeGroup.meetsid == meetsid, AgeGroup.swimeventid == event_id
@@ -3810,7 +3818,7 @@ def _import_relays_from_lxf(db: "Session", file_bytes: bytes, meetsid: int | Non
         for relay_el in club_el.iter(f"{ns}RELAY"):
             team_number = int(relay_el.get("number", "1"))
             gender_str = relay_el.get("gender", "X")
-            gender_int = {"M": 1, "F": 2, "X": 3}.get(gender_str, 3)
+            gender_int = {"M": 1, "F": 2, "MIXED": 3, "X": 3}.get(gender_str.upper(), 3)
             agemin = int(relay_el.get("agemin", "0")) if relay_el.get("agemin") else None
             agemax = int(relay_el.get("agemax", "0")) if relay_el.get("agemax") else None
 

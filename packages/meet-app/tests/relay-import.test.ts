@@ -158,14 +158,18 @@ describe('Relay import from LENEX', () => {
     try {
       importLenex(path, db)
 
+      // athleteid="101..104" in the LXF are external ids, reconciled via athlete.externalid —
+      // not adopted as the local primary key (see lenex.ts's club/athlete import comment).
       const positions = db.prepare(
-        'SELECT * FROM relayposition ORDER BY relaynumber'
-      ).all() as Array<{ relayid: number; relaynumber: number; athleteid: number }>
+        `SELECT rp.relayid, rp.relaynumber, a.externalid
+         FROM relayposition rp JOIN athlete a ON a.athleteid = rp.athleteid
+         ORDER BY rp.relaynumber`
+      ).all() as Array<{ relayid: number; relaynumber: number; externalid: string }>
       expect(positions).toHaveLength(4)
-      expect(positions[0].athleteid).toBe(101)
-      expect(positions[1].athleteid).toBe(102)
-      expect(positions[2].athleteid).toBe(103)
-      expect(positions[3].athleteid).toBe(104)
+      expect(positions[0].externalid).toBe('101')
+      expect(positions[1].externalid).toBe('102')
+      expect(positions[2].externalid).toBe('103')
+      expect(positions[3].externalid).toBe('104')
     } finally {
       try { unlinkSync(path) } catch {}
     }

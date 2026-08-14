@@ -99,6 +99,208 @@ describe('LENEX importer', () => {
     }
   })
 
+  // Regression test: importLenex used to have its OWN local nextId() (a stale copy of the same
+  // per-table MAX(pkCol)+1 pattern db.ts's real nextId() had before the 2026-08-14 fix — see
+  // this package's CLAUDE.md, "Real Splash crash deleting a Final"), used for auto-assigned
+  // club/athlete/swimresult/relay ids when the LXF file doesn't provide one. It was never
+  // updated when db.ts's nextId() was fixed to compute a global max across every table, so a
+  // club/athlete imported without an explicit id could still land on the same literal id as an
+  // already-imported swimevent/agegroup — exactly the collision that crashes real Splash with
+  // "Invalid class typecast". Fixed by importing and using db.ts's real (now-fixed) nextId()
+  // instead of maintaining a separate, driftable copy.
+  it('auto-assigns a club id that does not collide with an existing swimevent/agegroup id', () => {
+    const lxfPath = join(tmpdir(), `test-noncolliding-club-${randomBytes(4).toString('hex')}.lxf`)
+    // eventid/agegroupid deliberately high (1200/1201) to simulate a real meet's existing
+    // structure; the CLUB has no clubid attribute at all, forcing the auto-assign fallback.
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<LENEX version="3.0">
+  <MEETS>
+    <MEET name="Test Meet" city="Test City" nation="CAN" course="LCM">
+      <SESSIONS>
+        <SESSION number="1" name="Session 1">
+          <EVENTS>
+            <EVENT eventid="1200" number="1" gender="M" round="TIM">
+              <SWIMSTYLE swimstyleid="500" distance="50" relaycount="1" name="Freestyle" />
+              <AGEGROUPS>
+                <AGEGROUP agegroupid="1201" agemin="13" agemax="14" />
+              </AGEGROUPS>
+            </EVENT>
+          </EVENTS>
+        </SESSION>
+      </SESSIONS>
+      <CLUBS>
+        <CLUB code="TST" name="Test Club">
+          <ATHLETES>
+            <ATHLETE firstname="A" lastname="B" gender="M" />
+          </ATHLETES>
+        </CLUB>
+      </CLUBS>
+    </MEET>
+  </MEETS>
+</LENEX>`
+    writeZipSingleEntry(lxfPath, 'meet.lef', xml)
+
+    try {
+      importLenex(lxfPath, db)
+      const club = db.prepare('SELECT clubid FROM club WHERE code=?').get('TST') as { clubid: number }
+      const athlete = db.prepare('SELECT athleteid FROM athlete WHERE clubid=?').get(club.clubid) as { athleteid: number }
+      expect(club.clubid).not.toBe(1200)
+      expect(club.clubid).not.toBe(1201)
+      expect(athlete.athleteid).not.toBe(1200)
+      expect(athlete.athleteid).not.toBe(1201)
+      expect(athlete.athleteid).not.toBe(club.clubid)
+    } finally {
+      try { unlinkSync(lxfPath) } catch {}
+    }
+  })
+
+  it('never adopts an incoming external clubid/athleteid as the local primary key, even when it numerically collides with an existing local id', () => {
+    // The whole point of the externalid design (see lenex.ts's club/athlete import comment):
+    // team-app's clubsid/membersid are an independent, ever-growing counter with no relationship
+    // to meet-app's own ids. This test uses an external athleteid ("1200") that deliberately
+    // equals an id already in use locally (the event) to prove the import never blindly trusts
+    // the incoming value as a database key — confirmed live against real Splash as the actual
+    // root cause of an "Invalid class typecast" crash (see this package's CLAUDE.md).
+    const lxfPath = join(tmpdir(), `test-external-id-collision-${randomBytes(4).toString('hex')}.lxf`)
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<LENEX version="3.0">
+  <MEETS>
+    <MEET name="Test Meet" city="Test City" nation="CAN" course="LCM">
+      <SESSIONS>
+        <SESSION number="1" name="Session 1">
+          <EVENTS>
+            <EVENT eventid="1200" number="1" gender="M" round="TIM">
+              <SWIMSTYLE swimstyleid="500" distance="50" relaycount="1" name="Freestyle" />
+              <AGEGROUPS>
+                <AGEGROUP agegroupid="1201" agemin="13" agemax="14" />
+              </AGEGROUPS>
+            </EVENT>
+          </EVENTS>
+        </SESSION>
+      </SESSIONS>
+      <CLUBS>
+        <CLUB clubid="1200" code="TST" name="Test Club">
+          <ATHLETES>
+            <ATHLETE athleteid="1201" firstname="A" lastname="B" gender="M" />
+          </ATHLETES>
+        </CLUB>
+      </CLUBS>
+    </MEET>
+  </MEETS>
+</LENEX>`
+    writeZipSingleEntry(lxfPath, 'meet.lef', xml)
+
+    try {
+      importLenex(lxfPath, db)
+      const club = db.prepare('SELECT clubid, externalid FROM club WHERE code=?').get('TST') as { clubid: number; externalid: string }
+      const athlete = db.prepare('SELECT athleteid, externalid FROM athlete WHERE clubid=?').get(club.clubid) as { athleteid: number; externalid: string }
+      // The external ids are preserved for reconciliation...
+      expect(club.externalid).toBe('1200')
+      expect(athlete.externalid).toBe('1201')
+      // ...but the local primary keys are our own, never the incoming values verbatim.
+      expect(club.clubid).not.toBe(1200)
+      expect(athlete.athleteid).not.toBe(1201)
+      // And the event/agegroup rows that legitimately do use those exact ids are untouched.
+      const event = db.prepare('SELECT swimeventid FROM swimevent WHERE swimeventid=1200').get()
+      const agegroup = db.prepare('SELECT agegroupid FROM agegroup WHERE agegroupid=1201').get()
+      expect(event).toBeDefined()
+      expect(agegroup).toBeDefined()
+    } finally {
+      try { unlinkSync(lxfPath) } catch {}
+    }
+  })
+
+  it('reuses the same local athleteid/clubid across repeated imports of the same external id', () => {
+    // A club can legitimately re-register/re-import entries multiple times before a meet
+    // (early registration, then a final update closer to the deadline). The local id must stay
+    // stable across that, exactly like today's ON CONFLICT(athleteid) upsert already assumed —
+    // just reconciled via externalid instead of by the incoming id being the primary key itself.
+    function xml(name: string): string {
+      return `<?xml version="1.0" encoding="UTF-8"?>
+<LENEX version="3.0">
+  <MEETS>
+    <MEET name="Test Meet" city="Test City" nation="CAN" course="LCM">
+      <CLUBS>
+        <CLUB clubid="42" code="TST" name="Test Club">
+          <ATHLETES>
+            <ATHLETE athleteid="99" firstname="${name}" lastname="B" gender="M" />
+          </ATHLETES>
+        </CLUB>
+      </CLUBS>
+    </MEET>
+  </MEETS>
+</LENEX>`
+    }
+    const path1 = join(tmpdir(), `test-reimport-1-${randomBytes(4).toString('hex')}.lxf`)
+    const path2 = join(tmpdir(), `test-reimport-2-${randomBytes(4).toString('hex')}.lxf`)
+    writeZipSingleEntry(path1, 'meet.lef', xml('First'))
+    writeZipSingleEntry(path2, 'meet.lef', xml('Updated'))
+
+    try {
+      importLenex(path1, db)
+      const first = db.prepare(`SELECT athleteid, clubid FROM athlete WHERE externalid='99'`).get() as { athleteid: number; clubid: number }
+
+      importLenex(path2, db)
+      const second = db.prepare(`SELECT athleteid, clubid, firstname FROM athlete WHERE externalid='99'`).get() as
+        { athleteid: number; clubid: number; firstname: string }
+
+      expect(second.athleteid).toBe(first.athleteid)
+      expect(second.clubid).toBe(first.clubid)
+      expect(second.firstname).toBe('Updated')  // upsert still updates fields in place
+      expect(db.prepare(`SELECT COUNT(*) AS c FROM athlete`).get()).toEqual({ c: 1 })  // no duplicate row
+    } finally {
+      for (const p of [path1, path2]) { try { unlinkSync(p) } catch {} }
+    }
+  })
+
+  it('mints no colliding ids across multiple new clubs and athletes minted within one import', () => {
+    // Regression test for a real bug caught in code review: an earlier version of the club
+    // auto-id logic cached one starting value from nextId() and incremented it locally
+    // ("autoClubId++"), while athlete ids in the same loop used fresh nextId() calls. A second
+    // new club processed after an athlete insert could get the exact id that athlete had just
+    // been minted, because the cached club counter never saw the athlete's insert. Two new
+    // clubs (no external id, no matching code — forces the auto-mint path for both) each with
+    // one new athlete exercises exactly the interleaving that triggered it.
+    const lxfPath = join(tmpdir(), `test-multi-club-mint-${randomBytes(4).toString('hex')}.lxf`)
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<LENEX version="3.0">
+  <MEETS>
+    <MEET name="Test Meet" city="Test City" nation="CAN" course="LCM">
+      <CLUBS>
+        <CLUB code="AAA" name="Club A">
+          <ATHLETES>
+            <ATHLETE firstname="A1" lastname="X" gender="M" />
+          </ATHLETES>
+        </CLUB>
+        <CLUB code="BBB" name="Club B">
+          <ATHLETES>
+            <ATHLETE firstname="B1" lastname="X" gender="M" />
+          </ATHLETES>
+        </CLUB>
+        <CLUB code="CCC" name="Club C">
+          <ATHLETES>
+            <ATHLETE firstname="C1" lastname="X" gender="M" />
+          </ATHLETES>
+        </CLUB>
+      </CLUBS>
+    </MEET>
+  </MEETS>
+</LENEX>`
+    writeZipSingleEntry(lxfPath, 'meet.lef', xml)
+
+    try {
+      importLenex(lxfPath, db)
+      const clubIds = (db.prepare(`SELECT clubid FROM club ORDER BY clubid`).all() as { clubid: number }[]).map(r => r.clubid)
+      const athleteIds = (db.prepare(`SELECT athleteid FROM athlete ORDER BY athleteid`).all() as { athleteid: number }[]).map(r => r.athleteid)
+      expect(clubIds).toHaveLength(3)
+      expect(athleteIds).toHaveLength(3)
+      const allIds = [...clubIds, ...athleteIds]
+      expect(new Set(allIds).size).toBe(allIds.length)  // every id, across both tables, is unique
+    } finally {
+      try { unlinkSync(lxfPath) } catch {}
+    }
+  })
+
   // Regression test for a live bug: importLenex never set swimstyle.uniqueid at all, so it
   // stayed NULL for every custom style. Real Splash's own LXF importer treats the incoming
   // swimstyleid as canonical and stores it in its own UNIQUEID column (confirmed against a
@@ -207,6 +409,56 @@ describe('LENEX importer', () => {
     }
   })
 
+  // Regression test for a live bug found by comparing a real Splash-native .mdb: a
+  // freshly-split PRE/FIN pair has UseForMedals/UseForScoring 'F' on the PRE's age
+  // group and 'T' on the FIN's (the final's placement is what counts, not the
+  // prelim's) — but upsertAgeGroup above always writes 'T'/'T', so an imported LXF
+  // that already encodes the split (preveventid set) needs the prelim's age groups
+  // flipped explicitly. See the matching cascade in db.ts's updateEvent.
+  it('flips a prelim\'s age groups off for medals/scoring when the imported FIN links to it via preveventid', () => {
+    const lxfPath = join(tmpdir(), `test-prelim-scoring-${randomBytes(4).toString('hex')}.lxf`)
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<LENEX version="3.0">
+  <MEETS>
+    <MEET name="Test Meet" city="Test City" nation="CAN" course="LCM">
+      <SESSIONS>
+        <SESSION number="1" name="Session 1">
+          <EVENTS>
+            <EVENT eventid="1060" number="1" gender="M" round="PRE" preveventid="-1">
+              <SWIMSTYLE swimstyleid="500" distance="100" relaycount="1" name="Test Style" />
+              <AGEGROUPS>
+                <AGEGROUP agegroupid="1061" agemin="15" agemax="18" />
+              </AGEGROUPS>
+            </EVENT>
+            <EVENT eventid="1062" number="1" gender="M" round="FIN" preveventid="1060">
+              <SWIMSTYLE swimstyleid="500" distance="100" relaycount="1" name="Test Style" />
+              <AGEGROUPS>
+                <AGEGROUP agegroupid="1063" agemin="15" agemax="18" />
+              </AGEGROUPS>
+            </EVENT>
+          </EVENTS>
+        </SESSION>
+      </SESSIONS>
+    </MEET>
+  </MEETS>
+</LENEX>`
+    writeZipSingleEntry(lxfPath, 'meet.lef', xml)
+
+    try {
+      importLenex(lxfPath, db)
+      const prelimAg = db.prepare('SELECT useformedals, useforscoring FROM agegroup WHERE agegroupid=1061').get() as
+        { useformedals: string; useforscoring: string }
+      const finalAg = db.prepare('SELECT useformedals, useforscoring FROM agegroup WHERE agegroupid=1063').get() as
+        { useformedals: string; useforscoring: string }
+      expect(prelimAg.useformedals).toBe('F')
+      expect(prelimAg.useforscoring).toBe('F')
+      expect(finalAg.useformedals).toBe('T')
+      expect(finalAg.useforscoring).toBe('T')
+    } finally {
+      try { unlinkSync(lxfPath) } catch {}
+    }
+  })
+
   it('defaults preveventid to -1 (Splash\'s own "no link" sentinel) when the attribute is absent', () => {
     const lxfPath = join(tmpdir(), `test-preveventid-absent-${randomBytes(4).toString('hex')}.lxf`)
     const xml = `<?xml version="1.0" encoding="UTF-8"?>
@@ -232,6 +484,48 @@ describe('LENEX importer', () => {
       const row = db.prepare('SELECT preveventid FROM swimevent WHERE swimeventid=1').get() as
         { preveventid: number | null }
       expect(row.preveventid).toBe(-1)
+    } finally {
+      try { unlinkSync(lxfPath) } catch {}
+    }
+  })
+
+  // LENEX's GENDER enum is ALL|M|F|MIXED (not the "X" our own exports used to write for
+  // Mixed) — a real Splash-exported "ALL" (unrestricted) event used to silently collapse
+  // into Mixed because encodeGender only recognized M/F and defaulted everything else to 3.
+  it('imports gender="ALL" as 0 and gender="MIXED" as 3, per the real LENEX spec', () => {
+    const lxfPath = join(tmpdir(), `test-gender-all-mixed-${randomBytes(4).toString('hex')}.lxf`)
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<LENEX version="3.0">
+  <MEETS>
+    <MEET name="Test Meet" city="Test City" nation="CAN" course="LCM">
+      <SESSIONS>
+        <SESSION number="1" name="Session 1">
+          <EVENTS>
+            <EVENT eventid="1" number="1" gender="ALL" round="TIM">
+              <SWIMSTYLE swimstyleid="500" distance="100" relaycount="1" name="Test Style" />
+              <AGEGROUPS>
+                <AGEGROUP agegroupid="1" name="Open" agemin="19" agemax="-1" gender="ALL" />
+              </AGEGROUPS>
+            </EVENT>
+            <EVENT eventid="2" number="2" gender="MIXED" round="TIM">
+              <SWIMSTYLE swimstyleid="530" distance="100" relaycount="4" name="Test Relay" />
+            </EVENT>
+          </EVENTS>
+        </SESSION>
+      </SESSIONS>
+    </MEET>
+  </MEETS>
+</LENEX>`
+    writeZipSingleEntry(lxfPath, 'meet.lef', xml)
+
+    try {
+      importLenex(lxfPath, db)
+      const events = db.prepare('SELECT swimeventid, gender FROM swimevent ORDER BY swimeventid').all() as
+        { swimeventid: number; gender: number }[]
+      expect(events.find(e => e.swimeventid === 1)?.gender).toBe(0)
+      expect(events.find(e => e.swimeventid === 2)?.gender).toBe(3)
+      const ag = db.prepare('SELECT gender FROM agegroup WHERE agegroupid=1').get() as { gender: number }
+      expect(ag.gender).toBe(0)
     } finally {
       try { unlinkSync(lxfPath) } catch {}
     }
@@ -395,7 +689,10 @@ describe('LENEX importer', () => {
       importLenex(openEntryPath, db)      // registered under the wrong ("Open") bracket
       importLenex(correctedEntryPath, db) // category corrected to "15-18"
 
-      const rows = db.prepare('SELECT swimeventid FROM swimresult WHERE athleteid = 500').all() as
+      // athleteid="500" in the LXF is an external id, reconciled via externalid — not adopted
+      // as the local primary key (see lenex.ts's club/athlete import comment).
+      const athlete = db.prepare(`SELECT athleteid FROM athlete WHERE externalid = '500'`).get() as { athleteid: number }
+      const rows = db.prepare('SELECT swimeventid FROM swimresult WHERE athleteid = ?').all(athlete.athleteid) as
         Array<{ swimeventid: number }>
       expect(rows).toHaveLength(1)
       expect(rows[0].swimeventid).toBe(100)
@@ -464,12 +761,15 @@ describe('LENEX importer', () => {
     try {
       importLenex(structurePath, db)
       importLenex(openEntryPath, db)
+      // athleteid="500" in the LXF is an external id, reconciled via externalid — not adopted
+      // as the local primary key (see lenex.ts's club/athlete import comment).
+      const athlete = db.prepare(`SELECT athleteid FROM athlete WHERE externalid = '500'`).get() as { athleteid: number }
       // Simulate heat generation having already placed the athlete in a heat for the
       // "Open" event before the category-correction entries file is imported.
-      db.prepare('UPDATE swimresult SET heatid=999, lane=3 WHERE athleteid=500 AND swimeventid=101').run()
+      db.prepare('UPDATE swimresult SET heatid=999, lane=3 WHERE athleteid=? AND swimeventid=101').run(athlete.athleteid)
       importLenex(correctedEntryPath, db)
 
-      const rows = db.prepare('SELECT swimeventid FROM swimresult WHERE athleteid = 500 ORDER BY swimeventid').all() as
+      const rows = db.prepare('SELECT swimeventid FROM swimresult WHERE athleteid = ? ORDER BY swimeventid').all(athlete.athleteid) as
         Array<{ swimeventid: number }>
       expect(rows.map(r => r.swimeventid)).toEqual([100, 101])
     } finally {
@@ -749,6 +1049,22 @@ describe('LENEX exporter', () => {
     const xml = readLefXml(outPath)
     expect(xml).toMatch(/eventid="1"[^>]*preveventid="-1"/)
     expect(xml).toMatch(/eventid="2"[^>]*preveventid="1"/)
+  })
+
+  // Regression guard: decodeGender used to write "X" for Mixed, which isn't a value the
+  // real LENEX GENDER enum (ALL|M|F|MIXED) defines — a real Splash import of our own file
+  // could fail to recognize it. gender=0 (ALL) is a separate new value that never had an
+  // export path at all before this fix.
+  it('exportMeetLenex writes gender="ALL" and gender="MIXED", not "X", per the real LENEX spec', () => {
+    seedResultsFixture(db, dateToOle(2014, 7, 3))
+    db.exec(`UPDATE swimevent SET gender=0 WHERE swimeventid=1`)
+    db.exec(`UPDATE agegroup SET gender=0 WHERE swimeventid=1`)
+    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode, internalevent) VALUES (2, 1, 1, 2, 3, 5, 2, 'F')`)
+    exportMeetLenex(outPath, db)
+    const xml = readLefXml(outPath)
+    expect(xml).toMatch(/eventid="1"[^>]*gender="ALL"/)
+    expect(xml).toMatch(/eventid="2"[^>]*gender="MIXED"/)
+    expect(xml).not.toMatch(/gender="X"/)
   })
 })
 

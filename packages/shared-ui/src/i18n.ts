@@ -31,12 +31,16 @@ const fr = {
   },
   events: {
     columns: { name: 'Nom', datePhase: 'Date / Phase', time: 'Heure', pool: 'Bassin' },
-    genderLabel: (g: string) => g === 'M' ? 'Messieurs' : g === 'F' ? 'Dames' : 'Mixte',
-    youthGenderLabel: (g: string) => g === 'M' ? 'Garçons' : g === 'F' ? 'Filles' : 'Mixte',
+    genderLabel: (g: string) => g === 'ALL' ? 'Tous' : g === 'M' ? 'Messieurs' : g === 'F' ? 'Dames' : 'Mixte',
+    youthGenderLabel: (g: string) => g === 'ALL' ? 'Tous' : g === 'M' ? 'Garçons' : g === 'F' ? 'Filles' : 'Mixte',
+    // Dropdown option text — no age context available there (one event can span
+    // several age brackets), so adult/youth wording is combined into one label.
+    genderOptionLabel: (g: string) => g === 'ALL' ? 'Tous' : g === 'M' ? 'Homme' : g === 'F' ? 'Femme' : 'Mixte',
     ageRangeLabel: (minAge: number | null, maxAge: number | null, genderLabel: string) => {
-      if (maxAge == null) return `${minAge ?? 0} ans et plus, ${genderLabel}`
-      if (minAge == null) return `${maxAge} ans et moins, ${genderLabel}`
-      return `${minAge} - ${maxAge} ans, ${genderLabel}`
+      const suffix = genderLabel ? `, ${genderLabel}` : ''
+      if (maxAge == null) return `${minAge ?? 0} ans et plus${suffix}`
+      if (minAge == null) return `${maxAge} ans et moins${suffix}`
+      return `${minAge} - ${maxAge} ans${suffix}`
     },
     phaseLabel: (p: string) => p,
     poolUnit: (s: number) => `${s}m`,
@@ -48,7 +52,6 @@ const fr = {
       addFinal: 'Ajouter une finale',
       addAward: 'Ajouter une remise de prix',
       addBreak: 'Ajouter une pause',
-      addCategory: 'Ajouter une catégorie',
       addCategory10: 'Ajouter catégorie 10-',
       addCategory1112: 'Ajouter catégorie 11-12',
       addCategory1314: 'Ajouter catégorie 13-14',
@@ -61,7 +64,6 @@ const fr = {
     toolbar: {
       addSession: '+ Session',
       addEvent: '+ Épreuve',
-      addCategory: '+ Catégorie',
       addBreak: '+ Pause',
       delete: 'Effacer',
       importMeet: 'Importer (.lxf)',
@@ -72,37 +74,20 @@ const fr = {
     },
     props: {
       general: 'Général',
-      additionalFilters: 'Filtres additionnels',
-      complement: 'Complément',
-      other: 'Autres',
       designation: 'Désignation',
       value: 'Valeur',
-      ageFrom: 'Age de',
-      ageTo: 'Age à',
-      gender: 'Sexe',
-      nationalityLimit: 'Nationalité (athlètes) limitée à',
-      nationsOnly: 'Nations / Régions seulement (club)',
-      clubsOnly: 'Clubs seulement',
-      athleteLevels: "Niveaux d'athlètes (par Fédération)",
-      fastestTime: 'Niveau: Temps le plus rapide',
-      slowestTime: 'Niveau: Temps le plus lent',
-      paranation: 'Paranation',
-      ranking: 'Classement',
-      countForMedals: 'Tenir compte pour statistique médailles',
-      usedForCombined: 'Utiliser pour les épreuves combinées',
       numHeats: 'Nombre de séries',
+      // Controls the seeding method used whenever heats are (re)generated for this age group —
+      // not specifically how A/B finals get seeded (a separate mechanism), hence no "(finales)"
+      // in the label, which was misleading.
+      seedMethod: 'Méthode de répartition',
+      seedMethodCircle: 'Circulaire (répartition uniforme)',
+      seedMethodPyramid: 'Pyramidale (rapides en dernière série)',
       moveToEvent: "Déplacer vers une autre épreuve",
       moveButton: 'Déplacer',
       moveNoTarget: '— choisir —',
       moveConfirm: (groupLabel: string, eventLabel: string) =>
         `Déplacer "${groupLabel}" vers l'épreuve ${eventLabel} ? Les séries déjà générées pour ce groupe d'âge seront réinitialisées.`,
-      alwaysSwimPrelims: 'Toujours nager les éliminatoires',
-      advanceByTime: 'Avance en finale si temps de qualific...',
-      laneOrderFinals: 'Sort order lanes in finals',
-      name: 'Nom',
-      abbreviation: 'Abréviation',
-      winnerComment: 'Commentaire pour vainqueur',
-      externalId: 'ID externe',
       time: 'Heure',
       pool: 'Bassin',
       numEvents: "Nombre d'épreuves",
@@ -113,8 +98,6 @@ const fr = {
       city: 'Ville',
       nation: 'Nation',
     },
-    allClubs: 'tous les clubs',
-    allNations: 'Tous',
     defaultRanking: 'Selon temps nagé',
     eventPanel: {
       general: 'Général',
@@ -214,7 +197,7 @@ const fr = {
     heatNo: 'Série',
     timingSystems: 'Systèmes de chronométrage',
     noHeatSelected: 'Sélectionnez une série dans la liste ci-dessus',
-    genderLabel: (g: string) => g === 'M' ? 'Messieurs' : g === 'F' ? 'Dames' : 'Mixte',
+    genderLabel: (g: string) => g === 'ALL' ? 'Tous' : g === 'M' ? 'Messieurs' : g === 'F' ? 'Dames' : 'Mixte',
     adminLabel: 'Pause',
     heatLabel: 'Série',
     columns: {
@@ -378,12 +361,16 @@ const en = {
   },
   events: {
     columns: { name: 'Name', datePhase: 'Date / Phase', time: 'Time', pool: 'Pool' },
-    genderLabel: (g: string) => g === 'M' ? 'Men' : g === 'F' ? 'Women' : 'Mixed',
-    youthGenderLabel: (g: string) => g === 'M' ? 'Boys' : g === 'F' ? 'Girls' : 'Mixed',
+    genderLabel: (g: string) => g === 'ALL' ? 'All' : g === 'M' ? 'Men' : g === 'F' ? 'Women' : 'Mixed',
+    youthGenderLabel: (g: string) => g === 'ALL' ? 'All' : g === 'M' ? 'Boys' : g === 'F' ? 'Girls' : 'Mixed',
+    // Dropdown option text — no age context available there (one event can span
+    // several age brackets), so adult/youth wording is combined into one label.
+    genderOptionLabel: (g: string) => g === 'ALL' ? 'All' : g === 'M' ? 'Man' : g === 'F' ? 'Woman' : 'Mixed',
     ageRangeLabel: (minAge: number | null, maxAge: number | null, genderLabel: string) => {
-      if (maxAge == null) return `${minAge ?? 0} and older, ${genderLabel}`
-      if (minAge == null) return `${maxAge} and younger, ${genderLabel}`
-      return `${minAge} - ${maxAge}, ${genderLabel}`
+      const suffix = genderLabel ? `, ${genderLabel}` : ''
+      if (maxAge == null) return `${minAge ?? 0} and older${suffix}`
+      if (minAge == null) return `${maxAge} and younger${suffix}`
+      return `${minAge} - ${maxAge}${suffix}`
     },
     phaseLabel: (p: string) =>
       p === 'Eliminatoire' ? 'Prelims' : p === 'Finale' ? 'Final' : p === 'Finale directe' ? 'Direct Final' : p,
@@ -396,7 +383,6 @@ const en = {
       addFinal: 'Add final',
       addAward: 'Add award ceremony',
       addBreak: 'Add break',
-      addCategory: 'Add category',
       addCategory10: 'Add category 10-',
       addCategory1112: 'Add category 11-12',
       addCategory1314: 'Add category 13-14',
@@ -409,7 +395,6 @@ const en = {
     toolbar: {
       addSession: '+ Session',
       addEvent: '+ Event',
-      addCategory: '+ Category',
       addBreak: '+ Break',
       delete: 'Delete',
       importMeet: 'Import (.lxf)',
@@ -420,37 +405,17 @@ const en = {
     },
     props: {
       general: 'General',
-      additionalFilters: 'Additional Filters',
-      complement: 'Complement',
-      other: 'Other',
       designation: 'Designation',
       value: 'Value',
-      ageFrom: 'Age from',
-      ageTo: 'Age to',
-      gender: 'Gender',
-      nationalityLimit: 'Nationality (athletes) limited to',
-      nationsOnly: 'Nations / Regions only (club)',
-      clubsOnly: 'Clubs only',
-      athleteLevels: 'Athlete levels (by Federation)',
-      fastestTime: 'Level: Fastest time',
-      slowestTime: 'Level: Slowest time',
-      paranation: 'Paranation',
-      ranking: 'Ranking',
-      countForMedals: 'Count for medal statistics',
-      usedForCombined: 'Used for combined events',
       numHeats: 'Number of heats',
+      seedMethod: 'Seeding method',
+      seedMethodCircle: 'Circle (even distribution)',
+      seedMethodPyramid: 'Pyramid (fastest in last heat)',
       moveToEvent: 'Move to another event',
       moveButton: 'Move',
       moveNoTarget: '— choose —',
       moveConfirm: (groupLabel: string, eventLabel: string) =>
         `Move "${groupLabel}" to event ${eventLabel}? Heats already generated for this age group will be reset.`,
-      alwaysSwimPrelims: 'Always swim prelims',
-      advanceByTime: 'Advance to final if qualifying time...',
-      laneOrderFinals: 'Lane order in finals',
-      name: 'Name',
-      abbreviation: 'Abbreviation',
-      winnerComment: 'Winner comment',
-      externalId: 'External ID',
       time: 'Time',
       pool: 'Pool',
       numEvents: 'Number of events',
@@ -461,8 +426,6 @@ const en = {
       city: 'City',
       nation: 'Nation',
     },
-    allClubs: 'all clubs',
-    allNations: 'All',
     defaultRanking: 'By time swum',
     eventPanel: {
       general: 'General',
@@ -562,7 +525,7 @@ const en = {
     heatNo: 'Heat',
     timingSystems: 'Timing systems',
     noHeatSelected: 'Select a heat from the list above',
-    genderLabel: (g: string) => g === 'M' ? 'Men' : g === 'F' ? 'Women' : 'Mixed',
+    genderLabel: (g: string) => g === 'ALL' ? 'All' : g === 'M' ? 'Men' : g === 'F' ? 'Women' : 'Mixed',
     adminLabel: 'Break',
     heatLabel: 'Heat',
     columns: {

@@ -51,7 +51,7 @@ interface ReportEventSection {
   eventNumber: number
   eventName: string     // style name only
   phase: 'Finale' | 'Eliminatoire' | 'Finale directe'
-  gender: 'M' | 'F' | 'X'
+  gender: 'M' | 'F' | 'X' | 'ALL'
   ageMin: number
   ageMax: number | null
   sessionDate: string   // YYYY-MM-DD
@@ -88,8 +88,9 @@ function formatAgeRange(minAge: number, maxAge: number | null): string {
   return `${minAge} - ${maxAge} ans`
 }
 
-function genderPrefix(gender: 'M' | 'F' | 'X', minAge: number): string {
+function genderPrefix(gender: 'M' | 'F' | 'X' | 'ALL', minAge: number): string {
   const adult = minAge >= 15
+  if (gender === 'ALL') return 'Tous'
   if (gender === 'X') return adult ? 'Mixte' : 'Tous'
   if (gender === 'F') return adult ? 'Dames' : 'Filles'
   return adult ? 'Messieurs' : 'Garçons'
@@ -129,7 +130,7 @@ function generatePdfHtml(
   function buildEventHtml(s: ReportEventSection): string {
     const totalHeats = s.heats.length
     const prefix = genderPrefix(s.gender, s.ageMin)
-    const centerName = s.gender === 'X'
+    const centerName = s.gender === 'X' || s.gender === 'ALL'
       ? esc(s.eventName)
       : `${esc(prefix)},&nbsp;${esc(s.eventName)}`
     const ageRange = esc(formatAgeRange(s.ageMin, s.ageMax))
@@ -219,7 +220,7 @@ interface StartListLaneEvent {
   eventNumber: number
   eventName: string
   phase: 'Finale' | 'Eliminatoire' | 'Finale directe'
-  gender: 'M' | 'F' | 'X'
+  gender: 'M' | 'F' | 'X' | 'ALL'
   ageMin: number
   ageMax: number | null
   /** Heats that have an entry in this lane */
@@ -414,7 +415,7 @@ function generateStartListPdfHtml(
 
       const ev = events[i]
       const prefix = genderPrefix(ev.gender, ev.ageMin)
-      const evLabel = ev.gender === 'X'
+      const evLabel = ev.gender === 'X' || ev.gender === 'ALL'
         ? esc(ev.eventName)
         : `${esc(prefix)}, ${esc(ev.eventName)}`
       const ageRange = esc(formatAgeRange(ev.ageMin, ev.ageMax))
@@ -687,7 +688,8 @@ function msToDisplay(ms: number | null): string {
   return msToDisplayShared(ms, { noTimeText: 'NT' })!
 }
 
-function decodeGenderNum(g: number): 'M' | 'F' | 'X' {
+function decodeGenderNum(g: number): 'M' | 'F' | 'X' | 'ALL' {
+  if (g === 0) return 'ALL'
   if (g === 1) return 'M'
   if (g === 2) return 'F'
   return 'X'
@@ -718,7 +720,7 @@ function generateEntriesByEventPdfHtml(rows: EntryByEventReportRow[], isBeach: b
   for (const [, ev] of events) {
     const gender = decodeGenderNum(ev.gender)
     const prefix = genderPrefix(gender, ev.ageMin)
-    const centerName = gender === 'X'
+    const centerName = gender === 'X' || gender === 'ALL'
       ? esc(ev.eventName ?? '')
       : `${esc(prefix)}, ${esc(ev.eventName ?? '')}`
     const ageRange = esc(formatAgeRange(ev.ageMin, ev.ageMax))
@@ -941,7 +943,7 @@ function generateResultsListPdfHtml(
     }
 
     const prefix = genderPrefix(s.gender, overallMin)
-    const centerName = s.gender === 'X' ? esc(s.eventName) : `${esc(prefix)},&nbsp;${esc(s.eventName)}`
+    const centerName = (s.gender === 'X' || s.gender === 'ALL') ? esc(s.eventName) : `${esc(prefix)},&nbsp;${esc(s.eventName)}`
     const ageRange = esc(formatAgeRange(overallMin, overallMax))
     const dateTimeStr = s.sessionDate ? esc(`${s.sessionDate} - ${s.scheduledTime}`) : esc(s.scheduledTime)
 
@@ -1042,7 +1044,7 @@ function generateHeatListHtml(
 
   function tocLink(s: ReportEventSection, i: number): string {
     const prefix = genderPrefix(s.gender, s.ageMin)
-    const fullName = s.gender === 'X'
+    const fullName = s.gender === 'X' || s.gender === 'ALL'
       ? `${esc(s.eventName)}`
       : `${esc(prefix)},&nbsp;${esc(s.eventName)}`
     const age = esc(formatAgeRange(s.ageMin, s.ageMax))
@@ -1072,7 +1074,7 @@ function generateHeatListHtml(
   function buildEventHtml(s: ReportEventSection, idx: number): string {
     const totalHeats = s.heats.length
     const prefix = genderPrefix(s.gender, s.ageMin)
-    const centerName = s.gender === 'X'
+    const centerName = s.gender === 'X' || s.gender === 'ALL'
       ? esc(s.eventName)
       : `${esc(prefix)}, ${esc(s.eventName)}`
     const ageRange = esc(formatAgeRange(s.ageMin, s.ageMax))

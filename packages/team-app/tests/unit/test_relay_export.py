@@ -152,8 +152,10 @@ class TestRelayExportEventMatching:
 
         assert eventids == {str(event_m.swimeventid), str(event_f.swimeventid)}
 
-    def test_mixed_gender_relay_exports_gender_x_not_f(self, db_session):
-        """relay.gender=GENDER_MIXED must round-trip as "X", not silently become "F"."""
+    def test_mixed_gender_relay_exports_gender_mixed_not_f(self, db_session):
+        """relay.gender=GENDER_MIXED must round-trip as "MIXED" (the real LENEX GENDER
+        enum value — ALL|M|F|MIXED; "X" was our own non-conformant former output),
+        not silently become "F"."""
         club, event_m, event_f = _seed_ambiguous_style_meet(db_session)
 
         relay = Relay(relaysid=1, meetsid=1, clubsid=club.clubsid, stylesid=301, teamnumb=1,
@@ -170,4 +172,4 @@ class TestRelayExportEventMatching:
             xml_bytes = z.read("meet.lef")
         root = ET.fromstring(xml_bytes)
         relay_elem = next(root.iter("RELAY"))
-        assert relay_elem.get("gender") == "X"
+        assert relay_elem.get("gender") == "MIXED"

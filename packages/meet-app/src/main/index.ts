@@ -1973,7 +1973,7 @@ ipcMain.handle('timing:generate-sheets', async (_event, sessionId: number) => {
 
 ipcMain.handle('timing:generate-position-sheets', async (_event, sessionId: number) => {
   try {
-    const genderLabel = (g: 'M' | 'F' | 'X'): string => (g === 'M' ? 'Masculin' : g === 'F' ? 'Féminin' : 'Mixte')
+    const genderLabel = (g: 'ALL' | 'M' | 'F' | 'X'): string => (g === 'ALL' ? 'Tous' : g === 'M' ? 'Masculin' : g === 'F' ? 'Féminin' : 'Mixte')
 
     // Lowest member beach number for a relay team, so relay rows sort alongside individual ones
     const sortKeyOf = (identifier: string): string => identifier.split('/')[0]
@@ -2293,7 +2293,7 @@ function _pushStartListsAfterGeneration(eventId?: number, sessionId?: number): v
     }>
 
     if (events.length > 0) {
-      const genderMap: Record<number, string> = { 1: 'M', 2: 'F', 3: 'X' }
+      const genderMap: Record<number, string> = { 0: 'ALL', 1: 'M', 2: 'F', 3: 'X' }
       const roundMap: Record<number, string> = { 1: 'PRE', 2: 'SEM', 4: 'FIN', 5: 'TIM' }
 
       const eventsPayload = events.map(e => ({

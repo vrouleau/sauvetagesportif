@@ -21,7 +21,7 @@ import { inflateRawSync, deflateRawSync } from 'node:zlib'
 import Database from 'better-sqlite3'
 import { saveGeminiKeys } from './ocrGemini'
 import { generateBeachNumbers } from './beachNumber'
-import { parseOleDate } from './db'
+import { parseOleDate, nextId } from './db'
 import { getSeasonYear, loadAgeGroupRules } from './ageGroupRules'
 
 // ── ZIP reader ────────────────────────────────────────────────────────────────
@@ -104,10 +104,15 @@ function children(elem: XmlElem, tag: string): XmlElem[] {
 
 // ── Encoding helpers ──────────────────────────────────────────────────────────
 
+// LENEX's GENDER enum is ALL|M|F|MIXED. Our own exports historically wrote "X" for
+// Mixed (non-conformant — see decodeGender below); "X" is still accepted here so
+// files we've already exported keep importing correctly.
 function encodeGender(g: string | undefined): number {
-  if (g === 'F') return 2
-  if (g === 'M') return 1
-  return 3
+  const v = (g ?? '').toUpperCase()
+  if (v === 'ALL') return 0
+  if (v === 'M') return 1
+  if (v === 'F') return 2
+  return 3 // MIXED, legacy "X", or unrecognized/blank
 }
 
 function encodeStroke(s: string | undefined): number {
@@ -185,10 +190,18 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
     heats: 0, clubs: 0, athletes: 0, results: 0, errors: [],
   }
 
-  // Local nextId helper (same logic as db.ts nextId but uses the passed db)
-  function nextId(table: string, col: string): number {
-    const row = db.prepare(`SELECT MAX(${col}) AS m FROM ${table}`).get() as { m: number | null } | undefined
-    return (row?.m ?? 0) + 1
+  // Single shared local id counter for every id minted anywhere in this import (session, club,
+  // athlete, swimresult, relay). nextId() (db.ts) is a genuinely global counter now — same value
+  // regardless of which table/pkCol is passed, since it's a single-table-scanning-all-tables MAX
+  // in SQLite mode, or a single Postgres sequence in PG mode — so caching one starting value per
+  // import and incrementing it locally (instead of re-querying nextId() for every single row) is
+  // safe and avoids one full-table-scan query per row on a large entries import. If nextId()'s
+  // semantics ever change back to being scoped per table, this must go back to calling nextId()
+  // fresh every time, same as it did before this optimization.
+  let localNextId: number | null = null
+  function mintId(): number {
+    if (localNextId === null) localNextId = nextId('swimevent', 'swimeventid', db)
+    return localNextId++
   }
 
   const entries = readZipEntries(filePath)
@@ -337,7 +350,6 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
       `UPDATE swimsession SET name=?,
          lanemin=COALESCE(?, lanemin), lanemax=COALESCE(?, lanemax)
        WHERE swimsessionid=?`),
-    maxSessionId: db.prepare(`SELECT COALESCE(MAX(swimsessionid),0)+1 AS next FROM swimsession`),
     insertSession: db.prepare(
       `INSERT INTO swimsession (swimsessionid, sessionnumber, name, course, following, poolglobal, roundtotenths, lanemin, lanemax)
        VALUES (?,?,?,1,'F','F','F',?,?)`),
@@ -373,14 +385,15 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
          swimeventid=excluded.swimeventid, heatnumber=excluded.heatnumber,
          racestatus=excluded.racestatus, sortcode=excluded.sortcode`),
     upsertClub: db.prepare(
-      `INSERT INTO club (clubid, code, name) VALUES (?,?,?)
-       ON CONFLICT(clubid) DO UPDATE SET code=excluded.code, name=excluded.name`),
+      `INSERT INTO club (clubid, code, name, externalid) VALUES (?,?,?,?)
+       ON CONFLICT(clubid) DO UPDATE SET code=excluded.code, name=excluded.name, externalid=excluded.externalid`),
     upsertAthlete: db.prepare(
-      `INSERT INTO athlete (athleteid, firstname, lastname, birthdate, gender, nation, license, clubid)
-       VALUES (?,?,?,?,?,?,?,?)
+      `INSERT INTO athlete (athleteid, firstname, lastname, birthdate, gender, nation, license, clubid, externalid)
+       VALUES (?,?,?,?,?,?,?,?,?)
        ON CONFLICT(athleteid) DO UPDATE SET
          firstname=excluded.firstname, lastname=excluded.lastname, birthdate=excluded.birthdate,
-         gender=excluded.gender, nation=excluded.nation, license=excluded.license, clubid=excluded.clubid`),
+         gender=excluded.gender, nation=excluded.nation, license=excluded.license, clubid=excluded.clubid,
+         externalid=excluded.externalid`),
     upsertResult: db.prepare(
       `INSERT INTO swimresult (swimresultid, athleteid, swimeventid, agegroupid, heatid, lane, entrytime, entrycourse, swimtime, resultstatus, reactiontime, usetimetype)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,0)
@@ -426,8 +439,9 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
         if (!skipEventStructure) stmts.updateSession.run(sessName, laneMin, laneMax, swimsessionid)
       } else {
         if (skipEventStructure) continue  // Don't create new sessions during entries import
-        const r = stmts.maxSessionId.get() as { next: number }
-        swimsessionid = r.next
+        // mintId(), not a table-local MAX+1 — a new session's id must not collide with any
+        // other table's id either, same principle as club/athlete/heat/relay/swimresult above.
+        swimsessionid = mintId()
         stmts.insertSession.run(swimsessionid, num, sessName, laneMin, laneMax)
       }
       summary.sessions++
@@ -545,6 +559,22 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
     }
   }
 
+  // ── Prelim/Final scoring cascade ───────────────────────────────────────────────
+  // Real Splash's own "Convert to Final" (and, confirmed against a real Splash-native
+  // .mdb, its own LXF importer too) stops counting the prelim's age group(s) for
+  // medals/scoring once a final exists for it — the final's placement is what counts.
+  // upsertAgeGroup above always writes 'T'/'T', so an incoming file that already
+  // encodes a PRE/FIN split (preveventid set) needs this applied as a post-pass once
+  // every event/agegroup in the file has been inserted — mirrors updateEvent's
+  // equivalent cascade in db.ts (used by handleConvertToFinal).
+  {
+    const finalLinks = db.prepare(
+      `SELECT preveventid FROM swimevent WHERE preveventid IS NOT NULL AND preveventid > 0`
+    ).all() as Array<{ preveventid: number }>
+    const flipPrelim = db.prepare(`UPDATE agegroup SET useformedals='F', useforscoring='F' WHERE swimeventid=?`)
+    for (const link of finalLinks) flipPrelim.run(link.preveventid)
+  }
+
   // ── Auto-detect meet type from swim style IDs ─────────────────────────────────
   // If no MEET_TYPE is already set, infer from imported styles: IDs >= 600 are beach events
   {
@@ -557,24 +587,49 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
   }
 
   // ── Clubs → club; Athletes → athlete; Entries/Results → swimresult ────────────
+  //
+  // clubid/athleteid attributes in the incoming LXF are an EXTERNAL system's own primary key
+  // (team-app's clubsid/membersid, or occasionally a genuine Splash-native export's own internal
+  // id) — never adopted directly as our own primary key. Two independently-numbered systems can
+  // produce the same literal value (team-app is never flushed and its counters grow forever;
+  // meet-app's own event/agegroup ids are usually already fixed in place before any entries
+  // import happens) — real Splash itself never preserves an incoming LENEX id as a literal
+  // database key either, confirmed by sampling real, populated Splash .mdb files (CLUB/ATHLETE
+  // ids there are simply the next values off Splash's own single global counter, not anything
+  // reused from wherever the data originally came from). See this package's CLAUDE.md, "Real
+  // Splash crash deleting a Final", for the full investigation this design is based on.
+  //
+  // Reconciled instead via our own `externalid` column: look up an existing local row by the
+  // incoming external id first, reuse its id if found (so a returning athlete/club keeps the
+  // same local id across repeated imports within one meet — team-app's own results-import does
+  // the equivalent thing matching by license/club code, not by any numeric id), mint a fresh
+  // collision-safe id via nextId() only the first time a given external id is seen.
   const clubsElem = child(meet, 'CLUBS')
-  let autoClubId = nextId('club', 'clubid')
+  const findClubByExternalId = db.prepare(`SELECT clubid FROM club WHERE externalid = ?`)
+  const findClubByCode = db.prepare(`SELECT clubid FROM club WHERE code = ?`)
+  const findAthleteByExternalId = db.prepare(`SELECT athleteid FROM athlete WHERE externalid = ?`)
 
   for (const club of children(clubsElem ?? meet, 'CLUB')) {
     const ca = club.attrs
-    let clubId = parseInt(ca.clubid ?? '0', 10)
-    if (!clubId) {
-      // Auto-assign club ID (Splash Lenex exports don't include clubid)
-      // Try to find existing club by code
-      const existing = db.prepare(`SELECT clubid FROM club WHERE code = ?`).get(ca.code ?? '') as { clubid: number } | undefined
-      if (existing) {
-        clubId = existing.clubid
-      } else {
-        clubId = autoClubId++
-      }
+    const incomingClubId = (ca.clubid && ca.clubid !== '0') ? ca.clubid : null
+    let clubId: number
+    if (incomingClubId) {
+      const existing = findClubByExternalId.get(incomingClubId) as { clubid: number } | undefined
+      // mintId(), not a locally-incremented "starting value" counter (an earlier version of
+      // this fix did that and had a real bug: athlete ids minted later in this same loop, via
+      // their own separate counter, could push the true global max past a stale cached club
+      // counter, so a second new club could collide with an athlete inserted moments earlier —
+      // exactly the cross-table id collision this whole change set exists to prevent). mintId()
+      // is safe here because it's the one shared counter every id in this import draws from.
+      clubId = existing ? existing.clubid : mintId()
+    } else {
+      // No external id at all (e.g. real Splash's own Lenex exports don't carry one) — fall
+      // back to matching by club code, same as before this fix.
+      const existing = findClubByCode.get(ca.code ?? '') as { clubid: number } | undefined
+      clubId = existing ? existing.clubid : mintId()
     }
     try {
-      stmts.upsertClub.run(clubId, ca.code ?? '', ca.name ?? '')
+      stmts.upsertClub.run(clubId, ca.code ?? '', ca.name ?? '', incomingClubId)
       summary.clubs++
     } catch (e) {
       summary.errors.push(`Club ${clubId}: ${e}`)
@@ -583,9 +638,13 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
     const athElem = child(club, 'ATHLETES')
     for (const ath of children(athElem ?? club, 'ATHLETE')) {
       const aa = ath.attrs
-      let athId = parseInt(aa.athleteid ?? '0', 10)
-      if (!athId) {
-        athId = nextId('athlete', 'athleteid')
+      const incomingAthleteId = (aa.athleteid && aa.athleteid !== '0') ? aa.athleteid : null
+      let athId: number
+      if (incomingAthleteId) {
+        const existing = findAthleteByExternalId.get(incomingAthleteId) as { athleteid: number } | undefined
+        athId = existing ? existing.athleteid : mintId()
+      } else {
+        athId = mintId()
       }
 
       // Read handicap exception
@@ -596,7 +655,7 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
         stmts.upsertAthlete.run(
           athId, aa.firstname ?? '', aa.lastname ?? '',
           aa.birthdate || null, encodeGender(aa.gender),
-          aa.nation ?? '', aa.license || null, clubId
+          aa.nation ?? '', aa.license || null, clubId, incomingAthleteId
         )
         // Update handicapex if present
         if (handicapex) {
@@ -616,7 +675,7 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
         const entrytime = lenexTimeToMs(ea2.entrytime)
         const agegroupid = parseInt(ea2.agegroupid ?? '0', 10) || null
         const entrycourse = ea2.entrycourse ? encodeCourse(ea2.entrycourse) : null
-        const resId = nextId('swimresult', 'swimresultid')
+        const resId = mintId()
         try {
           stmts.clearStaleCategoryEntries.run(athId, eventId, eventId)
           stmts.upsertResult.run(
@@ -691,7 +750,7 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
         }
 
         // Create relay team record
-        const relayId = nextId('relay', 'relayid')
+        const relayId = mintId()
         try {
           db.prepare(
             `INSERT INTO relay (relayid, clubid, swimeventid, agegroupid, teamnumber, name, gender, entrytime, entrycourse)
@@ -704,12 +763,21 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
           for (const pos of children(positionsElem ?? entry, 'RELAYPOSITION')) {
             const pa = pos.attrs
             const posNumber = parseInt(pa.number ?? '0', 10)
-            const posAthleteId = parseInt(pa.athleteid ?? '0', 10)
-            if (!posNumber || !posAthleteId) continue
+            // pa.athleteid is the same external id the ATHLETE loop above already resolved to a
+            // local athleteid (via externalid) — never the local id itself, so it must go
+            // through the same lookup rather than being used directly.
+            const posAthleteExternalId = pa.athleteid
+            if (!posNumber || !posAthleteExternalId) continue
+            const posAthleteRow = findAthleteByExternalId.get(posAthleteExternalId) as { athleteid: number } | undefined
+            if (!posAthleteRow) {
+              summary.errors.push(`RelayPosition relay=${relayId} pos=${posNumber}: no athlete found for external id ${posAthleteExternalId}`)
+              continue
+            }
+            const posAthleteId = posAthleteRow.athleteid
             try {
               // 'OR IGNORE' was a no-op here even on SQLite — relayposition has no unique
               // constraint on (relayid, relaynumber) or any other column combo (schema.ts), and
-              // relayId is always a freshly minted id from nextId() just above, so there's never
+              // relayId is always a freshly minted id from mintId() just above, so there's never
               // an actual conflict to ignore within one import. Plain INSERT is Postgres-valid
               // and behaves identically to the old SQLite-only syntax.
               db.prepare(
@@ -745,9 +813,10 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
 // ── Decode helpers (reverse of encode*) ───────────────────────────────────────
 
 function decodeGender(g: number | null): string {
+  if (g === 0) return 'ALL'
   if (g === 1) return 'M'
   if (g === 2) return 'F'
-  return 'X'
+  return 'MIXED'
 }
 
 function decodeStroke(s: number | null): string {

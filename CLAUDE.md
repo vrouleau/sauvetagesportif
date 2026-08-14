@@ -106,7 +106,7 @@ Team-app `docker-compose.yml` uses `context: ../..` (monorepo root). Always run 
 - `swimevent.roundname` — event name (NOT `name`)
 - `swimevent.internalevent` — `'T'` = pause/admin event
 - `swimevent.round` — `11` in MDB encoding means Break/Pause → converted to `internalevent='T'` on import
-- Gender: `1`=M, `2`=F, `3`=Mixed
+- Gender: `0`=All (individual events only), `1`=M, `2`=F, `3`=Mixed (relay events only). An age group's gender always mirrors its parent event's — never independently set (cascades on event gender update, both apps). Individual events: All/M/F. Relay events: Mixed/M/F, no All. LENEX's real `GENDER` attribute enum is `ALL|M|F|MIXED` — our own exporter used to non-conformantly write `X` for Mixed; still accepted on import for backward compatibility. See `docs/AGE_GROUP_GENDER_MODEL.md` for the full design rationale (what Splash/LENEX's data model still supports vs. what our UI enforces).
 - Times: INTEGER milliseconds (`0` = no time, same as NULL)
 - Boolean: CHAR(1) `'T'`/`'F'`
 - `agegroup.agemax` — `99` or `-1` both mean "Open" (no upper limit)

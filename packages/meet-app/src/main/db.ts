@@ -67,7 +67,8 @@ export function closeLocalDb(): void {
 
 // ── Decode helpers ─────────────────────────────────────────────────────────────
 
-function decodeGender(g: number | null): 'M' | 'F' | 'X' {
+function decodeGender(g: number | null): 'M' | 'F' | 'X' | 'ALL' {
+  if (g === 0) return 'ALL'
   if (g === 1) return 'M'
   if (g === 2) return 'F'
   return 'X'
@@ -291,7 +292,7 @@ export interface HeatListEventRow {
   number: number
   nameFr: string
   nameEn: string
-  gender: 'M' | 'F' | 'X'
+  gender: 'ALL' | 'M' | 'F' | 'X'
   distance: number
   maxEntries?: number | null
   phase: 'Finale' | 'Eliminatoire' | 'Finale directe'
@@ -334,7 +335,7 @@ export interface CompetitionEventRow {
   number: number
   nameFr: string
   nameEn: string
-  gender: 'M' | 'F' | 'X'
+  gender: 'ALL' | 'M' | 'F' | 'X'
   distance: number
   phase: 'Finale' | 'Eliminatoire' | 'Finale directe'
   isAdmin?: boolean
@@ -1227,6 +1228,23 @@ export async function swapRelayLanes(
 
 // ── Write: session CRUD ───────────────────────────────────────────────────────
 
+// Every table whose rows get an id from nextId() below — kept in sync with the actual
+// nextId(table, pkCol) call sites in this file. Used only by the SQLite branch to compute a
+// single id shared across all of them (see comment below); the PG branch draws straight from
+// Splash's own sequence and doesn't need this list.
+const NEXT_ID_TABLES: Array<{ table: string; pkCol: string }> = [
+  { table: 'swimstyle', pkCol: 'swimstyleid' },
+  { table: 'swimsession', pkCol: 'swimsessionid' },
+  { table: 'club', pkCol: 'clubid' },
+  { table: 'athlete', pkCol: 'athleteid' },
+  { table: 'swimevent', pkCol: 'swimeventid' },
+  { table: 'agegroup', pkCol: 'agegroupid' },
+  { table: 'heat', pkCol: 'heatid' },
+  { table: 'swimresult', pkCol: 'swimresultid' },
+  { table: 'dsqitem', pkCol: 'dsqitemid' },
+  { table: 'relay', pkCol: 'relayid' },
+]
+
 export function nextId(table: string, pkCol: string, injectedDb?: ReturnType<typeof getLocalDb>): number {
   const db = injectedDb ?? getLocalDb()
   // In PG mode, use Splash's global UID sequence to avoid ID conflicts
@@ -1234,7 +1252,20 @@ export function nextId(table: string, pkCol: string, injectedDb?: ReturnType<typ
     const row = db.prepare(`SELECT nextval('gen_bs_global_uid') AS next`).get() as { next: number | bigint }
     return Number(row.next)
   }
-  const row = db.prepare(`SELECT COALESCE(MAX(${pkCol}), 0) + 1 AS next FROM ${table}`).get() as { next: number }
+  // SQLite has no external sequence to piggyback on, unlike PG mode above — but real Splash's
+  // own id space is a single counter shared across every table regardless of backend (its own
+  // MDB schema has a literal BSUIDTABLE row {NAME:'BS_GLOBAL_UID', LASTUID:<n>}, confirmed by
+  // directly querying a real Splash .mdb). Our previous per-table `MAX(pkCol)+1` let two
+  // different tables produce the same literal id (e.g. swimeventid=1 and agegroupid=1
+  // coexisting) — real Splash's own object-identity/notification system assumes ids are
+  // globally unique and throws "Invalid class typecast", retrieving the wrong cached object
+  // type, the moment it hits a collision. Confirmed live (2026-08-14) against real Splash: both
+  // converting an imported Timed Final into a Prelim/Final split, and deleting an already-split
+  // Final, crashed with exactly that error and stopped once ids were forced non-colliding.
+  // Single Electron process, single writer in SQLite mode — no locking needed here, same as the
+  // per-table MAX+1 pattern this replaces.
+  const unioned = NEXT_ID_TABLES.map(t => `SELECT COALESCE(MAX(${t.pkCol}), 0) AS m FROM ${t.table}`).join(' UNION ALL ')
+  const row = db.prepare(`SELECT COALESCE(MAX(m), 0) + 1 AS next FROM (${unioned})`).get() as { next: number }
   return row.next
 }
 
@@ -1336,14 +1367,14 @@ export async function createBreak(
 export async function createEvent(
   sessionId: number,
   eventnumber: number,
-  gender: 'M' | 'F' | 'X',
+  gender: 'M' | 'F' | 'X' | 'ALL',
   distance: number,
   phase: 'Finale' | 'Eliminatoire' | 'Finale directe',
   styleName: string,
 ): Promise<number> {
   const db = getLocalDb()
   const id = nextId('swimevent', 'swimeventid')
-  const gNum = gender === 'M' ? 1 : gender === 'F' ? 2 : 3
+  const gNum = gender === 'ALL' ? 0 : gender === 'M' ? 1 : gender === 'F' ? 2 : 3
   const round = phase === 'Eliminatoire' ? 1 : phase === 'Finale' ? 4 : 5
 
   const styleRow = distance > 0
@@ -1493,11 +1524,11 @@ export async function createAgeGroup(
   name: string,
   minAge: number,
   maxAge: number | null,
-  gender: 'M' | 'F' | 'X',
+  gender: 'M' | 'F' | 'X' | 'ALL',
 ): Promise<number> {
   const db = getLocalDb()
   const id = nextId('agegroup', 'agegroupid')
-  const gNum = gender === 'M' ? 1 : gender === 'F' ? 2 : 3
+  const gNum = gender === 'ALL' ? 0 : gender === 'M' ? 1 : gender === 'F' ? 2 : 3
   const sortRow = db.prepare(
     `SELECT MAX(sortcode) AS maxsort FROM agegroup WHERE swimeventid=?`
   ).get(eventId) as { maxsort: number | null }
@@ -1945,7 +1976,7 @@ function generateHeatsBeach(
     // signals that: create a single empty heat shell (so the event still
     // appears on the schedule) instead of distributing entries into heats.
     if (styleRow?.maxentries === 0) {
-      const heatId = (db.prepare(`SELECT COALESCE(MAX(heatid), 0) + 1 AS next FROM heat`).get() as { next: number }).next
+      const heatId = nextId('heat', 'heatid', db)
       db.prepare(
         `INSERT INTO heat (heatid, swimeventid, heatnumber, racestatus, sortcode)
          VALUES (?, ?, 1, 4, 100)`
@@ -1980,7 +2011,7 @@ function generateHeatsBeach(
     let idx = 0
     for (let h = 0; h < numHeats; h++) {
       const heatSize = baseSize + (h < remainder ? 1 : 0)
-      const heatId = (db.prepare(`SELECT COALESCE(MAX(heatid), 0) + 1 AS next FROM heat`).get() as { next: number }).next
+      const heatId = nextId('heat', 'heatid', db)
       const heatNumber = h + 1
 
       db.prepare(
@@ -2218,8 +2249,7 @@ function seedAndAssignHeats(
 
   for (let h = 0; h < heats.length; h++) {
     if (heats[h].length === 0) continue
-    const heatIdRow = db.prepare(`SELECT COALESCE(MAX(heatid), 0) + 1 AS next FROM heat`).get() as { next: number }
-    const heatId = heatIdRow.next
+    const heatId = nextId('heat', 'heatid', db)
     const heatNumber = heatNumberOffset + h + 1
     insertHeat.run(heatId, eventId, agegroupId, heatNumber, heatNumber)
     totalHeats++
@@ -2474,6 +2504,28 @@ export async function updateEvent(eventId: number, data: EventUpdate, injectedDb
   vals.push(eventId)
   db.prepare(`UPDATE swimevent SET ${sets.join(', ')} WHERE swimeventid=?`).run(...vals)
 
+  // An age group's gender is no longer independently editable in the UI — it always
+  // mirrors its parent event's, so changing the event's gender must trickle down to
+  // every age group under it (they're never allowed to drift apart).
+  if (data.gender !== undefined) {
+    db.prepare(`UPDATE agegroup SET gender=? WHERE swimeventid=?`).run(data.gender, eventId)
+  }
+
+  // Real Splash's own "Convert to Final" stops counting the prelim's age group(s) for
+  // medals/scoring once a final exists for it — the final's placement is what counts,
+  // not the prelim's. Confirmed against a real Splash-native .mdb: a freshly-split
+  // PRE/FIN pair has UseForMedals/UseForScoring 'F' on the PRE's age group, 'T' on the
+  // FIN's (our own event/agegroup creation always defaults both to 'T', so this needs
+  // to be applied explicitly wherever a final gets linked to its prelim).
+  if (data.preveventid !== undefined && data.preveventid != null && data.preveventid > 0) {
+    db.prepare(`UPDATE agegroup SET useformedals='F', useforscoring='F' WHERE swimeventid=?`).run(data.preveventid)
+  }
+  // Deleting a Final reverts its prelim's round back to TIM (see EventsPage.tsx's
+  // delete handler) — undo the flip above so the now-unsplit event counts again.
+  if (data.round !== undefined && data.round === 5) {
+    db.prepare(`UPDATE agegroup SET useformedals='T', useforscoring='T' WHERE swimeventid=?`).run(eventId)
+  }
+
   // Regenerate combined events when relevant fields change
   if (data.gender !== undefined || data.swimstyleid !== undefined) {
     regenerateCombinedEvents(db)
@@ -2583,7 +2635,7 @@ export interface FinalEventRow {
   eventId: number
   eventNumber: number
   eventName: string
-  gender: 'M' | 'F' | 'X'
+  gender: 'ALL' | 'M' | 'F' | 'X'
   sessionId: number
   sessionNumber: number
   sessionName: string
