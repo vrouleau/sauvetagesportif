@@ -974,7 +974,8 @@ class TestSessions:
         assert "number" in ev
         assert "nameFr" in ev
         assert "gender" in ev
-        assert ev["gender"] in ("M", "F", "X")
+        # ALL (0) is a real individual-event value now — see docs/AGE_GROUP_GENDER_MODEL.md
+        assert ev["gender"] in ("ALL", "M", "F", "X")
         assert "distance" in ev
         assert "phase" in ev
         assert "swimstyleId" in ev
@@ -997,7 +998,8 @@ class TestSessions:
                     assert "minAge" in ag
                     assert "maxAge" in ag
                     assert "gender" in ag
-                    assert ag["gender"] in ("M", "F", "X")
+                    # Always mirrors the parent event's gender, including ALL (0)
+                    assert ag["gender"] in ("ALL", "M", "F", "X")
                     break
             if found:
                 break
