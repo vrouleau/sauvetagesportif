@@ -73,6 +73,16 @@ function phaseTag(phase: 'Finale' | 'Eliminatoire' | 'Finale directe'): string {
 
 type ReportType = 'heatList' | 'startList' | 'combinedResults' | 'beachNumbers' | 'entriesByEvent' | 'pointStandings' | 'resultsList'
 
+const REPORT_LABELS: Record<ReportType, string> = {
+  heatList: 'Liste des Séries',
+  startList: 'Fiche de Départs',
+  entriesByEvent: 'Liste des inscriptions par épreuves',
+  resultsList: 'Liste des Résultats',
+  combinedResults: 'Résultat Combiné',
+  pointStandings: 'Classement au points',
+  beachNumbers: 'Identifiants plage',
+}
+
 // ── HTML generator ────────────────────────────────────────────────────────────
 
 function esc(s: string): string {
@@ -1514,13 +1524,13 @@ export default function ReportPage({ refreshKey = 0, meetType = 'POOL' }: { refr
 
   async function handleSavePdf() {
     if (!pdfHtml || !pdfHeaderInfo) return
-    const r = await reportApi()?.savePdf(pdfHtml, pdfHeaderInfo)
+    const r = await reportApi()?.savePdf(pdfHtml, pdfHeaderInfo, REPORT_LABELS[reportType])
     if (r && !r.ok && !r.canceled) alert(`Erreur PDF: ${r.error}`)
   }
 
   async function handleSaveHtml() {
     if (!exportHtml) return
-    const r = await reportApi()?.saveHtml(exportHtml)
+    const r = await reportApi()?.saveHtml(exportHtml, REPORT_LABELS[reportType])
     if (r && !r.ok && !r.canceled) alert(`Erreur HTML: ${r.error}`)
   }
 
