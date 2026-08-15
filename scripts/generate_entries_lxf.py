@@ -41,6 +41,16 @@ What it generates:
   - Roughly a third of individual (relaycount=1) events converted to a
     Prelim+Final pair (round PRE/FIN, linked via preveventid), the rest left
     as Finale directe (round TIM) -- a realistic mixed meet structure.
+  - Each event only gets AGEGROUP entries (and therefore entries/teams) for
+    the brackets the rulebook actually assigns it to -- see
+    POOL_EVENT_BRACKETS / BEACH_EVENT_BRACKETS below, sourced from
+    docs/Reglements-Competitions-Sauvetage-Sportif-Quebec-Edition-Septembre-
+    2025.pdf §5. The three Junior brackets (10-, 11-12, 13-14) essentially
+    never share a swimstyleid with each other (each has its own distance/
+    technique variant); 15-18 and Open always share theirs (the rulebook
+    treats them as one "15-18 ans, Senior et Maîtres" program). A couple of
+    Junior exercises are explicitly combined by rule where a footnote says
+    so, and SERC is unrestricted.
   - Every athlete entered in a random subset of the individual events open
     to their bracket (not literally every event -- see docstring below).
   - Relay teams (relaycount=4) built compliant with docs/RELAY_TEAM_RULES.md
@@ -180,6 +190,73 @@ RELAY_GENDER = {
 }
 
 SERC_SWIMSTYLE_ID = 530
+
+# ── Event -> eligible age brackets ──────────────────────────────────────────
+# Each swimstyleid is a distinct distance/technique variant tied to specific age
+# brackets by the rulebook (docs/Reglements-Competitions-Sauvetage-Sportif-Quebec-
+# Edition-Septembre-2025.pdf): pool §5.2/5.4-5.14, beach §5.15-5.27. The three
+# Junior brackets (10-, 11-12, 13-14) each get their own event for most exercises;
+# a few Junior exercises are explicitly shared by rule (10-+11-12 on the easier
+# obstacle/carry/tow/throw variants; 11-12+13-14 on "Portage avec palmes", since
+# the template has no third swimstyleid for it; beach Beach Flags/Sprint/Course-
+# Nage-Course are shared by all three). 15-18 and Open (Senior) always share their
+# events -- §5.1/5.15 present them as a single "15-18 ans, Senior et Maîtres"
+# program throughout, distinct from the Junior program. SERC (530) is unrestricted
+# (docs/RELAY_TEAM_RULES.md). Some exercises (Sauveteur d'acier, Sauvetage combiné,
+# the pool team relays, Surf Ski, Sauveteur océanique for 10-, Sauvetage avec
+# aquaplane/bouée tube) simply have no Junior/10- entry at all per the rulebook.
+POOL_EVENT_BRACKETS: dict[int, list[str]] = {
+    500: ["10-", "11-12"],                    # Nage avec obstacles 50m -- §5.4.1
+    501: ["13-14"],                           # Nage avec obstacles 100m -- §5.4.2
+    503: ["15-18", "Open"],                   # Nage avec obstacles 200m -- §5.1
+    504: ["13-14"],                           # Portage mannequin plein 50m -- §5.5.2
+    505: ["15-18", "Open"],                   # Portage mannequin plein 100m -- §5.1
+    506: ["10-", "11-12"],                    # Portage mannequin ½plein 50m -- §5.5.1
+    508: ["10-"],                             # Portage ½plein+palmes 50m -- §5.6.1
+    509: ["11-12", "13-14", "15-18", "Open"], # Portage plein+palmes 100m -- §5.6.2 + §5.1
+    510: ["13-14"],                           # Remorquage ½plein+palmes 100m -- §5.7.2
+    511: ["15-18", "Open"],                   # Remorquage mannequin+palmes 100m -- §5.1
+    513: ["10-", "11-12"],                    # Remorquage ½plein+palmes 50m -- §5.7.1
+    514: ["11-12"],                           # Sauveteur d'acier 100m -- §5.8.1 (no 10-)
+    515: ["13-14", "15-18", "Open"],          # Sauveteur d'acier 200m -- §5.8.2 + §5.1
+    521: ["10-"],                             # Lancer de précision 4m -- §5.9.1.1
+    522: ["11-12"],                           # Lancer de précision 7m -- §5.9.1.1
+    523: ["13-14"],                           # Lancer de la corde 10m -- §5.9.2.1
+    524: ["15-18", "Open"],                   # Lancer de la corde 12.5m -- §5.9.3
+    526: ["15-18", "Open"],                   # Sauvetage combiné -- §5.10 (Junior-excluded)
+    527: ["15-18", "Open"],                   # Relais sauvetage combiné -- §5.13
+    528: ["15-18", "Open"],                   # Relais obstacles -- §5.11
+    530: list(AGE_CODE_ORDER),                # SERC -- unrestricted
+    531: ["15-18", "Open"],                   # Relais portage mannequin -- §5.12
+}
+
+BEACH_EVENT_BRACKETS: dict[int, list[str]] = {
+    601: list(AGE_CODE_ORDER),        # Drapeau sur plage -- shared, §5.16
+    602: list(AGE_CODE_ORDER),        # Sprint sur plage -- shared, §5.16
+    603: ["15-18", "Open"],           # Surf Ski -- §5.15 (Junior-excluded)
+    604: ["13-14", "15-18", "Open"],  # Relais sprint sur plage 4x90m -- §5.16 (only 13-14)
+    605: ["10-", "11-12"],            # Aquaplane 200m -- §5.16
+    606: ["13-14"],                   # Aquaplane 400m -- §5.16
+    607: ["15-18", "Open"],           # Aquaplane 600m -- §5.15
+    608: ["10-"],                     # Course sur plage 500m -- §5.16
+    609: ["11-12"],                   # Course sur plage 1000m -- §5.16
+    610: ["13-14"],                   # Course sur plage 1500m -- §5.16
+    611: ["15-18", "Open"],           # Course sur plage 2000m -- §5.15
+    612: ["10-", "11-12", "13-14"],   # Course-Nage-Course 100/100/100 -- shared, §5.16
+    613: ["15-18", "Open"],           # Course-Nage-Course 100/300/100 -- §5.15
+    614: ["10-"],                     # Nage dans les brisants 100m -- §5.16
+    615: ["11-12", "13-14"],          # Nage dans les brisants 200m -- §5.16
+    616: ["15-18", "Open"],           # Nage dans les brisants 400m -- §5.15
+    617: ["11-12"],                   # Sauveteur océanique N100/C500/A200/S50 -- §5.16 (no 10-)
+    618: ["13-14"],                   # Sauveteur océanique N200/C1000/A400/S50 -- §5.16
+    619: ["15-18", "Open"],           # Sauveteur océanique N400/SK700/A600/S50 -- §5.15
+    621: ["13-14"],                   # Relais océanique N200/C1000/A400/S50 -- §5.16 (only 13-14)
+    622: ["15-18", "Open"],           # Relais océanique N400/SK700/A600/S50 -- §5.15
+    623: ["15-18", "Open"],           # Sauvetage avec aquaplane -- §5.15 (Junior-excluded)
+    624: ["15-18", "Open"],           # Sauvetage avec bouée tube -- §5.15 (Junior-excluded)
+}
+
+EVENT_BRACKETS: dict[str, dict[int, list[str]]] = {"POOL": POOL_EVENT_BRACKETS, "BEACH": BEACH_EVENT_BRACKETS}
 
 MEET_COURSE = {"POOL": "SCM", "BEACH": "OPEN"}
 
@@ -394,15 +471,16 @@ class EntriesGenerator:
 
     # -- event structure -----------------------------------------------------
 
-    def _new_agegroup_set(self) -> dict[str, int]:
+    def _new_agegroup_set(self, brackets: list[str]) -> dict[str, int]:
         ids = {}
-        for bracket in AGE_CODE_ORDER:
+        for bracket in brackets:
             ids[bracket] = self._next_agegroup_id
             self._next_agegroup_id += 1
         return ids
 
     def _build_events(self) -> None:
         catalog = POOL_EVENTS if self.meet_type == "POOL" else BEACH_EVENTS
+        event_brackets = EVENT_BRACKETS[self.meet_type]
         individual_indices = [i for i, e in enumerate(catalog) if e[6] == 1]
         # Convert roughly a third of individual events to Prelim+Final pairs.
         split_indices = {idx for pos, idx in enumerate(individual_indices) if pos % 3 == 0}
@@ -414,7 +492,8 @@ class EntriesGenerator:
             elif relaycount == 2:
                 gender = "ALL"
 
-            agegroup_ids = self._new_agegroup_set()
+            brackets = event_brackets[swimstyleid]
+            agegroup_ids = self._new_agegroup_set(brackets)
             is_split = idx in split_indices
             ev = BuiltEvent(
                 eventid=eventid, number=number, order=order, swimstyleid=swimstyleid,
@@ -424,7 +503,7 @@ class EntriesGenerator:
             if is_split:
                 ev.final_eventid = self._next_final_eventid
                 self._next_final_eventid += 1
-                ev.final_agegroup_ids = self._new_agegroup_set()
+                ev.final_agegroup_ids = self._new_agegroup_set(brackets)
             self.events.append(ev)
 
     # -- individual entries ---------------------------------------------------
@@ -438,10 +517,11 @@ class EntriesGenerator:
         pairs: list[tuple[Athlete, BuiltEvent]] = []
         for club in self.clubs:
             for athlete in club.athletes:
-                if not individual_events:
+                eligible = [e for e in individual_events if athlete.bracket in e.agegroup_ids]
+                if not eligible:
                     continue
-                k = self.rng.randint(min(3, len(individual_events)), len(individual_events))
-                chosen = self.rng.sample(individual_events, k)
+                k = self.rng.randint(min(3, len(eligible)), len(eligible))
+                chosen = self.rng.sample(eligible, k)
                 for ev in chosen:
                     pairs.append((athlete, ev))
         return pairs
@@ -466,7 +546,7 @@ class EntriesGenerator:
         for a in club.athletes:
             by_bracket_gender.setdefault((a.bracket, a.gender), []).append(a)
 
-        for bracket in AGE_CODE_ORDER:
+        for bracket in ev.agegroup_ids:  # only brackets the rulebook opens this event to
             younger = adjacent_younger(bracket)
 
             def pool_for(gender: str, br: str | None) -> list[Athlete]:
@@ -496,6 +576,8 @@ class EntriesGenerator:
         teams: list[tuple[list[Athlete], str]] = []
         by_bracket_gender: dict[tuple[str, str], list[Athlete]] = {}
         for a in club.athletes:
+            if a.bracket not in ev.agegroup_ids:  # only brackets the rulebook opens this event to
+                continue
             by_bracket_gender.setdefault((a.bracket, a.gender), []).append(a)
         for (bracket, gender), pool in by_bracket_gender.items():
             shuffled = list(pool)
@@ -547,10 +629,10 @@ def build_lxf(gen: EntriesGenerator, meet_name: str) -> Element:
             style_attrs["distance"] = str(distance)
         SubElement(event_el, "SWIMSTYLE", style_attrs)
         agegroups_el = SubElement(event_el, "AGEGROUPS")
-        for bracket in AGE_CODE_ORDER:
+        for bracket, agegroup_id in agegroup_ids.items():
             lo, hi = BRACKET_RANGE[bracket]
             SubElement(agegroups_el, "AGEGROUP", {
-                "agegroupid": str(agegroup_ids[bracket]),
+                "agegroupid": str(agegroup_id),
                 "agemin": str(lo), "agemax": str(hi),
             })
 
