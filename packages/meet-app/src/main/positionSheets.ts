@@ -44,10 +44,6 @@ export interface PositionSheetEvent {
 
 const EXTRA_ROWS = 4
 
-const PAGE_HEIGHT_IN = 11
-const PAGE_MARGIN_IN = 0.35
-const USABLE_HEIGHT_IN = PAGE_HEIGHT_IN - PAGE_MARGIN_IN * 2
-
 function escHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
@@ -60,11 +56,11 @@ function escHtml(s: string): string {
 export function generatePositionSheetsHtml(events: PositionSheetEvent[]): string {
   const styles = `
     <style>
-      @page { margin: ${PAGE_MARGIN_IN}in; size: letter portrait; }
+      @page { size: letter portrait; }
       * { box-sizing: border-box; margin: 0; padding: 0; }
       body { font-family: Arial, Helvetica, sans-serif; }
       .heat-page {
-        height: ${USABLE_HEIGHT_IN}in;
+        height: 100vh;
         display: flex;
         flex-direction: column;
         overflow: hidden;
