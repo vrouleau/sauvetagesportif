@@ -121,11 +121,27 @@ export class LivePushModule {
     // Load persisted queue
     this.loadQueue()
 
+    if (!this.enabled) {
+      // The queue file lives at a fixed userData path, not scoped to any one meet
+      // database — so a leftover queue here belongs to a different meet/session
+      // that previously shared this machine's userData folder (e.g. live push was
+      // configured there but some items never flushed). Without a URL/secret for
+      // THIS meet, attemptFlush() can never succeed anyway, so surfacing a stale
+      // "queued" badge and spinning a retry loop for it is just misleading — drop it.
+      this.stopRetryLoop()
+      if (this.queue.length > 0) {
+        this.queue = []
+        this.saveQueue()
+      }
+      this.setStatus('disconnected')
+      return
+    }
+
     // Start retry loop if queue has items
     if (this.queue.length > 0) {
       this.startRetryLoop()
       this.setStatus('queued')
-    } else if (this.enabled) {
+    } else {
       this.setStatus('disconnected')  // will become 'connected' on first successful push
     }
   }
