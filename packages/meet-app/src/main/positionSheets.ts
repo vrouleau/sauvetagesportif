@@ -44,6 +44,15 @@ export interface PositionSheetEvent {
 
 const EXTRA_ROWS = 4
 
+// Must match printHtml()'s non-header print margins (index.ts) exactly: Letter
+// height 11in minus top 0.4in / bottom 0.5in. Deliberately an absolute "in"
+// value, not 100vh — Electron's real print pipeline (webContents.print(),
+// confirmed via a "Microsoft: Print to PDF" output) resolves viewport units
+// against some small internal viewport, not the physical page, leaving most
+// of the page blank. Absolute CSS length units map to physical page geometry
+// regardless of print pipeline, so they don't have that failure mode.
+const USABLE_HEIGHT_IN = 11 - 0.4 - 0.5
+
 function escHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
@@ -60,7 +69,7 @@ export function generatePositionSheetsHtml(events: PositionSheetEvent[]): string
       * { box-sizing: border-box; margin: 0; padding: 0; }
       body { font-family: Arial, Helvetica, sans-serif; }
       .heat-page {
-        height: 100vh;
+        height: ${USABLE_HEIGHT_IN}in;
         display: flex;
         flex-direction: column;
         overflow: hidden;
