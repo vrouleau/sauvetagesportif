@@ -186,7 +186,7 @@ export const registrationApiElectron: RegistrationAPI = {
 
     for (const session of sessions) {
       for (const event of session.events) {
-        if (event.gender !== 'X' && event.gender !== athlete.gender) continue
+        if (event.gender !== 'X' && event.gender !== 'ALL' && event.gender !== athlete.gender) continue
 
         const relayCount = event.swimstyleId ? (styleRelayMap.get(event.swimstyleId) ?? 1) : 1
         const styleUid = `${event.distance}-${event.swimstyleId ?? event.nameFr}`

@@ -304,6 +304,7 @@ class Athlete:
     birthdate: date
     bracket: str
     skill: float  # 0.85 (fast) .. 1.20 (slow) multiplier on estimated times
+    no_entry_time: bool = False  # ~10% of athletes: no seed time on any individual entry (NT)
 
 
 @dataclass
@@ -352,7 +353,7 @@ def ms_to_lenex_time(ms: int | None) -> str | None:
     total_m = total_s // 60
     mm = total_m % 60
     hh = total_m // 60
-    return f"{hh}:{mm:02d}:{ss:02d}.{cc:02d}"
+    return f"{hh:02d}:{mm:02d}:{ss:02d}.{cc:02d}"
 
 
 # ── Relay team composition (docs/RELAY_TEAM_RULES.md, relayRules.ts) ────────
@@ -465,6 +466,7 @@ class EntriesGenerator:
                     birthdate=birthdate,
                     bracket=bracket,
                     skill=self.rng.uniform(0.85, 1.20),
+                    no_entry_time=self.rng.random() < 0.10,
                 )
                 self._next_athlete_id += 1
                 club.athletes.append(athlete)
@@ -678,10 +680,11 @@ def build_lxf(gen: EntriesGenerator, meet_name: str) -> Element:
                 }
                 if gen.meet_type == "POOL":
                     entry_attrs["entrycourse"] = MEET_COURSE["POOL"]
-                    time_ms = estimate_time_ms(ev.distance, athlete.skill, gen.rng)
-                    lenex_time = ms_to_lenex_time(time_ms)
-                    if lenex_time and gen.rng.random() < 0.7:  # ~30% NT, like a real meet
-                        entry_attrs["entrytime"] = lenex_time
+                    if not athlete.no_entry_time:
+                        time_ms = estimate_time_ms(ev.distance, athlete.skill, gen.rng)
+                        lenex_time = ms_to_lenex_time(time_ms)
+                        if lenex_time:
+                            entry_attrs["entrytime"] = lenex_time
                 SubElement(entries_el, "ENTRY", entry_attrs)
 
         relays_el = SubElement(club_el, "RELAYS")
