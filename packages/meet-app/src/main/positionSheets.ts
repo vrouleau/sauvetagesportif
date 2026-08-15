@@ -20,18 +20,24 @@
  * Beach position entry sheet PDF generator.
  *
  * Beach events are ranked (finish order), not timed — officials watch the
- * finish and write down the FINISH POSITION next to each athlete's beach
- * number on paper (writing a 1-2 digit position is quicker than writing a
- * beach number), then transcribe into the laptop afterward.
+ * finish and write down each athlete's beach number next to the FINISH
+ * POSITION they crossed in (position is known first — it's the order they
+ * watch athletes finish in — the beach number is what they read off the
+ * athlete and write down). One heat per page: a pre-printed position number
+ * (1, 2, 3, ...) per row with a blank box to write the beach number in, plus
+ * a few extra blank rows past the heat's entry count for late arrivals.
  *
- * One 2-column table (beach # | position box) per heat: rows are the beach
- * numbers already assigned to that heat, pre-printed, plus a few extra blank
- * rows for late arrivals slotted into that heat.
+ * Rows are a fixed, uniform size (up to MAX_ROWS_PER_PAGE per page) rather
+ * than computed to stretch across the page — beach heats are capped at 16
+ * entries app-wide (see HEAT_GENERATION_RULES.md), so a flat 16-row table
+ * always has room, and a fixed size avoids depending on exactly how a given
+ * print pipeline resolves relative page height (100vh and computed-to-fill
+ * inline heights both proved unreliable against Electron's real print path).
  */
 
 export interface PositionSheetHeat {
   heatNumber: number
-  identifiers: string[] // pre-printed beach numbers/teams, one per row, in display order
+  identifiers: string[] // beach numbers/teams assigned to this heat — only the count is used (row total)
 }
 
 export interface PositionSheetEvent {
@@ -42,6 +48,8 @@ export interface PositionSheetEvent {
 }
 
 const EXTRA_ROWS = 4
+const MAX_ROWS_PER_PAGE = 16
+const ROW_HEIGHT_IN = 0.55
 
 function escHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
@@ -49,84 +57,81 @@ function escHtml(s: string): string {
 
 /**
  * Generate the HTML content for beach position entry sheets.
- * One 2-column (beach # | position) card per heat; cards flow in CSS
- * columns to pack as many as fit per page.
+ * One full page per heat: a numbered position list (position pre-printed,
+ * beach number blank), fixed-size rows, up to 16 rows per page.
  */
 export function generatePositionSheetsHtml(events: PositionSheetEvent[]): string {
   const styles = `
     <style>
-      @page { margin: 0.35in; size: letter portrait; }
+      @page { size: letter portrait; }
       * { box-sizing: border-box; margin: 0; padding: 0; }
-      body { font-family: Arial, Helvetica, sans-serif; font-size: 9pt; }
-      .sheet { column-width: 2.35in; column-gap: 0.2in; }
-      .heat-card {
-        border: 1.5px solid #000;
-        margin-bottom: 0.15in;
-        break-inside: avoid;
-        -webkit-column-break-inside: avoid;
-        display: inline-block;
-        width: 100%;
+      body { font-family: Arial, Helvetica, sans-serif; }
+      .heat-page {
+        page-break-after: always;
+        break-after: page;
       }
+      .heat-page:last-child { page-break-after: auto; break-after: auto; }
       .heat-title {
         font-weight: bold;
-        font-size: 9.5pt;
-        padding: 3pt 5pt;
+        font-size: 13pt;
+        padding: 6pt 8pt;
         background: #e8e8e8;
-        border-bottom: 1.5px solid #000;
+        border: 1.5px solid #000;
+        border-bottom: none;
       }
       table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-      col.id-col { width: 58%; }
-      col.pos-col { width: 42%; }
+      col.pos-col { width: 35%; }
+      col.id-col { width: 65%; }
       th {
-        font-size: 7.5pt;
-        padding: 2pt 4pt;
+        font-size: 10pt;
+        padding: 4pt 8pt;
         background: #f4f4f4;
-        border-bottom: 1px solid #000;
+        border: 1.5px solid #000;
         text-align: left;
       }
-      th.pos-col, td.pos-col { border-left: 1px solid #000; text-align: center; }
+      th.pos-col, td.pos-col { text-align: center; }
       td {
-        border-bottom: 1px solid #999;
-        padding: 1pt 4pt;
-        font-family: monospace;
-        font-size: 9.5pt;
-        font-weight: bold;
-        word-break: break-all;
-        height: 0.26in;
+        border: 1px solid #999;
+        padding: 2pt 8pt;
+        height: ${ROW_HEIGHT_IN}in;
       }
-      td.pos-box { background: #fafafa; }
-      tr.late-row td { color: #bbb; font-weight: normal; }
+      td.pos-col {
+        font-family: monospace;
+        font-size: 14pt;
+        font-weight: bold;
+        border-left: 1.5px solid #000;
+        border-right: 1.5px solid #000;
+      }
+      td.id-box { background: #fafafa; }
+      tr.late-row td.pos-col { color: #bbb; }
     </style>
   `
 
-  const cardsHtml = events.map((ev) => {
-    const title = `Épr. ${ev.eventNumber}: ${ev.genderLabel}, ${escHtml(ev.eventName)}`
+  const pagesHtml = events.map((ev) => {
+    const eventTitle = `Épr. ${ev.eventNumber}: ${ev.genderLabel}, ${escHtml(ev.eventName)}`
     return ev.heats.map((h) => {
-      const idRows = h.identifiers.map((id) => `
-        <tr>
-          <td class="id-col">${escHtml(id)}</td>
-          <td class="pos-col pos-box"></td>
-        </tr>
-      `).join('')
+      const rowCount = Math.min(h.identifiers.length + EXTRA_ROWS, MAX_ROWS_PER_PAGE)
 
-      const lateRows = Array.from({ length: EXTRA_ROWS }, () => `
-        <tr class="late-row">
-          <td class="id-col"></td>
-          <td class="pos-col pos-box"></td>
-        </tr>
-      `).join('')
+      const rows = Array.from({ length: rowCount }, (_, i) => {
+        const late = i >= h.identifiers.length
+        return `
+          <tr${late ? ' class="late-row"' : ''}>
+            <td class="pos-col">${i + 1}</td>
+            <td class="id-box"></td>
+          </tr>
+        `
+      }).join('')
 
       return `
-        <div class="heat-card">
-          <div class="heat-title">${title} — Série ${h.heatNumber}</div>
+        <div class="heat-page">
+          <div class="heat-title">${eventTitle} — Série ${h.heatNumber}</div>
           <table>
-            <colgroup><col class="id-col"><col class="pos-col"></colgroup>
+            <colgroup><col class="pos-col"><col class="id-col"></colgroup>
             <thead>
-              <tr><th class="id-col"># plage</th><th class="pos-col">Position</th></tr>
+              <tr><th class="pos-col">Position</th><th class="id-col"># plage</th></tr>
             </thead>
             <tbody>
-              ${idRows}
-              ${lateRows}
+              ${rows}
             </tbody>
           </table>
         </div>
@@ -134,5 +139,5 @@ export function generatePositionSheetsHtml(events: PositionSheetEvent[]): string
     }).join('')
   }).join('')
 
-  return `<!DOCTYPE html><html><head><meta charset="utf-8">${styles}</head><body><div class="sheet">${cardsHtml}</div></body></html>`
+  return `<!DOCTYPE html><html><head><meta charset="utf-8">${styles}</head><body>${pagesHtml}</body></html>`
 }
