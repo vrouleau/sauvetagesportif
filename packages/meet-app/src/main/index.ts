@@ -1616,6 +1616,12 @@ async function printHtml(html: string, h: PdfHeaderInfo): Promise<void> {
   }
 }
 
+function sanitizeFileName(name?: string): string | null {
+  if (!name) return null
+  const cleaned = name.replace(/[\\/:*?"<>|]/g, '').trim()
+  return cleaned || null
+}
+
 ipcMain.handle('report:preview-pdf', async (_event, html: string, h: PdfHeaderInfo) => {
   try {
     const buf = await htmlToPdfBuffer(html, h)
@@ -1625,12 +1631,12 @@ ipcMain.handle('report:preview-pdf', async (_event, html: string, h: PdfHeaderIn
   }
 })
 
-ipcMain.handle('report:save-html', async (event, html: string) => {
+ipcMain.handle('report:save-html', async (event, html: string, fileName?: string) => {
   const win = BrowserWindow.fromWebContents(event.sender)
   const result = await dialog.showSaveDialog(win ?? BrowserWindow.getFocusedWindow()!, {
     title: 'Sauvegarder le rapport HTML',
     filters: [{ name: 'HTML', extensions: ['htm', 'html'] }],
-    defaultPath: 'Liste des séries.htm',
+    defaultPath: `${sanitizeFileName(fileName) ?? 'Liste des séries'}.htm`,
   })
   if (result.canceled || !result.filePath) return { ok: false, canceled: true }
   try {
@@ -1641,12 +1647,12 @@ ipcMain.handle('report:save-html', async (event, html: string) => {
   }
 })
 
-ipcMain.handle('report:save-pdf', async (event, html: string, h: PdfHeaderInfo) => {
+ipcMain.handle('report:save-pdf', async (event, html: string, h: PdfHeaderInfo, fileName?: string) => {
   const win = BrowserWindow.fromWebContents(event.sender)
   const result = await dialog.showSaveDialog(win ?? BrowserWindow.getFocusedWindow()!, {
     title: 'Sauvegarder le rapport PDF',
     filters: [{ name: 'PDF', extensions: ['pdf'] }],
-    defaultPath: 'Liste des séries.pdf',
+    defaultPath: `${sanitizeFileName(fileName) ?? 'Liste des séries'}.pdf`,
   })
   if (result.canceled || !result.filePath) return { ok: false, canceled: true }
   try {

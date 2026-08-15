@@ -252,10 +252,10 @@ const api = {
   report: {
     previewPdf: (html: string, headerInfo: unknown) =>
       ipcRenderer.invoke('report:preview-pdf', html, headerInfo),
-    saveHtml: (html: string) =>
-      ipcRenderer.invoke('report:save-html', html),
-    savePdf: (html: string, headerInfo: unknown) =>
-      ipcRenderer.invoke('report:save-pdf', html, headerInfo),
+    saveHtml: (html: string, fileName?: string) =>
+      ipcRenderer.invoke('report:save-html', html, fileName),
+    savePdf: (html: string, headerInfo: unknown, fileName?: string) =>
+      ipcRenderer.invoke('report:save-pdf', html, headerInfo, fileName),
     print: (html: string, headerInfo: unknown) =>
       ipcRenderer.invoke('report:print', html, headerInfo),
   },
