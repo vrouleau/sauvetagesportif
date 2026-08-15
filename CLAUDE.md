@@ -89,6 +89,14 @@ scripts/
                              template (remaps swimstyle IDs, fuzzy-matches clubs/athletes, copies
                              HANDICAP exception codes). Usage:
                              python scripts/normalize_lxf.py TEMPLATE.lxf ENTRIES.lxf HISTORIC.lxf
+  generate_entries_lxf.py  — Testing tool: generates a synthetic LENEX entries file (clubs,
+                             athletes spread across age brackets, individual entries, compliant
+                             relay teams) for the meet-app <-> team-app round trip, importable
+                             straight into a fresh meet-app database (File → Importer LENEX).
+                             Usage: python scripts/generate_entries_lxf.py --clubs N --athletes N
+                             --type pool|beach --output FILE.lxf [--seed N]
+                             Pairs with packages/meet-app/scripts/generate_results.py (see
+                             packages/meet-app/CLAUDE.md) to fill in realistic results afterward.
 ```
 
 ## Shared critical rules

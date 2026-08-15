@@ -538,3 +538,28 @@ scripts\simulate_results.bat
 # Custom path (required if both packaged and dev databases exist)
 scripts\simulate_results.bat "C:\path\to\meet.db"
 ```
+
+## Generate Results (test script — relay + beach + DSQ codes)
+
+A more capable superset of `simulate_results.py` above: also fills **relay** results (`relay`/`relayposition`), uses **sequential beach positions** per heat instead of pool times when `MEET_TYPE=BEACH`, assigns a real `dsqitemid` reason code (from the meet's own seeded `dsqitem` table, filtered individual-vs-relay via `dsqitem.options`), and takes the DSQ rate as an argument instead of a hardcoded 5%. Pairs with the top-level `scripts/generate_entries_lxf.py` (see root `CLAUDE.md`) as the second half of an end-to-end synthetic-meet testing pipeline.
+
+- **Script**: `scripts/generate_results.bat` (calls `scripts/generate_results.py`)
+- **Same DB auto-detection / idempotency / `racestatus=5` side effect as `simulate_results.py`** — the two scripts intentionally share that contract.
+- **Scope**: does *not* generate heats or seed Finals from qualifiers (that logic — `generateHeats`, `autoQualify`, `seedFinals` — is TypeScript-only, no CLI equivalent). It only fills rows that already have a real `heatid` and no result yet, matching the standard two-pass workflow: generate prelim/timed-final heats in-app → run this script → qualify + generate Final heats in-app → re-run this script.
+
+```bash
+# Default path, default 5% DSQ
+scripts\generate_results.bat
+
+# Custom path and DSQ rate (percent)
+scripts\generate_results.bat "C:\path\to\meet.db" 15
+```
+
+End-to-end synthetic meet, from nothing:
+```bash
+python scripts/generate_entries_lxf.py --clubs 8 --athletes 120 --type pool --output entries.lxf
+# meet-app: File -> Importer LENEX (entries.lxf), then "Générer séries"
+scripts\generate_results.bat
+# meet-app: qualify + generate heats for any Finals
+scripts\generate_results.bat
+```
