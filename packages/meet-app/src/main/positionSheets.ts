@@ -46,10 +46,7 @@ const EXTRA_ROWS = 4
 
 const PAGE_HEIGHT_IN = 11
 const PAGE_MARGIN_IN = 0.35
-const HEADER_HEIGHT_IN = 0.9
-const USABLE_HEIGHT_IN = PAGE_HEIGHT_IN - PAGE_MARGIN_IN * 2 - HEADER_HEIGHT_IN
-const MIN_ROW_HEIGHT_IN = 0.35
-const MAX_ROW_HEIGHT_IN = 1.1
+const USABLE_HEIGHT_IN = PAGE_HEIGHT_IN - PAGE_MARGIN_IN * 2
 
 function escHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
@@ -67,11 +64,16 @@ export function generatePositionSheetsHtml(events: PositionSheetEvent[]): string
       * { box-sizing: border-box; margin: 0; padding: 0; }
       body { font-family: Arial, Helvetica, sans-serif; }
       .heat-page {
+        height: ${USABLE_HEIGHT_IN}in;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
         page-break-after: always;
         break-after: page;
       }
       .heat-page:last-child { page-break-after: auto; break-after: auto; }
       .page-header {
+        flex: 0 0 auto;
         text-align: center;
         padding-bottom: 8pt;
         margin-bottom: 10pt;
@@ -79,28 +81,48 @@ export function generatePositionSheetsHtml(events: PositionSheetEvent[]): string
       }
       .page-header .event-title { font-size: 15pt; font-weight: bold; }
       .page-header .heat-title { font-size: 13pt; margin-top: 2pt; }
-      table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-      col.pos-col { width: 35%; }
-      col.id-col { width: 65%; }
-      th {
-        font-size: 10pt;
-        padding: 4pt 8pt;
+      .list-head {
+        flex: 0 0 auto;
+        display: flex;
         background: #f4f4f4;
         border-bottom: 2px solid #000;
-        text-align: left;
+        font-size: 10pt;
+        font-weight: bold;
       }
-      th.pos-col, td.pos-col { text-align: center; border-right: 1px solid #000; }
-      td {
+      .list-head .col { padding: 4pt 8pt; }
+      .rows {
+        flex: 1 1 auto;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      .row {
+        flex: 1 1 0;
+        min-height: 0;
+        display: flex;
+        align-items: center;
         border-bottom: 1px solid #999;
+      }
+      .col.pos-col {
+        flex: 0 0 35%;
+        text-align: center;
+        border-right: 1px solid #000;
         padding: 2pt 8pt;
       }
-      td.pos-col {
+      .row .col.pos-col {
         font-family: monospace;
         font-size: 15pt;
         font-weight: bold;
       }
-      td.id-box { background: #fafafa; }
-      tr.late-row td.pos-col { color: #bbb; }
+      .col.id-col {
+        flex: 1 1 auto;
+        padding: 2pt 8pt;
+      }
+      .row .col.id-col {
+        height: 100%;
+        background: #fafafa;
+      }
+      .row.late-row .col.pos-col { color: #bbb; }
     </style>
   `
 
@@ -108,18 +130,14 @@ export function generatePositionSheetsHtml(events: PositionSheetEvent[]): string
     const eventTitle = `Épr. ${ev.eventNumber}: ${ev.genderLabel}, ${escHtml(ev.eventName)}`
     return ev.heats.map((h) => {
       const rowCount = h.identifiers.length + EXTRA_ROWS
-      const rowHeightIn = Math.min(
-        MAX_ROW_HEIGHT_IN,
-        Math.max(MIN_ROW_HEIGHT_IN, USABLE_HEIGHT_IN / rowCount)
-      )
 
       const rows = Array.from({ length: rowCount }, (_, i) => {
         const late = i >= h.identifiers.length
         return `
-          <tr style="height: ${rowHeightIn}in"${late ? ' class="late-row"' : ''}>
-            <td class="pos-col">${i + 1}</td>
-            <td class="id-box"></td>
-          </tr>
+          <div class="row${late ? ' late-row' : ''}">
+            <div class="col pos-col">${i + 1}</div>
+            <div class="col id-col"></div>
+          </div>
         `
       }).join('')
 
@@ -129,15 +147,13 @@ export function generatePositionSheetsHtml(events: PositionSheetEvent[]): string
             <div class="event-title">${eventTitle}</div>
             <div class="heat-title">Série ${h.heatNumber}</div>
           </div>
-          <table>
-            <colgroup><col class="pos-col"><col class="id-col"></colgroup>
-            <thead>
-              <tr><th class="pos-col">Position</th><th class="id-col"># plage</th></tr>
-            </thead>
-            <tbody>
-              ${rows}
-            </tbody>
-          </table>
+          <div class="list-head">
+            <div class="col pos-col">Position</div>
+            <div class="col id-col"># plage</div>
+          </div>
+          <div class="rows">
+            ${rows}
+          </div>
         </div>
       `
     }).join('')
