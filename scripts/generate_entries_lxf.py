@@ -51,6 +51,12 @@ What it generates:
     treats them as one "15-18 ans, Senior et Maîtres" program). A couple of
     Junior exercises are explicitly combined by rule where a footnote says
     so, and SERC is unrestricted.
+  - Individual (relaycount=1) events are gender-split: the "10-" bracket
+    stays a single open (gender=ALL) event, every other bracket the style is
+    open to gets separate M and F events instead -- matches
+    config/combined-events-config.json's own per-gender "garçons"/"filles"
+    categories for 11-12/13-14/15-18/Open (an always-ALL event can never
+    feed those, leaving most of Résultat Combiné/Classement au points empty).
   - Every athlete entered in a random subset of the individual events open
     to their bracket (not literally every event -- see docstring below).
   - Relay teams (relaycount=4) built compliant with docs/RELAY_TEAM_RULES.md
@@ -151,7 +157,6 @@ POOL_EVENTS = [
     (1099, 18, 18, 526, "100m Sauvetage Combiné", 100, 1),
     (1101, 19, 19, 527, "4x50m Relais Sauvetage Combiné", 50, 4),
     (1103, 20, 20, 528, "4x50m Relais obstacles", 50, 4),
-    (1105, 21, 21, 530, "SERC", 0, 4),
     (1107, 22, 22, 531, "4x25m Relais portage du mannequin", 25, 4),
 ]
 
@@ -264,6 +269,10 @@ MEET_COURSE = {"POOL": "SCM", "BEACH": "OPEN"}
 # kept well clear of the template's own id ranges (pool 1065-1107, beach 6001-6045).
 FINAL_EVENTID_BASE = {"POOL": 1500, "BEACH": 6500}
 AGEGROUP_ID_BASE = {"POOL": 2000, "BEACH": 7000}
+# Extra eventids minted when a catalog row's non-"10-" brackets are split into
+# separate M/F events (see _build_events) -- kept clear of FINAL_EVENTID_BASE's
+# own range (pool 1500+~25, beach 6500+~25).
+SPLIT_EVENTID_BASE = {"POOL": 1600, "BEACH": 6600}
 
 # ── Name pools ───────────────────────────────────────────────────────────────
 
@@ -483,22 +492,61 @@ class EntriesGenerator:
     def _build_events(self) -> None:
         catalog = POOL_EVENTS if self.meet_type == "POOL" else BEACH_EVENTS
         event_brackets = EVENT_BRACKETS[self.meet_type]
-        individual_indices = [i for i, e in enumerate(catalog) if e[6] == 1]
-        # Convert roughly a third of individual events to Prelim+Final pairs.
-        split_indices = {idx for pos, idx in enumerate(individual_indices) if pos % 3 == 0}
 
-        for idx, (eventid, number, order, swimstyleid, name, distance, relaycount) in enumerate(catalog):
-            gender = "ALL"
-            if relaycount == 4:
-                gender = RELAY_GENDER.get(swimstyleid, "MIXED")
-            elif relaycount == 2:
-                gender = "ALL"
-
+        # Expand each relaycount=1 catalog row into its gender-specific sub-events:
+        # the "10-" bracket stays a single open (ALL) event -- real competitions run
+        # young kids together, and config/combined-events-config.json's own "10 ans
+        # et moins" category is gender=0 (combined). Every other bracket the style is
+        # open to gets split into separate M and F events instead, matching that same
+        # config's per-gender categories for 11-12/13-14/15-18/Open -- an event that's
+        # always gender=ALL can never feed a "garçons"/"filles" combined-results
+        # category, which otherwise leaves 8 of 10 categories permanently empty.
+        # (eventid, number, name, swimstyleid, distance, relaycount, gender, brackets)
+        expanded: list[tuple[int, int, str, int, int, int, str, list[str]]] = []
+        next_split_eventid = SPLIT_EVENTID_BASE[self.meet_type]
+        number = 1
+        for (eventid, _number, _order, swimstyleid, name, distance, relaycount) in catalog:
             brackets = event_brackets[swimstyleid]
+
+            if relaycount != 1:
+                gender = RELAY_GENDER.get(swimstyleid, "MIXED") if relaycount == 4 else "ALL"
+                expanded.append((eventid, number, name, swimstyleid, distance, relaycount, gender, brackets))
+                number += 1
+                continue
+
+            open_brackets = [b for b in brackets if b == "10-"]
+            gendered_brackets = [b for b in brackets if b != "10-"]
+
+            # The original catalog eventid goes to the first sub-event produced
+            # (whichever that is); any further sub-event mints a fresh id.
+            reuse_original_id = True
+
+            def next_eventid() -> int:
+                nonlocal reuse_original_id, next_split_eventid
+                if reuse_original_id:
+                    reuse_original_id = False
+                    return eventid
+                next_split_eventid += 1
+                return next_split_eventid - 1
+
+            if open_brackets:
+                expanded.append((next_eventid(), number, name, swimstyleid, distance, relaycount, "ALL", open_brackets))
+                number += 1
+            for g in ("M", "F"):
+                if not gendered_brackets:
+                    continue
+                expanded.append((next_eventid(), number, name, swimstyleid, distance, relaycount, g, gendered_brackets))
+                number += 1
+
+        # Convert roughly a third of individual (relaycount=1) sub-events to Prelim+Final pairs.
+        individual_positions = [i for i, e in enumerate(expanded) if e[5] == 1]
+        split_positions = {idx for pos, idx in enumerate(individual_positions) if pos % 3 == 0}
+
+        for idx, (eventid, ev_number, name, swimstyleid, distance, relaycount, gender, brackets) in enumerate(expanded):
             agegroup_ids = self._new_agegroup_set(brackets)
-            is_split = idx in split_indices
+            is_split = idx in split_positions
             ev = BuiltEvent(
-                eventid=eventid, number=number, order=order, swimstyleid=swimstyleid,
+                eventid=eventid, number=ev_number, order=ev_number, swimstyleid=swimstyleid,
                 name=name, distance=distance, relaycount=relaycount, gender=gender,
                 round="PRE" if is_split else "TIM", agegroup_ids=agegroup_ids,
             )
@@ -519,7 +567,10 @@ class EntriesGenerator:
         pairs: list[tuple[Athlete, BuiltEvent]] = []
         for club in self.clubs:
             for athlete in club.athletes:
-                eligible = [e for e in individual_events if athlete.bracket in e.agegroup_ids]
+                eligible = [
+                    e for e in individual_events
+                    if athlete.bracket in e.agegroup_ids and (e.gender == "ALL" or e.gender == athlete.gender)
+                ]
                 if not eligible:
                     continue
                 k = self.rng.randint(min(3, len(eligible)), len(eligible))
