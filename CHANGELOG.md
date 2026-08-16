@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.5.1] - 2026-08-16
+
+### Other
+
+- Gender-split individual events in the synthetic entries generator, fix 10-and-under ageMin, drop SERC from the catalog (`f84b793`)
+- Include short-distance individual/relay events in club point standings (`cbd8812`)
+- Default new meets to combining age groups within a heat (`c5ae602`)
+- Don't surface or retry a stale live-push queue when live push is disabled (`99fa22b`)
+- Fix individual gender=ALL events hidden in entry page, LXF entrytime hour padding (`4f4bb29`)
+- Merge pull request #21 from vrouleau/claude/pdf-report-filename (`5f43287`)
+- Suggest the actual report name when saving a PDF/HTML report (`effcf7e`)
+- Merge pull request #20 from vrouleau/claude/entries-script-age-groups-xo1gzg (`e40e062`)
+- Restrict entries generator to per-event age-group eligibility (`93e7636`)
+- Merge pull request #19 from vrouleau/claude/lenex-results-test-generators-cat7uz (`23a99a3`)
+- Add LENEX entries and results test data generators (`d8a5a12`)
+- Merge pull request #18 from vrouleau/claude/beach-position-sheets-layout-sgyphu (`0d9fbc2`)
+- Simplify position sheets: fixed-size rows, capped at 16 per page (`78f4ae8`)
+- Fix position sheet page fill: use absolute inches, not viewport units (`9a70d69`)
+- Use 100vh instead of hardcoded inch margins for position sheet pages (`c6e403d`)
+- Fix position sheet page overflow with flexbox row layout (`58cca20`)
+- Redesign beach position sheets: numbered position list, one heat per page (`d0ab046`)
+
 ## [0.5.0] - 2026-08-14
 
 ### 📝 Documentation
