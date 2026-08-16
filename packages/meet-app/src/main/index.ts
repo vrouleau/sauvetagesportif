@@ -1504,6 +1504,10 @@ ipcMain.handle('file:new-meet', async (_event, meetType?: string, lang?: string)
        ON CONFLICT(name) DO UPDATE SET data = excluded.data`
     ).run(type.toUpperCase())
 
+    // Default new meets to combining age groups within a heat (small-meet-friendly;
+    // still overridable per meet in Réglages du meet → Répartition des séries)
+    setMeetValues({ COMBINEAGEGROUPS: { type: 'B', value: 'T' } })
+
     // Seed DSQ codes from config/dsq-codes.json
     seedDsqCodes(db, type, lang || 'fr')
 
