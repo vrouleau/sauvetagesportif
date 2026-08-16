@@ -20,7 +20,7 @@ import { assignLateBeachNumber } from './beachNumber'
 import { resolveMatchingAge, getSeasonYear } from './ageGroupRules'
 import {
   regenerateCombinedEvents, resolveToFinal, loadCombinedEventsConfig,
-  queryRelayEventsWithAgeGroups,
+  queryRelayEventsWithAgeGroups, queryShortDistanceIndividualEventsWithAgeGroups, findMatchingEvents,
 } from './combinedEvents'
 import { regeneratePointScores, loadPointScoresConfig } from './pointScores'
 import { getDb as getActiveDb, isPgConnected, closeDb as closeActiveDb } from './connectionManager'
@@ -3349,7 +3349,8 @@ export function getCombinedResults(selectedEventIds: number[], injectedDb?: Retu
     const filteredEvents = events.filter(ev => selectedEventIds.includes(ev.eventId))
 
     // If no events match (either no events defined or none selected), still show the category header
-    // but with empty athletes (like "Cumulatif 10 ans et moins - garçons" which is a special no-events category)
+    // but with empty athletes (config's isSpecialNoEvents categories, if any are ever added, always
+    // have zero events by design)
     if (filteredEvents.length === 0 && events.length === 0) {
       // Special category with no events — just show the title
       categories.push({ name: categoryName, subtitle: '', athletes: [] })
@@ -3984,6 +3985,71 @@ export function getPointStandings(selectedEventIds: number[], injectedDb?: Retur
          FROM relay r
          JOIN heat h ON r.heatid = h.heatid
          LEFT JOIN club c ON r.clubid = c.clubid
+         WHERE r.swimeventid = ?
+           AND r.agegroupid = ?
+           AND r.swimtime IS NOT NULL
+           AND r.swimtime > 0
+           AND (r.resultstatus IS NULL OR r.resultstatus = 0)
+           AND h.racestatus = 5
+         ORDER BY CASE WHEN r.qualcode IS NULL THEN 1 ELSE 0 END, r.qualcode ASC, r.swimtime ASC`
+      ).all(eventId, agegroupId) as Array<{
+        swimtime: number; resultstatus: number | null
+        clubname: string; clubcode: string
+      }>
+
+      let place = 0
+      let lastTime: number | null = null
+
+      for (let i = 0; i < results.length; i++) {
+        const r = results[i]
+        if (r.swimtime !== lastTime) {
+          place = i + 1
+          lastTime = r.swimtime
+        }
+
+        const pts = (place - 1 < pointsScale.length) ? pointsScale[place - 1] : 0
+        if (pts <= 0) continue
+
+        const key = r.clubcode || r.clubname
+        if (!clubPoints.has(key)) {
+          clubPoints.set(key, { clubName: r.clubname, clubCode: r.clubcode, totalPoints: 0, catPoints: new Map() })
+        }
+        const club = clubPoints.get(key)!
+        club.totalPoints += pts
+        club.catPoints.set(category.name, (club.catPoints.get(category.name) ?? 0) + pts)
+      }
+    }
+  }
+
+  // Club standings also include short-distance individual events (e.g. "Lancer de
+  // précision", accuracy throw) that queryEventsWithAgeGroups excludes for the
+  // individual-only "Résultat combiné" report — see queryShortDistanceIndividualEventsWithAgeGroups'
+  // doc comment. Reuses findMatchingEvents (age + gender aware, unlike the relay loop
+  // above, since these events are genuinely gendered) and the same swimresult-based
+  // results query as the main individual loop, just sourced from this separate,
+  // non-distance-filtered event list.
+  const shortDistanceEventsWithAgeGroups = queryShortDistanceIndividualEventsWithAgeGroups(db)
+  for (const category of loadCombinedEventsConfig().categories) {
+    if (category.isSpecialNoEvents) continue
+
+    const matchingEvents = findMatchingEvents(shortDistanceEventsWithAgeGroups, category)
+      .filter(ev => selectedEventIds.includes(ev.eventId))
+    if (matchingEvents.length === 0) continue
+
+    if (!categoryNames.includes(category.name)) categoryNames.push(category.name)
+    const pointsScale = category.pointsForPlaces.split(',').map(Number)
+
+    for (const { eventId: prelimEventId, agegroupId: prelimAgegroupId } of matchingEvents) {
+      const { eventId, agegroupId } = resolveToFinal(db, prelimEventId, prelimAgegroupId)
+
+      const results = db.prepare(
+        `SELECT r.swimtime, r.resultstatus,
+                COALESCE(c.name, c.code, '') AS clubname,
+                COALESCE(c.code, '') AS clubcode
+         FROM swimresult r
+         JOIN athlete a ON r.athleteid = a.athleteid
+         JOIN heat h ON r.heatid = h.heatid
+         LEFT JOIN club c ON a.clubid = c.clubid
          WHERE r.swimeventid = ?
            AND r.agegroupid = ?
            AND r.swimtime IS NOT NULL

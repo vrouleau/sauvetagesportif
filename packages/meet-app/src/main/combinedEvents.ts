@@ -176,14 +176,52 @@ export function queryEventsWithAgeGroups(db: Database.Database): EventWithAgeGro
  * Kept as a separate query rather than a flag on queryEventsWithAgeGroups so the
  * COMBINEDEVENTS XML (and everything driven off it, including getCombinedResults)
  * stays untouched and individual-only as documented above.
+ *
+ * No distance filter here (unlike queryEventsWithAgeGroups): real Splash's
+ * "Classement aux points" does count short-distance relay events like "Lancer de la
+ * corde" (Line Throw, relaycount=2) — confirmed 2026-08-16 against a real Splash PDF
+ * generated from the same meet, matching exactly (including tie ordering) once this
+ * filter was dropped. "Résultat combiné" (queryEventsWithAgeGroups, individual-only)
+ * keeps its own distance filter — confirmed separately, unaffected by this change, to
+ * already match Splash as-is.
  */
 export function queryRelayEventsWithAgeGroups(db: Database.Database): EventWithAgeGroup[] {
+  return db
+    .prepare(
+      `SELECT e.swimeventid, ag.agegroupid, e.eventnumber, e.gender AS eventgender, e.internalevent,
+              ag.agemin, ag.agemax, ag.gender,
+              ss.relaycount
+       FROM swimevent e
+       JOIN agegroup ag ON ag.swimeventid = e.swimeventid
+       JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid
+       WHERE ss.relaycount > 1
+         AND (e.internalevent IS NULL OR e.internalevent = 'F')
+         AND e.eventnumber IS NOT NULL
+         AND (e.preveventid IS NULL OR e.preveventid < 1)
+       ORDER BY e.eventnumber, ag.sortcode`
+    )
+    .all() as EventWithAgeGroup[]
+}
+
+/**
+ * Individual (relaycount<=1) pool events under 25m — "Lancer de précision" (accuracy
+ * throw, 4m/7m). Confirmed 2026-08-16 against a real Splash PDF (same meet as
+ * queryRelayEventsWithAgeGroups' Line Throw finding): Splash's "Classement aux points"
+ * counts these, but its "Résultat combiné" does not — the same club-only/combined-
+ * excluded split as relay events, just for an individual-relaycount event instead of a
+ * relaycount>1 one. Kept as its own query (not folded into queryEventsWithAgeGroups)
+ * so the COMBINEDEVENTS XML — and everything driven off it, including
+ * getCombinedResults and the report UI's event picker — stays untouched and matches
+ * Splash's "Résultat combiné" as confirmed. Beach has no equivalent: its swimstyle
+ * catalog has no "under 25" throw-style events, and beach's own `distance` column means
+ * "max participants per heat" rather than meters, so this only ever matches pool events.
+ */
+export function queryShortDistanceIndividualEventsWithAgeGroups(db: Database.Database): EventWithAgeGroup[] {
   const meetTypeRow = db.prepare(
     `SELECT data FROM bsglobal WHERE name = 'MEET_TYPE'`
   ).get() as { data: string } | undefined
   const isBeach = (meetTypeRow?.data || 'POOL').toUpperCase() === 'BEACH'
-
-  const distanceFilter = isBeach ? '' : 'AND ss.distance >= 25'
+  if (isBeach) return []
 
   return db
     .prepare(
@@ -193,9 +231,8 @@ export function queryRelayEventsWithAgeGroups(db: Database.Database): EventWithA
        FROM swimevent e
        JOIN agegroup ag ON ag.swimeventid = e.swimeventid
        JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid
-       WHERE 1=1
-         ${distanceFilter}
-         AND ss.relaycount > 1
+       WHERE ss.relaycount <= 1
+         AND ss.distance < 25
          AND (e.internalevent IS NULL OR e.internalevent = 'F')
          AND e.eventnumber IS NOT NULL
          AND (e.preveventid IS NULL OR e.preveventid < 1)
