@@ -720,6 +720,11 @@ def create_new_meet(data: dict = Body(default={}), db: Session = Depends(get_db)
         course_map = {"LCM": "1", "SCM": "3", "SCY": "2"}
         _update_meetvalue(db, "COURSE", f"I;{course_map.get(meet.course, '1')}", meetsid=new_meetsid)
 
+    # Default new meets to combining age groups within a heat (small-meet-friendly;
+    # still overridable per meet in meet config → Répartition des séries) —
+    # matches meet-app's own default (packages/meet-app/src/main/index.ts)
+    _update_meetvalue(db, "COMBINEAGEGROUPS", "B;T", meetsid=new_meetsid)
+
     # Reset closure date
     _set_closure_date(db, "", meetsid=new_meetsid)
 
@@ -842,6 +847,11 @@ def reset_meet(request: Request, data: dict = Body(default={}), db: Session = De
     if meet.course:
         course_map = {"LCM": "1", "SCM": "3", "SCY": "2"}
         _update_meetvalue(db, "COURSE", f"I;{course_map.get(meet.course, '1')}", meetsid=target_meetsid)
+
+    # Default new meets to combining age groups within a heat (small-meet-friendly;
+    # still overridable per meet in meet config → Répartition des séries) —
+    # matches meet-app's own default (packages/meet-app/src/main/index.ts)
+    _update_meetvalue(db, "COMBINEAGEGROUPS", "B;T", meetsid=target_meetsid)
 
     # Reset closure date
     _set_closure_date(db, "", meetsid=target_meetsid)
