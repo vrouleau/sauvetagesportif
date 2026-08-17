@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.5.2] - 2026-08-17
+
+### 🐛 Bug Fixes
+
+- bundle age-group-rules.json in packaged builds (`182c397`)
+
+### Other
+
+- remove test files (`9e43c9e`)
+
 ## [0.5.1] - 2026-08-16
 
 ### Other
