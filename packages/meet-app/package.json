@@ -50,6 +50,10 @@
       {
         "from": "../../config/point-scores-config.json",
         "to": "point-scores-config.json"
+      },
+      {
+        "from": "../../config/age-group-rules.json",
+        "to": "age-group-rules.json"
       }
     ],
     "win": {
