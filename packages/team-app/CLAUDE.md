@@ -237,7 +237,7 @@ backend/app/
   routers/serc_print.py — SERC printable judge sheets (bilingual, one page per team per section)
   events.py             — LENEX meet structure parser
   best_times_v2.py      — Best times computed from Team Manager results table
-  export.py             — LENEX export (registrations + Gemini key transport; session names + pause events included)
+  export.py             — LENEX export (registrations + Gemini key transport; session names + pause events included; SERC events/relays excluded — meet-app has no notion of them)
   export_entries.py     — LENEX export (all clubs + athletes + best times)
   invoices.py           — Stripe invoice generation
   seed.py               — Entries .lxf parser (clubs/athletes/HANDICAP into members table)

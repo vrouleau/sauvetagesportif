@@ -48,6 +48,11 @@ def _ms_to_lenex(ms: int | None) -> str:
 
 _ROUND_LINK_ORDER = {"PRE": 0, "SEM": 1, "FIN": 2, "TIM": 0}
 
+# SERC (Simulated Emergency Response Competition, swimstyleid 530) is judged and
+# scored entirely within team-app (see routers/serc.py) — meet-app has no notion
+# of it, so it's stripped from every LENEX export produced here.
+SERC_STYLE_ID = 530
+
 
 def _compute_preveventids(events: list[tuple]) -> dict:
     """Link prelim/semi/final rounds of the same event within one session.
@@ -138,6 +143,8 @@ def _meet_struct_from_db(db: Session, meetsid: int | None = None):
     for ses in db_sessions:
         events = []
         for ev in sorted(ses.events, key=lambda e: e.sortcode or e.eventnumber or 0):
+            if ev.swimstyleid == SERC_STYLE_ID:
+                continue
             ag_list = [
                 MeetAgeGroup(ag.agegroupid, ag.agemin or -1, ag.agemax or -1)
                 for ag in ev.agegroups
@@ -355,14 +362,18 @@ def generate_lxf(db: Session, meetsid: int | None = None) -> bytes:
     # Query all relay teams and their positions, grouped by club
     relay_rows = (
         db.query(Relay)
-        .filter(Relay.clubsid.isnot(None), Relay.meetsid == export_meetsid)
+        .filter(
+            Relay.clubsid.isnot(None),
+            Relay.meetsid == export_meetsid,
+            Relay.stylesid != SERC_STYLE_ID,
+        )
         .order_by(Relay.clubsid, Relay.stylesid, Relay.teamnumb)
         .all()
     )
     relay_pos_rows = (
         db.query(RelayPos)
         .join(Relay, RelayPos.relaysid == Relay.relaysid)
-        .filter(RelayPos.membersid.isnot(None))
+        .filter(RelayPos.membersid.isnot(None), Relay.stylesid != SERC_STYLE_ID)
         .order_by(RelayPos.relaysid, RelayPos.numb)
         .all()
     )
@@ -654,7 +665,10 @@ def generate_meet_lxf_from_db(db: Session, meetsid: int | None = None) -> bytes:
             ses_attrs["lanemax"] = str(ses.lanemax)
         ses_xml = ET.SubElement(sessions_xml, "SESSION", ses_attrs)
         evts_xml = ET.SubElement(ses_xml, "EVENTS")
-        sorted_events = sorted(ses.events, key=lambda e: e.sortcode or e.eventnumber or 0)
+        sorted_events = [
+            ev for ev in sorted(ses.events, key=lambda e: e.sortcode or e.eventnumber or 0)
+            if ev.swimstyleid != SERC_STYLE_ID
+        ]
         preveventids = _compute_preveventids([
             (ev.swimeventid, ev.eventnumber or 0, _GENDER_MAP.get(ev.gender, "MIXED"),
              ev.swimstyleid or 0, _ROUND_MAP.get(ev.round, "TIM"))
