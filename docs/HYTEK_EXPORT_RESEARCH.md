@@ -211,20 +211,32 @@ Mirrors the style of `docs/LENEX_EXPORT_MATRIX.md`:
 
 ## Recommended path forward
 
-1. Hand-build one representative SD3 sample (small club, a couple of athletes,
-   a few individual events) from a real team-app database export, by hand or
-   with a throwaway script — **before** wiring up a permanent export endpoint.
+1. ~~Hand-build one representative SD3 sample~~ — done: `scripts/generate_hytek_sd3.py`
+   is a standalone prototype that reads a team-app SQLite database file and a
+   meet name, and writes a `.sd3` entries file for that meet (individual
+   entries only — clubs → `C1`, athletes → `D0`/`D1`, `A0`/`B1`/`Z0` framing).
+   It deliberately doesn't touch FastAPI/Postgres — point it at a copy of the
+   default `meetmgr.db` SQLite file (or the file the unit tests spin up), not
+   the Docker/Postgres stack:
+   ```bash
+   python packages/team-app/scripts/generate_hytek_sd3.py \
+       --db /path/to/meetmgr.db --meet "Coupe du Québec 2026" --output entries.sd3
+   ```
+   Verified against a hand-seeded SQLite database: fields land at the exact
+   column offsets from the "Field layouts" section above. What's **not**
+   verified is whether Meet Manager itself accepts the result — that's step 2.
 2. Get that sample actually imported into a real Hy-Tek Meet Manager install
    (organizer contact, or a trial license) to validate the record set/ordering
    Meet Manager actually accepts, since the public spec alone hasn't proven
-   sufficient for others.
-3. Once validated, implement `backend/app/export_hytek.py` following the same
-   shape as `export_entries.py` (SQLAlchemy query → in-memory record build →
-   bytes), exposed as a new `GET /api/export/hytek-entries` admin endpoint
-   returning the `.sd3` file, gated to pool meets (`meet_type == 'POOL'`) same
-   as other pool-only paths in the codebase.
+   sufficient for others (see the "Meet Manager may reject generated SDIF
+   files" report above).
+3. Once validated, port the logic into `backend/app/export_hytek.py` following
+   the same shape as `export_entries.py` (SQLAlchemy query → in-memory record
+   build → bytes), exposed as a new `GET /api/export/hytek-entries` admin
+   endpoint returning the `.sd3` file, gated to pool meets (`meet_type ==
+   'POOL'`) same as other pool-only paths in the codebase.
 4. Add relay (E0/F0) support as a follow-up once individual entries round-trip
-   cleanly — not part of the first cut.
+   cleanly — not part of the first cut, and not in the prototype script.
 
 ## Sources
 
