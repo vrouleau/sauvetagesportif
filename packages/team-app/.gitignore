@@ -1,6 +1,10 @@
 .env
 .env.bak
 .venv
+.venv-test
+.venv-test/
+.hypothesis/
+.pytest_cache/
 __pycache__
 .kiro/context.md
 backend/target/
