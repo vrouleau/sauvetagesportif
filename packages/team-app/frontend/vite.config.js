@@ -22,7 +22,9 @@ import tailwindcss from '@tailwindcss/vite'
 import path from 'path'
 import { readFileSync } from 'fs'
 
-const pkg = JSON.parse(readFileSync(path.resolve(__dirname, 'package.json'), 'utf-8'))
+const rootDir = import.meta.dirname
+
+const pkg = JSON.parse(readFileSync(path.resolve(rootDir, 'package.json'), 'utf-8'))
 
 export default defineConfig({
   plugins: [tailwindcss(), react()],
@@ -31,7 +33,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      '@shared': path.resolve(__dirname, '../../shared-ui/src'),
+      '@shared': path.resolve(rootDir, '../../shared-ui/src'),
     },
   },
   server: {
@@ -39,7 +41,7 @@ export default defineConfig({
       '/api': 'http://localhost:8000'
     },
     fs: {
-      allow: [path.resolve(__dirname, '../../shared-ui/src'), '.'],
+      allow: [path.resolve(rootDir, '../../shared-ui/src'), '.'],
     },
   },
 })

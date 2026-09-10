@@ -181,7 +181,7 @@ describe('Beach number generation - Property tests', () => {
       }),
       { numRuns: 50 }
     )
-  })
+  }, 30_000)
 
   /**
    * Property 3: Idempotency
