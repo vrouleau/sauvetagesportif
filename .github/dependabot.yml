@@ -1,0 +1,102 @@
+# Dependabot configuration
+# Docs: https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-reference
+#
+# One entry per dependency manifest location in this monorepo. Dependabot opens
+# PRs against `main`; CI (.github/workflows/ci.yml) runs full regression on each.
+#
+# Notes:
+# - Major bumps are grouped separately and left for manual review (electron,
+#   vite, reportlab-style jumps changed behavior during the last uplift).
+# - Security updates are enabled separately via repo Settings and are not
+#   gated by the schedules below.
+version: 2
+updates:
+  # ── meet-app + shared-ui (root npm workspaces) ────────────────────────────
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(deps-dev)"
+    groups:
+      # Batch all patch/minor bumps into a single low-risk PR.
+      npm-minor-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
+    ignore:
+      # electron-vite bundles its own vite; let it drive the electron toolchain.
+      - dependency-name: "electron"
+        update-types: ["version-update:semver-major"]
+
+  # ── team-app frontend (separate lockfile, not part of workspaces) ─────────
+  - package-ecosystem: "npm"
+    directory: "/packages/team-app/frontend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "team-app"
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(deps-dev)"
+    groups:
+      frontend-minor-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
+
+  # ── team-app Python backend ───────────────────────────────────────────────
+  - package-ecosystem: "pip"
+    directory: "/packages/team-app/backend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "team-app"
+      - "python"
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      pip-minor-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
+
+  # ── team-app Python test deps ─────────────────────────────────────────────
+  - package-ecosystem: "pip"
+    directory: "/packages/team-app/tests"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "team-app"
+      - "python"
+    commit-message:
+      prefix: "chore(deps-dev)"
+
+  # ── GitHub Actions used in workflows ──────────────────────────────────────
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels:
+      - "dependencies"
+      - "ci"
+    commit-message:
+      prefix: "ci(deps)"
