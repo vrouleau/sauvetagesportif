@@ -173,6 +173,7 @@ Best times are computed from the Team Manager `results` table via `best_times_v2
 | `GET /api/export` | Export registrations as .lxf bundle (.zip) | Admin |
 | `GET /api/export/entries` | Export entries .lxf (clubs + athletes + best times) | Admin |
 | `GET /api/export/registrations-lxf` | Export registrations .lxf (for meet-app import) | Organizer/Admin |
+| _(none yet)_ | Export entries for Hy-Tek Meet Manager — investigation only so far, see `docs/HYTEK_EXPORT_RESEARCH.md` | — |
 | `PUT /api/sessions/{id}` | Update session fields (name, date, times, lanes) | Organizer/Admin |
 | `PUT /api/closure-date` | Set registration deadline (syncs to MEETVALUES DEADLINE) | Organizer/Admin |
 | `GET /api/admin/backup-db` | Download full PostgreSQL dump (.sql) | Admin |
