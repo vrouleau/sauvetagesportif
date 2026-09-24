@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.5.3] - 2026-09-24
+
+### ✨ Features
+
+- default new team-app meets to combined age groups in heats (`e4b5835`)
+
+### 🔧 Chores
+
+- uplift third-party dependencies across meet and team apps (`5749483`)
+
+### 🏗️ CI
+
+- surface electron major updates in Dependabot (`ea20a3f`)
+- add Dependabot config for automated dependency updates (`c055061`)
+
+### Other
+
+- Merge pull request #24 from vrouleau/claude/dependency-uplift-3pp (`f61e45e`)
+- Merge pull request #22 from vrouleau/claude/serc-events-lenex-export-pgkldy (`1e7373f`)
+- Exclude SERC events from team-app LENEX exports (`57680dc`)
+
 ## [0.5.2] - 2026-08-17
 
 ### 🐛 Bug Fixes
