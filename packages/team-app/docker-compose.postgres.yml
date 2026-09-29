@@ -19,7 +19,11 @@ services:
 
   backend:
     environment:
-      DATABASE_URL: postgresql://meetmgr:meetmgr@db:5432/meetmgr
+      # Pin the psycopg2 driver explicitly. SQLAlchemy 2.1 changed the default
+      # DBAPI for a bare "postgresql://" URL from psycopg2 to psycopg (v3);
+      # we ship psycopg2-binary, so an unqualified scheme fails at create_engine
+      # with "ModuleNotFoundError: No module named 'psycopg'".
+      DATABASE_URL: postgresql+psycopg2://meetmgr:meetmgr@db:5432/meetmgr
     depends_on:
       db:
         condition: service_healthy
