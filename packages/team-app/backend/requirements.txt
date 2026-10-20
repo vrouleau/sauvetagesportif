@@ -1,8 +1,8 @@
-fastapi==0.143.0
+fastapi==0.143.2
 uvicorn==0.54.0
 sqlalchemy==2.1.4
 psycopg2-binary==2.9.13
-pydantic==2.14.0
+pydantic==2.14.1
 python-multipart==0.0.32
 cryptography==50.0.2
 httpx==0.28.1
