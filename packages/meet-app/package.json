@@ -80,7 +80,7 @@
     "@dnd-kit/utilities": "^3.2.2",
     "@electron-toolkit/preload": "^3.0.0",
     "@electron-toolkit/utils": "^4.0.0",
-    "@ericblade/quagga2": "^1.12.1",
+    "@ericblade/quagga2": "^1.13.0",
     "better-sqlite3": "^13.0.3",
     "pg": "^8.23.1",
     "react": "^19.3.1",
@@ -96,12 +96,12 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
     "electron": "44.8.0",
-    "electron-builder": "^26.15.3",
+    "electron-builder": "^26.18.0",
     "electron-vite": "^6.0.0",
     "fast-check": "^4.10.2",
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
-    "vite": "^8.3.4",
+    "vite": "^8.3.5",
     "vitest": "^5.0.5"
   }
 }
