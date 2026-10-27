@@ -1,5 +1,106 @@
 # Changelog
 
+## [0.5.3] - 2026-10-27
+
+### ✨ Features
+
+- default new team-app meets to combined age groups in heats (`e4b5835`)
+
+### 🐛 Bug Fixes
+
+- pin psycopg2 driver in Postgres DATABASE_URL for SQLAlchemy 2.1 (`94f94e9`)
+
+### 📝 Documentation
+
+- add banquet ticket & hotel athlete-night fees plan (`50f45af`)
+
+### 🔧 Chores
+
+- update hypothesis requirement (`7c45b13`)
+- bump source-map-js from 1.2.1 to 1.2.2 (`e84d726`)
+- bump the npm-minor-patch group with 4 updates (`9a89b7b`)
+- bump the pip-minor-patch group (`cdf3d09`)
+- bump the frontend-minor-patch group (`3d2242b`)
+- update sqlalchemy requirement (`df8ad9f`)
+- bump brace-expansion from 1.1.18 to 5.0.12 (`d35d43e`)
+- bump http-cache-semantics from 4.2.0 to 4.3.0 (`33d9372`)
+- bump the npm-minor-patch group with 4 updates (`497e1b8`)
+- bump stripe in /packages/team-app/backend (`08cacb7`)
+- update sqlalchemy requirement (`8e855c5`)
+- bump the pip-minor-patch group (`6605ab6`)
+- bump the frontend-minor-patch group (`a90d0f7`)
+- update hypothesis requirement (`d7381f3`)
+- bump undici (`55f7ccd`)
+- bump the npm-minor-patch group with 4 updates (`8f2e1cd`)
+- update hypothesis requirement (`313a779`)
+- bump the frontend-minor-patch group (`166d94b`)
+- bump the pip-minor-patch group (`d80a7a5`)
+- update sqlalchemy requirement (`21d4cac`)
+- bump the npm-minor-patch group with 3 updates (`318533b`)
+- bump the pip-minor-patch group (`358ee16`)
+- bump the frontend-minor-patch group (`8634dc3`)
+- update sqlalchemy requirement (`8665664`)
+- update hypothesis requirement (`343a18b`)
+- bump fast-check in the npm-minor-patch group (`3a1376b`)
+- update hypothesis requirement (`5a8b804`)
+- update defusedxml requirement (`6f5ef19`)
+- update pytest requirement in /packages/team-app/tests (`0066862`)
+- update requests requirement in /packages/team-app/tests (`0165e01`)
+- update sqlalchemy requirement (`62c57c5`)
+- uplift third-party dependencies across meet and team apps (`5749483`)
+
+### 🏗️ CI
+
+- bump actions/setup-python from 6 to 7 (`6a89cf4`)
+- bump actions/checkout from 5 to 7 (`eee6d57`)
+- bump actions/setup-node from 6 to 7 (`48b2362`)
+- surface electron major updates in Dependabot (`ea20a3f`)
+- add Dependabot config for automated dependency updates (`c055061`)
+
+### Other
+
+- Merge pull request #59 from vrouleau/dependabot/npm_and_yarn/source-map-js-1.2.2 (`d4274e0`)
+- Merge pull request #58 from vrouleau/dependabot/npm_and_yarn/npm-minor-patch-f925b6e979 (`89a335c`)
+- Merge pull request #57 from vrouleau/dependabot/pip/packages/team-app/tests/hypothesis-gte-6.168.5 (`209a1d3`)
+- Merge pull request #56 from vrouleau/dependabot/pip/packages/team-app/backend/pip-minor-patch-20697f1aee (`5f9502c`)
+- Merge pull request #55 from vrouleau/dependabot/npm_and_yarn/packages/team-app/frontend/frontend-minor-patch-b58372f079 (`ad2ec94`)
+- Merge pull request #54 from vrouleau/dependabot/pip/packages/team-app/tests/sqlalchemy-gte-2.1.4 (`20e8151`)
+- Merge pull request #53 from vrouleau/dependabot/npm_and_yarn/brace-expansion-5.0.12 (`5dd4a2f`)
+- Merge pull request #52 from vrouleau/dependabot/npm_and_yarn/http-cache-semantics-4.3.0 (`6441fac`)
+- Merge pull request #51 from vrouleau/dependabot/npm_and_yarn/npm-minor-patch-1035e492f9 (`0c04072`)
+- Merge pull request #50 from vrouleau/dependabot/pip/packages/team-app/backend/stripe-16.0.0 (`99e8fdf`)
+- Merge pull request #49 from vrouleau/dependabot/pip/packages/team-app/tests/sqlalchemy-gte-2.1.2 (`6d03bfa`)
+- Merge branch 'main' into dependabot/pip/packages/team-app/tests/sqlalchemy-gte-2.1.2 (`fec9055`)
+- Merge pull request #48 from vrouleau/dependabot/pip/packages/team-app/backend/pip-minor-patch-1aff39d68a (`d9f4f2e`)
+- Merge pull request #47 from vrouleau/dependabot/npm_and_yarn/packages/team-app/frontend/frontend-minor-patch-cd32d6a707 (`c34a229`)
+- Merge pull request #46 from vrouleau/dependabot/pip/packages/team-app/tests/hypothesis-gte-6.168.3 (`05b32b4`)
+- Merge pull request #41 from vrouleau/dependabot/pip/packages/team-app/backend/pip-minor-patch-e078833e6c (`692d75b`)
+- Merge pull request #45 from vrouleau/dependabot/npm_and_yarn/multi-211fa015e3 (`e5d6d1c`)
+- Merge pull request #44 from vrouleau/dependabot/npm_and_yarn/npm-minor-patch-24f2af7d1e (`31c0371`)
+- Merge pull request #43 from vrouleau/dependabot/pip/packages/team-app/tests/hypothesis-gte-6.168.1 (`e0746e8`)
+- Merge branch 'main' into dependabot/pip/packages/team-app/tests/hypothesis-gte-6.168.1 (`0b535ee`)
+- Merge pull request #42 from vrouleau/dependabot/npm_and_yarn/packages/team-app/frontend/frontend-minor-patch-12ebeab49c (`dae1799`)
+- Merge pull request #40 from vrouleau/dependabot/pip/packages/team-app/tests/sqlalchemy-gte-2.1.0 (`78cbd62`)
+- Merge pull request #39 from vrouleau/dependabot/npm_and_yarn/npm-minor-patch-eb7b71cd9e (`0ccfeea`)
+- Merge pull request #38 from vrouleau/dependabot/pip/packages/team-app/backend/pip-minor-patch-8775e5c7c6 (`040b4ab`)
+- Merge pull request #37 from vrouleau/dependabot/npm_and_yarn/packages/team-app/frontend/frontend-minor-patch-9964c267ee (`a44a4ce`)
+- Merge pull request #36 from vrouleau/dependabot/pip/packages/team-app/tests/sqlalchemy-gte-2.0.54 (`e332435`)
+- Merge pull request #35 from vrouleau/dependabot/pip/packages/team-app/tests/hypothesis-gte-6.168.0 (`63b7531`)
+- Merge pull request #34 from vrouleau/dependabot/npm_and_yarn/npm-minor-patch-f284f367d3 (`fe49a4c`)
+- Merge pull request #33 from vrouleau/dependabot/pip/packages/team-app/tests/defusedxml-gte-0.7.1 (`364458f`)
+- Merge pull request #32 from vrouleau/dependabot/pip/packages/team-app/tests/hypothesis-gte-6.167.1 (`64e87d0`)
+- Merge pull request #31 from vrouleau/dependabot/pip/packages/team-app/tests/pytest-gte-9.1.1 (`efabda2`)
+- Merge branch 'main' into dependabot/pip/packages/team-app/tests/pytest-gte-9.1.1 (`099dc1b`)
+- Merge pull request #30 from vrouleau/dependabot/pip/packages/team-app/tests/requests-gte-2.34.2 (`f2348d1`)
+- Merge pull request #29 from vrouleau/dependabot/pip/packages/team-app/tests/sqlalchemy-gte-2.0.52 (`21d3e62`)
+- Merge pull request #28 from vrouleau/dependabot/github_actions/actions/setup-python-7 (`915e4bf`)
+- Merge pull request #27 from vrouleau/dependabot/github_actions/actions/checkout-7 (`25a103f`)
+- Merge pull request #26 from vrouleau/dependabot/github_actions/actions/setup-node-7 (`14d82cd`)
+- Merge pull request #25 from vrouleau/claude/add-dependabot-config (`60ad89c`)
+- Merge pull request #24 from vrouleau/claude/dependency-uplift-3pp (`f61e45e`)
+- Merge pull request #22 from vrouleau/claude/serc-events-lenex-export-pgkldy (`1e7373f`)
+- Exclude SERC events from team-app LENEX exports (`57680dc`)
+
 ## [0.5.2] - 2026-08-17
 
 ### 🐛 Bug Fixes
