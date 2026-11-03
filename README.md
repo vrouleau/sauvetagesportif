@@ -16,25 +16,40 @@ packages/
 
 ### Electron app (meet-app)
 
-**Prerequisites (Windows, one-time):**
-```bash
-winget install Microsoft.VisualStudio.2022.BuildTools --override "--quiet --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
-```
+**Prerequisites (one-time):**
 
-**Prerequisites (macOS, one-time):**
-```bash
-xcode-select --install
-```
+- **Node.js 22** (matches the version used by CI). Check with `node -v`.
+- Native-module compiler toolchain:
+  - **Windows:**
+    ```bash
+    winget install Microsoft.VisualStudio.2022.BuildTools --override "--quiet --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+    ```
+  - **macOS:**
+    ```bash
+    xcode-select --install
+    ```
 
 **Setup & run:**
+
+This is an npm **workspaces** monorepo, so dependencies install from the repo **root** into a single hoisted `node_modules`. Do not run `npm install` inside `packages/meet-app` — run it at the root.
+
 ```bash
-cd packages/meet-app
+# 1. From the repo root — installs all packages and runs the postinstall
+#    native rebuild (better-sqlite3 compiled for Electron's ABI).
 npm install
-npm run rebuild    # compile better-sqlite3 for Electron (needs VS Build Tools)
+
+# 2. Start the dev app (hot-reload main + renderer). Run this one from the package.
+cd packages/meet-app
 npm run dev
 ```
 
-> Note: `@electron/rebuild` recompiles `better-sqlite3` for Electron's Node ABI. This is required once after `npm install` and after any Electron version change.
+> **Why the root install?** `electron-vite`, `electron-builder`, and every other tool live in the root `node_modules`. If you install inside `packages/meet-app` instead, the build fails with `'electron-vite' is not recognized`.
+
+> **Native rebuild.** `npm install` triggers `postinstall` → `scripts/rebuild.js`, which downloads the Electron binary and recompiles `better-sqlite3` for Electron's Node ABI. If you ever need to redo it manually (e.g. after an Electron version change), run `npm run rebuild` from `packages/meet-app`. The Electron version's ABI must be known to `node-abi` — if a rebuild fails with `Could not detect abi for version <X>`, bump the `node-abi` override in the root `package.json`.
+
+> **Switching between `npm run dev` and `npm test`.** They compile `better-sqlite3` for different Node ABIs (Electron vs. system Node). Before `npm run dev` run `npm run rebuild`; before `npm test` run `npm rebuild better-sqlite3`.
+
+> **Troubleshooting a failing `npm run dev` / build.** Almost always it's a stale or missing install. From the repo root: `npm install` (re-syncs to the committed `package-lock.json`), then retry. After a `git pull` that changed any `package.json` / `package-lock.json`, re-run the root `npm install`.
 
 ### Web app (team-app)
 
@@ -106,9 +121,32 @@ This produces two files in `scripts/`:
 
 To load: File → *Restaurer un meet (.smb)…* and select the desired fixture. Heats are not pre-generated — use *Générer séries* in the app to create them.
 
+### Dry-run the meet-app package (before releasing)
+
+Build and package the installer **locally** to validate it before tagging a real release. This runs the exact same steps the Release CI runs (`npm run build` + `electron-builder`), just without creating a tag or GitHub release, so nothing is published. Artifacts land in `packages/meet-app/dist/` (gitignored).
+
+```bash
+# From the repo root — make sure deps are installed and native module is built:
+npm install
+
+cd packages/meet-app
+
+# Option A — compile only (fast; verifies the Vite build of main/preload/renderer):
+npm run build          # output → packages/meet-app/out/
+
+# Option B — full package into a real installer (what CI produces):
+npm run build:win      # Windows → packages/meet-app/dist/*.exe
+# macOS equivalent:
+npx electron-vite build && npx electron-builder --mac   # → packages/meet-app/dist/*.dmg
+```
+
+Then install/run the produced `.exe` (or `.dmg`) and smoke-test the app before cutting a release. Because this mirrors the CI build exactly, a clean dry-run is a strong signal the Release CI will succeed.
+
+> Tip: for a from-scratch dry-run that also wipes stale build output and recompiles the native module, use `npm run clean` (removes `out/`, rebuilds `better-sqlite3` for Electron, runs the full Vite build) before `npm run build:win`.
+
 ### Releasing
 
-All packages share a single version. To create a release:
+All packages share a single version. Once the dry-run above looks good, create a release:
 
 ```bash
 npm run release minor    # 0.1.0 → 0.2.0
@@ -116,16 +154,17 @@ npm run release patch    # 0.1.0 → 0.1.1
 npm run release 1.0.0    # explicit version
 ```
 
-This bumps the version in all `package.json` files, commits, and creates a git tag. Then push:
+This bumps the version in all `package.json` files, updates `package-lock.json`, generates release notes, commits (`release: vX.Y.Z`), and creates a git tag. It does **not** push. Review the commit and tag, then push:
 
 ```bash
 git push && git push --tags
 ```
 
-Pushing the tag triggers the [Release CI](.github/workflows/release.yml) which builds:
+Pushing the tag triggers the [Release CI](.github/workflows/release.yml) which builds and publishes:
 - Windows installer (`.exe`) via electron-builder
 - macOS DMG
 - Docker images pushed to `ghcr.io`
+- A GitHub Release with auto-generated notes (grouped by conventional-commit type: `feat`, `fix`, `docs`, other)
 
 ## Architecture
 
