@@ -961,6 +961,16 @@ def set_meet_config(entries: dict, request: Request, db: Session = Depends(get_d
         # Sync canonical individual keys
         if key == "NAME":
             _set_meet_config(db, meetsid, "meet_name", value)
+            # Also update the meets.name column — it's what the admin meet
+            # list (/admin/meets) and the meet switcher read. Without this,
+            # renaming via the meet root element updated meet_config.meet_name
+            # (title bar) and MEETVALUES NAME (LXF export) but left the meet
+            # list showing the stale template name.
+            if meetsid:
+                from ..models_team import Meet as TeamMeet
+                team_meet = db.get(TeamMeet, meetsid)
+                if team_meet is not None:
+                    team_meet.name = value or "Current Meet"
         elif key == "COURSE":
             course_map = {"1": "LCM", "2": "SCY", "3": "SCM"}
             _set_meet_config(db, meetsid, "meet_course", course_map.get(value, "LCM"))

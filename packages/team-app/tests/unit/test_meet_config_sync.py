@@ -98,3 +98,26 @@ def test_clearing_agedate_clears_age_base_date(db_session):
 def test_other_fields_unaffected(db_session):
     set_meet_config({"NAME": {"type": "S", "value": "Championnat"}}, request=_NoHeaderRequest(), db=db_session)
     assert _get_bsglobal(db_session, "age_base_date") is None
+
+
+def test_name_syncs_to_meets_name_column(db_session):
+    # Renaming via the meet root element (PUT /meet-config NAME) must also
+    # update the meets.name column — it's what the admin meet list
+    # (/admin/meets) and the meet switcher read. Before this fix the rename
+    # updated meet_config.meet_name (title bar) and the MEETVALUES NAME blob
+    # (LXF export) but left meets.name showing the stale template name.
+    set_meet_config({"NAME": {"type": "S", "value": "Invitation Provinciale Novembre 2026"}},
+                    request=_NoHeaderRequest(), db=db_session)
+    meet = db_session.get(TeamMeet, 1)
+    assert meet.name == "Invitation Provinciale Novembre 2026"
+
+
+def test_name_also_written_to_meet_config_and_meetvalues(db_session):
+    # The canonical meet_config.meet_name key and the MEETVALUES NAME blob
+    # must stay in sync with the meets.name column.
+    from app.models import MeetConfig
+    set_meet_config({"NAME": {"type": "S", "value": "Invitation Provinciale Novembre 2026"}},
+                    request=_NoHeaderRequest(), db=db_session)
+    name_cfg = db_session.get(MeetConfig, (1, "meet_name"))
+    assert name_cfg is not None and name_cfg.data == "Invitation Provinciale Novembre 2026"
+    assert "NAME=S;Invitation Provinciale Novembre 2026" in _get_meetvalues(db_session)
