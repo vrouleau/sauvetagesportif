@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.5.6] - 2026-11-03
+
+### 🔧 Chores
+
+- bump sharp from 0.35.4 to 0.35.5 (`71f1e21`)
+
+### Other
+
+- Merge pull request #81 from vrouleau/dependabot/npm_and_yarn/sharp-0.35.5 (`d80d1e5`)
+
 ## [0.5.5] - 2026-11-03
 
 ### ✨ Features
