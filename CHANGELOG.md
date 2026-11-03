@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.5.7] - 2026-11-03
+
+### 🐛 Bug Fixes
+
+- correct team-app login title to SauvetageTeam (`cd48673`)
+
+### 📝 Documentation
+
+- add manual meet-app setup, dry-run packaging, and release steps (`e3c9d46`)
+
+### Other
+
+- Fix meet-app native rebuild on Electron 45: pin node-abi>=4.40.0 (`172484c`)
+
 ## [0.5.6] - 2026-11-03
 
 ### 🔧 Chores
