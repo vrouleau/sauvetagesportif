@@ -293,7 +293,7 @@ Team-specific fields (`pin`, `email`, `invite_send_count`, `stripe_account_id`) 
 
 | Field | Encoding |
 |-------|----------|
-| Gender | 1=Male, 2=Female, 3=Mixed |
+| Gender | 0=All (individual events), 1=Male, 2=Female, 3=Mixed (relay events) |
 | Round | 1=Prelims, 2=Semis, 4=Finals, 5=Direct Finals |
 | Course | 1=50m LCM, 2=25yd SCY, 3=25m SCM |
 | Boolean | CHAR(1): 'T'/'F' |
@@ -328,10 +328,8 @@ Replaces manual time entry from handwritten timing sheets with a camera-based wo
 Separate SQLite file (`%APPDATA%/@meetmgr/meet-app/timing_scans.sqlite`) stores scanned images and processing state. Cleared via "Vider les scans" button or `npm run clean`.
 
 ### Dependencies (timing/OCR)
-```bash
-cd packages/meet-app
-npm install sharp tesseract.js onnxruntime-node @ericblade/quagga2
-```
+
+Barcode scanning uses `@ericblade/quagga2` (a regular meet-app dependency, installed by the root `npm install` — no separate install step). Handwritten-time recognition is done server-side by the Gemini vision API (see above), not a bundled OCR engine.
 
 ## Combined Events (Cumulative Point Standings)
 
@@ -373,26 +371,26 @@ Beach events use positions (1st, 2nd, 3rd) instead of times. Heat generation wor
 - **Finals** qualify by best position from prelims (lowest value = best)
 
 Meet type is stored in `bsglobal` as `MEET_TYPE` (`POOL` or `BEACH`). Templates:
-- `config/template_pool.lxf` — swimstyleids 501-540
-- `config/template_beach.lxf` — swimstyleids 601-605
+- `config/template_pool.lxf` — swimstyleids 500-531
+- `config/template_beach.lxf` — swimstyleids 601-624
 
 ### Beach numbers (athlete identifiers)
 
 In beach competitions, athletes wear numbered jerseys/bibs instead of being identified by lane. The meet-app generates deterministic beach numbers stored in `athlete.nameprefix`.
 
-**Format:** `Letter + 3 digits` (e.g., `C201`)
+**Format:** `Letter + 3 chars` (e.g., `C201`, or `C A01` for Masters — 4 chars total, no space)
 - **Letter (A-Z):** Club identifier, derived from the first available character in the club code (fallback: first unused letter A-Z)
-- **Hundreds digit (1-9):** Category (age group + gender), assigned dynamically per club based on which categories are present
-- **Tens + units (01-99):** Sequential athlete number within the category, sorted alphabetically by last name then first name
+- **Category char:** A **fixed global code** per (age bracket, sex) — the same everywhere, not assigned dynamically per club. Age brackets follow the canonical order (`10-, 11-12, 13-14, 15-18, Open, Masters`), each with a female slot then a male slot: `10-F=0, 10-M=1, 11-12F=2, 11-12M=3, 13-14F=4, 13-14M=5, 15-18F=6, 15-18M=7, OpenF=8, OpenM=9, MastersF=A, MastersM=B`. Digits `0-9` cover the first 5 brackets; Masters overflows into letters. The bracket comes from the athlete's age group; the sex comes from the athlete's own `gender` (not the age group's, which can be mixed).
+- **Last 2 chars (01-99):** Sequential athlete number within the category, sorted alphabetically by last name then first name
 
 **When generated:**
 | Trigger | Behavior |
 |---------|----------|
 | LXF import (beach meet) | Full regeneration for all registered athletes |
-| Late entry registration | Assigns next available number in the athlete's club/category |
+| Late entry registration | Assigns next available number in the athlete's category |
 | Heat generation | Auto-assigns to any athlete with entries but no beach number |
 
-**Constraints:** Max 26 clubs (one letter each), 9 categories per club, 99 athletes per category.
+**Constraints:** Max 26 clubs (one letter each), 12 categories (6 age brackets × 2 sexes), 99 athletes per category per club.
 
 **Properties:** Deterministic (same input → same output), unique, idempotent (re-running produces identical results), stable (late arrivals don't change existing numbers).
 
@@ -403,7 +401,7 @@ In beach competitions, athletes wear numbered jerseys/bibs instead of being iden
 ### Configuration
 
 `config/combined-events-config.json` — single source of truth shared by both apps. Defines:
-- **Categories**: one per age group/gender combination (10 for Canadian lifesaving: 10-, 11-12, 13-14, 15-18, 19+ × M/F/mixed)
+- **Categories**: one per age group/gender combination (9 for Canadian lifesaving: a single all-gender `10 and under`, plus M and F each for `11-12`, `13-14`, `15-18`, and `Open`)
 - **Points scales**: comma-separated points per rank (e.g. `"20,18,16,14,13,12,11,10,8,7,6,5,4,3,2,1"`)
 - **Flags**: `sortbyresfirst`, `finalusetype`, `isSpecialNoEvents`
 
