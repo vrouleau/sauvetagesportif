@@ -521,30 +521,14 @@ printed "Liste des résultats" report (medals) reads its rank order from.
 - Output: `fixture_pool.smb`, `fixture_beach.smb` (10 clubs, 150 athletes, events, registrations)
 - Usage: File → Restaurer un meet (.smb)
 
-## Simulate Results (test script)
-
-Injects random swim times into all `swimresult` rows that have no time yet. Useful for end-to-end testing of the results export flow without running a real competition.
-
-- **Script**: `scripts/simulate_results.bat` (calls `scripts/simulate_results.py`)
-- **Default DB**: auto-detects `%APPDATA%\SauvetageMeet-Dev\meet.db` (unpackaged, i.e. `npm run dev` — matches `app.setName()` in `src/main/index.ts`) vs. `%APPDATA%\SauvetageMeet\meet.db` (packaged build). **If both exist, the script refuses to guess and asks for an explicit path** — silently running against the wrong one used to look identical to a real "0 results, nothing to simulate" run (bit us for real once: `npm run dev` writes to `-Dev`, but the old hardcoded default pointed at the non-`-Dev` path).
-- **Logic**: `swimtime = entrytime ± 5%` (random if NT: 30–180s), 5% DSQ
-- **Side effect**: marks affected heats as official (`racestatus=5`)
-- **Idempotent**: only fills rows where `swimtime` is NULL or 0 — safe to re-run after generating finals
-
-```bash
-# Default path (auto-detected)
-scripts\simulate_results.bat
-
-# Custom path (required if both packaged and dev databases exist)
-scripts\simulate_results.bat "C:\path\to\meet.db"
-```
-
 ## Generate Results (test script — relay + beach + DSQ codes)
 
-A more capable superset of `simulate_results.py` above: also fills **relay** results (`relay`/`relayposition`), uses **sequential beach positions** per heat instead of pool times when `MEET_TYPE=BEACH`, assigns a real `dsqitemid` reason code (from the meet's own seeded `dsqitem` table, filtered individual-vs-relay via `dsqitem.options`), and takes the DSQ rate as an argument instead of a hardcoded 5%. Pairs with the top-level `scripts/generate_entries_lxf.py` (see root `CLAUDE.md`) as the second half of an end-to-end synthetic-meet testing pipeline.
+Fills realistic random results into all `swimresult`/`relay` rows that have a heat assigned and no result yet. Useful for end-to-end testing of the results export / finals flow without running a real competition. Handles **individual + relay** results (`relay`/`relayposition`), uses **sequential beach positions** per heat instead of pool times when `MEET_TYPE=BEACH`, assigns a real `dsqitemid` reason code (from the meet's own seeded `dsqitem` table, filtered individual-vs-relay via `dsqitem.options`), and takes the DSQ rate as an argument (default 5%). Pairs with the top-level `scripts/generate_entries_lxf.py` (see root `CLAUDE.md`) as the second half of an end-to-end synthetic-meet testing pipeline. (This replaced the older `simulate_results.py`/`.bat`, a pool-times-only subset, removed 2026-11 — `generate_results.py` is a strict superset.)
 
 - **Script**: `scripts/generate_results.bat` (calls `scripts/generate_results.py`)
-- **Same DB auto-detection / idempotency / `racestatus=5` side effect as `simulate_results.py`** — the two scripts intentionally share that contract.
+- **Default DB**: auto-detects `%APPDATA%\SauvetageMeet-Dev\meet.db` (unpackaged, i.e. `npm run dev` — matches `app.setName()` in `src/main/index.ts`) vs. `%APPDATA%\SauvetageMeet\meet.db` (packaged build). **If both exist, the script refuses to guess and asks for an explicit path** — silently running against the wrong one used to look identical to a real "0 results, nothing to simulate" run (bit us for real once: `npm run dev` writes to `-Dev`, but an old hardcoded default pointed at the non-`-Dev` path).
+- **Side effect**: marks affected heats as official (`racestatus=5`).
+- **Idempotent**: only fills rows where the result is still NULL/0 — safe to re-run after generating finals.
 - **Scope**: does *not* generate heats or seed Finals from qualifiers (that logic — `generateHeats`, `autoQualify`, `seedFinals` — is TypeScript-only, no CLI equivalent). It only fills rows that already have a real `heatid` and no result yet, matching the standard two-pass workflow: generate prelim/timed-final heats in-app → run this script → qualify + generate Final heats in-app → re-run this script.
 
 ```bash
@@ -555,11 +539,11 @@ scripts\generate_results.bat
 scripts\generate_results.bat "C:\path\to\meet.db" 15
 ```
 
-End-to-end synthetic meet, from nothing:
+End-to-end synthetic meet, from nothing (full step-by-step procedure in the root `README.md`, "End-to-end test with a large meet"):
 ```bash
 python scripts/generate_entries_lxf.py --clubs 8 --athletes 120 --type pool --output entries.lxf
-# meet-app: File -> Importer LENEX (entries.lxf), then "Générer séries"
+# meet-app: File -> Importer LENEX (entries.lxf), then "Générer séries", then exit
 scripts\generate_results.bat
-# meet-app: qualify + generate heats for any Finals
+# meet-app: qualify + generate heats for any Finals, then exit
 scripts\generate_results.bat
 ```

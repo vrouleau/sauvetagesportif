@@ -22,11 +22,11 @@
 generate_results.py — Fill realistic random results into an existing
 SauvetageMeet SQLite database, for individual AND relay entries, respecting
 meet type (pool times vs. beach sequential positions) and a configurable DSQ
-rate. A more capable superset of simulate_results.py (which stays as the
-lightweight "just fill missing pool times" option) — this one also handles
-relays, beach positions, and DSQ reason codes.
+rate. Handles individual entries, relays, beach positions, and DSQ reason
+codes. (Replaced the older pool-times-only simulate_results.py, removed
+2026-11 — this script is a strict superset.)
 
-Scope, matching how simulate_results.py already works: this script does NOT
+Scope: this script does NOT
 generate heats or seed finals from qualifiers (that logic -- generateHeats,
 autoQualify, seedFinals -- lives only in meet-app's TypeScript, no CLI). It
 only fills swimtime/resultstatus/dsqitemid on swimresult/relay rows that
@@ -51,9 +51,11 @@ For each swimresult/relay row with a real heatid and no result yet:
 
 Usage:
     python scripts/generate_results.py [path_to_meet.db] [--dsq-pct 5] [--seed 42]
-Default DB path: auto-detects between the packaged app's data dir and the
-`npm run dev` data dir, same as simulate_results.py -- see that script's
-docstring for why it refuses to guess when both exist.
+Default DB path: auto-detects between the packaged app's data dir
+(%APPDATA%/SauvetageMeet/meet.db) and the `npm run dev` data dir
+(%APPDATA%/SauvetageMeet-Dev/meet.db). If both exist it refuses to guess and
+asks for an explicit path -- running against the wrong one looks identical to
+a real "0 results, nothing to fill" run.
 """
 
 from __future__ import annotations

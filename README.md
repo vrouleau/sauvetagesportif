@@ -121,6 +121,54 @@ This produces two files in `scripts/`:
 
 To load: File → *Restaurer un meet (.smb)…* and select the desired fixture. Heats are not pre-generated — use *Générer séries* in the app to create them.
 
+### End-to-end test with a large meet (entries → heats → results → finals)
+
+Manually exercise the full competition flow — importing a big synthetic meet, generating heats, and filling realistic random results — without running a real competition. This is the standard way to test the results export / heat / finals logic end-to-end.
+
+Two scripts cooperate:
+- `scripts/generate_entries_lxf.py` (repo **root**) — builds a synthetic LENEX entries file (clubs, athletes across age brackets, individual entries, compliant relay teams).
+- `packages/meet-app/scripts/generate_results.py` — fills realistic random results into the meet-app SQLite DB (individual + relay, pool times or beach positions, configurable DSQ rate). It only fills rows that already have a heat assigned and no result yet, and it's **idempotent** (re-running only touches still-empty rows).
+
+> **Why exit the app before running `generate_results.py`?** The script writes directly to the meet-app SQLite file. meet-app must be closed first, otherwise the DB is locked (and the app wouldn't see the external changes until it reloads anyway).
+
+> **Database path.** `generate_results.py` auto-detects the dev DB (`%APPDATA%\SauvetageMeet-Dev\meet.db`, used by `npm run dev`) vs. the packaged DB (`%APPDATA%\SauvetageMeet\meet.db`). If **both** exist it refuses to guess — pass the path explicitly as the first argument.
+
+**Procedure:**
+
+```bash
+# ── 1. Generate a large synthetic entries file (repo root) ──
+#     Bump --clubs / --athletes for a bigger meet. --type pool|beach.
+python scripts/generate_entries_lxf.py --clubs 12 --athletes 300 --type pool --output entries.lxf
+```
+
+2. **Launch meet-app** (`cd packages/meet-app && npm run dev`) and create a meet of the matching type (*File → Nouveau meet*, pool/beach).
+3. **Import the entries:** *File → Importer LENEX* → select `entries.lxf`. This loads clubs, athletes, and registrations.
+4. **Generate heats:** *Générer séries* — seeds prelim and timed-final heats from the entries.
+5. **Exit meet-app** (close it fully so the SQLite file is unlocked).
+
+```bash
+# ── 6. Fill results into every heat that now exists ──
+#     --dsq-pct sets the DSQ rate (default 5). --seed for reproducible output.
+cd packages/meet-app
+python scripts/generate_results.py --dsq-pct 5
+#     If both dev and packaged DBs exist, pass the path explicitly:
+#     python scripts/generate_results.py "%APPDATA%\SauvetageMeet-Dev\meet.db"
+```
+
+7. **Relaunch meet-app**, then **qualify + generate heats for any Finals** (qualify from prelim times, then *Générer séries* for the Final rounds).
+8. **Exit meet-app** again.
+
+```bash
+# ── 9. Re-run to fill the new Final heats ──
+#     Idempotent: only the still-empty Final rows get results this time.
+cd packages/meet-app
+python scripts/generate_results.py --dsq-pct 5
+```
+
+10. **Relaunch meet-app** and verify results/standings, or test *File → Exporter résultats* for the results LXF round-trip into team-app.
+
+> **Beach meets:** pass `--type beach` in step 1. `generate_results.py` auto-detects `MEET_TYPE=BEACH` from the DB and writes sequential gap-free positions per heat instead of times — no flag change needed in steps 6/9.
+
 ### Dry-run the meet-app package (before releasing)
 
 Build and package the installer **locally** to validate it before tagging a real release. This runs the exact same steps the Release CI runs (`npm run build` + `electron-builder`), just without creating a tag or GitHub release, so nothing is published. Artifacts land in `packages/meet-app/dist/` (gitignored).
