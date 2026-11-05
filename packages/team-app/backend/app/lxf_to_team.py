@@ -138,12 +138,15 @@ def import_lxf_as_meet(db: DbSession, content: bytes, force: bool = False) -> di
     meet_course = _course_to_int(course_str)
     meet_date = _parse_date(meet_el.get("startdate") or meet_el.get("date"))
 
-    # Fall back to first SESSION date if no meet-level date
+    # Fall back to the EARLIEST SESSION date if no meet-level date. mindate is
+    # the meet's start date, so take the minimum session date rather than the
+    # first one in document order (sessions aren't guaranteed to be sorted).
     if not meet_date:
-        for sess_el in root.iter("SESSION"):
-            meet_date = _parse_date(sess_el.get("date"))
-            if meet_date:
-                break
+        session_dates = [
+            d for d in (_parse_date(s.get("date")) for s in root.iter("SESSION")) if d
+        ]
+        if session_dates:
+            meet_date = min(session_dates)
 
     # ── Create or reuse MEETS row ─────────────────────────────────────────────
     existing_meet = db.query(Meet).filter(

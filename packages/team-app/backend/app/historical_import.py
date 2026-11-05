@@ -50,23 +50,28 @@ def _parse_meet_metadata(root) -> dict:
         course = "LCM"
     city = meet_el.get("city", "")
 
+    def _iso(raw: str) -> _date | None:
+        if not raw:
+            return None
+        try:
+            return _date.fromisoformat(raw[:10])
+        except ValueError:
+            return None
+
     startdate: _date | None = None
     for attr in ("startdate", "date"):
-        raw = meet_el.get(attr, "")
-        if raw:
-            try:
-                startdate = _date.fromisoformat(raw[:10])
-                break
-            except ValueError:
-                pass
+        startdate = _iso(meet_el.get(attr, ""))
+        if startdate:
+            break
 
-    stopdate: _date | None = None
-    raw = meet_el.get("stopdate", "")
-    if raw:
-        try:
-            stopdate = _date.fromisoformat(raw[:10])
-        except ValueError:
-            pass
+    # Fall back to the earliest SESSION date when the meet carries no meet-level
+    # date, so meets.mindate is never left NULL on import (mindate = meet start).
+    if not startdate:
+        session_dates = [d for d in (_iso(s.get("date", "")) for s in root.iter("SESSION")) if d]
+        if session_dates:
+            startdate = min(session_dates)
+
+    stopdate: _date | None = _iso(meet_el.get("stopdate", ""))
 
     return {
         "name": name,

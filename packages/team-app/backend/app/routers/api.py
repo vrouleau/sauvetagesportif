@@ -2661,12 +2661,26 @@ async def import_historical(file: UploadFile = File(...), force: bool = False, d
 
 @router.get("/admin/historical-meets", dependencies=[Depends(require_admin)])
 def list_historical_meets(db: Session = Depends(get_db)):
-    """List all historical meets (excludes __best_times_import__ internal meet)."""
+    """List archived/completed meets (meetstate == 3), newest start date first.
+
+    Scope is history-only: current/open meets (meetstate != 3) belong to the
+    Open Meets dashboard (/admin/meets), not here — this is the complement of
+    that filter. Excludes the __best_times_import__ internal pseudo-meet.
+
+    Lieu/Date come straight from MEETS.place/mindate. The import paths
+    (historical_import.py / lxf_to_team.py) populate those columns, deriving
+    the date from the earliest <SESSION date> when the file has no meet-level
+    date. (meet_config's MEETVALUES CITY and the swimsession table only hold
+    data for the current/open meet, which this endpoint excludes, so there's
+    nothing to fall back to for historical rows.)
+    """
     from ..models_team import Meet, Result
+
     meets = (
         db.query(Meet)
         .filter(Meet.name != "__best_times_import__")
-        .order_by(Meet.mindate.desc())
+        .filter(Meet.meetstate == 3)
+        .order_by(Meet.mindate.desc().nullslast())
         .all()
     )
     result = []
@@ -3562,49 +3576,6 @@ async def import_team_mdb_endpoint(file: UploadFile = File(...), db: Session = D
         raise HTTPException(400, f"MDB import failed: {e}")
 
     return {"ok": True, "tables": counts, "filename": file.filename}
-
-
-@router.get("/admin/historical-meets", dependencies=[Depends(require_admin)])
-def list_historical_meets(db: Session = Depends(get_db)):
-    """List all meets in the Team Manager schema (historical + current)."""
-    from ..models_team import Meet, Result
-    meets = db.query(Meet).order_by(Meet.mindate.desc()).all()
-    current_id = get_active_meetsid(db)
-    meet_city = (_get_meet_config(db, current_id, "meet_city") if current_id else None) or ""
-    result = []
-    for m in meets:
-        has_results = db.query(Result).filter(
-            Result.meetsid == m.meetsid,
-            Result.totaltime.isnot(None),
-            Result.totaltime > 0,
-        ).limit(1).count() > 0
-        place = m.place or ""
-        # For current meet, fall back to meet_config's meet_city
-        if not place and current_id and m.meetsid == current_id:
-            place = meet_city
-        result.append({
-            "id": m.meetsid,
-            "name": m.name,
-            "place": place,
-            "mindate": m.mindate.isoformat() if m.mindate else None,
-            "maxdate": m.maxdate.isoformat() if m.maxdate else None,
-            "course": m.course,
-            "has_results": has_results,
-        })
-    return result
-
-
-@router.delete("/admin/historical-meets/{meet_id}", dependencies=[Depends(require_admin)])
-def delete_historical_meet(meet_id: int, db: Session = Depends(get_db)):
-    """Delete a historical meet and all its associated data."""
-    from ..models_team import Meet
-    meet = db.get(Meet, meet_id)
-    if not meet:
-        raise HTTPException(404, "Meet not found")
-    db.delete(meet)  # cascades to sessions, events, results, membersmeets
-    db.commit()
-    return {"ok": True, "deleted": meet.name}
-
 
 
 @router.get("/admin/historical-best-times/{member_id}", dependencies=[Depends(require_admin)])
