@@ -3682,14 +3682,16 @@ class TestCloseMeetWithoutResults:
             requests.post(f"{BASE_URL}/api/sessions", json={"name": "S1", "number": 1},
                           headers=b_headers, timeout=10).raise_for_status()
 
-            # /admin/historical-meets has no meetstate/registration_open
-            # filter (see docs/CONCURRENT_MEETS_PLAN.md) — it lists every
-            # Meet row, open or archived. Snapshotting after meet B exists
-            # isolates just the close action's effect, instead of also
-            # picking up meet B's own creation as a spurious "new entry".
+            # /admin/historical-meets lists only archived meets (meetstate==3);
+            # open meets like A and B live in the Open Meets dashboard, not
+            # here. Snapshot it before closing so we can prove the close
+            # action adds no archived record (A is open, so it shouldn't be
+            # present before OR after).
             before_historical = {m["id"] for m in
                                   requests.get(f"{BASE_URL}/api/admin/historical-meets", headers=admin_headers, timeout=10).json()}
-            assert meet_a_id in before_historical
+            assert meet_a_id not in before_historical, (
+                "an open meet must not appear in historical-meets (meetstate==3 only)"
+            )
 
             r2 = requests.post(f"{BASE_URL}/api/admin/close-meet-without-results",
                                headers={**admin_headers, "X-Meet-Id": str(meet_a_id)}, timeout=10)
@@ -3708,7 +3710,7 @@ class TestCloseMeetWithoutResults:
 
             after_historical = {m["id"] for m in
                                  requests.get(f"{BASE_URL}/api/admin/historical-meets", headers=admin_headers, timeout=10).json()}
-            assert after_historical == before_historical - {meet_a_id}, (
+            assert after_historical == before_historical, (
                 "close-meet-without-results must not create any historical-meets entry — "
                 "meet A should simply be gone, not replaced by an archived record"
             )
