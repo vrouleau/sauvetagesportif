@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.5.8] - 2026-11-05
+
+### 🐛 Bug Fixes
+
+- show Lieu/Date for historical meets, exclude current meet (`6cc9418`)
+
+### 📝 Documentation
+
+- fix stale README facts (beach numbers, swimstyle ids, gender, combined events, OCR deps) (`c56f8c3`)
+
+### 🔧 Chores
+
+- remove redundant simulate_results script, document e2e meet test (`df49909`)
+
+### ✅ Tests
+
+- update close-meet test for history-only historical-meets (`25cd3f7`)
+
 ## [0.5.7] - 2026-11-03
 
 ### 🐛 Bug Fixes
