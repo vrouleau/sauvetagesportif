@@ -1875,6 +1875,35 @@ def reorder_events(request: Request, data: dict = Body(default={}), db: Session 
     return {"ok": True}
 
 
+def _parse_event_time(val) -> datetime | None:
+    """Parse an event daytime/duration "HH:MM" string into the sentinel-date
+    DateTime the swimevent columns use (base 2000-01-01, so it reads back via
+    strftime("%H:%M")).
+
+    Both daytime (time of day) and duration (an elapsed H:MM interval) are stored
+    as a time-of-day offset, so the hour must fit 0-23. The previous code did
+    datetime(2000,1,1,H,M) directly, which raised ValueError (500) for H>=24 or
+    any non-numeric part. This parses defensively: minutes overflow carries into
+    hours, the hour is clamped to 23, and malformed/empty input returns None
+    instead of crashing the request.
+    """
+    if val is None or val == "":
+        return None
+    s = str(val)
+    # Already a full datetime/ISO string — leave for SQLAlchemy to coerce.
+    if "-" in s or "T" in s:
+        return val
+    parts = s.split(":")
+    if len(parts) < 2 or not (parts[0].isdigit() and parts[1].isdigit()):
+        return None
+    hours = int(parts[0])
+    minutes = int(parts[1])
+    hours += minutes // 60
+    minutes = minutes % 60
+    hours = min(hours, 23)  # stored as a time-of-day; H:MM duration caps at 23:59
+    return datetime(2000, 1, 1, hours, minutes)
+
+
 @router.put("/events/{event_id}", dependencies=[Depends(require_organizer_or_admin)])
 def update_event(event_id: int, request: Request, data: dict = Body(default={}), db: Session = Depends(get_db)):
     """Update event fields (gender, swimstyle, number, round, maxentries, etc.)."""
@@ -1905,9 +1934,8 @@ def update_event(event_id: int, request: Request, data: dict = Body(default={}),
             # Convert gender string to int if needed
             if key == "gender" and isinstance(val, str):
                 val = {"ALL": GENDER_ALL, "M": GENDER_M, "F": GENDER_F, "MIXED": GENDER_MIXED, "X": GENDER_MIXED}.get(val, GENDER_MIXED)
-            elif key in ("daytime", "duration") and val:
-                if ":" in str(val) and "-" not in str(val):
-                    val = datetime(2000, 1, 1, *[int(x) for x in str(val).split(":")[:2]])
+            elif key in ("daytime", "duration"):
+                val = _parse_event_time(val)
             setattr(event, col, val)
 
     # An age group's gender is no longer independently editable in the UI — it always

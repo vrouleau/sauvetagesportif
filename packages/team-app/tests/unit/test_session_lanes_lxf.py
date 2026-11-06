@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import sys
 import zipfile
+from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 from xml.etree import ElementTree as ET
@@ -114,3 +115,63 @@ def test_load_from_parsed_persists_session_lanemin_lanemax(db_session):
     row = db_session.query(SwimSession).filter_by(sessionnumber=1).one()
     assert row.lanemin == 1
     assert row.lanemax == 40
+
+
+# ── Session date round-trip ────────────────────────────────────────────────────
+# Regression: generate_lxf wrote age_base_date (the meet-level AGEDATE) into the
+# SESSION @date attribute, so the session's own calendar date was lost and an
+# importing app showed the AGEDATE as the session date. parse_meet_lxf and
+# _load_from_parsed also never carried SESSION @date at all.
+
+def test_generate_lxf_writes_session_date_not_agedate(db_session):
+    # AGEDATE (age_base_date) and the session's real date are deliberately different
+    # so a regression (writing AGEDATE into @date) is caught.
+    db_session.add(BsGlobal(name="age_base_date", data="2026-12-31"))
+    db_session.add(SwimSession(swimsessionid=1, name="Samedi", sessionnumber=1,
+                                startdate=datetime(2026, 11, 28)))
+    db_session.commit()
+
+    lxf_bytes = generate_lxf(db_session)
+    attrs = _session_attrs(lxf_bytes)
+    assert len(attrs) == 1
+    assert attrs[0]["date"] == "2026-11-28"  # the session date, NOT 2026-12-31 (AGEDATE)
+
+
+def test_generate_lxf_session_date_empty_when_unset(db_session):
+    db_session.add(BsGlobal(name="age_base_date", data="2026-12-31"))
+    db_session.add(SwimSession(swimsessionid=1, name="Samedi", sessionnumber=1))
+    db_session.commit()
+
+    lxf_bytes = generate_lxf(db_session)
+    attrs = _session_attrs(lxf_bytes)
+    assert len(attrs) == 1
+    # No session date → empty attribute, never the AGEDATE fallback.
+    assert attrs[0].get("date", "") == ""
+
+
+def test_parse_meet_lxf_reads_session_date(db_session):
+    db_session.add(BsGlobal(name="age_base_date", data="2026-12-31"))
+    db_session.add(SwimSession(swimsessionid=1, name="Samedi", sessionnumber=1,
+                                startdate=datetime(2026, 11, 28)))
+    db_session.commit()
+
+    lxf_bytes = generate_lxf(db_session)
+    meet = parse_meet_lxf(lxf_bytes)
+
+    assert len(meet.sessions) == 1
+    assert meet.sessions[0].date == "2026-11-28"
+
+
+def test_load_from_parsed_persists_session_date(db_session):
+    meet = type("Meet", (), {})()
+    meet.meet_name = "Test Meet"
+    meet.course = "LCM"
+    meet.masters = False
+    meet.sessions = [MeetSession(number=1, name="Samedi", date="2026-11-28", events=[])]
+
+    _load_from_parsed(db_session, meet)
+    db_session.commit()
+
+    row = db_session.query(SwimSession).filter_by(sessionnumber=1).one()
+    assert row.startdate is not None
+    assert row.startdate.strftime("%Y-%m-%d") == "2026-11-28"

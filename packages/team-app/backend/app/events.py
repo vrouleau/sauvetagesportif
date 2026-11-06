@@ -19,6 +19,7 @@
 """Load events from meet .lxf into SwimEvent + SwimStyle + AgeGroup tables."""
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 from sqlalchemy.orm import Session
@@ -36,6 +37,19 @@ def _round_from_lenex(round_str: str) -> int:
     """Map Lenex round string to Splash integer encoding."""
     mapping = {"PRE": ROUND_PRE, "SEM": 2, "FIN": ROUND_FIN, "TIM": ROUND_TIM}
     return mapping.get(round_str, ROUND_TIM)
+
+
+def _time_to_datetime(value: str | None) -> datetime | None:
+    """Encode a LENEX "HH:MM" time-of-day into the DateTime form the swimevent
+    daytime/duration columns use (fixed sentinel date 2000-01-01), matching
+    routers/api.py's update_event. Returns None for blank/invalid input."""
+    if not value:
+        return None
+    parts = value.split(":")
+    try:
+        return datetime(2000, 1, 1, int(parts[0]), int(parts[1]) if len(parts) > 1 else 0)
+    except (ValueError, IndexError):
+        return None
 
 
 def _load_from_parsed(db: Session, meet: ParsedMeet, reuse_meetsid: int | None = None) -> int:
@@ -74,10 +88,21 @@ def _load_from_parsed(db: Session, meet: ParsedMeet, reuse_meetsid: int | None =
 
     for ses in meet.sessions:
         # Create session (old schema)
+        # LENEX SESSION @date (YYYY-MM-DD) → startdate. Without this the imported
+        # session had no date and the UI showed blank (see export.py, which also
+        # used to write the wrong date here).
+        ses_startdate = None
+        if ses.date:
+            try:
+                ses_startdate = datetime.strptime(ses.date[:10], "%Y-%m-%d")
+            except ValueError:
+                ses_startdate = None
+
         session = SwimSession(
             meetsid=team_meet.meetsid,
             sessionnumber=ses.number,
             name=ses.name,
+            startdate=ses_startdate,
             course=None,  # will be set from meet-level course if needed
             lanemin=ses.lanemin,
             lanemax=ses.lanemax,
@@ -92,6 +117,7 @@ def _load_from_parsed(db: Session, meet: ParsedMeet, reuse_meetsid: int | None =
             meetsid=team_meet.meetsid,
             numb=ses.number,
             name=(ses.name or "")[:50],
+            startdate=ses_startdate,
         )
         db.add(team_session)
         db.flush()
@@ -110,6 +136,9 @@ def _load_from_parsed(db: Session, meet: ParsedMeet, reuse_meetsid: int | None =
                     db.add(style)
                     db.flush()
 
+            ev_daytime = _time_to_datetime(ev.daytime)
+            ev_duration = _time_to_datetime(ev.duration)
+
             event = SwimEvent(
                 swimeventid=ev.eventid,
                 meetsid=team_meet.meetsid,
@@ -124,6 +153,8 @@ def _load_from_parsed(db: Session, meet: ParsedMeet, reuse_meetsid: int | None =
                 roundname=ev.roundname or None,
                 internalevent="T" if ev.is_internal else "F",
                 comment=ev.roundname if ev.is_internal else None,
+                daytime=ev_daytime,
+                duration=ev_duration,
             )
             db.add(event)
             db.flush()

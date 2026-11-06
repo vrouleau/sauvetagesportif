@@ -156,12 +156,14 @@ def _meet_struct_from_db(db: Session, meetsid: int | None = None):
                 round=round_map.get(ev.round, "TIM"),
                 event_type="MASTERS" if ev.masters == 'T' else "",
                 swimstyleid=ev.swimstyleid or 0,
-                distance=ev.swimstyle.distance if ev.swimstyle else 0,
-                relaycount=ev.swimstyle.relaycount if ev.swimstyle else 1,
+                distance=(ev.swimstyle.distance if ev.swimstyle else None) or 0,
+                relaycount=(ev.swimstyle.relaycount if ev.swimstyle else None) or 1,
                 style_name=ev.swimstyle.name if ev.swimstyle else "",
                 agegroups=ag_list,
                 roundname=ev.roundname or (ev.comment if ev.swimstyleid is None else "") or "",
                 is_internal=(ev.internalevent == 'T' or ev.swimstyleid is None),
+                daytime=ev.daytime.strftime("%H:%M") if ev.daytime else "",
+                duration=ev.duration.strftime("%H:%M") if ev.duration else "",
             ))
         preveventids = _compute_preveventids(
             [(m.eventid, m.number, m.gender, m.swimstyleid, m.round) for m in events]
@@ -173,6 +175,7 @@ def _meet_struct_from_db(db: Session, meetsid: int | None = None):
             name=ses.name or "",
             lanemin=ses.lanemin,
             lanemax=ses.lanemax,
+            date=ses.startdate.strftime("%Y-%m-%d") if ses.startdate else "",
             events=events,
         ))
 
@@ -263,7 +266,10 @@ def generate_lxf(db: Session, meetsid: int | None = None) -> bytes:
         ses_attrs = {
             "number": str(ses.number),
             "name": ses.name or "",
-            "date": age_base_date,
+            # The session's own calendar date — NOT age_base_date (the AGEDATE), which
+            # is a meet-level age-calculation reference and was being written here by
+            # mistake, so imports showed the wrong session date.
+            "date": ses.date or "",
             "course": meet_struct.course or "LCM",
         }
         if ses.lanemin is not None:
@@ -281,6 +287,10 @@ def generate_lxf(db: Session, meetsid: int | None = None) -> bytes:
                 "round": m_ev.round,
                 "preveventid": str(m_ev.preveventid),
             }
+            if m_ev.daytime:
+                ev_attrs["daytime"] = m_ev.daytime
+            if m_ev.duration:
+                ev_attrs["duration"] = m_ev.duration
             if m_ev.roundname:
                 ev_attrs["name"] = m_ev.roundname
             if m_ev.is_internal:
@@ -648,11 +658,9 @@ def generate_meet_lxf_from_db(db: Session, meetsid: int | None = None) -> bytes:
 
     sessions_xml = ET.SubElement(meet_xml, "SESSIONS")
     for ses in db_sessions:
-        ses_date = ""
-        if ses.daytime:
-            ses_date = ses.daytime.strftime("%Y-%m-%d")
-        elif ses.startdate:
-            ses_date = ses.startdate.strftime("%Y-%m-%d")
+        # The SESSION calendar date comes from startdate; daytime is the start
+        # time-of-day, not a date, so it must not be the source for @date.
+        ses_date = ses.startdate.strftime("%Y-%m-%d") if ses.startdate else ""
         ses_attrs = {
             "number": str(ses.sessionnumber or ses.swimsessionid),
             "name": ses.name or "",
@@ -682,6 +690,10 @@ def generate_meet_lxf_from_db(db: Session, meetsid: int | None = None) -> bytes:
                 "round": _ROUND_MAP.get(ev.round, "TIM"),
                 "preveventid": str(preveventids[ev.swimeventid]),
             }
+            if ev.daytime:
+                ev_attrs["daytime"] = ev.daytime.strftime("%H:%M")
+            if ev.duration:
+                ev_attrs["duration"] = ev.duration.strftime("%H:%M")
             if ev.masters == 'T':
                 ev_attrs["type"] = "MASTERS"
             if ev.roundname:
@@ -691,10 +703,16 @@ def generate_meet_lxf_from_db(db: Session, meetsid: int | None = None) -> bytes:
             if ev.internalevent == 'T' or ev.swimstyleid is None:
                 ev_attrs["internalevent"] = "T"
             ev_xml = ET.SubElement(evts_xml, "EVENT", ev_attrs)
+            # A swimstyle with a NULL distance/relaycount (common for lifesaving
+            # styles) must not serialize as the literal "None" — str(None) would
+            # otherwise land in the attribute and crash int() on re-import. Fall
+            # back to 0/1.
+            _style_distance = (ev.swimstyle.distance if ev.swimstyle else None) or 0
+            _style_relaycount = (ev.swimstyle.relaycount if ev.swimstyle else None) or 1
             style_attrs = {
                 "stroke": _STROKE_MAP.get(ev.swimstyle.stroke if ev.swimstyle else 0, "UNKNOWN"),
-                "distance": str(ev.swimstyle.distance if ev.swimstyle else 0),
-                "relaycount": str(ev.swimstyle.relaycount if ev.swimstyle else 1),
+                "distance": str(_style_distance),
+                "relaycount": str(_style_relaycount),
             }
             if ev.swimstyleid:
                 style_attrs["swimstyleid"] = str(ev.swimstyleid)

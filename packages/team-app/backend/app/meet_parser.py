@@ -31,6 +31,20 @@ from xml.etree import ElementTree as ET  # noqa: F401
 from defusedxml.ElementTree import fromstring as _ET_fromstring
 
 
+def _safe_int(value, default: int) -> int:
+    """int() an XML attribute that may be absent, blank, or the literal string
+    "None"/non-numeric (e.g. a meet-app export writes distance="None" for a
+    style-less pause SWIMSTYLE). ElementTree.get(name, default) only returns the
+    default when the attribute is ABSENT, so a present-but-"None" value would
+    otherwise reach int() and raise ValueError, 500-ing the whole import."""
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return default
+
+
 @dataclass
 class MeetAgeGroup:
     agegroupid: int
@@ -54,6 +68,10 @@ class MeetEvent:
     roundname: str = ""
     is_internal: bool = False
     preveventid: int = -1
+    # LENEX EVENT @daytime (scheduled start time) and @duration, as "HH:MM" strings.
+    # Empty when unset. Carried through import/export for events AND pauses.
+    daytime: str = ""
+    duration: str = ""
 
     @property
     def is_masters(self) -> bool:
@@ -76,6 +94,9 @@ class MeetSession:
     name: str
     lanemin: int | None = None
     lanemax: int | None = None
+    # Session calendar date as YYYY-MM-DD (LENEX SESSION @date). Distinct from the
+    # meet's AGEDATE — see export.py, which previously conflated the two.
+    date: str = ""
     events: list[MeetEvent] = field(default_factory=list)
 
 
@@ -138,44 +159,45 @@ def parse_meet_lxf(source) -> ParsedMeet:
     for session_el in root.iter("SESSION"):
         lanemin_attr = session_el.get("lanemin")
         lanemax_attr = session_el.get("lanemax")
+        date_attr = session_el.get("date", "") or ""
         ses = MeetSession(
-            number=int(session_el.get("number", 0)),
+            number=_safe_int(session_el.get("number"), 0),
             name=session_el.get("name", ""),
-            lanemin=int(lanemin_attr) if lanemin_attr else None,
-            lanemax=int(lanemax_attr) if lanemax_attr else None,
+            lanemin=_safe_int(lanemin_attr, 0) if lanemin_attr else None,
+            lanemax=_safe_int(lanemax_attr, 0) if lanemax_attr else None,
+            date=date_attr[:10] if len(date_attr) >= 10 else "",
         )
         for event_el in session_el.iter("EVENT"):
             style_el = event_el.find("SWIMSTYLE")
             fee_el = event_el.find("FEE")
-            try:
-                fee_cents = int(fee_el.get("value", 0)) if fee_el is not None else 0
-            except (ValueError, TypeError):
-                fee_cents = 0
+            fee_cents = _safe_int(fee_el.get("value") if fee_el is not None else None, 0)
             # A style-less SWIMSTYLE (code="ID0", no swimstyleid) marks a pause/break
             # event — this is how Splash represents it, in addition to our own
             # internalevent="T" attribute on EVENT.
             is_placeholder_style = style_el is not None and style_el.get("code") == "ID0"
             is_internal = event_el.get("internalevent", "").upper() == "T" or is_placeholder_style
             ev = MeetEvent(
-                eventid=int(event_el.get("eventid", 0)),
-                number=int(event_el.get("number", 0)),
+                eventid=_safe_int(event_el.get("eventid"), 0),
+                number=_safe_int(event_el.get("number"), 0),
                 gender=event_el.get("gender", ""),
                 round=event_el.get("round", "TIM"),
                 event_type=event_el.get("type", ""),
-                swimstyleid=0 if is_placeholder_style else (int(style_el.get("swimstyleid", 0)) if style_el is not None else 0),
-                distance=int(style_el.get("distance", 0)) if style_el is not None else 0,
-                relaycount=int(style_el.get("relaycount", 1)) if style_el is not None else 1,
+                swimstyleid=0 if is_placeholder_style else (_safe_int(style_el.get("swimstyleid"), 0) if style_el is not None else 0),
+                distance=_safe_int(style_el.get("distance"), 0) if style_el is not None else 0,
+                relaycount=_safe_int(style_el.get("relaycount"), 1) if style_el is not None else 1,
                 style_name=(style_el.get("name", "") if style_el is not None else ""),
                 fee_cents=fee_cents,
                 roundname=event_el.get("name", ""),
                 is_internal=is_internal,
-                preveventid=int(event_el.get("preveventid", -1)),
+                preveventid=_safe_int(event_el.get("preveventid"), -1),
+                daytime=(event_el.get("daytime") or "")[:5],
+                duration=(event_el.get("duration") or "")[:5],
             )
             for ag_el in event_el.iter("AGEGROUP"):
                 ev.agegroups.append(MeetAgeGroup(
-                    agegroupid=int(ag_el.get("agegroupid", 0)),
-                    agemin=int(ag_el.get("agemin", -1)),
-                    agemax=int(ag_el.get("agemax", -1)),
+                    agegroupid=_safe_int(ag_el.get("agegroupid"), 0),
+                    agemin=_safe_int(ag_el.get("agemin"), -1),
+                    agemax=_safe_int(ag_el.get("agemax"), -1),
                 ))
             ses.events.append(ev)
         meet.sessions.append(ses)
