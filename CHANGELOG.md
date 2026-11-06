@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.10] - 2026-11-06
+
+### 🔧 Chores
+
+- bump electron 45.1.0 -> 45.2.3 (`645d620`)
+- bump backend Python patch versions (`2a9686d`)
+- override minimatch to ^11.0.1 to fix ReDoS advisory (`de8d9f2`)
+
+### ✅ Tests
+
+- fix flaky beach-number idempotency test timeout (`ac5f5fc`)
+
 ## [0.5.9] - 2026-11-06
 
 ### 🐛 Bug Fixes
