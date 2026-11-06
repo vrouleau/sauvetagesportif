@@ -22,6 +22,7 @@ import { useRegistrationApi } from '../context/RegistrationApiContext'
 import type { RegistrationData, RegistrationStyle } from '../data/api'
 import { formatEntryTime as msToTime, parseEntryTime as parseTime } from '../logic/timeFormat'
 import { filterCategoriesAroundSuggestion, computeAvailableCategories } from '../logic/ageGroupCode'
+import { toDateInput } from '../logic/dateFormat'
 import TimeInput from '../components/TimeInput'
 
 interface RegistrationPageProps {
@@ -158,9 +159,7 @@ export default function RegistrationPage({ athleteId, onNavigateBack }: Registra
             </div>
             <div className="flex items-center gap-1">
               <label className="text-xs text-gray-500">{tr.dob}:</label>
-              <input type="date" className="border border-gray-300 px-1.5 py-0.5 rounded text-xs" defaultValue={athlete.birthdate}
-                     onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-                     onBlur={e => saveAthlete('birthdate', e.target.value)} />
+              <BirthdateField value={athlete.birthdate} onSave={v => saveAthlete('birthdate', v)} />
             </div>
             <div className="flex items-center gap-1">
               <label className="text-xs text-gray-500">{tr.nran}:</label>
@@ -330,5 +329,29 @@ export default function RegistrationPage({ athleteId, onNavigateBack }: Registra
         )}
       </div>
     </div>
+  )
+}
+
+/**
+ * Controlled birthdate input (blur-to-save). Unlike the sibling text fields,
+ * this is controlled and re-syncs on prop change via useEffect: an
+ * <input type="date"> only renders a strict YYYY-MM-DD value (a datetime like
+ * "1978-08-23T00:00:00" is silently rejected and shows blank), and with the
+ * uncontrolled defaultValue approach the field would also keep a stale value
+ * after the parent reloads athlete data. toDateInput() normalizes the incoming
+ * value; see logic/dateFormat.ts.
+ */
+function BirthdateField({ value, onSave }: { value: string | null | undefined; onSave: (value: string) => void }) {
+  const [val, setVal] = useState(toDateInput(value))
+  useEffect(() => { setVal(toDateInput(value)) }, [value])
+  return (
+    <input
+      type="date"
+      className="border border-gray-300 px-1.5 py-0.5 rounded text-xs"
+      value={val}
+      onChange={e => setVal(e.target.value)}
+      onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+      onBlur={e => { if (e.target.value !== toDateInput(value)) onSave(e.target.value) }}
+    />
   )
 }

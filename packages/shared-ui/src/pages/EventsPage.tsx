@@ -37,6 +37,7 @@ import type { Session, CompetitionEvent, AgeGroup, SwimStyle } from '../data/api
 import { useApi } from '../context/ApiContext'
 import { useLang } from '../context/LangContext'
 import { buildEventGroups, findEventGroup, sameShape, findSiblingAgeGroup } from '../logic/eventGroups'
+import { toDateInput, toSplashDate } from '../logic/dateFormat'
 
 type SelectedItem =
   | { type: 'competition' }
@@ -2135,19 +2136,10 @@ function FeeFieldRow({ label, fieldKey }: { label: string; fieldKey: string }) {
 
 function DateFieldRow({ label, fieldKey }: { label: string; fieldKey: string }) {
   const { meetValues, saveField } = useContext(MeetConfigContext)
-  // Splash date format: YYYYMMDDHHMMSSMMM → display as YYYY-MM-DD
-  const raw = meetValues[fieldKey] ?? ''
-  const toIso = (v: string): string => {
-    if (/^\d{4}-\d{2}-\d{2}/.test(v)) return v.slice(0, 10)
-    if (/^\d{8,}/.test(v)) return `${v.slice(0, 4)}-${v.slice(4, 6)}-${v.slice(6, 8)}`
-    return v
-  }
-  const toSplash = (iso: string): string => {
-    // YYYY-MM-DD → YYYYMMDD000000000
-    return iso.replace(/-/g, '') + '000000000'
-  }
-  const [val, setVal] = useState(toIso(raw))
-  useEffect(() => { setVal(toIso(meetValues[fieldKey] ?? '')) }, [meetValues[fieldKey]])
+  // Meet-config dates persist in Splash's packed YYYYMMDDHHMMSSMMM format;
+  // normalize to YYYY-MM-DD for the input and back for saving (see dateFormat.ts).
+  const [val, setVal] = useState(toDateInput(meetValues[fieldKey]))
+  useEffect(() => { setVal(toDateInput(meetValues[fieldKey] ?? '')) }, [meetValues[fieldKey]])
   return (
     <tr className="border-b border-gray-100 hover:bg-gray-50">
       <td className="px-4 py-0.5 text-gray-600 w-64">{label}</td>
@@ -2157,7 +2149,7 @@ function DateFieldRow({ label, fieldKey }: { label: string; fieldKey: string }) 
           className="w-40 border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
           value={val}
           onChange={(e) => setVal(e.target.value)}
-          onBlur={() => saveField(fieldKey, toSplash(val), 'D')}
+          onBlur={() => saveField(fieldKey, toSplashDate(val), 'D')}
         />
       </td>
     </tr>
@@ -2454,6 +2446,37 @@ function TextRow({ label, value, field }: { label: string; value: string; field:
   )
 }
 
+function DateRow({ label, value, field }: { label: string; value: string | undefined; field: string }) {
+  const onUpdate = useContext(SessionUpdateContext)
+  // Controlled input so the field re-syncs when `session.date` changes (e.g. after a
+  // save, a fresh fetch, or an external update). A plain uncontrolled defaultValue is
+  // only honored on mount and the panel isn't remounted when the same session's date
+  // changes (it's keyed on session id), so the field would otherwise show a stale date.
+  //
+  // An <input type="date"> only renders a value in strict YYYY-MM-DD form; a datetime
+  // string like "2026-11-28T00:00:00" (which some backends return for a DATE column)
+  // is silently rejected and shows blank. toDateInput() normalizes it (see dateFormat.ts).
+  const [val, setVal] = useState(toDateInput(value))
+  useEffect(() => { setVal(toDateInput(value)) }, [value])
+  return (
+    <tr className="border-b border-gray-100 hover:bg-gray-50">
+      <td className="px-4 py-0.5 text-gray-600 w-64">{label}</td>
+      <td className="px-2 py-0.5">
+        <input
+          type="date"
+          className="w-full border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
+          value={val}
+          onChange={(e) => setVal(e.target.value)}
+          onBlur={(e) => {
+            if (e.target.value !== toDateInput(value)) onUpdate({ [field]: e.target.value || null })
+          }}
+          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+        />
+      </td>
+    </tr>
+  )
+}
+
 function NumberRow({ label, value, field }: { label: string; value: number | undefined; field: string }) {
   const onUpdate = useContext(SessionUpdateContext)
   return (
@@ -2609,20 +2632,7 @@ function SessionPropertiesPanel({
           {!collapsed.has('Général') && (
             <>
               <NumberRow label="Numéro" value={session.number} field="sessionnumber" />
-              <tr className="border-b border-gray-100 hover:bg-gray-50">
-                <td className="px-4 py-0.5 text-gray-600 w-64">Date</td>
-                <td className="px-2 py-0.5">
-                  <input
-                    type="date"
-                    className="w-full border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
-                    defaultValue={session.date ?? ''}
-                    onBlur={(e) => {
-                      if (e.target.value !== (session.date ?? '')) onUpdate({ startdate: e.target.value || null })
-                    }}
-                    onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-                  />
-                </td>
-              </tr>
+              <DateRow label="Date" value={session.date} field="startdate" />
               <TextRow label="Nom" value={session.name} field="name" />
             </>
           )}

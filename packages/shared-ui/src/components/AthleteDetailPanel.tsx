@@ -19,6 +19,7 @@
 import { useState, useEffect } from 'react'
 import type { RegistrationData, Club } from '../data/api'
 import { useLang } from '../context/LangContext'
+import { toDateInput } from '../logic/dateFormat'
 
 export interface AthleteDetailPanelProps {
   athlete: RegistrationData['athlete'] | null
@@ -71,7 +72,7 @@ export default function AthleteDetailPanel({ athlete, athleteId, onSave, clubs, 
         <DateField
           key={`${athleteId}-birthdate`}
           label={tr.dob}
-          defaultValue={athlete.birthdate}
+          defaultValue={toDateInput(athlete.birthdate)}
           onSave={(value) => onSave('birthdate', value)}
         />
         <EditableField

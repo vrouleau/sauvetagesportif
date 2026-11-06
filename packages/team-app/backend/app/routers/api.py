@@ -1567,7 +1567,11 @@ def list_sessions(request: Request, db: Session = Depends(get_db)):
             "id": s.swimsessionid,
             "number": s.sessionnumber or 0,
             "name": s.name or "",
-            "date": s.startdate.isoformat() if s.startdate else None,
+            # startdate is a DATETIME column; an <input type="date"> only accepts a
+            # bare YYYY-MM-DD value, so emit the date part only (isoformat() would
+            # yield "...T00:00:00", which the date input rejects and renders blank).
+            # getattr(..., "date", ...) handles both datetime and plain date values.
+            "date": getattr(s.startdate, "date", lambda: s.startdate)().isoformat() if s.startdate else None,
             "time": s.daytime.strftime("%H:%M") if s.daytime else None,
             "endTime": s.endtime.strftime("%H:%M") if s.endtime else None,
             "poolSize": 50 if s.course == 1 else 25,
