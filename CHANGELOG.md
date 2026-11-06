@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.11] - 2026-11-06
+
+### 🐛 Bug Fixes
+
+- session date + event/pause daytime/duration LXF round-trip (`f736e1c`)
+- date/time round-trip + event daytime/duration in LXF (`add7fe4`)
+
 ## [0.5.10] - 2026-11-06
 
 ### 🔧 Chores
