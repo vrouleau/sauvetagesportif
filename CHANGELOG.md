@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.9] - 2026-11-06
+
+### 🐛 Bug Fixes
+
+- normalize date-input values to YYYY-MM-DD (`490e6b3`)
+
 ## [0.5.8] - 2026-11-05
 
 ### 🐛 Bug Fixes
