@@ -51,3 +51,44 @@ export function toSplashDate(iso: string | null | undefined): string {
   if (!iso) return ''
   return iso.replace(/-/g, '') + '000000000'
 }
+
+/**
+ * Coerce a time-of-day string to the strict zero-padded "HH:MM" an
+ * `<input type="time">` requires. A value like "9:30" (single-digit hour, as
+ * meet-app's formatDaytime emits) is silently rejected by the input and renders
+ * blank — even though it displays fine as plain text elsewhere. Returns '' for
+ * empty/unrecognized input.
+ */
+export function toTimeInput(v: string | null | undefined): string {
+  if (!v) return ''
+  const m = String(v).match(/^(\d{1,2}):(\d{2})/)
+  if (!m) return ''
+  return `${m[1].padStart(2, '0')}:${m[2]}`
+}
+
+/**
+ * Normalize a loosely-typed DURATION (elapsed time, not a clock time) to the
+ * "H:MM" wire format the DB/LXF layers use. Rules:
+ *   - "H:MM" form (contains ":") is kept as typed; minutes clamped to 59.
+ *       "1:00" → "1:00", "0:15" → "0:15", "1:5" → "1:05"
+ *   - a BARE NUMBER is minutes (carrying into hours past 60):
+ *       "1" → "0:01", "15" → "0:15", "90" → "1:30"
+ * Empty input returns ''. Unrecognized input is returned unchanged so the user
+ * can see and correct it rather than having it silently wiped.
+ */
+export function normalizeDuration(raw: string | null | undefined): string {
+  const s = (raw ?? '').trim()
+  if (!s) return ''
+  const colon = s.match(/^(\d{1,3}):(\d{1,2})$/)
+  if (colon) {
+    const h = parseInt(colon[1], 10)
+    const m = Math.min(59, parseInt(colon[2], 10))
+    return `${h}:${String(m).padStart(2, '0')}`
+  }
+  const mins = s.match(/^\d{1,4}$/)
+  if (mins) {
+    const total = parseInt(s, 10)
+    return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
+  }
+  return s
+}

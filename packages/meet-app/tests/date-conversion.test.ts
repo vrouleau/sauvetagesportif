@@ -91,8 +91,16 @@ function parseBirthDate(birthdate: string | number | null): string {
   return '2000-01-01'
 }
 
-function parseOleDate(d: string | number | null): string | undefined {
+function parseOleDate(d: string | number | Date | null): string | undefined {
   if (d == null) return undefined
+  if (d instanceof Date) {
+    if (isNaN(d.getTime())) return undefined
+    const y = d.getFullYear()
+    if (y < 1900 || y > 2100) return undefined
+    const m = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    return `${y}-${m}-${day}`
+  }
   if (typeof d === 'number') {
     if (d <= 0 || d === -36522) return undefined
     const ms = OLE_EPOCH_MS + d * 86400000
@@ -244,6 +252,13 @@ describe('parseOleDate', () => {
   it('parses ISO date string', () => {
     expect(parseOleDate('2026-06-15')).toBe('2026-06-15')
     expect(parseOleDate('2026-06-15 08:00:00')).toBe('2026-06-15')
+  })
+
+  it('parses a JS Date object using local components (PG DATE fallback)', () => {
+    // node-pg can hand back a DATE column as a Date at local midnight; formatting
+    // from local components must not shift the day the way toISOString() (UTC) would.
+    expect(parseOleDate(new Date(2026, 10, 28))).toBe('2026-11-28') // month is 0-indexed
+    expect(parseOleDate(new Date('invalid'))).toBeUndefined()
   })
 
   it('returns undefined for null sentinel', () => {

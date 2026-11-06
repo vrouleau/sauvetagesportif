@@ -17,7 +17,7 @@
 // along with Sauvetage Sportif. If not, see <https://www.gnu.org/licenses/>.
 
 import { describe, it, expect } from 'vitest'
-import { toDateInput, toSplashDate } from './dateFormat'
+import { toDateInput, toSplashDate, normalizeDuration, toTimeInput } from './dateFormat'
 
 describe('toDateInput', () => {
   it('passes through a bare ISO date', () => {
@@ -55,5 +55,55 @@ describe('toSplashDate', () => {
 
   it('round-trips with toDateInput', () => {
     expect(toDateInput(toSplashDate('2026-11-28'))).toBe('2026-11-28')
+  })
+})
+
+describe('toTimeInput', () => {
+  it('zero-pads a single-digit hour (the blank <input type=time> bug)', () => {
+    expect(toTimeInput('9:30')).toBe('09:30')
+    expect(toTimeInput('1:05')).toBe('01:05')
+  })
+
+  it('passes through an already-padded HH:MM', () => {
+    expect(toTimeInput('10:00')).toBe('10:00')
+    expect(toTimeInput('22:00')).toBe('22:00')
+  })
+
+  it('trims seconds if present', () => {
+    expect(toTimeInput('09:30:00')).toBe('09:30')
+  })
+
+  it('returns empty for empty/nullish/unrecognized input', () => {
+    expect(toTimeInput('')).toBe('')
+    expect(toTimeInput(null)).toBe('')
+    expect(toTimeInput(undefined)).toBe('')
+    expect(toTimeInput('abc')).toBe('')
+  })
+})
+
+describe('normalizeDuration', () => {
+  it('keeps an explicit H:MM as typed', () => {
+    expect(normalizeDuration('1:00')).toBe('1:00')
+    expect(normalizeDuration('1:30')).toBe('1:30')
+    expect(normalizeDuration('0:15')).toBe('0:15')
+    expect(normalizeDuration('1:5')).toBe('1:05')
+    expect(normalizeDuration('1:75')).toBe('1:59') // minutes clamped to 59
+  })
+
+  it('treats a bare number as MINUTES', () => {
+    expect(normalizeDuration('1')).toBe('0:01')
+    expect(normalizeDuration('15')).toBe('0:15')
+    expect(normalizeDuration('90')).toBe('1:30')
+    expect(normalizeDuration('0')).toBe('0:00')
+  })
+
+  it('returns empty for empty/nullish input', () => {
+    expect(normalizeDuration('')).toBe('')
+    expect(normalizeDuration(null)).toBe('')
+    expect(normalizeDuration(undefined)).toBe('')
+  })
+
+  it('leaves unrecognized input unchanged for user correction', () => {
+    expect(normalizeDuration('abc')).toBe('abc')
   })
 })

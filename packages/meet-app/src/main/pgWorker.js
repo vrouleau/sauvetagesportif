@@ -35,6 +35,12 @@ const { Pool, types } = require('pg')
 // without timezone conversion issues.
 types.setTypeParser(1114, (val) => val) // timestamp → raw string
 types.setTypeParser(1184, (val) => val) // timestamptz → raw string
+// PG OID 1082 = date. Without this, node-pg returns a JS Date (parsed at LOCAL
+// midnight); normalizeRow() then does toISOString() (UTC), which shifts the day
+// backwards in any timezone west of UTC and, for session startdate, left the
+// Date field blank/wrong. Return the raw "YYYY-MM-DD" string so parseOleDate()
+// gets exactly what <input type="date"> needs, with no timezone conversion.
+types.setTypeParser(1082, (val) => val) // date → raw string
 
 // PG OID 20 = int8/bigint. node-pg returns this as a STRING by default (to
 // avoid silent precision loss past Number.MAX_SAFE_INTEGER), but every bigint

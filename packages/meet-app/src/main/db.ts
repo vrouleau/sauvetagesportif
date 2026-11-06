@@ -148,8 +148,20 @@ const OLE_EPOCH_MS = Date.UTC(1899, 11, 30) // month is 0-indexed
  * Parse an OLE Automation date (or ISO date string) into a YYYY-MM-DD string.
  * Returns undefined if the value is null, zero, or the null sentinel.
  */
-export function parseOleDate(d: string | number | null): string | undefined {
+export function parseOleDate(d: string | number | Date | null): string | undefined {
   if (d == null) return undefined
+
+  // A JS Date can reach here if a PG driver returns a DATE/TIMESTAMP column as a
+  // Date object (e.g. no raw-string type parser registered). Format from LOCAL
+  // components — using toISOString() here would shift the day in non-UTC zones.
+  if (d instanceof Date) {
+    if (isNaN(d.getTime())) return undefined
+    const y = d.getFullYear()
+    if (y < 1900 || y > 2100) return undefined
+    const m = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    return `${y}-${m}-${day}`
+  }
 
   if (typeof d === 'number') {
     if (d <= 0 || d === -36522) return undefined // null sentinel or invalid

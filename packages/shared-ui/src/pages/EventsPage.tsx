@@ -37,7 +37,7 @@ import type { Session, CompetitionEvent, AgeGroup, SwimStyle } from '../data/api
 import { useApi } from '../context/ApiContext'
 import { useLang } from '../context/LangContext'
 import { buildEventGroups, findEventGroup, sameShape, findSiblingAgeGroup } from '../logic/eventGroups'
-import { toDateInput, toSplashDate } from '../logic/dateFormat'
+import { toDateInput, toSplashDate, normalizeDuration, toTimeInput } from '../logic/dateFormat'
 
 type SelectedItem =
   | { type: 'competition' }
@@ -1715,17 +1715,40 @@ function ageRangeLabel(t: ReturnType<typeof useLang>['t'], minAge: number, maxAg
   return t.events.ageRangeLabel(lower, upper, genderLabel)
 }
 
+/**
+ * Duration entry as HH:MM of ELAPSED time (not a wall-clock time of day).
+ * A native <input type="time"> is wrong here: it's a clock picker capped at
+ * 23:59 and reads as a time of day, whereas a duration is an interval (e.g.
+ * "1:30" = 1h30m, and may exceed 24h). This is a text field that accepts loose
+ * input ("90", "1:30", "1h30", "45m") and normalizes to "H:MM" on blur, keeping
+ * the exact same H:MM wire format the DB/LXF layers already use.
+ */
+function DurationInput({ value, onChange, onSave }: { value: string; onChange: (v: string) => void; onSave: (v: string) => void }) {
+  return (
+    <input
+      type="text"
+      inputMode="numeric"
+      placeholder="h:mm"
+      className="w-28 border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      onBlur={() => onSave(normalizeDuration(value))}
+      onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+    />
+  )
+}
+
 // ─── Pause Properties Panel (simplified: name, time, duration) ────────────────
 
 function PausePropertiesPanel({ event, onUpdate }: { event: CompetitionEvent; onUpdate: (data: Record<string, unknown>) => void }) {
   const { t } = useLang()
   const [pauseName, setPauseName] = useState(event.nameFr)
-  const [scheduledTime, setScheduledTime] = useState(event.scheduledTime ?? '')
+  const [scheduledTime, setScheduledTime] = useState(toTimeInput(event.scheduledTime))
   const [duration, setDuration] = useState(event.duration ?? '')
 
   useEffect(() => {
     setPauseName(event.nameFr)
-    setScheduledTime(event.scheduledTime ?? '')
+    setScheduledTime(toTimeInput(event.scheduledTime))
     setDuration(event.duration ?? '')
   }, [event.id, event.nameFr, event.scheduledTime, event.duration])
 
@@ -1777,12 +1800,10 @@ function PausePropertiesPanel({ event, onUpdate }: { event: CompetitionEvent; on
           <tr className="border-b border-gray-100 hover:bg-gray-50">
             <td className="px-4 py-0.5 text-gray-600 w-64">{t.events.eventPanel.duration}</td>
             <td className="px-2 py-0.5">
-              <input
-                type="time"
-                className="w-28 border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
+              <DurationInput
                 value={duration}
-                onChange={(e) => setDuration(e.target.value)}
-                onBlur={() => save({ duration: duration || null })}
+                onChange={setDuration}
+                onSave={(v) => { setDuration(v); save({ duration: v || null }) }}
               />
             </td>
           </tr>
@@ -1802,7 +1823,7 @@ function EventPropertiesPanel({ event, onUpdate }: { event: CompetitionEvent; on
   const [, setRoundName] = useState(event.nameFr)
   const [evGender, setEvGender] = useState(event.gender)
   const [masters, setMasters] = useState(false)
-  const [scheduledTime, setScheduledTime] = useState(event.scheduledTime ?? '')
+  const [scheduledTime, setScheduledTime] = useState(toTimeInput(event.scheduledTime))
   const [duration, setDuration] = useState(event.duration ?? '')
   const [swimStyles, setSwimStyles] = useState<SwimStyle[]>([])
   const [selectedStyleId, setSelectedStyleId] = useState<number | null>(null)
@@ -1815,7 +1836,7 @@ function EventPropertiesPanel({ event, onUpdate }: { event: CompetitionEvent; on
     setEvNumber(event.number)
     setRoundName(event.nameFr)
     setEvGender(event.gender)
-    setScheduledTime(event.scheduledTime ?? '')
+    setScheduledTime(toTimeInput(event.scheduledTime))
     setDuration(event.duration ?? '')
     setSelectedStyleId(event.swimstyleId ?? null)
     setFinalOrder(event.finalOrder ?? 2)
@@ -1998,12 +2019,10 @@ function EventPropertiesPanel({ event, onUpdate }: { event: CompetitionEvent; on
               <tr className="border-b border-gray-100 hover:bg-gray-50">
                 <td className="px-4 py-0.5 text-gray-600 w-64">{t.events.eventPanel.duration}</td>
                 <td className="px-2 py-0.5">
-                  <input
-                    type="time"
-                    className="w-28 border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
+                  <DurationInput
                     value={duration}
-                    onChange={(e) => setDuration(e.target.value)}
-                    onBlur={() => save({ duration: duration || null })}
+                    onChange={setDuration}
+                    onSave={(v) => { setDuration(v); save({ duration: v || null }) }}
                   />
                 </td>
               </tr>

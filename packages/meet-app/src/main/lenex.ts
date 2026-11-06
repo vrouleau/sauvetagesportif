@@ -348,11 +348,12 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
     findSession: db.prepare(`SELECT swimsessionid FROM swimsession WHERE sessionnumber=?`),
     updateSession: db.prepare(
       `UPDATE swimsession SET name=?,
+         startdate=COALESCE(?, startdate),
          lanemin=COALESCE(?, lanemin), lanemax=COALESCE(?, lanemax)
        WHERE swimsessionid=?`),
     insertSession: db.prepare(
-      `INSERT INTO swimsession (swimsessionid, sessionnumber, name, course, following, poolglobal, roundtotenths, lanemin, lanemax)
-       VALUES (?,?,?,1,'F','F','F',?,?)`),
+      `INSERT INTO swimsession (swimsessionid, sessionnumber, name, startdate, course, following, poolglobal, roundtotenths, lanemin, lanemax)
+       VALUES (?,?,?,?,1,'F','F','F',?,?)`),
     upsertStyle: db.prepare(
       `INSERT INTO swimstyle (swimstyleid, distance, relaycount, stroke, name, technique, code, uniqueid)
        VALUES (?,?,?,?,?,?,?,?)
@@ -361,13 +362,15 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
       `INSERT INTO swimevent
          (swimeventid, swimsessionid, eventnumber, gender, round, swimstyleid, sortcode,
           internalevent, splashmecanedit, masters, pfineignore, seedbonuslast,
-          seedexhlast, seedlateentrylast, seedingglobal, twoperlane, combineagegroups, roundname, comment, preveventid)
-       VALUES (?,?,?,?,?,?,?,?,'F',?,'F','F','F','F','F','F','F',?,?,?)
+          seedexhlast, seedlateentrylast, seedingglobal, twoperlane, combineagegroups, roundname, comment, preveventid,
+          daytime, duration)
+       VALUES (?,?,?,?,?,?,?,?,'F',?,'F','F','F','F','F','F','F',?,?,?,?,?)
        ON CONFLICT(swimeventid) DO UPDATE SET
          swimsessionid=excluded.swimsessionid, eventnumber=excluded.eventnumber,
          gender=excluded.gender, round=excluded.round, swimstyleid=excluded.swimstyleid,
          sortcode=excluded.sortcode, internalevent=excluded.internalevent,
          masters=excluded.masters, preveventid=excluded.preveventid,
+         daytime=excluded.daytime, duration=excluded.duration,
          roundname=CASE WHEN excluded.roundname!='' THEN excluded.roundname ELSE swimevent.roundname END,
          comment=CASE WHEN excluded.comment!='' THEN excluded.comment ELSE swimevent.comment END`),
     upsertAgeGroup: db.prepare(
@@ -434,15 +437,19 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
       const sessName = (a.name ?? '').slice(0, 100)
       const laneMin = a.lanemin ? parseInt(a.lanemin, 10) : null
       const laneMax = a.lanemax ? parseInt(a.lanemax, 10) : null
+      // LENEX SESSION carries the session date in a `date="YYYY-MM-DD"` attribute
+      // (see docs/LENEX_EXPORT_MATRIX.md); keep just the date part so it lands as a
+      // clean YYYY-MM-DD in swimsession.startdate (what getSessions/parseOleDate expect).
+      const startDate = /^\d{4}-\d{2}-\d{2}/.test(a.date ?? '') ? a.date!.slice(0, 10) : null
       if (existing) {
         swimsessionid = existing.swimsessionid
-        if (!skipEventStructure) stmts.updateSession.run(sessName, laneMin, laneMax, swimsessionid)
+        if (!skipEventStructure) stmts.updateSession.run(sessName, startDate, laneMin, laneMax, swimsessionid)
       } else {
         if (skipEventStructure) continue  // Don't create new sessions during entries import
         // mintId(), not a table-local MAX+1 — a new session's id must not collide with any
         // other table's id either, same principle as club/athlete/heat/relay/swimresult above.
         swimsessionid = mintId()
-        stmts.insertSession.run(swimsessionid, num, sessName, laneMin, laneMax)
+        stmts.insertSession.run(swimsessionid, num, sessName, startDate, laneMin, laneMax)
       }
       summary.sessions++
     } catch (e) {
@@ -503,10 +510,13 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
       // convention, -1 = no previous round) — without it, real Splash crashes when opening
       // a final whose link never got reconstructed on import.
       const prevEventId = ea.preveventid ? parseInt(ea.preveventid, 10) : -1
+      const evDaytime = parseLenexDaytimeToStore(ea.daytime)
+      const evDuration = parseLenexDaytimeToStore(ea.duration)
       try {
         stmts.upsertEvent.run(
           eventId, swimsessionid, parseInt(ea.number ?? '0', 10),
-          gender, round, styleId || null, sortcode, isInternal, isMasters, evName, evComment, prevEventId
+          gender, round, styleId || null, sortcode, isInternal, isMasters, evName, evComment, prevEventId,
+          evDaytime, evDuration
         )
         summary.events++
       } catch (e) {
@@ -899,6 +909,45 @@ function attr(name: string, value: string | number | null | undefined): string {
   return ` ${name}="${escXml(String(value))}"`
 }
 
+/**
+ * Format a stored event daytime/duration into a LENEX time-of-day string
+ * "HH:MM". Handles the SQLite "2000-01-01 HH:MM:00" sentinel (and ISO strings)
+ * and OLE-double fractional-day values. Returns undefined when there's no
+ * value. Self-contained (mirrors db.ts formatDaytime) so lenex.ts has no
+ * runtime dependency on a non-exported db.ts helper.
+ */
+function formatLenexDaytime(d: string | number | null): string | undefined {
+  if (d == null) return undefined
+  const fromFrac = (n: number): string | undefined => {
+    const frac = Math.abs(n) % 1
+    if (frac === 0) return undefined
+    const totalMinutes = Math.round(frac * 24 * 60)
+    const hours = Math.floor(totalMinutes / 60)
+    const minutes = totalMinutes % 60
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
+  }
+  if (typeof d === 'number') return fromFrac(d)
+  const str = String(d)
+  const match = str.match(/(\d{2}):(\d{2})/)
+  if (match) return `${match[1]}:${match[2]}`
+  const num = parseFloat(str)
+  if (!isNaN(num)) return fromFrac(num)
+  return undefined
+}
+
+/**
+ * Convert a LENEX time-of-day string ("HH:MM" or "HH:MM:SS") to the SQLite
+ * sentinel-date form the swimevent.daytime/duration columns use
+ * ("2000-01-01 HH:MM:00"), matching updateEvent() in db.ts. Returns null when
+ * absent/blank so a missing attribute stores NULL rather than a bogus time.
+ */
+function parseLenexDaytimeToStore(v: string | undefined | null): string | null {
+  if (!v) return null
+  const m = String(v).match(/(\d{1,2}):(\d{2})/)
+  if (!m) return null
+  return `2000-01-01 ${m[1].padStart(2, '0')}:${m[2]}:00`
+}
+
 // ── ZIP writer (minimal, single-entry) ────────────────────────────────────────
 
 export function writeZipSingleEntry(filePath: string, entryName: string, content: string): void {
@@ -1051,6 +1100,7 @@ export function exportLenexResults(filePath: string, db: Database.Database): Exp
   const events = db.prepare(
     `SELECT e.swimeventid, e.swimsessionid, e.eventnumber, e.gender, e.round, e.roundname,
             e.internalevent, e.sortcode, e.swimstyleid, e.preveventid,
+            e.daytime, e.duration,
             s.distance, s.stroke, s.relaycount, s.name AS stylename
      FROM swimevent e
      LEFT JOIN swimstyle s ON s.swimstyleid = e.swimstyleid
@@ -1059,6 +1109,7 @@ export function exportLenexResults(filePath: string, db: Database.Database): Exp
     swimeventid: number; swimsessionid: number; eventnumber: number
     gender: number; round: number; roundname: string | null; internalevent: string | null
     sortcode: number; swimstyleid: number | null; preveventid: number | null; distance: number | null
+    daytime: string | number | null; duration: string | number | null
     stroke: number | null; relaycount: number | null; stylename: string | null
   }>
 
@@ -1176,7 +1227,9 @@ export function exportLenexResults(filePath: string, db: Database.Database): Exp
     for (const ev of sessEvents) {
       const internalAttr = ev.internalevent === 'T' ? ' internalevent="T"' : ''
       const nameAttr = ev.internalevent === 'T' && ev.roundname ? attr('name', ev.roundname) : ''
-      lines.push(`            <EVENT${attr('eventid', ev.swimeventid)}${attr('number', ev.eventnumber)}${attr('gender', decodeGender(ev.gender))}${attr('round', decodeRound(ev.round))}${attr('order', ev.sortcode)}${attr('preveventid', ev.preveventid ?? -1)}${internalAttr}${nameAttr}>`)
+      const daytimeAttr = attr('daytime', formatLenexDaytime(ev.daytime))
+      const durationAttr = attr('duration', formatLenexDaytime(ev.duration))
+      lines.push(`            <EVENT${attr('eventid', ev.swimeventid)}${attr('number', ev.eventnumber)}${attr('gender', decodeGender(ev.gender))}${attr('round', decodeRound(ev.round))}${attr('order', ev.sortcode)}${attr('preveventid', ev.preveventid ?? -1)}${daytimeAttr}${durationAttr}${internalAttr}${nameAttr}>`)
 
       // SWIMSTYLE (required by Splash even for pause/break events, hence code="ID0" placeholder)
       if (ev.swimstyleid) {
@@ -1374,6 +1427,7 @@ export function exportMeetLenex(filePath: string, db: Database.Database): MeetEx
   const events = db.prepare(
     `SELECT e.swimeventid, e.swimsessionid, e.eventnumber, e.gender, e.round, e.roundname,
             e.internalevent, e.masters, e.sortcode, e.swimstyleid, e.preveventid,
+            e.daytime, e.duration,
             s.distance, s.stroke, s.relaycount, s.name AS stylename
      FROM swimevent e
      LEFT JOIN swimstyle s ON s.swimstyleid = e.swimstyleid
@@ -1382,6 +1436,7 @@ export function exportMeetLenex(filePath: string, db: Database.Database): MeetEx
     swimeventid: number; swimsessionid: number; eventnumber: number
     gender: number; round: number; roundname: string | null; internalevent: string | null
     masters: string | null; sortcode: number; swimstyleid: number | null; preveventid: number | null
+    daytime: string | number | null; duration: string | number | null
     distance: number | null; stroke: number | null; relaycount: number | null; stylename: string | null
   }>
 
@@ -1422,6 +1477,8 @@ export function exportMeetLenex(filePath: string, db: Database.Database): MeetEx
         attr('preveventid', ev.preveventid ?? -1),
       ]
       if (ev.roundname) evAttrs.push(attr('name', ev.roundname))
+      evAttrs.push(attr('daytime', formatLenexDaytime(ev.daytime)))
+      evAttrs.push(attr('duration', formatLenexDaytime(ev.duration)))
       if (ev.internalevent === 'T') evAttrs.push(` internalevent="T"`)
       if (ev.masters === 'T') evAttrs.push(` type="MASTERS"`)
       lines.push(`            <EVENT${evAttrs.join('')}>`)

@@ -622,6 +622,39 @@ describe('LENEX importer', () => {
     }
   })
 
+  // Regression test for a live bug: importLenex read the SESSION name/lanes but never the
+  // `date="YYYY-MM-DD"` attribute LENEX puts on <SESSION>, so an imported session's
+  // swimsession.startdate stayed NULL and the EventsPage Date field showed blank
+  // (found importing a real team-app inscriptions.lxf whose SESSION carried date="2026-12-31").
+  it('imports the SESSION date attribute into swimsession.startdate', () => {
+    const lxfPath = join(tmpdir(), `test-session-date-${randomBytes(4).toString('hex')}.lxf`)
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<LENEX version="3.0">
+  <MEETS>
+    <MEET name="Test Meet" city="Test City" nation="CAN" course="LCM">
+      <SESSIONS>
+        <SESSION number="1" name="Samedi" date="2026-12-31">
+          <EVENTS>
+            <EVENT eventid="1" number="1" gender="M" round="TIM">
+              <SWIMSTYLE swimstyleid="500" distance="50" relaycount="1" name="Test Style" />
+            </EVENT>
+          </EVENTS>
+        </SESSION>
+      </SESSIONS>
+    </MEET>
+  </MEETS>
+</LENEX>`
+    writeZipSingleEntry(lxfPath, 'meet.lef', xml)
+
+    try {
+      importLenex(lxfPath, db)
+      const row = db.prepare(`SELECT startdate FROM swimsession WHERE sessionnumber=1`).get() as { startdate: string | null }
+      expect(row.startdate).toBe('2026-12-31')
+    } finally {
+      try { unlinkSync(lxfPath) } catch {}
+    }
+  })
+
   // Regression test for a real bug found auditing a live beach meet (CQS Plage 2026):
   // an athlete born right on an age-bracket boundary was first registered under the
   // wrong division (Open) via team-app, then corrected to the right one (15-18) and
@@ -940,6 +973,65 @@ describe('LENEX exporter', () => {
       }
       expect(row.lanemin).toBe(1)
       expect(row.lanemax).toBe(40)
+    } finally {
+      freshCleanup()
+    }
+  })
+
+  // Regression test for a live bug: event (and pause) start time (daytime) and
+  // duration were never written to <EVENT> by either exporter nor read back by
+  // importLenex, so they were silently dropped on every .lxf round trip.
+  it('exportMeetLenex writes event daytime/duration (was silently dropped before)', () => {
+    seedResultsFixture(db, dateToOle(2014, 7, 3))
+    db.prepare(`UPDATE swimevent SET daytime='2000-01-01 09:30:00', duration='2000-01-01 00:15:00' WHERE swimeventid=1`).run()
+    exportMeetLenex(outPath, db)
+    const xml = readLefXml(outPath)
+    expect(xml).toMatch(/eventid="1"[^>]*daytime="09:30"/)
+    expect(xml).toMatch(/eventid="1"[^>]*duration="00:15"/)
+  })
+
+  it('exportMeetLenex omits daytime/duration attrs when unset (not a literal "null")', () => {
+    seedResultsFixture(db, dateToOle(2014, 7, 3))
+    exportMeetLenex(outPath, db)
+    const xml = readLefXml(outPath)
+    expect(xml).not.toMatch(/daytime=/)
+    expect(xml).not.toMatch(/duration=/)
+  })
+
+  it('round-trips event daytime/duration through importLenex → exportMeetLenex → importLenex (was silently dropped before)', () => {
+    seedResultsFixture(db, dateToOle(2014, 7, 3))
+    db.prepare(`UPDATE swimevent SET daytime='2000-01-01 09:30:00', duration='2000-01-01 00:15:00' WHERE swimeventid=1`).run()
+    exportMeetLenex(outPath, db)
+
+    const { db: freshDb, cleanup: freshCleanup } = createTestDb()
+    try {
+      importLenex(outPath, freshDb)
+      const row = freshDb.prepare(`SELECT daytime, duration FROM swimevent WHERE swimeventid=1`).get() as {
+        daytime: string | null; duration: string | null
+      }
+      // Stored back in the "2000-01-01 HH:MM:00" sentinel form getSessions/formatDaytime expect.
+      expect(row.daytime).toContain('09:30')
+      expect(row.duration).toContain('00:15')
+    } finally {
+      freshCleanup()
+    }
+  })
+
+  it('round-trips a PAUSE daytime/duration through importLenex → exportMeetLenex → importLenex', () => {
+    seedResultsFixture(db, dateToOle(2014, 7, 3))
+    // A pause/break: internalevent='T', no swimstyle, with start time + duration.
+    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode, internalevent, comment, daytime, duration) VALUES (2, 1, NULL, 2, 0, 5, 2, 'T', 'Pause', '2000-01-01 10:00:00', '2000-01-01 00:30:00')`)
+    exportMeetLenex(outPath, db)
+
+    const { db: freshDb, cleanup: freshCleanup } = createTestDb()
+    try {
+      importLenex(outPath, freshDb)
+      const row = freshDb.prepare(`SELECT daytime, duration, internalevent FROM swimevent WHERE swimeventid=2`).get() as {
+        daytime: string | null; duration: string | null; internalevent: string | null
+      }
+      expect(row.internalevent).toBe('T')
+      expect(row.daytime).toContain('10:00')
+      expect(row.duration).toContain('00:30')
     } finally {
       freshCleanup()
     }
