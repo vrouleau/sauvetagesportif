@@ -1,5 +1,5 @@
 pytest>=9.2.0
 requests>=2.34.2
-hypothesis>=6.170.14
+hypothesis>=6.170.15
 sqlalchemy>=2.1.6
 defusedxml>=0.7.1
