@@ -124,6 +124,22 @@ export default function Admin() {
     loadClubs()
   }
 
+  async function updateClubName(club, name) {
+    const trimmed = name.trim()
+    if (!trimmed) { loadClubs(); return }  // reject empty, revert input
+    try {
+      await api.put(`/clubs/${club.id}`, { name: trimmed })
+      loadClubs()
+    } catch (e) { setMsg(e.detail || e.message || 'Error'); loadClubs() }
+  }
+
+  async function updateClubCode(club, code) {
+    try {
+      await api.put(`/clubs/${club.id}`, { code: code.trim() })
+      loadClubs()
+    } catch (e) { setMsg(e.detail || e.message || 'Error'); loadClubs() }
+  }
+
   return (
     <div className="flex flex-col h-full">
       {/* Toolbar */}
@@ -259,9 +275,24 @@ export default function Admin() {
                 {clubs.map(c => (
                   <tr key={c.id} className="border-b border-gray-200 hover:bg-blue-50">
                     <td className="px-2 py-0.5">
-                      {c.name} <span className="text-gray-400">({c.athlete_count}, PIN: {c.pin || '—'})</span>
+                      <div className="flex items-center gap-1">
+                        <input type="text" className="border border-gray-300 px-1 py-0.5 rounded text-xs flex-1 min-w-0"
+                          defaultValue={c.name}
+                          key={`name-${c.id}-${c.name}`}
+                          onKeyDown={e => { if (e.key === 'Enter') e.target.blur() }}
+                          onBlur={e => { if (e.target.value.trim() !== (c.name || '')) updateClubName(c, e.target.value) }}
+                          placeholder={t.club_name_placeholder} />
+                        <span className="text-gray-400 shrink-0">({c.athlete_count}, PIN: {c.pin || '—'})</span>
+                      </div>
                     </td>
-                    <td className="px-2 py-0.5 text-gray-500">{c.code || '—'}</td>
+                    <td className="px-2 py-0.5">
+                      <input type="text" className="border border-gray-300 px-1 py-0.5 rounded text-xs w-20"
+                        defaultValue={c.code || ''}
+                        key={`code-${c.id}-${c.code}`}
+                        onKeyDown={e => { if (e.key === 'Enter') e.target.blur() }}
+                        onBlur={e => { if (e.target.value.trim() !== (c.code || '')) updateClubCode(c, e.target.value) }}
+                        placeholder="Code" />
+                    </td>
                     <td className="px-2 py-0.5">
                       <input type="email" className="border border-gray-300 px-1 py-0.5 rounded text-xs w-full"
                         defaultValue={c.email}
