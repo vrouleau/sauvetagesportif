@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.5.12] - 2026-11-11
+
+### 🔧 Chores
+
+- bump the frontend-minor-patch group (`cd62490`)
+- update hypothesis requirement (`0899460`)
+- bump @vitejs/plugin-react (`17dba4a`)
+- update sqlalchemy requirement (`5ce5ef8`)
+
+### Other
+
+- Merge pull request #86 from vrouleau/feature/edit-club-name-code (`6c091ac`)
+- Allow editing club name and code in admin club manager (`0ab572b`)
+- Merge pull request #85 from vrouleau/dependabot/npm_and_yarn/packages/team-app/frontend/frontend-minor-patch-f3118ada7b (`e2a8e3a`)
+- Merge pull request #84 from vrouleau/dependabot/pip/packages/team-app/tests/hypothesis-gte-6.170.15 (`e364cf7`)
+- Merge branch 'main' into dependabot/pip/packages/team-app/tests/hypothesis-gte-6.170.15 (`1758bda`)
+- Merge pull request #83 from vrouleau/dependabot/npm_and_yarn/npm-minor-patch-b0a933e47f (`8b0cb04`)
+- Merge pull request #82 from vrouleau/dependabot/pip/packages/team-app/tests/sqlalchemy-gte-2.1.8 (`16dd511`)
+
 ## [0.5.11] - 2026-11-06
 
 ### 🐛 Bug Fixes
