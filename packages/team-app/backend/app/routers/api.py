@@ -143,6 +143,8 @@ class ClubCreate(BaseModel):
 
 class ClubUpdate(BaseModel):
     email: str | None = None
+    name: str | None = None
+    code: str | None = None
 
 
 class RegistrationCreate(BaseModel):
@@ -1139,6 +1141,13 @@ def update_club(club_id: int, data: ClubUpdate, db: Session = Depends(get_db)):
         raise HTTPException(404)
     if data.email is not None:
         club.email = data.email
+    if data.name is not None:
+        name = data.name.strip()
+        if not name:
+            raise HTTPException(400, "Club name must not be empty")
+        club.name = name
+    if data.code is not None:
+        club.code = data.code.strip()
     db.commit()
     return {"ok": True}
 
