@@ -3091,6 +3091,63 @@ def set_gemini_keys(data: dict, db: Session = Depends(get_db)):
 # Stripe
 # ---------------------------------------------------------------------------
 
+# Map the club's 3-letter LENEX/IOC nation code to the ISO-3166 alpha-2 country
+# Stripe expects. These clubs are Québec-based, so CA is both the common case
+# and the safe fallback for unknown/missing codes.
+_NATION_TO_ISO2 = {
+    "CAN": "CA", "USA": "US", "FRA": "FR", "GBR": "GB", "MEX": "MX",
+    "AUS": "AU", "NZL": "NZ", "GER": "DE", "ESP": "ES", "ITA": "IT",
+    "BEL": "BE", "NED": "NL", "SUI": "CH",
+}
+
+
+def _club_country_iso2(club: TeamClub) -> str:
+    return _NATION_TO_ISO2.get((club.nation or "").upper(), "CA")
+
+
+def _public_business_url() -> str | None:
+    """APP_BASE_URL only when it's a real public http(s) URL.
+
+    Stripe's business_profile.url rejects localhost / non-public hosts ("Not a
+    valid URL"), and APP_BASE_URL defaults to http://localhost:8001 in dev — so
+    prefilling it blindly breaks account creation. Return None in that case and
+    let Stripe collect the URL during onboarding instead.
+    """
+    url = (os.environ.get("APP_BASE_URL") or "").strip()
+    if not url.startswith(("http://", "https://")):
+        return None
+    lowered = url.lower()
+    if "localhost" in lowered or "127.0.0.1" in lowered or "0.0.0.0" in lowered:
+        return None
+    return url
+
+
+def _create_connect_account(stripe, club: TeamClub):
+    """Create a Standard connected account, prefilled from the club.
+
+    Prefilling the known club info (business name, email, country, MCC) means
+    Stripe's hosted onboarding wizard asks the admin fewer questions. NOTE:
+    this platform's risk config requires Stripe to be the losses collector,
+    which rules out Express/Custom dashboards — Standard is the only supported
+    type here (verified against the Connect API). The win is the prefill +
+    deferred (currently_due) fields, not a lighter account type.
+    """
+    business_profile = {
+        "name": (club.name or None),
+        "mcc": "8699",  # Membership organisations (sports clubs)
+    }
+    public_url = _public_business_url()
+    if public_url:
+        business_profile["url"] = public_url
+    return stripe.Account.create(
+        type="standard",
+        country=_club_country_iso2(club),
+        email=(club.email or None),
+        business_type="non_profit",
+        business_profile=business_profile,
+    )
+
+
 @router.post("/stripe/connect", dependencies=[Depends(require_organizer_or_admin)])
 def stripe_connect_start(db: Session = Depends(get_db)):
     import stripe
@@ -3105,8 +3162,20 @@ def stripe_connect_start(db: Session = Depends(get_db)):
     if not club:
         raise HTTPException(404, "Organizer club not found")
 
+    # If we have a stored account id, make sure it still exists on Stripe. An
+    # account that was deleted/closed in the Stripe dashboard leaves a dangling
+    # id here, and AccountLink.create would then 404 ("No such account"),
+    # bricking the connect button. Treat a missing account as "not connected"
+    # and fall through to creating a fresh one.
+    if club.stripe_account_id:
+        try:
+            stripe.Account.retrieve(club.stripe_account_id)
+        except stripe.InvalidRequestError:
+            club.stripe_account_id = None
+            db.commit()
+
     if not club.stripe_account_id:
-        account = stripe.Account.create(type="standard")
+        account = _create_connect_account(stripe, club)
         club.stripe_account_id = account.id
         db.commit()
 
@@ -3116,6 +3185,9 @@ def stripe_connect_start(db: Session = Depends(get_db)):
         refresh_url=f"{base_url}/organizer?stripe=refresh",
         return_url=f"{base_url}/organizer?stripe=success",
         type="account_onboarding",
+        # Collect only what's due right now; optional fields are deferred to the
+        # first payout, letting the admin finish the initial flow faster.
+        collection_options={"fields": "currently_due"},
     )
     return {"url": link.url}
 
@@ -3252,6 +3324,13 @@ def send_club_invoice(club_id: int, request: Request, db: Session = Depends(get_
             stripe_account=acct,
         )
 
+    # Surface the organising club on the invoice/PDF. Stripe locks the big
+    # header title to the connected account's business name/website (that's
+    # where "meetmanager.vrouleau.app" comes from and it can't be overridden
+    # per-invoice), so we add the organiser as a labelled custom field instead.
+    # Stripe caps custom_fields name/value at 30 chars each.
+    custom_fields = [{"name": "Organisateur"[:30], "value": (org_club.name or "")[:30]}]
+
     invoice = stripe.Invoice.create(
         customer=customer.id,
         auto_advance=False,
@@ -3259,6 +3338,7 @@ def send_club_invoice(club_id: int, request: Request, db: Session = Depends(get_
         collection_method="send_invoice",
         days_until_due=30,
         description=f"{meet_name} — Inscriptions",
+        custom_fields=custom_fields,
         metadata={"meetmanager_club_id": str(club.clubsid), "meetmanager_meet": meet_name},
         pending_invoice_items_behavior="exclude",
         stripe_account=acct,
