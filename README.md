@@ -251,6 +251,22 @@ Web app for team registration before the competition.
 - **Close-meet flow**: organizer imports results .lxf → archived as historical meet → current meet reset → all club PINs regenerated → organizer cleared → admin invites next organizer
 - **Data adapter**: `meetApi.js` wraps HTTP `fetch('/api/...')` → FastAPI backend
 
+#### Payments & Invoicing
+
+Clubs are billed for registrations in one of two ways, chosen per event by cost and scale:
+
+**Tier 1 — PDF invoice + Interac e-Transfer (default for most events).**
+The organizer generates a PDF invoice per club (served from `/api/clubs/{id}/invoice-pdf`, or in bulk as a ZIP from `/api/invoices/pdf-zip`) and emails it. Clubs pay by e-Transfer settled outside the app. **No Stripe account, no onboarding, near-zero fees.** This is the right fit for the smaller Québec events, where the ~3% card cost and Stripe's mandatory KYC onboarding (business URL, phone, bank account, identity) aren't worth it.
+
+**Tier 2 — Stripe card payments (reserved for the national event).**
+Used only for the yearly Canadian championship managed by the Société de sauvetage (~350 athletes, ~20 clubs). Invoices are issued and paid by credit card through Stripe.
+
+- **Single central account.** The Société de sauvetage is the one onboarded Stripe merchant; invoices to all Canadian clubs are issued from that account (the platform `STRIPE_API_KEY`). Clubs are simply invoice **customers** — they do **not** create Stripe accounts, so there is **no per-club onboarding**.
+- **Fees.** Stripe's ~2.9% + CA$0.30 per domestic card charge is all-inclusive — card-network/interchange fees are already bundled, not added on top. Foreign cards add ~1% plus currency conversion.
+- **Invoice rendering.** The invoice header title comes from the Stripe account's business name/website (set during that account's onboarding) and **cannot** be overridden per invoice; line items use `price_data` (unit_amount × quantity) so quantities render correctly.
+
+> **On Stripe Connect (historical note).** Earlier work explored per-club Stripe **Connect** accounts (one connected account per organizer club, created via `stripe.Account.create` + hosted `AccountLink` onboarding, with prefill from the club record). This was set aside: the platform's Stripe risk configuration requires Stripe to be the losses collector, which rules out the lighter **Express**/Custom dashboards (verified against the Connect API — only **Standard** is available), and Standard onboarding's KYC requirements are too heavy for volunteer-run clubs. The central-account model above avoids per-club onboarding entirely. The `clubs.stripe_account_id` column and the `/api/stripe/*` connect endpoints remain from that exploration.
+
 ### Code Sharing Pattern
 
 Both apps render the same `EventsPage` component. Each provides its own `MeetAPI` implementation via React Context:
