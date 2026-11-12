@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.5.14] - 2026-11-12
+
+### 📝 Documentation
+
+- add Payments & Invoicing section to README (`a8472bf`)
+
+### Other
+
+- Merge pull request #88 from vrouleau/fix/stripe-onboarding-and-invoice-organiser (`dc9cd1d`)
+- Lighten Stripe Connect onboarding and add organiser to invoice (`e5ec80f`)
+- Merge pull request #87 from vrouleau/fix/stripe-invoice-qty-and-organizer-ux (`d19dc50`)
+- Fix Stripe invoice qty/fee bugs and improve organizer billing UX (`5e45ba6`)
+
 ## [0.5.13] - 2026-11-12
 
 ### 📝 Documentation
