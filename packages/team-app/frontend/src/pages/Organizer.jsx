@@ -27,6 +27,7 @@ export default function Organizer() {
   const [checked, setChecked] = useState({})
   const [stripeStatus, setStripeStatus] = useState(null)
   const [msg, setMsg] = useState('')
+  const [msgError, setMsgError] = useState(false)
   const [showImportConfirm, setShowImportConfirm] = useState(false)
   const [showCloseConfirm, setShowCloseConfirm] = useState(false)
   const { t, lang } = useLang()
@@ -210,45 +211,87 @@ export default function Organizer() {
     e.target.value = ''
   }
 
+  // Checked club ids that are still actionable in the current mode. Guards
+  // against a stale selection (mode changed after boxes were ticked).
+  function selectedActionableIds() {
+    return clubs.filter(c => checked[c.id] && isSelectable(c)).map(c => c.id)
+  }
+
+  function clubName(id) {
+    const c = clubs.find(c => String(c.id) === String(id))
+    return c ? c.name : `#${id}`
+  }
+
+  // Pull the most useful message out of a thrown api error: the backend's
+  // HTTPException detail when present, else the status code / generic message.
+  function errorReason(e) {
+    if (e && typeof e.detail === 'string' && e.detail) return e.detail
+    if (e && e.status) return `HTTP ${e.status}`
+    return (e && e.message) || (lang === 'fr' ? 'erreur inconnue' : 'unknown error')
+  }
+
+  // Build a result message that names the clubs that failed and why, instead
+  // of a bare error count that hides which club broke and the reason.
+  function summarizeSendResult(sent, sentLabel, failures) {
+    setMsgError(failures.length > 0)
+    let msg = `${sent} ${sentLabel}`
+    if (failures.length) {
+      const detail = failures.map(f => `${f.name} (${f.reason})`).join(', ')
+      const errWord = lang === 'fr'
+        ? `${failures.length} échec(s)`
+        : `${failures.length} failed`
+      msg += ` — ${errWord}: ${detail}`
+    }
+    return msg
+  }
+
   async function sendSelectedInvites() {
-    const ids = Object.entries(checked).filter(([,v]) => v).map(([k]) => k)
+    const ids = selectedActionableIds()
     if (!ids.length) return
+    setMsgError(false)
     setMsg(lang === 'fr' ? 'Envoi en cours...' : 'Sending...')
-    let sent = 0, errors = 0
+    let sent = 0
+    const failures = []
     for (const id of ids) {
       try {
         await api.post(`/clubs/${id}/send-pin`, { lang })
         sent++
-      } catch { errors++ }
+      } catch (e) {
+        failures.push({ name: clubName(id), reason: errorReason(e) })
+      }
     }
     setChecked({})
     loadClubs()
-    setMsg(`${sent} ${t.invitations_sent}${errors ? ` (${errors} ${lang === 'fr' ? 'erreur(s)' : 'error(s)'})` : ''}`)
+    setMsg(summarizeSendResult(sent, t.invitations_sent, failures))
   }
 
   async function sendSelectedStripeInvoices() {
-    const ids = Object.entries(checked).filter(([,v]) => v).map(([k]) => k)
+    const ids = selectedActionableIds()
     if (!ids.length) return
     const count = ids.length
     const message = lang === 'fr'
       ? `Envoyer les factures Stripe à ${count} club(s) ?`
       : `Send Stripe invoices to ${count} club(s)?`
     if (!confirm(message)) return
+    setMsgError(false)
     setMsg(lang === 'fr' ? 'Envoi des factures...' : 'Sending invoices...')
-    let sent = 0, errors = 0
+    let sent = 0
+    const failures = []
     for (const id of ids) {
       try {
         await api.post(`/clubs/${id}/invoice`, {})
         sent++
-      } catch { errors++ }
+      } catch (e) {
+        failures.push({ name: clubName(id), reason: errorReason(e) })
+      }
     }
     setChecked({})
     loadClubs()
-    setMsg(`${sent} ${t.stripe_invoices_sent}${errors ? ` (${errors} ${lang === 'fr' ? 'erreur(s)' : 'error(s)'})` : ''}`)
+    setMsg(summarizeSendResult(sent, t.stripe_invoices_sent, failures))
   }
 
   async function downloadSelectedPdfZip() {
-    const ids = Object.entries(checked).filter(([,v]) => v).map(([k]) => Number(k))
+    const ids = selectedActionableIds().map(Number)
     if (!ids.length) return
     setMsg(lang === 'fr' ? 'Génération des PDF...' : 'Generating PDFs...')
     try {
@@ -267,10 +310,32 @@ export default function Organizer() {
     } catch (e) { setMsg(e.message || 'Error') }
   }
 
-  const checkedCount = Object.values(checked).filter(Boolean).length
   const closurePassed = meetInfo?.closure_date && new Date() > new Date(meetInfo.closure_date + 'T23:59:59')
 
   const mode = !closurePassed ? 'invite' : stripeStatus?.connected ? 'stripe' : 'pdf'
+
+  // Whether a club can be acted on in the current mode. Greys out rows that
+  // would be skipped/rejected by the backend so "select all" never picks them
+  // and the action count isn't inflated by non-billable/unreachable clubs:
+  //  - invite: needs an email to send the PIN invite to.
+  //  - stripe: needs registered athletes (→ billable line items) AND an email
+  //            (Stripe send_invoice requires a customer email; send_club_invoice
+  //            also 400s when there are no line items).
+  //  - pdf:    needs registered athletes (→ line items to render).
+  function isSelectable(c) {
+    const hasEmail = !!(c.email && c.email.trim())
+    const hasRegistered = (c.registered_athlete_count || 0) > 0
+    if (mode === 'invite') return hasEmail
+    if (mode === 'stripe') return hasRegistered && hasEmail
+    return hasRegistered
+  }
+
+  const selectableClubs = clubs.filter(isSelectable)
+
+  // Count only selectable clubs that are checked — a selection can go stale if
+  // the mode changes (e.g. closure date passes, Stripe connects) and a
+  // previously-valid club becomes non-selectable.
+  const checkedCount = selectableClubs.filter(c => checked[c.id]).length
 
   function handleMainAction() {
     if (mode === 'invite') sendSelectedInvites()
@@ -311,11 +376,10 @@ export default function Organizer() {
           </span>
         )}
         <div className="flex-1" />
-        {/* Stripe status */}
-        {stripeStatus?.connected ? (
+        {/* Stripe status (passive indicator only — the connect/disconnect
+            control lives in the actions bar below) */}
+        {stripeStatus?.connected && (
           <span className="text-xs text-green-700">✓ Stripe</span>
-        ) : (
-          <button onClick={connectStripe} className="text-xs text-purple-600 hover:underline">{t.stripe_connect_btn}</button>
         )}
         {/* Closure date */}
         {/* Closure date (read-only, set via meet config) */}
@@ -346,14 +410,23 @@ export default function Organizer() {
           className="px-3 py-1 bg-gray-500 text-white text-xs rounded hover:bg-gray-600">
           {lang === 'fr' ? 'Fermer sans résultats' : 'Close without results'}
         </button>
-        {stripeStatus?.connected && (
-          <>
-            <div className="w-px h-4 bg-gray-300" />
-            <button onClick={disconnectStripe} className="text-xs text-red-500 hover:underline">{t.stripe_disconnect_btn}</button>
-          </>
+        <div className="w-px h-4 bg-gray-300" />
+        {/* Single Stripe toggle: connect when disconnected, disconnect when
+            connected — replaces the old ambiguous "Disconnect" link and the
+            separate connect link that used to sit in the toolbar. */}
+        {stripeStatus?.connected ? (
+          <button onClick={disconnectStripe}
+            className="px-3 py-1 bg-red-600 text-white text-xs rounded hover:bg-red-700">
+            {t.stripe_disconnect_btn}
+          </button>
+        ) : (
+          <button onClick={connectStripe}
+            className="px-3 py-1 bg-purple-600 text-white text-xs rounded hover:bg-purple-700">
+            {t.stripe_connect_btn}
+          </button>
         )}
         <div className="flex-1" />
-        {msg && <span className="text-xs text-green-700">{msg}</span>}
+        {msg && <span className={`text-xs max-w-xl truncate ${msgError ? 'text-red-600' : 'text-green-700'}`} title={msg}>{msg}</span>}
       </div>
 
       {/* Live Mode section */}
@@ -366,10 +439,13 @@ export default function Organizer() {
             <tr>
               <th className="px-2 py-1.5 border-b border-gray-300 w-6">
                 <input type="checkbox" className="w-3.5 h-3.5"
-                  checked={clubs.length > 0 && clubs.every(c => checked[c.id])}
+                  disabled={selectableClubs.length === 0}
+                  checked={selectableClubs.length > 0 && selectableClubs.every(c => checked[c.id])}
                   onChange={e => {
+                    // Select-all only toggles clubs that are actionable in the
+                    // current mode; non-selectable rows stay unchecked.
                     const val = e.target.checked
-                    setChecked(Object.fromEntries(clubs.map(c => [c.id, val])))
+                    setChecked(Object.fromEntries(selectableClubs.map(c => [c.id, val])))
                   }} />
               </th>
               <th className="px-2 py-1.5 border-b border-gray-300 text-left font-medium">{t.club}</th>
@@ -379,10 +455,24 @@ export default function Organizer() {
             </tr>
           </thead>
           <tbody>
-            {clubs.map(c => (
-              <tr key={c.id} className="border-b border-gray-200 hover:bg-blue-50">
+            {clubs.map(c => {
+              const selectable = isSelectable(c)
+              const reason = !selectable
+                ? (mode === 'invite'
+                    ? (lang === 'fr' ? 'Aucun courriel' : 'No email')
+                    : mode === 'stripe'
+                      ? ((c.registered_athlete_count || 0) === 0
+                          ? (lang === 'fr' ? 'Aucun athlète inscrit' : 'No registered athletes')
+                          : (lang === 'fr' ? 'Aucun courriel' : 'No email'))
+                      : (lang === 'fr' ? 'Aucun athlète inscrit' : 'No registered athletes'))
+                : undefined
+              return (
+              <tr key={c.id} className={`border-b border-gray-200 ${selectable ? 'hover:bg-blue-50' : 'bg-gray-50 text-gray-400'}`}>
                 <td className="px-2 py-1">
-                  <input type="checkbox" className="w-3.5 h-3.5" checked={!!checked[c.id]}
+                  <input type="checkbox" className="w-3.5 h-3.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                    disabled={!selectable}
+                    title={reason}
+                    checked={selectable && !!checked[c.id]}
                     onChange={e => setChecked(prev => ({...prev, [c.id]: e.target.checked}))} />
                 </td>
                 <td className="px-2 py-1">{c.name}</td>
@@ -397,7 +487,8 @@ export default function Organizer() {
                   )}
                 </td>
               </tr>
-            ))}
+              )
+            })}
           </tbody>
         </table>
       </div>

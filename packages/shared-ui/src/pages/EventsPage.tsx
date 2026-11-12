@@ -1986,7 +1986,13 @@ function EventPropertiesPanel({ event, onUpdate }: { event: CompetitionEvent; on
                     defaultValue={event.fee ?? ''}
                     placeholder="0.00"
                     onBlur={(e) => {
-                      const v = e.target.value ? parseFloat(e.target.value) : null
+                      // Store an explicit 0 for a blank/unset fee rather than null.
+                      // A null fee is ambiguous ("not configured") and the invoice
+                      // builder treats null and 0 the same (no charge), so persisting
+                      // 0 keeps the stored value unambiguous and self-documenting.
+                      const raw = e.target.value.trim()
+                      const parsed = raw ? parseFloat(raw) : 0
+                      const v = Number.isFinite(parsed) ? parsed : 0
                       save({ fee: v })
                     }}
                     onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}

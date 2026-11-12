@@ -57,7 +57,6 @@ from ..best_times import (
 )
 from ..export import generate_lxf
 from ..export_entries import generate_entries_lxf
-from ..invoices import create_invoice_for_club
 
 router = APIRouter(prefix="/api")
 _audit = logging.getLogger("audit")
@@ -3273,12 +3272,23 @@ def send_club_invoice(club_id: int, request: Request, db: Session = Depends(get_
             desc_parts.append(it["event_name"])
         if it.get("description"):
             desc_parts.append(it["description"])
+        # Use price_data (unit_amount + quantity via an inline product) instead
+        # of a pre-multiplied `amount`. A lump `amount` makes Stripe render
+        # Qty 1 with the unit price equal to the whole line total — that's why
+        # "Frais par athlète" showed Qty 1 / CA$200 instead of Qty 4 / CA$50.
+        # The product must live on the same connected account as the invoice.
+        line_desc = " — ".join(desc_parts) or "Inscription"
+        product = stripe.Product.create(name=line_desc[:250], stripe_account=acct)
         stripe.InvoiceItem.create(
             customer=customer.id,
             invoice=invoice.id,
-            currency="cad",
-            amount=it["unit_cents"] * it["qty"],
-            description=" — ".join(desc_parts) or "Inscription",
+            price_data={
+                "currency": "cad",
+                "product": product.id,
+                "unit_amount": it["unit_cents"],
+            },
+            quantity=it["qty"],
+            description=line_desc,
             stripe_account=acct,
         )
 
@@ -3293,16 +3303,6 @@ def send_club_invoice(club_id: int, request: Request, db: Session = Depends(get_
         "invoice_id": invoice.id,
         "total_cents": sum(it["unit_cents"] * it["qty"] for it in items),
     }
-
-
-@router.post("/clubs/{club_id}/create-invoice", dependencies=[Depends(require_organizer_or_admin)])
-def create_club_invoice(club_id: int, request: Request, db: Session = Depends(get_db)):
-    try:
-        return create_invoice_for_club(db, club_id, meetsid=resolve_meetsid(request, db))
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    except RuntimeError as e:
-        raise HTTPException(500, str(e))
 
 
 # ---------------------------------------------------------------------------

@@ -16,19 +16,22 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with Sauvetage Sportif. If not, see <https://www.gnu.org/licenses/>.
 
-"""Create Stripe draft invoices summarising registration fees, one per club."""
+"""Build club registration-fee line items and render per-club invoice PDFs.
+
+The actual Stripe draft/send flow lives in routers/api.py (send_club_invoice);
+this module provides the shared line-item builder (_club_line_items) it and the
+PDF/ZIP endpoints consume, plus the ReportLab PDF renderer.
+"""
 from __future__ import annotations
 
 import json
-import os
 from datetime import date
 from io import BytesIO
 
-import stripe
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 
 from .models import (
-    BsGlobal, SwimEvent, SwimStyle, SwimResult,
+    SwimEvent, SwimStyle, SwimResult,
     fee_dollars_to_cents, GENDER_M, GENDER_F,
 )
 from .models_team import TeamClub, Member, Relay, RelayPos
@@ -98,13 +101,6 @@ def _meet_fees(db: Session, meetsid: int | None = None) -> dict[str, int]:
     return fees
 
 
-def _stripe_client() -> None:
-    key = os.environ.get("STRIPE_API_KEY")
-    if not key:
-        raise RuntimeError("STRIPE_API_KEY not configured")
-    stripe.api_key = key
-
-
 def _club_line_items(db: Session, club: TeamClub, meet_fees: dict[str, int],
                       meetsid: int | None = None) -> list[dict]:
     """Build one line item per athlete for a club.
@@ -117,16 +113,6 @@ def _club_line_items(db: Session, club: TeamClub, meet_fees: dict[str, int],
     """
     meet_id = meetsid if meetsid is not None else get_active_meetsid(db)
 
-    # Build a map of event_number -> fee_cents
-    all_events = db.query(SwimEvent).options(joinedload(SwimEvent.swimstyle)).filter(
-        SwimEvent.meetsid == meet_id
-    ).all()
-    fee_by_number = {}
-    for e in all_events:
-        fee_cents = fee_dollars_to_cents(e.fee)
-        if fee_cents > 0:
-            fee_by_number[e.eventnumber] = fee_cents
-
     rows = (
         db.query(SwimResult, SwimEvent, Member)
         .join(SwimEvent, (SwimResult.swimeventid == SwimEvent.swimeventid) & (SwimResult.meetsid == SwimEvent.meetsid))
@@ -137,7 +123,13 @@ def _club_line_items(db: Session, club: TeamClub, meet_fees: dict[str, int],
     )
 
     def _event_fee(ev) -> int:
-        return fee_dollars_to_cents(ev.fee) or fee_by_number.get(ev.eventnumber - 1, 0)
+        # Use the event's own configured fee only. An unset fee (None) or an
+        # explicit 0 both mean "no charge" for this event — we must NOT borrow a
+        # neighbouring event's fee. The old `fee_by_number.get(eventnumber - 1)`
+        # fallback silently charged a $0/None event the *previous* event number's
+        # fee, which e.g. billed a male athlete in a $0 men's event the adjacent
+        # women's event fee (see Nage avec obstacles: women #1 = $5, men #2 = None).
+        return fee_dollars_to_cents(ev.fee)
 
     def _relay_count(ev) -> int:
         style = ev.swimstyle if getattr(ev, "swimstyle", None) else None
@@ -169,7 +161,8 @@ def _club_line_items(db: Session, club: TeamClub, meet_fees: dict[str, int],
                     break
         if not event:
             return 0
-        return fee_dollars_to_cents(event.fee) or fee_by_number.get(event.eventnumber - 1, 0)
+        # Own fee only — same reasoning as _event_fee (no eventnumber-1 fallback).
+        return fee_dollars_to_cents(event.fee)
 
     # First pass: for each billable relay event, collect its team members and
     # fee so the fee can be split evenly (with exact-cent remainder handling).
@@ -327,97 +320,9 @@ def _club_line_items(db: Session, club: TeamClub, meet_fees: dict[str, int],
     return meet_items + event_items
 
 
-def _find_or_create_customer(club: TeamClub) -> stripe.Customer:
-    email = (club.email or "").strip()
-    if email:
-        existing = stripe.Customer.list(email=email, limit=1)
-        if existing.data:
-            return existing.data[0]
-    return stripe.Customer.create(
-        name=club.name,
-        email=email or None,
-        metadata={"meetmanager_club_id": str(club.clubsid)},
-    )
-
-
-def _create_draft_for_club(club: TeamClub, items: list[dict], meet_name: str) -> dict:
-    customer = _find_or_create_customer(club)
-    invoice = stripe.Invoice.create(
-        customer=customer.id,
-        auto_advance=False,
-        currency="cad",
-        collection_method="send_invoice",
-        days_until_due=30,
-        description=f"{meet_name} — Inscriptions",
-        metadata={
-            "meetmanager_club_id": str(club.clubsid),
-            "meetmanager_meet": meet_name,
-        },
-        pending_invoice_items_behavior="exclude",
-    )
-    for it in items:
-        desc_parts = []
-        if it["event_number"]:
-            desc_parts.append(f"#{it['event_number']}")
-        if it["event_name"]:
-            desc_parts.append(it["event_name"])
-        if it["description"]:
-            desc_parts.append(it["description"])
-        stripe.InvoiceItem.create(
-            customer=customer.id,
-            invoice=invoice.id,
-            currency="cad",
-            amount=it["unit_cents"] * it["qty"],
-            description=" — ".join(desc_parts) or "Inscription",
-        )
-    return {
-        "club": club.name,
-        "invoice_id": invoice.id,
-        "url": f"https://dashboard.stripe.com/invoices/{invoice.id}",
-    }
-
-
 def _meet_name(db: Session, meetsid: int | None = None) -> str:
     meetsid = meetsid if meetsid is not None else get_active_meetsid(db)
     return _get_meet_config(db, meetsid, "meet_name") or "Compétition"
-
-
-def create_invoice_for_club(db: Session, club_id: int, meetsid: int | None = None) -> dict:
-    """Create a single Stripe draft invoice for one club."""
-    _stripe_client()
-    club = db.query(TeamClub).options(joinedload(TeamClub.members)).get(club_id)
-    if not club:
-        raise ValueError(f"Club {club_id} not found")
-    items = _club_line_items(db, club, _meet_fees(db, meetsid), meetsid=meetsid)
-    if not items:
-        raise ValueError("No billable items for this club")
-    return _create_draft_for_club(club, items, _meet_name(db, meetsid))
-
-
-def create_invoices_for_all_clubs(db: Session, meetsid: int | None = None) -> dict:
-    """Create Stripe draft invoices for every club with billable items."""
-    _stripe_client()
-    meet_name = _meet_name(db, meetsid)
-    meet_fees = _meet_fees(db, meetsid)
-    clubs = (
-        db.query(TeamClub)
-        .options(joinedload(TeamClub.members))
-        .order_by(TeamClub.name)
-        .all()
-    )
-    created: list[dict] = []
-    skipped: list[str] = []
-    errors: list[dict] = []
-    for club in clubs:
-        items = _club_line_items(db, club, meet_fees, meetsid=meetsid)
-        if not items:
-            skipped.append(club.name)
-            continue
-        try:
-            created.append(_create_draft_for_club(club, items, meet_name))
-        except stripe.StripeError as e:
-            errors.append({"club": club.name, "error": str(e)})
-    return {"created": created, "skipped": skipped, "errors": errors}
 
 
 def _money(cents: int) -> str:
