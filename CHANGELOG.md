@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.13] - 2026-11-12
+
+### Other
+
+- Fix Stripe invoice qty/fee bugs and improve organizer billing UX (`5e45ba6`)
+
 ## [0.5.12] - 2026-11-11
 
 ### 🔧 Chores
