@@ -1241,8 +1241,59 @@ def send_pin(club_id: int, data: dict, request: Request, db: Session = Depends(g
                                org_club_name=org_club_name, org_email=org_email,
                                no_reply=not reply_to)
 
-    # Email content
-    if lang == "fr":
+    # Email content — the organizer gets its own text: it organizes the meet
+    # and invites the teams, it doesn't register athletes like a team does.
+    manual_url = f"{base_url}/usage?doc=team-organizer"
+    if is_organizer and lang == "fr":
+        subject = f"Organisation — {meet_name}"
+        deadline = (f"<p>Date limite d'inscription des équipes : <strong>{closure_date}</strong>.</p>"
+                    if closure_date else "")
+        html = (f"<p>Bonjour,</p>"
+                f"<p>Vous êtes invité(e) à organiser la compétition <strong>{meet_name}</strong> "
+                f"pour <strong>{club.name}</strong>. Vous pouvez dès maintenant préparer la compétition "
+                f"et inviter les équipes.</p>"
+                f"{deadline}"
+                f"<p><strong>Marche à suivre :</strong></p>"
+                f"<ol>"
+                f"<li><strong>Récupérer votre NIP.</strong> Cliquer sur le lien sécurisé ci-dessous "
+                f"pour afficher votre NIP. <em>Le lien est à usage unique et expire dans 7 jours — "
+                f"prenez le NIP en note immédiatement, il ne pourra plus être affiché par la suite.</em>"
+                f"<br><a href=\"{secret_url}\">{secret_url}</a></li>"
+                f"<li><strong>Ouvrir le portail</strong> à l'adresse "
+                f"<a href=\"{base_url}\">{base_url}</a> et se connecter avec votre NIP.</li>"
+                f"<li><strong>Créer la structure de la compétition</strong> (sessions, épreuves, frais, "
+                f"date limite d'inscription) dans l'onglet Compétition.</li>"
+                f"<li><strong>Inviter les équipes</strong> à partir de l'onglet Invitation, "
+                f"une fois la structure prête.</li>"
+                f"</ol>"
+                f"<p>Voici le guide de l'organisateur : <a href=\"{manual_url}\">{manual_url}</a></p>"
+                f"<p>Bonne compétition!</p>"
+                f"{footer_note}")
+    elif is_organizer:
+        subject = f"Organizing — {meet_name}"
+        deadline = (f"<p>Team entry deadline: <strong>{closure_date}</strong>.</p>"
+                    if closure_date else "")
+        html = (f"<p>Hello,</p>"
+                f"<p>You are invited to organize <strong>{meet_name}</strong> "
+                f"for <strong>{club.name}</strong>. You can start preparing the meet and inviting teams now.</p>"
+                f"{deadline}"
+                f"<p><strong>How to proceed:</strong></p>"
+                f"<ol>"
+                f"<li><strong>Get your PIN.</strong> Click the secure link below to reveal your PIN. "
+                f"<em>The link can only be used once and expires in 7 days — write the PIN down "
+                f"immediately, it will not be shown again.</em>"
+                f"<br><a href=\"{secret_url}\">{secret_url}</a></li>"
+                f"<li><strong>Open the portal</strong> at "
+                f"<a href=\"{base_url}\">{base_url}</a> and log in with your PIN.</li>"
+                f"<li><strong>Create the meet structure</strong> (sessions, events, fees, "
+                f"entry deadline) in the Meet tab.</li>"
+                f"<li><strong>Invite the teams</strong> from the Invitation tab, "
+                f"once the structure is ready.</li>"
+                f"</ol>"
+                f"<p>Here is the organizer manual: <a href=\"{manual_url}\">{manual_url}</a></p>"
+                f"<p>Good luck!</p>"
+                f"{footer_note}")
+    elif lang == "fr":
         subject = f"Invitation — {meet_name}"
         deadline = (f"<p style=\"color:#c00;font-weight:bold\">⚠️ Date limite d'inscription : {closure_date}. "
                     f"Après cette date, vous ne pourrez plus accéder au portail d'inscription.</p>") if closure_date else ""

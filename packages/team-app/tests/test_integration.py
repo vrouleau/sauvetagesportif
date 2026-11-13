@@ -4472,6 +4472,9 @@ class TestInvoiceEmail:
         assert org["name"] in mail["from"] and mail["from"].endswith(self.FROM_ADDR)
         assert "/secret/" in mail["html"]
         assert "ne pas répondre" not in mail["html"]  # replies work now
+        assert mail["subject"].startswith("Invitation — ")
+        assert "inscrire les athlètes de votre équipe" in mail["html"]
+        assert "organiser la compétition" not in mail["html"]
 
     def test_invite_to_organizer_replies_to_support(self, parties, admin_headers, fake_resend):
         org = parties["org"]
@@ -4483,6 +4486,17 @@ class TestInvoiceEmail:
         assert mail["to"] == [self.ORG_EMAIL]
         assert mail["reply_to"] == self.SUPPORT
         assert mail["from"] == f"SauvetageTeam {self.FROM_ADDR}"
+        # Organizer text, not the "register your athletes" team invite
+        assert mail["subject"].startswith("Organisation — ")
+        assert "invité(e) à organiser la compétition" in mail["html"]
+        html = mail["html"]
+        steps = ["Récupérer votre NIP", "Ouvrir le portail",
+                 "Créer la structure de la compétition", "Inviter les équipes"]
+        positions = [html.index(s) for s in steps]
+        assert positions == sorted(positions), "steps must be NIP → login → structure → invite"
+        assert "/usage?doc=team-organizer" in mail["html"]
+        assert "/secret/" in mail["html"]  # still needs its PIN to log in
+        assert "inscrire les athlètes de votre équipe" not in mail["html"]
 
     def test_self_invite_sends_email(self, parties, admin_headers, fake_resend):
         """Public self-invite (login page link) goes through send_pin and gets
