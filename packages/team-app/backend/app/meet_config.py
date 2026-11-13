@@ -215,9 +215,5 @@ def increment_club_invite_send_count(db: Session, club_id: int, meetsid: int) ->
     row.invite_send_count = (row.invite_send_count or 0) + 1
 
 
-def increment_club_stripe_send_count(db: Session, club_id: int, meetsid: int) -> None:
-    row = db.get(ClubMeetInvite, (club_id, meetsid))
-    if not row:
-        row = ClubMeetInvite(clubsid=club_id, meetsid=meetsid)
-        db.add(row)
-    row.stripe_send_count = (row.stripe_send_count or 0) + 1
+# The invoice send count (stripe_send_count, shared by the Stripe and email
+# paths) is bumped by invoices.record_invoice_sent, alongside the revision.

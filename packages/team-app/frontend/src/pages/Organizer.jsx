@@ -265,29 +265,38 @@ export default function Organizer() {
     setMsg(summarizeSendResult(sent, t.invitations_sent, failures))
   }
 
-  async function sendSelectedStripeInvoices() {
-    const ids = selectedActionableIds()
+  // Send invoices to the checked clubs that have an email, one request per
+  // club. `channel` is 'email' (HTML + PDF with Interac instructions) or
+  // 'stripe' (Stripe-hosted invoice). Both bump the same per-club send count.
+  async function sendSelectedInvoices(channel) {
+    const ids = selectedSendableIds()
     if (!ids.length) return
-    const count = ids.length
-    const message = lang === 'fr'
-      ? `Envoyer les factures Stripe à ${count} club(s) ?`
-      : `Send Stripe invoices to ${count} club(s)?`
-    if (!confirm(message)) return
+    if (!confirm(t.confirm_send_invoices(ids.length))) return
     setMsgError(false)
     setMsg(lang === 'fr' ? 'Envoi des factures...' : 'Sending invoices...')
-    let sent = 0
+    const sentIds = []
     const failures = []
     for (const id of ids) {
       try {
-        await api.post(`/clubs/${id}/invoice`, {})
-        sent++
+        if (channel === 'stripe') await api.post(`/clubs/${id}/invoice`, {})
+        else await api.post(`/clubs/${id}/send-invoice-email`, { lang })
+        sentIds.push(id)
       } catch (e) {
         failures.push({ name: clubName(id), reason: errorReason(e) })
       }
     }
+    // Emailed invoices go out in the organizer's name: send them one summary
+    // listing the whole batch. Best-effort — the invoices themselves are sent.
+    if (channel === 'email' && sentIds.length) {
+      try {
+        await api.post('/invoices/notify-organizer', { club_ids: sentIds, lang })
+      } catch (e) {
+        failures.push({ name: lang === 'fr' ? 'Résumé organisateur' : 'Organizer summary', reason: errorReason(e) })
+      }
+    }
     setChecked({})
     loadClubs()
-    setMsg(summarizeSendResult(sent, t.stripe_invoices_sent, failures))
+    setMsg(summarizeSendResult(sentIds.length, t.stripe_invoices_sent, failures))
   }
 
   async function downloadSelectedPdfZip() {
@@ -312,50 +321,43 @@ export default function Organizer() {
 
   const closurePassed = meetInfo?.closure_date && new Date() > new Date(meetInfo.closure_date + 'T23:59:59')
 
-  const mode = !closurePassed ? 'invite' : stripeStatus?.connected ? 'stripe' : 'pdf'
+  // Before the registration deadline: invite mode. After: invoice mode, with
+  // Download PDF / Send PDF (email) / Send Stripe side by side.
+  const mode = !closurePassed ? 'invite' : 'invoice'
 
-  // Whether a club can be acted on in the current mode. Greys out rows that
-  // would be skipped/rejected by the backend so "select all" never picks them
-  // and the action count isn't inflated by non-billable/unreachable clubs:
-  //  - invite: needs an email to send the PIN invite to.
-  //  - stripe: needs registered athletes (→ billable line items) AND an email
-  //            (Stripe send_invoice requires a customer email; send_club_invoice
-  //            also 400s when there are no line items).
-  //  - pdf:    needs registered athletes (→ line items to render).
+  const hasEmail = c => !!(c.email && c.email.trim())
+
+  // Whether a club's checkbox is usable in the current mode. Greys out rows
+  // the backend would reject so "select all" never picks them:
+  //  - invite:  needs an email to send the PIN invite to.
+  //  - invoice: needs registered athletes (→ billable line items). Clubs
+  //             without an email can still get a PDF download; the send
+  //             buttons skip them (see selectedSendableIds).
   function isSelectable(c) {
-    const hasEmail = !!(c.email && c.email.trim())
-    const hasRegistered = (c.registered_athlete_count || 0) > 0
-    if (mode === 'invite') return hasEmail
-    if (mode === 'stripe') return hasRegistered && hasEmail
-    return hasRegistered
+    if (mode === 'invite') return hasEmail(c)
+    return (c.registered_athlete_count || 0) > 0
+  }
+
+  // Checked clubs that the email/Stripe send buttons will actually send to.
+  function selectedSendableIds() {
+    return clubs.filter(c => checked[c.id] && isSelectable(c) && hasEmail(c)).map(c => c.id)
   }
 
   const selectableClubs = clubs.filter(isSelectable)
 
   // Count only selectable clubs that are checked — a selection can go stale if
-  // the mode changes (e.g. closure date passes, Stripe connects) and a
-  // previously-valid club becomes non-selectable.
+  // the mode changes (e.g. closure date passes) and a previously-valid club
+  // becomes non-selectable.
   const checkedCount = selectableClubs.filter(c => checked[c.id]).length
-
-  function handleMainAction() {
-    if (mode === 'invite') sendSelectedInvites()
-    else if (mode === 'stripe') sendSelectedStripeInvoices()
-    else downloadSelectedPdfZip()
-  }
-
-  const buttonLabel = mode === 'invite' ? t.send_invitation
-    : mode === 'stripe' ? t.send_stripe_invoice_btn
-    : t.download_invoices_btn
-  const buttonColor = mode === 'invite' ? 'bg-green-600 hover:bg-green-700'
-    : mode === 'stripe' ? 'bg-blue-600 hover:bg-blue-700'
-    : 'bg-gray-600 hover:bg-gray-700'
+  const sendableCount = selectableClubs.filter(c => checked[c.id] && hasEmail(c)).length
+  const stripeConnected = !!stripeStatus?.connected
 
   function statusText(c) {
     const parts = []
     if (c.registered_athlete_count) parts.push(`${c.registered_athlete_count} ${t.athletes_short}`)
     if (c.total_fees_cents) parts.push(formatMoney(c.total_fees_cents, meetInfo?.currency || 'CAD', lang))
     if (mode === 'invite' && c.invite_send_count) parts.push(`${c.invite_send_count}× ${t.invited_short}`)
-    if (mode === 'stripe' && c.stripe_send_count) parts.push(`${c.stripe_send_count}× ${t.sent_short}`)
+    if (mode === 'invoice' && c.stripe_send_count) parts.push(`${c.stripe_send_count}× ${t.sent_short}`)
     return parts.join(' · ') || '—'
   }
 
@@ -393,10 +395,28 @@ export default function Organizer() {
 
       {/* Actions bar */}
       <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-50 border-b border-gray-200 shrink-0">
-        <button onClick={handleMainAction} disabled={!checkedCount}
-          className={`text-white px-3 py-1 rounded text-xs disabled:opacity-50 ${buttonColor}`}>
-          {buttonLabel} {checkedCount > 0 && `(${checkedCount})`}
-        </button>
+        {mode === 'invite' ? (
+          <button onClick={sendSelectedInvites} disabled={!checkedCount}
+            className="text-white px-3 py-1 rounded text-xs disabled:opacity-50 bg-green-600 hover:bg-green-700">
+            {t.send_invitation} {checkedCount > 0 && `(${checkedCount})`}
+          </button>
+        ) : (
+          <>
+            <button onClick={downloadSelectedPdfZip} disabled={!checkedCount}
+              className="text-white px-3 py-1 rounded text-xs disabled:opacity-50 bg-gray-600 hover:bg-gray-700">
+              {t.download_pdf_btn} {checkedCount > 0 && `(${checkedCount})`}
+            </button>
+            <button onClick={() => sendSelectedInvoices('email')} disabled={!sendableCount}
+              className="text-white px-3 py-1 rounded text-xs disabled:opacity-50 bg-teal-600 hover:bg-teal-700">
+              {t.send_pdf_btn} {sendableCount > 0 && `(${sendableCount})`}
+            </button>
+            <button onClick={() => sendSelectedInvoices('stripe')} disabled={!stripeConnected || !sendableCount}
+              title={stripeConnected ? undefined : t.stripe_connect_first}
+              className="text-white px-3 py-1 rounded text-xs disabled:opacity-50 bg-blue-600 hover:bg-blue-700">
+              {t.send_stripe_btn} {stripeConnected && sendableCount > 0 && `(${sendableCount})`}
+            </button>
+          </>
+        )}
         <div className="w-px h-4 bg-gray-300" />
         <button onClick={exportLxf} className="px-3 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700">{t.download_lxf}</button>
         <input ref={importResultsRef} type="file" accept=".lxf" className="hidden" onChange={importResults} />
@@ -460,12 +480,10 @@ export default function Organizer() {
               const reason = !selectable
                 ? (mode === 'invite'
                     ? (lang === 'fr' ? 'Aucun courriel' : 'No email')
-                    : mode === 'stripe'
-                      ? ((c.registered_athlete_count || 0) === 0
-                          ? (lang === 'fr' ? 'Aucun athlète inscrit' : 'No registered athletes')
-                          : (lang === 'fr' ? 'Aucun courriel' : 'No email'))
-                      : (lang === 'fr' ? 'Aucun athlète inscrit' : 'No registered athletes'))
-                : undefined
+                    : (lang === 'fr' ? 'Aucun athlète inscrit' : 'No registered athletes'))
+                : (mode === 'invoice' && !hasEmail(c)
+                    ? (lang === 'fr' ? 'Aucun courriel — PDF seulement' : 'No email — PDF only')
+                    : undefined)
               return (
               <tr key={c.id} className={`border-b border-gray-200 ${selectable ? 'hover:bg-blue-50' : 'bg-gray-50 text-gray-400'}`}>
                 <td className="px-2 py-1">

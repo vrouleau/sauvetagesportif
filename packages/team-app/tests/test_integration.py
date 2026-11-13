@@ -23,6 +23,7 @@ no SPLASH involved. Run: `pytest tests/ -v` from repo root.
 """
 from __future__ import annotations
 
+import base64
 import re
 import zipfile
 from datetime import date
@@ -3779,10 +3780,9 @@ class TestClubInviteCountsScopedPerMeet:
             assert r.status_code == 200, r.text
             meet_b_id = r.json()["meet_id"]
 
-            # Directly seed an invite count for meet A only — send-pin itself
-            # needs RESEND_API_KEY configured, which the test stack doesn't
-            # set up; this exercises the same increment path's data shape
-            # without depending on outbound email.
+            # Directly seed an invite count for meet A only — exercises the
+            # increment path's data shape for a specific meetsid without going
+            # through send-pin (which resolves its meet from the request).
             exec_in_backend(
                 "from app.database import SessionLocal\n"
                 "from app.meet_config import increment_club_invite_send_count\n"
@@ -4168,3 +4168,318 @@ class TestNewSwimstyleConfirmation:
             "The registration should resolve now that its event was loaded, not be silently dropped"
         )
 
+
+
+class TestInvoiceEmail:
+    """Invoice by email (Interac), invoice numbers/revisions, organizer summary
+    and invite email, end to end through the fake Resend service
+    (tests/fake_resend — no real email is sent).
+
+    Test stack config (docker-compose.test.yml): RESEND_FROM_EMAIL =
+    no-reply@test.local, SUPPORT_EMAIL = support@test.local.
+    Rendering details are unit-tested in tests/unit/test_invoice_numbering.py
+    and tests/unit/test_emailing.py; recipient rules for every role/organizer
+    combination in tests/unit/test_invoice_parties.py.
+    """
+
+    FROM_ADDR = "<no-reply@test.local>"
+    SUPPORT = "support@test.local"
+    ORG_EMAIL = "org@example.com"
+    COACH_EMAIL = "coach@example.com"
+
+    # -- helpers ----------------------------------------------------------
+
+    @staticmethod
+    def _clubs(admin_headers):
+        r = requests.get(f"{BASE_URL}/api/clubs", headers=admin_headers, timeout=30)
+        r.raise_for_status()
+        return r.json()
+
+    def _club(self, admin_headers, club_id):
+        return next(c for c in self._clubs(admin_headers) if c["id"] == club_id)
+
+    @staticmethod
+    def _set_email(admin_headers, club_id, email):
+        requests.put(f"{BASE_URL}/api/clubs/{club_id}", json={"email": email},
+                     headers=admin_headers, timeout=10).raise_for_status()
+
+    @staticmethod
+    def _send(club_id, headers):
+        return requests.post(f"{BASE_URL}/api/clubs/{club_id}/send-invoice-email",
+                             json={"lang": "fr"}, headers=headers, timeout=30)
+
+    @staticmethod
+    def _notify(club_ids, headers):
+        return requests.post(f"{BASE_URL}/api/invoices/notify-organizer",
+                             json={"club_ids": club_ids, "lang": "fr"}, headers=headers, timeout=30)
+
+    @staticmethod
+    def _rev(invoice_no: str) -> int:
+        m = re.search(r"-R(\d+)$", invoice_no)
+        return int(m.group(1)) if m else 1
+
+    @staticmethod
+    def _base(invoice_no: str) -> str:
+        return re.sub(r"-R\d+$", "", invoice_no)
+
+    @staticmethod
+    def _clear_organizer():
+        # No public endpoint clears organizer_club_id — same escape hatch as
+        # test_organizer_club_gets_organizer_role_in_meets.
+        exec_in_backend(
+            "from app.database import SessionLocal\n"
+            "from app.models import MeetConfig\n"
+            "from app.models_team import Meet  # noqa: F401 — registers meets for FK resolution\n"
+            "db = SessionLocal()\n"
+            "db.query(MeetConfig).filter(MeetConfig.name == 'organizer_club_id').delete()\n"
+            "db.commit()\n"
+        )
+
+    # -- fixtures ---------------------------------------------------------
+
+    @pytest.fixture(scope="class")
+    def with_fees(self, uploaded, athletes, admin_headers):
+        """Register one adult athlete and put a $10 fee on every event so that
+        athlete's club is billable; undo both afterwards. Yields the billable
+        club id and the registered event id."""
+        adult = _by_birthyear(athletes, 2002, gender="M")[0]
+        reg = get_registration(adult["id"], admin_headers)
+        style = next(s for s in reg["individual_events"]
+                     if any(c["age_code"] == "Open" and not c.get("registered") for c in s["categories"]))
+        cat = next(c for c in style["categories"] if c["age_code"] == "Open")
+        created = post_registration(adult["id"], cat["event_id"], "Open", 65430, admin_headers)
+        r = requests.get(f"{BASE_URL}/api/sessions", timeout=10)
+        r.raise_for_status()
+        originals = {ev["id"]: (ev.get("fee") or 0)
+                     for sess in r.json() for ev in sess["events"] if not ev["isAdmin"]}
+        for eid in originals:
+            requests.put(f"{BASE_URL}/api/events/{eid}", json={"fee": 10},
+                         headers=admin_headers, timeout=10).raise_for_status()
+        yield {"club_id": adult["club_id"], "event_id": cat["event_id"]}
+        for eid, fee in originals.items():
+            requests.put(f"{BASE_URL}/api/events/{eid}", json={"fee": fee},
+                         headers=admin_headers, timeout=10)
+        delete_registration(created["id"], admin_headers)
+
+    @pytest.fixture
+    def parties(self, with_fees, admin_headers):
+        """The billable club (coach email set) and another club to act as
+        organizer (email set, not yet assigned). Restores emails, the
+        registered event's fee, and clears the organizer afterwards."""
+        clubs = self._clubs(admin_headers)
+        club = next(c for c in clubs if c["id"] == with_fees["club_id"])
+        org = next(c for c in clubs if c["id"] != club["id"])
+        origs = {c["id"]: c.get("email") or "" for c in (club, org)}
+        self._set_email(admin_headers, club["id"], self.COACH_EMAIL)
+        self._set_email(admin_headers, org["id"], self.ORG_EMAIL)
+        yield {"club": club, "org": org, "event_id": with_fees["event_id"],
+               "org_headers": {"X-Club-Pin": org["pin"]}}
+        self._clear_organizer()
+        requests.put(f"{BASE_URL}/api/events/{with_fees['event_id']}", json={"fee": 10},
+                     headers=admin_headers, timeout=10)
+        for cid, email in origs.items():
+            self._set_email(admin_headers, cid, email)
+
+    def _make_organizer(self, admin_headers, org):
+        requests.post(f"{BASE_URL}/api/admin/set-organizer", json={"club_id": org["id"]},
+                      headers=admin_headers, timeout=10).raise_for_status()
+
+    # -- validation -------------------------------------------------------
+
+    def test_unknown_club_404(self, uploaded, admin_headers, fake_resend):
+        assert self._send(999999, admin_headers).status_code == 404
+        assert fake_resend.emails() == []
+
+    def test_requires_organizer_or_admin(self, uploaded, fake_resend):
+        r = requests.post(f"{BASE_URL}/api/clubs/1/send-invoice-email", json={"lang": "fr"}, timeout=10)
+        assert r.status_code in (401, 403)
+        assert fake_resend.emails() == []
+
+    def test_club_without_email_400(self, parties, admin_headers, fake_resend):
+        self._set_email(admin_headers, parties["club"]["id"], "")
+        r = self._send(parties["club"]["id"], admin_headers)
+        assert r.status_code == 400 and "email" in r.json()["detail"].lower()
+        assert fake_resend.emails() == []
+
+    def test_organizer_without_email_400(self, parties, admin_headers, fake_resend):
+        self._set_email(admin_headers, parties["org"]["id"], "")
+        self._make_organizer(admin_headers, parties["org"])
+        r = self._send(parties["club"]["id"], admin_headers)
+        assert r.status_code == 400 and "organizer" in r.json()["detail"]
+        assert fake_resend.emails() == []
+
+    # -- organizer sends: full lifecycle ------------------------------------
+
+    def test_organizer_send_lifecycle(self, parties, admin_headers, fake_resend):
+        """Send → resend unchanged → total changes → send → summary, as the
+        organizer: number/revision, counter, PDF, From/Reply-To, Interac text."""
+        club, org, org_h = parties["club"], parties["org"], parties["org_headers"]
+        self._make_organizer(admin_headers, org)
+        count0 = self._club(admin_headers, club["id"])["stripe_send_count"]
+
+        # 1st send
+        r = self._send(club["id"], org_h)
+        assert r.status_code == 200, r.text
+        n1 = r.json()["invoice_no"]
+        assert re.fullmatch(rf"\d{{4}}-\d{{3,}}-{club['id']:04d}(-R\d+)?", n1), n1
+        [mail] = fake_resend.emails()
+        assert mail["to"] == [self.COACH_EMAIL]
+        assert mail["from"].endswith(self.FROM_ADDR) and org["name"] in mail["from"]
+        assert mail["reply_to"] == self.ORG_EMAIL
+        assert n1 in mail["subject"]
+        html = mail["html"]
+        assert html.count(n1) >= 3  # summary box + security answer + memo
+        assert f"<strong>{self.ORG_EMAIL}</strong>" in html  # Interac recipient
+        assert "Quel est le numéro de facture?" in html
+        assert f"mailto:{self.ORG_EMAIL}" in html  # contact sentence
+        [att] = mail["attachments"]
+        assert att["filename"] == f"facture_{n1}.pdf"
+        assert base64.b64decode(att["content"]).startswith(b"%PDF")
+        assert self._club(admin_headers, club["id"])["stripe_send_count"] == count0 + 1
+
+        # Re-send, total unchanged → same number, counter still increments
+        fake_resend.clear()
+        r = self._send(club["id"], org_h)
+        assert r.status_code == 200 and r.json()["invoice_no"] == n1
+        assert self._club(admin_headers, club["id"])["stripe_send_count"] == count0 + 2
+
+        # Total changes (event fee $10 → $25) → next send gets the next revision
+        requests.put(f"{BASE_URL}/api/events/{parties['event_id']}", json={"fee": 25},
+                     headers=admin_headers, timeout=10).raise_for_status()
+        fake_resend.clear()
+        r = self._send(club["id"], org_h)
+        assert r.status_code == 200
+        n2 = r.json()["invoice_no"]
+        assert self._base(n2) == self._base(n1) and self._rev(n2) == self._rev(n1) + 1
+        assert n2 in fake_resend.emails()[0]["subject"]
+
+        # Batch summary → the organizer, listing the latest number
+        fake_resend.clear()
+        r = self._notify([club["id"]], org_h)
+        assert r.status_code == 200 and r.json()["sent"] is True
+        [summary] = fake_resend.emails()
+        assert summary["to"] == [self.ORG_EMAIL]
+        assert summary["from"] == f"SauvetageTeam {self.FROM_ADDR}"
+        assert n2 in summary["html"] and n1 not in summary["html"].replace(n2, "")
+        assert club["name"] in summary["html"] and self.COACH_EMAIL in summary["html"]
+
+    def test_pdf_download_matches_next_send(self, parties, admin_headers, fake_resend):
+        """A downloaded PDF shows the number the next send will use, and
+        downloading doesn't consume a revision."""
+        club = parties["club"]
+        self._make_organizer(admin_headers, parties["org"])
+        r = requests.post(f"{BASE_URL}/api/invoices/pdf-zip", json={"club_ids": [club["id"]]},
+                          headers=admin_headers, timeout=60)
+        assert r.status_code == 200
+        [name] = zipfile.ZipFile(BytesIO(r.content)).namelist()
+        previewed = re.match(r"invoice_(.+?)_", name).group(1)
+        r = self._send(club["id"], admin_headers)
+        assert r.status_code == 200 and r.json()["invoice_no"] == previewed
+
+    # -- admin sends --------------------------------------------------------
+
+    def test_admin_send_uses_support_but_pays_organizer(self, parties, admin_headers, fake_resend):
+        club, org = parties["club"], parties["org"]
+        self._make_organizer(admin_headers, org)
+        r = self._send(club["id"], admin_headers)
+        assert r.status_code == 200, r.text
+        [mail] = fake_resend.emails()
+        assert mail["reply_to"] == self.SUPPORT
+        assert org["name"] in mail["from"]
+        assert f"<strong>{self.ORG_EMAIL}</strong>" in mail["html"]  # still pays the organizer
+        assert f"mailto:{self.SUPPORT}" in mail["html"] and f"mailto:{self.ORG_EMAIL}" not in mail["html"]
+
+        fake_resend.clear()
+        r = self._notify([club["id"]], admin_headers)
+        assert r.status_code == 200 and r.json()["to"] == self.SUPPORT
+        assert fake_resend.emails()[0]["to"] == [self.SUPPORT]
+
+    def test_no_organizer_admin_is_organizer(self, parties, admin_headers, fake_resend):
+        """No organizer → payment, contact, Reply-To and summary all go to SUPPORT_EMAIL."""
+        self._clear_organizer()
+        club = parties["club"]
+        r = self._send(club["id"], admin_headers)
+        assert r.status_code == 200, r.text
+        [mail] = fake_resend.emails()
+        assert mail["from"] == f"SauvetageTeam {self.FROM_ADDR}"
+        assert mail["reply_to"] == self.SUPPORT
+        assert f"<strong>{self.SUPPORT}</strong>" in mail["html"]  # Interac recipient
+        assert "organisée par" not in mail["html"]
+
+        fake_resend.clear()
+        r = self._notify([club["id"]], admin_headers)
+        assert r.status_code == 200
+        [summary] = fake_resend.emails()
+        assert summary["to"] == [self.SUPPORT] and "au nom de" not in summary["html"]
+
+    # -- failures -----------------------------------------------------------
+
+    def test_failed_send_is_502_and_not_recorded(self, parties, admin_headers, fake_resend):
+        club = parties["club"]
+        self._make_organizer(admin_headers, parties["org"])
+        # Change the total so a recorded send would bump the revision
+        requests.put(f"{BASE_URL}/api/events/{parties['event_id']}", json={"fee": 40},
+                     headers=admin_headers, timeout=10).raise_for_status()
+        before = self._club(admin_headers, club["id"])["stripe_send_count"]
+
+        fake_resend.fail(True)
+        r = self._send(club["id"], admin_headers)
+        assert r.status_code == 502
+        assert self._club(admin_headers, club["id"])["stripe_send_count"] == before
+
+        # The failed attempt consumed nothing: retry gets the same number
+        # the failed one would have had, and is counted once.
+        fake_resend.fail(False)
+        r1 = self._send(club["id"], admin_headers)
+        assert r1.status_code == 200
+        r2 = self._send(club["id"], admin_headers)
+        assert r2.json()["invoice_no"] == r1.json()["invoice_no"]
+        assert self._club(admin_headers, club["id"])["stripe_send_count"] == before + 2
+
+    # -- organizer summary edge cases ---------------------------------------
+
+    def test_notify_organizer_requires_clubs(self, uploaded, admin_headers, fake_resend):
+        assert self._notify([], admin_headers).status_code == 400
+        assert fake_resend.emails() == []
+
+    def test_notify_organizer_skips_never_sent(self, uploaded, admin_headers, fake_resend):
+        never = [c["id"] for c in self._clubs(admin_headers)
+                 if not c.get("registered_athlete_count") and not c.get("stripe_send_count")][:3]
+        assert never
+        r = self._notify(never, admin_headers)
+        assert r.status_code == 200 and r.json()["sent"] is False
+        assert fake_resend.emails() == []
+
+    def test_pdf_zip_names_carry_invoice_number(self, with_fees, admin_headers):
+        cid = with_fees["club_id"]
+        r = requests.post(f"{BASE_URL}/api/invoices/pdf-zip", json={"club_ids": [cid]},
+                          headers=admin_headers, timeout=60)
+        assert r.status_code == 200
+        [name] = zipfile.ZipFile(BytesIO(r.content)).namelist()
+        assert re.match(rf"invoice_\d{{4}}-\d{{3,}}-{cid:04d}(-R\d+)?_", name), name
+
+    # -- invite email ---------------------------------------------------------
+
+    def test_invite_reply_to_and_from_organizer(self, parties, admin_headers, fake_resend):
+        club, org = parties["club"], parties["org"]
+        self._make_organizer(admin_headers, org)
+        r = requests.post(f"{BASE_URL}/api/clubs/{club['id']}/send-pin", json={"lang": "fr"},
+                          headers=admin_headers, timeout=30)
+        assert r.status_code == 200, r.text
+        [mail] = fake_resend.emails()
+        assert mail["to"] == [self.COACH_EMAIL]
+        assert mail["reply_to"] == self.ORG_EMAIL
+        assert org["name"] in mail["from"] and mail["from"].endswith(self.FROM_ADDR)
+        assert "/secret/" in mail["html"]
+        assert "ne pas répondre" not in mail["html"]  # replies work now
+
+    def test_invite_to_organizer_replies_to_support(self, parties, admin_headers, fake_resend):
+        org = parties["org"]
+        self._make_organizer(admin_headers, org)
+        r = requests.post(f"{BASE_URL}/api/clubs/{org['id']}/send-pin", json={"lang": "fr"},
+                          headers=admin_headers, timeout=30)
+        assert r.status_code == 200, r.text
+        [mail] = fake_resend.emails()
+        assert mail["to"] == [self.ORG_EMAIL]
+        assert mail["reply_to"] == self.SUPPORT
+        assert mail["from"] == f"SauvetageTeam {self.FROM_ADDR}"

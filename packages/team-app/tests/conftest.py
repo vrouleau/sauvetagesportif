@@ -37,7 +37,35 @@ ENTRIES_FILE = FIXTURES / "test_entries.lxf"
 RESULTS_FILE = FIXTURES / "test_results.lxf"
 
 BASE_URL = os.environ.get("MEETMGR_URL", "http://127.0.0.1:8000")
+# Fake Resend (tests/fake_resend, docker-compose.test.yml) — records every
+# email the backend "sends"; no real email ever leaves the test stack.
+FAKE_RESEND_URL = os.environ.get("MEETMGR_FAKE_RESEND_URL", "http://127.0.0.1:8025")
 ADMIN_PIN = os.environ.get("ADMIN_PIN", "314159")
+
+
+class FakeResend:
+    """Test-side handle on the fake Resend service."""
+
+    def clear(self) -> None:
+        requests.delete(f"{FAKE_RESEND_URL}/emails", timeout=5).raise_for_status()
+
+    def emails(self) -> list[dict]:
+        r = requests.get(f"{FAKE_RESEND_URL}/emails", timeout=5)
+        r.raise_for_status()
+        return r.json()
+
+    def fail(self, on: bool) -> None:
+        requests.post(f"{FAKE_RESEND_URL}/control", json={"fail": on}, timeout=5).raise_for_status()
+
+
+@pytest.fixture
+def fake_resend():
+    """Cleared fake-Resend outbox; failure mode always reset afterwards."""
+    fr = FakeResend()
+    fr.fail(False)
+    fr.clear()
+    yield fr
+    fr.fail(False)
 HEALTH_TIMEOUT = 90  # backend can take a while on first build
 KEEP_STACK = os.environ.get("MEETMGR_KEEP_STACK") == "1"
 # Set MEETMGR_SKIP_STACK=1 if you've already brought up a clean stack from

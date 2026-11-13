@@ -251,7 +251,14 @@ class ClubMeetInvite(Base):
     clubsid = Column(Integer, ForeignKey("clubs.clubsid", ondelete="CASCADE"), primary_key=True)
     meetsid = Column(Integer, ForeignKey("meets.meetsid", ondelete="CASCADE"), primary_key=True)
     invite_send_count = Column(Integer, default=0)
+    # Number of invoices sent to this club for this meet, by Stripe *or* by
+    # email (Interac e-Transfer instructions) — one shared counter, the name
+    # predates the email path.
     stripe_send_count = Column(Integer, default=0)
+    # Invoice-number revision (see invoices.invoice_number): bumped when an
+    # invoice is sent with a total different from the last one sent.
+    invoice_rev = Column(Integer)
+    invoice_last_total_cents = Column(Integer)
 
 
 # ── RELAYS ────────────────────────────────────────────────────────────────────

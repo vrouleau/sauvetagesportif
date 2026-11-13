@@ -53,6 +53,7 @@ All test commands run from a **WSL terminal**. The test suite is in `tests/`.
 - `conftest.py` manages the Docker stack automatically via `docker compose -p team-app-test -f docker-compose.yml -f docker-compose.test.yml --env-file tests/test.env`
 - `-p team-app-test` gives the test stack its own project name — **without it, `down -v` targets the same named volume as the plain dev stack (`docker compose up -d` with no `-p`, project name defaults to the directory name) and silently wipes your local dev database.** This has happened before; always pass `-p team-app-test` (or an equivalent unique name) for any test/e2e compose invocation, never reuse the bare `docker-compose.yml` project.
 - `docker-compose.test.yml` adds a port mapping: backend exposed on `http://127.0.0.1:8000`
+- It also replaces Resend with a **fake** (`tests/fake_resend/server.py`, service `fake-resend` on `127.0.0.1:8025`): the backend's `RESEND_API_URL` points at it, it records every email payload and can be told to fail (`POST /control {"fail": true}`). Tests use the `fake_resend` fixture (conftest) to read the outbox. **Tests never send real email.** The stack also sets `RESEND_FROM_EMAIL=no-reply@test.local` and `SUPPORT_EMAIL=support@test.local`.
 - `tests/test.env` provides test-only credentials (`ADMIN_PIN=314159`, `SECRET_KEY=test-only-key-not-for-production`)
 - By default the session fixture runs `down -v && up --build -d` (wipes the test DB, rebuilds images) then tears down after — this is safe because it's scoped to the `team-app-test` project, not the dev stack.
 
@@ -188,6 +189,11 @@ Best times are computed from the Team Manager `results` table via `best_times_v2
 | `DELETE /api/admin/historical-meets/{id}` | Delete a historical meet | Admin |
 | `POST /api/import-results-lxf` | Import results .lxf as historical meet; organizer path also resets current meet + PINs + clears organizer | Organizer/Admin |
 | `GET /api/athletes` | Athlete list | Any authenticated |
+| `GET /api/clubs/{id}/invoice-pdf` | One club's invoice PDF | Organizer/Admin |
+| `POST /api/invoices/pdf-zip` | ZIP of invoice PDFs (`{club_ids}`) | Organizer/Admin |
+| `POST /api/clubs/{id}/invoice` | Send Stripe invoice | Organizer/Admin |
+| `POST /api/clubs/{id}/send-invoice-email` | Email invoice (HTML + PDF, Interac instructions, Reply-To organizer) | Organizer/Admin |
+| `POST /api/invoices/notify-organizer` | One summary email to the organizer for a batch of emailed invoices (`{club_ids, lang}`) | Organizer/Admin |
 | `GET /api/admin/gemini-keys` | Get masked Gemini API keys | Admin |
 | `POST /api/admin/gemini-keys` | Set free/paid Gemini API keys | Admin |
 | `GET /api/relay-teams?club_id=X` | Relay page data (events, teams, eligible athletes) | Authenticated |
@@ -239,7 +245,8 @@ backend/app/
   best_times_v2.py      — Best times computed from Team Manager results table
   export.py             — LENEX export (registrations + Gemini key transport; session names + pause events included; SERC events/relays excluded — meet-app has no notion of them)
   export_entries.py     — LENEX export (all clubs + athletes + best times)
-  invoices.py           — Stripe invoice generation
+  invoices.py           — Invoice line items, deterministic invoice numbers (YEAR-MEET-CLUB[-Rn]), PDF renderer
+  emailing.py           — Resend transport, shared email footer, invoice + organizer-summary email templates
   seed.py               — Entries .lxf parser (clubs/athletes/HANDICAP into members table)
   mdb_import.py         — Splash Team Manager .mdb import (via mdbtools)
   lxf_to_team.py        — Import results .lxf as historical meet (merges clubs/members/HANDICAP, upserts if same name)
@@ -335,6 +342,18 @@ All three LXF import paths read this element and set `members.handicapex`:
 - `historical_import.py` — Import historical .lxf (Admin page)
 
 Existing members missing `handicapex` are backfilled on re-import; existing non-null values are never overwritten.
+
+## Invoices
+
+After the closure date the Organizer page shows **Download PDF / Send PDF / Send Stripe**.
+- **Invoice number** (`invoices.invoice_number`): `YEAR-MEETSID-CLUBSID`, e.g. `2026-012-0045`. Year = `meets.mindate`, else first session date. Revision suffix `-R2`… when a send's total differs from the last sent total (`club_meet_invites.invoice_rev` / `invoice_last_total_cents`, migration m0005). Downloading a PDF previews the number without persisting; `record_invoice_sent` persists it on a successful send.
+- **Send count**: `club_meet_invites.stripe_send_count` is the shared counter for Stripe *and* email sends (name predates the email path).
+- **Email path**: pays by Interac e-Transfer to the organizer club's email, invoice number in the memo. No Autodeposit: security question "What is the invoice number?" / « Quel est le numéro de facture? », answer = invoice number. The UI then calls `notify-organizer` once per batch; it rebuilds numbers from persisted revisions, not from the request.
+- **Who is named** (`_invoice_email_parties`): Interac recipient = organizer club's email if the meet has an organizer, else `SUPPORT_EMAIL` (no organizer → the admin is the organizer). Contact sentence, Reply-To and batch summary = `SUPPORT_EMAIL` when the admin sends or there is no organizer, else the organizer. No Interac recipient (organizer without email, or no organizer and no `SUPPORT_EMAIL`) → 400 before anything is sent.
+
+### Outgoing email (all via `emailing.send_email`)
+- From address = `RESEND_FROM_EMAIL` (must be on a Resend-verified domain); display name = organizer club name (`from_header`), `SauvetageTeam` when there's no organizer and for the organizer batch summary.
+- Reply-To is always set where a human can answer — invite: organizer email (support when the recipient is the organizer / no organizer); invoice: see `_invoice_email_parties`. Without Reply-To, replies go to the no-reply From address.
 
 ## Closure Date
 

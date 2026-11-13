@@ -98,15 +98,27 @@ Les responsables peuvent demander leur propre invitation depuis la page de conne
 
 ---
 
-## Après la clôture — Envoyer les factures (Stripe)
+## Après la clôture — Envoyer les factures
 
-Si votre compte Stripe est connecté :
+Une fois la date limite d'inscription passée, sélectionner les clubs dans l'onglet Invitation (cases à cocher). Trois boutons sont disponibles :
 
-1. Sélectionner les clubs dans l'onglet Invitation (cases à cocher)
-2. Cliquer **Envoyer la facture Stripe** — chaque club reçoit une facture pour ses frais d'inscription
-3. Les clubs paient en ligne ; le statut de paiement est suivi dans Stripe
+| Bouton | Action |
+|---|---|
+| **Télécharger PDF** | Télécharge un ZIP contenant une facture PDF par club sélectionné |
+| **Envoyer PDF** | Envoie à chaque club sa facture par courriel (PDF joint) avec les instructions pour payer par **virement Interac** au courriel du club organisateur, en inscrivant le numéro de facture dans le champ message / mémo. Les réponses sont adressées à l'organisateur. |
+| **Envoyer Stripe** | Envoie une facture Stripe (paiement par carte). Actif seulement si Stripe est connecté. |
 
-> **Note** : Connecter votre compte Stripe dans la barre d'outils de l'onglet Invitation avant le meet. Les tarifs sont configurés dans la structure de compétition.
+Les deux boutons d'envoi demandent une confirmation (« Voulez-vous envoyer X factures maintenant ? »). Les clubs sans courriel ne peuvent recevoir qu'un PDF téléchargé. La colonne **Statut** indique combien de fois une facture a été envoyée à chaque club (`2× envoyé`), par courriel ou par Stripe.
+
+Après **Envoyer PDF**, le club organisateur reçoit **un seul courriel récapitulatif** listant toutes les factures que la plateforme vient d'envoyer en son nom (club, courriel, n° de facture, total).
+
+### Numéros de facture
+
+Chaque facture a un numéro stable `ANNÉE-MEET-CLUB`, p. ex. `2026-012-0045` — le même sur le PDF, le courriel et la facture Stripe. Si le total d'un club change après l'envoi d'une facture (inscription tardive, retrait), l'envoi suivant reçoit un suffixe de révision : `2026-012-0045-R2`. Renvoyer une facture inchangée conserve le même numéro. Utilisez ce numéro dans le mémo Interac pour associer les paiements aux clubs.
+
+Le dépôt automatique n'est pas utilisé : les clubs doivent ajouter la question de sécurité **« Quel est le numéro de facture? »** avec leur numéro de facture comme réponse. Pour déposer un virement, répondez avec le numéro de facture du club (indiqué dans le courriel récapitulatif reçu après chaque envoi).
+
+> **Note** : Les tarifs sont configurés dans la structure de compétition. Le courriel du club organisateur (Admin) est le destinataire des virements Interac — vérifiez-le avant l'envoi.
 
 ---
 
@@ -158,6 +170,6 @@ Une fois la compétition terminée et les résultats exportés depuis SauvetageM
 | ② | Créer la structure de compétition | Organisateur | SauvetageTeam (ou SauvetageMeet → export) |
 | ③ | Envoyer les invitations aux clubs | Organisateur | SauvetageTeam |
 | ④ | Inscrire les athlètes | Responsables | SauvetageTeam |
-| ⑤ | Envoyer les factures Stripe (collecter les frais) | Organisateur | SauvetageTeam |
+| ⑤ | Envoyer les factures — PDF/Interac par courriel ou Stripe (collecter les frais) | Organisateur | SauvetageTeam |
 | ⑥ | Exporter les inscriptions (.lxf) → Courir la compétition | Organisateur + SauvetageMeet | Les deux |
 | ⑦ | Importer les résultats (.lxf) → meet clôturé | Organisateur | SauvetageTeam |

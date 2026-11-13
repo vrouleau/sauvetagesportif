@@ -16,11 +16,12 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with Sauvetage Sportif. If not, see <https://www.gnu.org/licenses/>.
 
-"""Build club registration-fee line items and render per-club invoice PDFs.
+"""Build club registration-fee line items, invoice numbers and invoice PDFs.
 
-The actual Stripe draft/send flow lives in routers/api.py (send_club_invoice);
-this module provides the shared line-item builder (_club_line_items) it and the
-PDF/ZIP endpoints consume, plus the ReportLab PDF renderer.
+The Stripe and email send flows live in routers/api.py (send_club_invoice,
+send_club_invoice_email); this module provides the shared line-item builder
+(_club_line_items), the deterministic invoice numbering they all use, and the
+ReportLab PDF renderer.
 """
 from __future__ import annotations
 
@@ -31,10 +32,10 @@ from io import BytesIO
 from sqlalchemy.orm import Session
 
 from .models import (
-    SwimEvent, SwimStyle, SwimResult,
+    SwimEvent, SwimStyle, SwimResult, SwimSession,
     fee_dollars_to_cents, GENDER_M, GENDER_F,
 )
-from .models_team import TeamClub, Member, Relay, RelayPos
+from .models_team import TeamClub, Member, Relay, RelayPos, ClubMeetInvite, Meet as TeamMeet
 from .meet_config import get_active_meetsid, _get_meet_config
 
 
@@ -329,8 +330,90 @@ def _money(cents: int) -> str:
     return f"${cents / 100:,.2f}"
 
 
+# ---------------------------------------------------------------------------
+# Invoice numbers
+# ---------------------------------------------------------------------------
+# Format: YEAR-MEET-CLUB[-Rn], e.g. 2026-012-0045 / 2026-012-0045-R2.
+# Deterministic: depends only on the meet (year + id), the club id, and the
+# revision. The revision is 1 until an invoice is sent; it is bumped when an
+# invoice is sent with a total different from the last one sent, so a club
+# that adds athletes after being billed gets a distinct number, while
+# re-sending an unchanged invoice keeps the same number. Short, ASCII-only
+# and dash-separated so it fits an Interac e-Transfer memo field.
+
+def format_invoice_number(year: int, meetsid: int | None, clubsid: int, rev: int = 1) -> str:
+    base = f"{year}-{(meetsid or 0):03d}-{clubsid:04d}"
+    return base if rev <= 1 else f"{base}-R{rev}"
+
+
+def next_invoice_rev(last_rev: int | None, last_total_cents: int | None, total_cents: int) -> int:
+    """Revision an invoice for `total_cents` gets, given what was last sent."""
+    if not last_rev or last_total_cents is None:
+        return 1
+    return last_rev if last_total_cents == total_cents else last_rev + 1
+
+
+def _meet_year(db: Session, meetsid: int | None) -> int:
+    """Meet start year: meets.mindate, else earliest session date, else today."""
+    if meetsid:
+        meet = db.get(TeamMeet, meetsid)
+        if meet and meet.mindate:
+            return meet.mindate.year
+        first = (
+            db.query(SwimSession.startdate)
+            .filter(SwimSession.meetsid == meetsid, SwimSession.startdate.isnot(None))
+            .order_by(SwimSession.startdate)
+            .first()
+        )
+        if first and first[0]:
+            return first[0].year
+    return date.today().year
+
+
+def invoice_number(db: Session, club_id: int, meetsid: int | None, total_cents: int) -> str:
+    """Number an invoice for `total_cents` would carry right now (read-only)."""
+    row = db.get(ClubMeetInvite, (club_id, meetsid)) if meetsid else None
+    rev = next_invoice_rev(row.invoice_rev if row else None,
+                           row.invoice_last_total_cents if row else None, total_cents)
+    return format_invoice_number(_meet_year(db, meetsid), meetsid, club_id, rev)
+
+
+def record_invoice_sent(db: Session, club_id: int, meetsid: int | None, total_cents: int) -> None:
+    """Persist the revision/total of a sent invoice and bump the send count.
+
+    The send count (`stripe_send_count`) is shared by the Stripe and email
+    paths. Caller commits.
+    """
+    if not meetsid:
+        return
+    row = db.get(ClubMeetInvite, (club_id, meetsid))
+    if not row:
+        row = ClubMeetInvite(clubsid=club_id, meetsid=meetsid)
+        db.add(row)
+    row.invoice_rev = next_invoice_rev(row.invoice_rev, row.invoice_last_total_cents, total_cents)
+    row.invoice_last_total_cents = total_cents
+    row.stripe_send_count = (row.stripe_send_count or 0) + 1
+
+
+def items_total_cents(items: list[dict]) -> int:
+    return sum(it["unit_cents"] * it["qty"] for it in items)
+
+
 def generate_invoice_pdf(db: Session, club_id: int, meetsid: int | None = None) -> bytes:
     """Generate a PDF invoice for a single club."""
+    club = db.get(TeamClub, club_id)
+    if not club:
+        raise ValueError(f"Club {club_id} not found")
+    items = _club_line_items(db, club, _meet_fees(db, meetsid), meetsid=meetsid)
+    if not items:
+        raise ValueError("No billable items for this club")
+    _meetsid = meetsid if meetsid is not None else get_active_meetsid(db)
+    invoice_no = invoice_number(db, club.clubsid, _meetsid, items_total_cents(items))
+    return render_invoice_pdf(club, items, _meet_name(db, meetsid), invoice_no)
+
+
+def render_invoice_pdf(club: TeamClub, items: list[dict], meet_name: str, invoice_no: str) -> bytes:
+    """Render an invoice PDF from pre-computed line items."""
     from reportlab.lib import colors
     from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
     from reportlab.lib.pagesizes import LETTER
@@ -338,16 +421,7 @@ def generate_invoice_pdf(db: Session, club_id: int, meetsid: int | None = None) 
     from reportlab.lib.units import inch
     from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-    club = db.get(TeamClub, club_id)
-    if not club:
-        raise ValueError(f"Club {club_id} not found")
-    items = _club_line_items(db, club, _meet_fees(db, meetsid), meetsid=meetsid)
-    if not items:
-        raise ValueError("No billable items for this club")
-
-    meet_name = _meet_name(db, meetsid)
     issue_date = date.today()
-    invoice_no = f"INV-{issue_date.strftime('%Y%m%d')}-{club.clubsid:04d}"
 
     _BRAND = colors.HexColor("#1e3a8a")
     _BAND = colors.HexColor("#eef2ff")
