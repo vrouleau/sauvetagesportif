@@ -4483,3 +4483,28 @@ class TestInvoiceEmail:
         assert mail["to"] == [self.ORG_EMAIL]
         assert mail["reply_to"] == self.SUPPORT
         assert mail["from"] == f"SauvetageTeam {self.FROM_ADDR}"
+
+    def test_self_invite_sends_email(self, parties, admin_headers, fake_resend):
+        """Public self-invite (login page link) goes through send_pin and gets
+        the same Reply-To / display name as an organizer-sent invite."""
+        club, org = parties["club"], parties["org"]
+        self._make_organizer(admin_headers, org)
+        r = requests.post(f"{BASE_URL}/api/self-invite",
+                          json={"club_id": club["id"], "email": self.COACH_EMAIL, "lang": "fr"},
+                          timeout=30)
+        assert r.status_code == 200, r.text
+        [mail] = fake_resend.emails()
+        assert mail["to"] == [self.COACH_EMAIL]
+        assert mail["reply_to"] == self.ORG_EMAIL
+        assert org["name"] in mail["from"]
+
+    def test_invite_all_sends_to_every_club_with_email(self, parties, admin_headers, fake_resend):
+        self._make_organizer(admin_headers, parties["org"])
+        r = requests.post(f"{BASE_URL}/api/organizer/clubs/invite-all", json={"lang": "fr"},
+                          headers=admin_headers, timeout=60)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["errors"] == [], body["errors"]
+        recipients = {m["to"][0] for m in fake_resend.emails()}
+        assert {self.COACH_EMAIL, self.ORG_EMAIL} <= recipients
+        assert body["sent"] == len(fake_resend.emails())

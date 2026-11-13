@@ -1349,7 +1349,7 @@ def self_invite(data: dict, request: Request, db: Session = Depends(get_db)):
         club.email = email
         db.commit()
 
-    return send_pin(club_id, {"lang": lang}, db)
+    return send_pin(club_id, {"lang": lang}, request, db)
 
 
 @router.post("/secret/{token}")
@@ -2977,7 +2977,7 @@ def invite_all_clubs(data: dict, request: Request, db: Session = Depends(get_db)
     errors = []
     for club in clubs:
         try:
-            send_pin(club.clubsid, {"lang": lang}, db)
+            send_pin(club.clubsid, {"lang": lang}, request, db)
             sent += 1
         except Exception as e:
             errors.append({"club": club.name, "error": str(e)})
