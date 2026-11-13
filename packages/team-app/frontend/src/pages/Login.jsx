@@ -76,17 +76,22 @@ export default function Login({ onLogin }) {
           <button type="submit" className="w-full px-4 py-2 bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 border border-blue-700 rounded">
             {t.login_btn}
           </button>
-          {!closed && (
-            <div className="mt-4 text-center">
-              <Link to="/self-invite" className="text-xs text-gray-500 hover:underline">
-                {t.self_invite_title}
-              </Link>
-              <span className="mx-2 text-gray-300">·</span>
-              <a href="/results" target="_blank" rel="noopener noreferrer" className="text-xs text-gray-500 hover:underline">
-                {t.results_link}
-              </a>
-            </div>
-          )}
+          {/* Self-invite only makes sense while registrations are open; the
+              results link stays visible after the deadline — that's when
+              people actually want results. */}
+          <div className="mt-4 text-center">
+            {!closed && (
+              <>
+                <Link to="/self-invite" className="text-xs text-gray-500 hover:underline">
+                  {t.self_invite_title}
+                </Link>
+                <span className="mx-2 text-gray-300">·</span>
+              </>
+            )}
+            <a href="/results" target="_blank" rel="noopener noreferrer" className="text-xs text-gray-500 hover:underline">
+              {t.results_link}
+            </a>
+          </div>
           {window.__SUPPORT_EMAIL__ && (
             <div className="mt-3 text-center">
               <a href={`mailto:${window.__SUPPORT_EMAIL__}`} className="text-xs text-blue-500 hover:underline">
