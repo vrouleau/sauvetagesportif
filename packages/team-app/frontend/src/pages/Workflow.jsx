@@ -30,7 +30,12 @@ const DOCS = [
 export default function Workflow() {
   const { lang } = useLang()
   const [content, setContent] = useState('')
-  const [activeDoc, setActiveDoc] = useState('team-admin')
+  // ?doc=team-organizer (etc.) opens that guide directly — used by the
+  // organizer invite email's link to the organizer manual.
+  const [activeDoc, setActiveDoc] = useState(() => {
+    const requested = new URLSearchParams(window.location.search).get('doc')
+    return DOCS.some(d => d.id === requested) ? requested : 'team-admin'
+  })
   const scrollRef = useRef(null)
 
   useEffect(() => {
