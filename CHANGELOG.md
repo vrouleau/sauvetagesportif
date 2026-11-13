@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.16] - 2026-11-13
+
+### Other
+
+- Merge pull request #90 from vrouleau/fix/self-invite-and-results-link (`93067e6`)
+- Keep the results link on the login page after the registration deadline (`6e7e597`)
+- Fix self-invite and invite-all crashing in send_pin (`170307b`)
+
 ## [0.5.15] - 2026-11-13
 
 ### Other
