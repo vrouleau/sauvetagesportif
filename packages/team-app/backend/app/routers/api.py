@@ -49,7 +49,7 @@ from ..meet_config import (
     _get_closure_date, _set_closure_date,
     _get_organizer_club_id, _set_organizer_club_id,
     session_date_conflict,
-    increment_club_invite_send_count, increment_club_stripe_send_count,
+    increment_club_invite_send_count,
 )
 from ..seed import seed_from_lxf
 from ..best_times import (
@@ -387,6 +387,34 @@ def require_organizer_or_admin(request: Request, db: Session = Depends(get_db)):
     role, _ = _resolve_role(pin, db)
     if role not in ("admin", "organizer"):
         raise HTTPException(403, "Organizer or admin access required")
+
+
+def _invoice_email_parties(request: Request, db: Session, meetsid: int | None) -> dict:
+    """Who an emailed invoice names, for the invoice email and its batch summary.
+
+    - `pay_to`: Interac e-Transfer recipient — the organizer club's email when
+      the meet has an organizer; with no organizer the admin is acting as
+      organizer, so SUPPORT_EMAIL.
+    - `support_contact`: SUPPORT_EMAIL when it should be the clubs' contact and
+      Reply-To, i.e. the admin is sending (or there is no organizer); else "".
+    - `summary_to`: where the batch summary goes — support_contact, else the
+      organizer's email.
+    Any of these may be "" when the relevant email isn't configured.
+    """
+    support = os.environ.get("SUPPORT_EMAIL", "").strip()
+    org_cfg = _get_organizer_club_id(db, meetsid=meetsid)
+    org_club = db.get(TeamClub, int(org_cfg)) if org_cfg else None
+    org_email = ((org_club.email if org_club else "") or "").strip()
+    role, _ = _resolve_role(request.headers.get("X-Club-Pin", ""), db)
+    support_contact = support if (role == "admin" or not org_club) else ""
+    return {
+        "org_club": org_club,
+        "org_name": (org_club.name if org_club else "") or "",
+        "pay_to": org_email if org_club else support,
+        "support_contact": support_contact,
+        "reply_to": support_contact or org_email,
+        "summary_to": support_contact or org_email,
+    }
 
 
 def _check_closure(db: Session, pin: str = ""):
@@ -1157,7 +1185,6 @@ def send_pin(club_id: int, data: dict, request: Request, db: Session = Depends(g
     import uuid
     from datetime import timedelta
     from cryptography.fernet import Fernet
-    import httpx
 
     club = db.get(TeamClub, club_id)
     if not club:
@@ -1166,8 +1193,7 @@ def send_pin(club_id: int, data: dict, request: Request, db: Session = Depends(g
         raise HTTPException(400, "No email set for this club")
 
     lang = data.get("lang", "fr")
-    resend_key = os.environ.get("RESEND_API_KEY")
-    if not resend_key:
+    if not os.environ.get("RESEND_API_KEY"):
         raise HTTPException(500, "RESEND_API_KEY not configured")
 
     fernet_key = os.environ.get("SECRET_KEY")
@@ -1206,45 +1232,14 @@ def send_pin(club_id: int, data: dict, request: Request, db: Session = Depends(g
             org_email = org_club.email or ""
             org_club_name = org_club.name or ""
 
-    support_email = os.environ.get("SUPPORT_EMAIL", "")
-
-    # Build footer
-    footer_note = "<hr style=\"margin-top:20px\">"
-    if is_organizer:
-        if lang == "fr":
-            if support_email:
-                footer_note += (f"<p>Pour toute question, contactez le support : "
-                                f"<a href=\"mailto:{support_email}\">{support_email}</a></p>")
-        else:
-            if support_email:
-                footer_note += (f"<p>If you have questions, contact support: "
-                                f"<a href=\"mailto:{support_email}\">{support_email}</a></p>")
-    else:
-        if lang == "fr":
-            lines = []
-            if org_email:
-                lines.append(f"Pour toute question sur la compétition, contactez l'organisateur ({org_club_name}) : "
-                             f"<a href=\"mailto:{org_email}\">{org_email}</a>")
-            if support_email:
-                lines.append(f"Pour de l'aide avec le portail d'inscription, contactez le support : "
-                             f"<a href=\"mailto:{support_email}\">{support_email}</a>")
-            if lines:
-                footer_note += "<p>" + "<br>".join(lines) + "</p>"
-        else:
-            lines = []
-            if org_email:
-                lines.append(f"If you have questions about the meet, contact the organizer ({org_club_name}): "
-                             f"<a href=\"mailto:{org_email}\">{org_email}</a>")
-            if support_email:
-                lines.append(f"For help with the registration portal, contact support: "
-                             f"<a href=\"mailto:{support_email}\">{support_email}</a>")
-            if lines:
-                footer_note += "<p>" + "<br>".join(lines) + "</p>"
-
-    if lang == "fr":
-        footer_note += "<p style=\"font-size:11px;color:#888\">Ce courriel est envoyé automatiquement. Veuillez ne pas répondre à ce courriel.</p>"
-    else:
-        footer_note += "<p style=\"font-size:11px;color:#888\">This is an automated message. Please do not reply to this email.</p>"
+    from ..emailing import build_footer, send_email
+    # Replies go to the organizer (or to support when the recipient *is* the
+    # organizer, or the meet has none). Shown under the organizer club's name.
+    reply_to = org_email or os.environ.get("SUPPORT_EMAIL", "").strip()
+    from_name = org_club_name or "SauvetageTeam"
+    footer_note = build_footer(lang, is_organizer=bool(is_organizer),
+                               org_club_name=org_club_name, org_email=org_email,
+                               no_reply=not reply_to)
 
     # Email content
     if lang == "fr":
@@ -1294,16 +1289,7 @@ def send_pin(club_id: int, data: dict, request: Request, db: Session = Depends(g
                 f"<p>Good luck!</p>"
                 f"{footer_note}")
 
-    from_email = os.environ.get("RESEND_FROM_EMAIL", "noreply@example.com")
-    resp = httpx.post("https://api.resend.com/emails", json={
-        "from": from_email,
-        "to": [club.email],
-        "subject": subject,
-        "html": html,
-    }, headers={"Authorization": f"Bearer {resend_key}"}, timeout=10)
-
-    if resp.status_code not in (200, 201):
-        raise HTTPException(502, f"Resend error: {resp.text}")
+    send_email(club.email, subject, html, reply_to=reply_to or None, from_name=from_name)
 
     increment_club_invite_send_count(db, club.clubsid, meetsid)
     db.commit()
@@ -3247,7 +3233,9 @@ def invoices_pdf_zip(data: dict, request: Request, db: Session = Depends(get_db)
     from io import BytesIO
     from ..invoices import generate_invoice_pdf
 
+    from ..invoices import _club_line_items, _meet_fees, invoice_number, items_total_cents
     meetsid = resolve_meetsid(request, db)
+    meet_fees = _meet_fees(db, meetsid)
     club_ids = data.get("club_ids", [])
     if not club_ids:
         raise HTTPException(400, "No clubs selected")
@@ -3261,7 +3249,8 @@ def invoices_pdf_zip(data: dict, request: Request, db: Session = Depends(get_db)
                 continue
             club = db.get(TeamClub, cid)
             name = club.name.replace(" ", "_") if club else f"club_{cid}"
-            zf.writestr(f"invoice_{name}.pdf", pdf)
+            total = items_total_cents(_club_line_items(db, club, meet_fees, meetsid=meetsid))
+            zf.writestr(f"invoice_{invoice_number(db, cid, meetsid, total)}_{name}.pdf", pdf)
 
     if buf.tell() == 0:
         raise HTTPException(400, "No billable clubs in selection")
@@ -3307,8 +3296,11 @@ def send_club_invoice(club_id: int, request: Request, db: Session = Depends(get_
     if not items:
         raise HTTPException(400, "No billable items for this club")
 
+    from ..invoices import invoice_number, record_invoice_sent, items_total_cents
     acct = org_club.stripe_account_id
     meet_name = _meet_name(db, meetsid)
+    total_cents = items_total_cents(items)
+    invoice_no = invoice_number(db, club.clubsid, meetsid, total_cents)
 
     email = (club.email or "").strip()
     customer = None
@@ -3329,7 +3321,12 @@ def send_club_invoice(club_id: int, request: Request, db: Session = Depends(get_
     # where "meetmanager.vrouleau.app" comes from and it can't be overridden
     # per-invoice), so we add the organiser as a labelled custom field instead.
     # Stripe caps custom_fields name/value at 30 chars each.
-    custom_fields = [{"name": "Organisateur"[:30], "value": (org_club.name or "")[:30]}]
+    # The invoice number is the same deterministic one used on the PDF and
+    # the email invoice (invoices.invoice_number), independent of Stripe's own.
+    custom_fields = [
+        {"name": "Organisateur"[:30], "value": (org_club.name or "")[:30]},
+        {"name": "N° facture"[:30], "value": invoice_no[:30]},
+    ]
 
     invoice = stripe.Invoice.create(
         customer=customer.id,
@@ -3339,7 +3336,8 @@ def send_club_invoice(club_id: int, request: Request, db: Session = Depends(get_
         days_until_due=30,
         description=f"{meet_name} — Inscriptions",
         custom_fields=custom_fields,
-        metadata={"meetmanager_club_id": str(club.clubsid), "meetmanager_meet": meet_name},
+        metadata={"meetmanager_club_id": str(club.clubsid), "meetmanager_meet": meet_name,
+                  "meetmanager_invoice_no": invoice_no},
         pending_invoice_items_behavior="exclude",
         stripe_account=acct,
     )
@@ -3375,14 +3373,121 @@ def send_club_invoice(club_id: int, request: Request, db: Session = Depends(get_
     stripe.Invoice.finalize_invoice(invoice.id, stripe_account=acct)
     stripe.Invoice.send_invoice(invoice.id, stripe_account=acct)
 
-    increment_club_stripe_send_count(db, club.clubsid, meetsid)
+    record_invoice_sent(db, club.clubsid, meetsid, total_cents)
     db.commit()
 
     return {
         "club": club.name,
         "invoice_id": invoice.id,
-        "total_cents": sum(it["unit_cents"] * it["qty"] for it in items),
+        "invoice_no": invoice_no,
+        "total_cents": total_cents,
     }
+
+
+@router.post("/clubs/{club_id}/send-invoice-email", dependencies=[Depends(require_organizer_or_admin)])
+def send_club_invoice_email(club_id: int, data: dict, request: Request, db: Session = Depends(get_db)):
+    """Email a club its invoice (HTML + PDF attached) with Interac e-Transfer
+    instructions: pay to the organizer club email, invoice number in the memo.
+
+    Shares the invoice number and the send counter (stripe_send_count) with
+    the Stripe path. Recipient/contact rules: see _invoice_email_parties.
+    """
+    from ..invoices import (
+        _club_line_items, _meet_fees, _meet_name, invoice_number, record_invoice_sent,
+        items_total_cents, render_invoice_pdf,
+    )
+    from ..emailing import build_invoice_email, send_email
+
+    lang = (data or {}).get("lang", "fr")
+    meetsid = resolve_meetsid(request, db)
+
+    club = db.get(TeamClub, club_id)
+    if not club:
+        raise HTTPException(404, "Club not found")
+    to = (club.email or "").strip()
+    if not to:
+        raise HTTPException(400, "No email set for this club")
+
+    items = _club_line_items(db, club, _meet_fees(db, meetsid), meetsid=meetsid)
+    if not items:
+        raise HTTPException(400, "No billable items for this club")
+    parties = _invoice_email_parties(request, db, meetsid)
+    if not parties["pay_to"]:
+        raise HTTPException(400, "No Interac recipient: set the organizer club's email"
+                                 if parties["org_club"] else
+                                 "No Interac recipient: no organizer and SUPPORT_EMAIL not configured")
+    if not os.environ.get("RESEND_API_KEY"):
+        raise HTTPException(500, "RESEND_API_KEY not configured")
+
+    meet_name = _meet_name(db, meetsid)
+    total_cents = items_total_cents(items)
+    invoice_no = invoice_number(db, club.clubsid, meetsid, total_cents)
+    pdf = render_invoice_pdf(club, items, meet_name, invoice_no)
+    subject, html = build_invoice_email(
+        lang=lang, meet_name=meet_name, club_name=club.name or "",
+        org_club_name=parties["org_name"], org_email=parties["pay_to"], invoice_no=invoice_no,
+        items=items, total_cents=total_cents, support_email=parties["support_contact"],
+    )
+    pdf_name = f"facture_{invoice_no}.pdf"
+    send_email(to, subject, html, reply_to=parties["reply_to"] or None,
+               from_name=parties["org_name"] or "SauvetageTeam",
+               attachments=[(pdf_name, pdf)])
+    # The organizer gets one summary per batch, not one email per invoice —
+    # see notify_organizer_invoices_sent, called by the UI after the loop.
+
+    record_invoice_sent(db, club.clubsid, meetsid, total_cents)
+    db.commit()
+
+    return {"club": club.name, "invoice_no": invoice_no, "total_cents": total_cents,
+            "message": f"Email sent to {to}"}
+
+
+@router.post("/invoices/notify-organizer", dependencies=[Depends(require_organizer_or_admin)])
+def notify_organizer_invoices_sent(data: dict, request: Request, db: Session = Depends(get_db)):
+    """Send the organizer one summary of the invoices just emailed in their
+    name — or SUPPORT_EMAIL when the admin sent the batch. Called by the UI
+    once after a batch of send-invoice-email calls.
+
+    Takes `{club_ids, lang}`; each club's invoice number and total are
+    rebuilt from what record_invoice_sent persisted, not from the request,
+    so the summary matches exactly what the clubs received.
+    """
+    from ..invoices import _meet_name, _meet_year, format_invoice_number
+    from ..models_team import ClubMeetInvite
+    from ..emailing import build_organizer_invoice_summary, send_email
+
+    lang = (data or {}).get("lang", "fr")
+    club_ids = [int(c) for c in (data or {}).get("club_ids", [])]
+    meetsid = resolve_meetsid(request, db)
+    if not club_ids or not meetsid:
+        raise HTTPException(400, "No clubs")
+
+    parties = _invoice_email_parties(request, db, meetsid)
+    recipient = parties["summary_to"]
+    if not recipient:
+        return {"sent": False, "reason": "No organizer email or SUPPORT_EMAIL"}
+
+    year = _meet_year(db, meetsid)
+    invoices = []
+    for cid in club_ids:
+        club = db.get(TeamClub, cid)
+        row = db.get(ClubMeetInvite, (cid, meetsid))
+        if not club or not row or not row.invoice_rev or row.invoice_last_total_cents is None:
+            continue  # never actually sent — nothing to report
+        invoices.append({
+            "club_name": club.name or "", "club_email": club.email or "",
+            "invoice_no": format_invoice_number(year, meetsid, cid, row.invoice_rev),
+            "total_cents": row.invoice_last_total_cents,
+        })
+    if not invoices:
+        return {"sent": False, "reason": "No sent invoices"}
+    invoices.sort(key=lambda i: i["club_name"].lower())
+
+    subject, html = build_organizer_invoice_summary(
+        lang=lang, meet_name=_meet_name(db, meetsid),
+        org_club_name=parties["org_name"], org_email=parties["pay_to"], invoices=invoices)
+    send_email(recipient, subject, html, from_name="SauvetageTeam")
+    return {"sent": True, "count": len(invoices), "to": recipient}
 
 
 # ---------------------------------------------------------------------------

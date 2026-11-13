@@ -98,15 +98,27 @@ Coaches can request their own invitation from the login page:
 
 ---
 
-## After Closure — Send Invoices (Stripe)
+## After Closure — Send Invoices
 
-If your Stripe account is connected:
+Once the registration deadline has passed, select clubs in the Invitation tab (checkboxes). Three buttons are available:
 
-1. Select clubs in the Invitation tab (checkboxes)
-2. Click **Send Stripe Invoice** — each club receives an invoice for their registration fees
-3. Clubs pay online; payment status is tracked in Stripe
+| Button | What it does |
+|---|---|
+| **Download PDF** | Downloads a ZIP with one PDF invoice per selected club |
+| **Send PDF** | Emails each club its invoice (PDF attached) with instructions to pay by **Interac e-Transfer** to the organizer club's email, putting the invoice number in the message/memo field. Replies go to the organizer. |
+| **Send Stripe** | Sends a Stripe invoice (clubs pay by card). Only enabled when Stripe is connected. |
 
-> **Note**: Connect your Stripe account in the Invitation tab toolbar before the meet. Fees are configured in the meet structure.
+Both send buttons ask for confirmation first ("Do you want to send X invoices now?"). Clubs without an email can only get a PDF download. The **Status** column shows how many times each club was sent an invoice (`2× sent`), by email or Stripe.
+
+After **Send PDF**, the organizer club receives **one summary email** listing every invoice the platform just sent in its name (club, email, invoice number, total).
+
+### Invoice numbers
+
+Each invoice has a stable number `YEAR-MEET-CLUB`, e.g. `2026-012-0045` — the same on the PDF, the email, and the Stripe invoice. If a club's total changes after an invoice was sent (late registration, withdrawal), the next send gets a revision suffix: `2026-012-0045-R2`. Re-sending an unchanged invoice keeps the same number. Use the number in the Interac memo to match payments to clubs.
+
+Autodeposit is not used: clubs are told to set the security question **"What is the invoice number?"** with their invoice number as the answer. When you deposit a transfer, answer with that club's invoice number (listed in the summary email you receive after each batch).
+
+> **Note**: Fees are configured in the meet structure. The organizer club's email (Admin) is the Interac e-Transfer recipient — make sure it's correct before sending.
 
 ---
 
@@ -158,6 +170,6 @@ Once the competition is over and results have been exported from SauvetageMeet:
 | ② | Create meet structure | Organizer | SauvetageTeam (or SauvetageMeet → export) |
 | ③ | Send invitations to clubs | Organizer | SauvetageTeam |
 | ④ | Register athletes | Coaches | SauvetageTeam |
-| ⑤ | Send Stripe invoices (collect fees) | Organizer | SauvetageTeam |
+| ⑤ | Send invoices — PDF/Interac by email or Stripe (collect fees) | Organizer | SauvetageTeam |
 | ⑥ | Export registrations (.lxf) → Run competition | Organizer + SauvetageMeet | Both |
 | ⑦ | Import results (.lxf) → meet closed | Organizer | SauvetageTeam |

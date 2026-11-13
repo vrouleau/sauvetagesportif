@@ -422,6 +422,7 @@ class TestRunner:
             "0002_hc_results_status",
             "0003_swimevent_agegroup_composite_pk",
             "0004_club_meet_invites",
+            "0005_invoice_revision",
         ]
 
         ran_second = apply_pending(new_engine)
@@ -429,7 +430,7 @@ class TestRunner:
 
         with new_engine.connect() as conn:
             count = conn.execute(text("SELECT COUNT(*) FROM schema_migrations")).scalar()
-        assert count == 4
+        assert count == 5
 
 
 # ---------------------------------------------------------------------------
