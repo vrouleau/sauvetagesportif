@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.15] - 2026-11-13
+
+### Other
+
+- Merge pull request #89 from vrouleau/feat/invoice-email-interac (`dddd08d`)
+- Invoice by email with Interac instructions and deterministic invoice numbers (`7280878`)
+
 ## [0.5.14] - 2026-11-12
 
 ### 📝 Documentation
