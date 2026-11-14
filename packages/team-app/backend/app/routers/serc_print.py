@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from html import escape
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import HTMLResponse
@@ -205,6 +206,7 @@ LABELS = {
         "judge_sheet": "FEUILLE DE POINTAGE DU JUGE",
         "draw_no": "Tirage No:",
         "team_name": "Nom d'équipe:",
+        "team_members": "Prénoms des membres:",
         "judge_id": "Identification du juge:",
         "victim": "Victime",
         "judges_notes": "Notes du juge",
@@ -238,6 +240,7 @@ LABELS = {
         "judge_sheet": "JUDGE SCORING SHEET",
         "draw_no": "Draw No:",
         "team_name": "Team Name:",
+        "team_members": "Member first names:",
         "judge_id": "Judge Identification:",
         "victim": "Victim",
         "judges_notes": "Judge's Notes",
@@ -275,6 +278,21 @@ VICTIM_TYPE_KEY = {
     "Injured Swimmer": "is",
     "Unconscious Non-Breathing": "unb",
 }
+
+
+def _render_team_metadata(t: dict[str, str], draw_num: int | str, team_name: str, member_names: str) -> str:
+    return f"""
+        <div class="meta-row">
+            <span>{t['draw_no']} <span class="field">{escape(str(draw_num))}</span></span>
+            <span>{t['team_name']} <span class="field">{escape(team_name)}</span></span>
+        </div>
+        <div class="meta-row">
+            <span>{t['team_members']} <span class="field">{escape(member_names)}</span></span>
+        </div>
+        <div class="meta-row">
+            <span>{t['judge_id']} <span class="field"></span></span>
+        </div>
+    """
 
 
 # ── Page CSS (matches XLSX print styling) ─────────────────────────────────────
@@ -380,7 +398,15 @@ body { font-family: Arial, sans-serif; font-size: 10pt; color: #000; }
 
 # ── Rendering functions ───────────────────────────────────────────────────────
 
-def _render_victim_sheet(victim_num: int, victim_type: str, factors: dict, lang: str, team_name: str = "", draw_num: int | str = "") -> str:
+def _render_victim_sheet(
+    victim_num: int,
+    victim_type: str,
+    factors: dict,
+    lang: str,
+    team_name: str = "",
+    member_names: str = "",
+    draw_num: int | str = "",
+) -> str:
     """Render one victim judge sheet page."""
     t = LABELS[lang]
     type_key = VICTIM_TYPE_KEY.get(victim_type, "ns")
@@ -412,14 +438,7 @@ def _render_victim_sheet(victim_num: int, victim_type: str, factors: dict, lang:
         <div class="title-bar">{type_label} - {t['victim']} {victim_num}</div>
         <div class="subtitle-bar">{t['judge_sheet']}</div>
 
-        <div class="meta-row">
-            <span>{t['draw_no']} <span class="field">{draw_num}</span></span>
-            <span>{t['team_name']} <span class="field">{team_name}</span></span>
-        </div>
-        <div class="meta-row">
-            <span></span>
-            <span>{t['judge_id']} <span class="field"></span></span>
-        </div>
+        {_render_team_metadata(t, draw_num, team_name, member_names)}
 
         <div class="scenario-box">
             <strong>{t['victim']}: {type_label}</strong><br>
@@ -456,7 +475,13 @@ def _render_victim_sheet(victim_num: int, victim_type: str, factors: dict, lang:
     </div>"""
 
 
-def _render_overall_sheet(factors: dict, lang: str, team_name: str = "", draw_num: int | str = "") -> str:
+def _render_overall_sheet(
+    factors: dict,
+    lang: str,
+    team_name: str = "",
+    member_names: str = "",
+    draw_num: int | str = "",
+) -> str:
     """Render the Overall (Chief Judge) sheet."""
     t = LABELS[lang]
     desc = OVERALL_DESCRIPTION[lang]
@@ -485,14 +510,7 @@ def _render_overall_sheet(factors: dict, lang: str, team_name: str = "", draw_nu
         <div class="title-bar">{t['overall_title']}</div>
         <div class="subtitle-bar">{t['judge_sheet']}</div>
 
-        <div class="meta-row">
-            <span>{t['draw_no']} <span class="field">{draw_num}</span></span>
-            <span>{t['team_name']} <span class="field">{team_name}</span></span>
-        </div>
-        <div class="meta-row">
-            <span></span>
-            <span>{t['judge_id']} <span class="field"></span></span>
-        </div>
+        {_render_team_metadata(t, draw_num, team_name, member_names)}
 
         <div class="notes-header">{t['judges_notes']}</div>
         <div class="notes-box">
@@ -527,7 +545,13 @@ def _render_overall_sheet(factors: dict, lang: str, team_name: str = "", draw_nu
     </div>"""
 
 
-def _render_bystander_sheet(factors: dict, lang: str, team_name: str = "", draw_num: int | str = "") -> str:
+def _render_bystander_sheet(
+    factors: dict,
+    lang: str,
+    team_name: str = "",
+    member_names: str = "",
+    draw_num: int | str = "",
+) -> str:
     """Render the Bystander sheet."""
     t = LABELS[lang]
     desc = BYSTANDER_DESCRIPTION[lang]
@@ -554,14 +578,7 @@ def _render_bystander_sheet(factors: dict, lang: str, team_name: str = "", draw_
         <div class="title-bar">{t['bystander_title']}</div>
         <div class="subtitle-bar">{t['judge_sheet']}</div>
 
-        <div class="meta-row">
-            <span>{t['draw_no']} <span class="field">{draw_num}</span></span>
-            <span>{t['team_name']} <span class="field">{team_name}</span></span>
-        </div>
-        <div class="meta-row">
-            <span></span>
-            <span>{t['judge_id']} <span class="field"></span></span>
-        </div>
+        {_render_team_metadata(t, draw_num, team_name, member_names)}
 
         <div class="scenario-box">
             {desc['scenario']}
@@ -625,19 +642,22 @@ def print_sheets(
 
     # Get teams from relay entries in draw order
     relays = db.query(Relay).filter(Relay.stylesid == SERC_STYLE_ID).order_by(Relay.teamnumb).all()
-    teams_map: dict[int, str] = {}
+    teams_map: dict[int, tuple[str, str]] = {}
     for relay in relays:
         positions = db.query(RelayPos).filter(RelayPos.relaysid == relay.relaysid).order_by(RelayPos.numb).all()
-        members = []
+        member_first_names = []
         for pos in positions:
             if pos.membersid:
                 member = db.get(Member, pos.membersid)
-                if member:
-                    members.append(member.lastname)
+                if member and member.firstname and member.firstname.strip():
+                    member_first_names.append(member.firstname.strip())
         club = db.get(TeamClub, relay.clubsid) if relay.clubsid else None
         club_name = (club.name or club.code or "") if club else ""
-        team_name = "/".join(m for m in members if m) if members else club_name
-        teams_map[relay.relaysid] = team_name
+        fallback_name = " ".join(
+            part for part in (club_name, str(relay.teamnumb) if relay.teamnumb is not None else "") if part
+        )
+        team_name = (relay.name or "").strip() or fallback_name or f"Team {relay.teamnumb or 1}"
+        teams_map[relay.relaysid] = (team_name, ", ".join(member_first_names))
 
     # Get draw order (position 1,2,3... = draw number for each team)
     orders = (
@@ -647,30 +667,39 @@ def print_sheets(
         .all()
     )
     if orders:
-        ordered = [(o.position, o.relay_team_id, teams_map.get(o.relay_team_id, f"Team {o.position}")) for o in orders]
+        ordered = [
+            (o.position, *teams_map.get(o.relay_team_id, (f"Team {o.position}", "")))
+            for o in orders
+        ]
     else:
         # Fall back to natural order
-        ordered = [(i + 1, rid, name) for i, (rid, name) in enumerate(teams_map.items())]
+        ordered = [(i + 1, *team_data) for i, team_data in enumerate(teams_map.values())]
 
     sheets_html = ""
 
     # For each team: generate all section pages
-    for draw_pos, relay_team_id, team_name in ordered:
+    for draw_pos, team_name, member_names in ordered:
         # Overall
         for ln in langs:
-            sheets_html += _render_overall_sheet(overall_factors, ln, team_name=team_name, draw_num=draw_pos)
+            sheets_html += _render_overall_sheet(
+                overall_factors, ln, team_name=team_name, member_names=member_names, draw_num=draw_pos
+            )
 
         # Bystander
         if config.has_bystander:
             for ln in langs:
-                sheets_html += _render_bystander_sheet(bystander_factors, ln, team_name=team_name, draw_num=draw_pos)
+                sheets_html += _render_bystander_sheet(
+                    bystander_factors, ln, team_name=team_name, member_names=member_names, draw_num=draw_pos
+                )
 
         # Victims
         for i in range(config.num_victims):
             vf = victim_factors[i] if i < len(victim_factors) else {}
             victim_type = vf.get("type", "Non Swimmer")
             for ln in langs:
-                sheets_html += _render_victim_sheet(i + 1, victim_type, vf, ln, team_name=team_name, draw_num=draw_pos)
+                sheets_html += _render_victim_sheet(
+                    i + 1, victim_type, vf, ln, team_name=team_name, member_names=member_names, draw_num=draw_pos
+                )
 
     html = f"""<!DOCTYPE html>
 <html>

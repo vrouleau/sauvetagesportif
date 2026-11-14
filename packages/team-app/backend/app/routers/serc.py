@@ -45,6 +45,13 @@ _DSQ_CODES_ENV = "DSQ_CODES_PATH"
 _DSQ_CODES_FILENAME = "dsq-codes.json"
 
 
+def _team_display_name(team_name: str | None, team_number: int | None, members: list[str]) -> str:
+    if team_name and team_name.strip():
+        return team_name.strip()
+    surnames = [member.split(",", 1)[0].strip() for member in members if member]
+    return "/".join(surnames) if surnames else f"Team {team_number or 1}"
+
+
 def _dsq_codes_path() -> Path:
     override = os.environ.get(_DSQ_CODES_ENV)
     if override:
@@ -133,10 +140,7 @@ def list_teams(db: Session = Depends(get_db)):
             if club:
                 club_name = club.name or club.code or ""
 
-        # Build team name (from relay custom name or generated)
-        team_name = ""
-        if members:
-            team_name = "/".join(m.split(",")[0].strip() for m in members if m)
+        team_name = _team_display_name(relay.name, relay.teamnumb, members)
 
         teams.append({
             "relay_team_id": relay.relaysid,
@@ -383,7 +387,7 @@ def get_results(db: Session = Depends(get_db)):
                 if m:
                     members.append(f"{m.lastname}, {m.firstname}")
         team_info[relay.relaysid] = {
-            "name": "/".join(m.split(",")[0].strip() for m in members) if members else f"Team {relay.teamnumb}",
+            "name": _team_display_name(relay.name, relay.teamnumb, members),
             "club": club.name if club else "",
         }
 

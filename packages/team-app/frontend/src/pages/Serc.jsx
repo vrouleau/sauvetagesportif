@@ -34,6 +34,12 @@ import { QRCodeSVG } from 'qrcode.react'
 import api from '../api'
 import { computeSercTotal } from '../sercScoring'
 
+const PRINT_OPTIONS = [
+  { value: 'en', labels: { fr: 'Anglais — simple face', en: 'English — single-sided' } },
+  { value: 'fr', labels: { fr: 'Français — simple face', en: 'French — single-sided' } },
+  { value: 'bilingual', labels: { fr: 'Bilingue — recto-verso', en: 'Bilingual — double-sided' } },
+]
+
 // ─── Factor Catalog ───────────────────────────────────────────────────────────
 // Descriptive labels from the XLSX "Drop Down Info" sheet.
 // User picks these; the factor value is hidden.
@@ -205,12 +211,22 @@ export default function Serc() {
         <NavItem label={lang === 'fr' ? 'Pointages' : 'Scoring'} active={page === 'scoring'} onClick={() => handleSetPage('scoring')} />
         <div className="text-gray-500 text-[10px] uppercase px-3 pt-3">{lang === 'fr' ? 'Résultats' : 'Output'}</div>
         <NavItem label={lang === 'fr' ? 'Résultats' : 'Results'} active={page === 'results'} onClick={() => handleSetPage('results')} />
-        <NavItem label={lang === 'fr' ? 'Feuilles d\'impression' : 'Print Sheets'} active={false}
-          onClick={() => window.open('/api/serc/print/sheets?lang=bilingual', '_blank')} />
+        <div className="text-gray-500 text-[10px] uppercase px-3 pt-3">{lang === 'fr' ? "Feuilles d'impression" : 'Print Sheets'}</div>
+        {PRINT_OPTIONS.map(option => (
+          <a
+            key={option.value}
+            className="block px-3 py-1.5 pl-5 text-xs leading-4 text-gray-300 hover:bg-gray-700"
+            href={`/api/serc/print/sheets?lang=${option.value}`}
+            target="_blank"
+            rel="noreferrer"
+          >
+            {option.labels[lang]}
+          </a>
+        ))}
       </div>
 
       {/* Main content */}
-      <div className="flex-1 overflow-auto p-4">
+      <div className={`flex-1 min-w-0 min-h-0 p-4 ${page === 'scoring' ? 'overflow-hidden' : 'overflow-auto'}`}>
         {page === 'setup' && <SetupPage config={config} onSave={loadAll} lang={lang} registerSave={fn => { pendingSaveRef.current = fn }} />}
         {page === 'scoring' && <ScoringPage teams={teams} config={config} lang={lang} />}
         {page === 'results' && <ResultsPage lang={lang} />}
@@ -554,6 +570,7 @@ function ScoringPage({ teams, config, lang }) {
   }
 
   const orderedTeams = order.map(id => teams.find(t => t.relay_team_id === id)).filter(Boolean)
+  const scoreGridWidth = 176 + 44 + orderedTeams.length * 132
 
   // Assign row indices (only for input rows, not headers)
   let inputRowIdx = 0
@@ -563,17 +580,24 @@ function ScoringPage({ teams, config, lang }) {
   })
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center gap-3 flex-wrap">
+    <div className="h-full min-h-0 flex flex-col gap-3">
+      <div className="flex items-center gap-3 flex-wrap shrink-0">
         <h2 className="text-lg font-bold text-gray-800">{lang === 'fr' ? 'Pointages' : 'Scoring'}</h2>
         <button className={`px-3 py-1 text-xs rounded ${drawMode === 'random' ? 'bg-purple-600 text-white' : 'bg-gray-200 text-gray-700'}`}
           onClick={randomize}>🎲 {lang === 'fr' ? 'Tirage aléatoire' : 'Random Draw'}</button>
         <button className={`px-3 py-1 text-xs rounded ${drawMode === 'final' ? 'bg-amber-600 text-white' : 'bg-gray-200 text-gray-700'}`}
           onClick={orderByResults}>🏆 {lang === 'fr' ? 'Tirage final' : 'Final Draw'}</button>
-        <button className="px-3 py-1 bg-gray-600 text-white text-xs rounded hover:bg-gray-700"
-          onClick={() => window.open('/api/serc/print/sheets?draw=1&lang=fr', '_blank')}>🖨 {lang === 'fr' ? 'Imprimer FR' : 'Print FR'}</button>
-        <button className="px-3 py-1 bg-gray-600 text-white text-xs rounded hover:bg-gray-700"
-          onClick={() => window.open('/api/serc/print/sheets?draw=1&lang=bilingual', '_blank')}>🖨 FR/EN</button>
+        {PRINT_OPTIONS.map(option => (
+          <a
+            key={option.value}
+            className="px-3 py-1 bg-gray-600 text-white text-xs rounded hover:bg-gray-700"
+            href={`/api/serc/print/sheets?lang=${option.value}`}
+            target="_blank"
+            rel="noreferrer"
+          >
+            🖨 {option.labels[lang]}
+          </a>
+        ))}
         <span className="text-xs text-gray-500">{orderedTeams.length} {lang === 'fr' ? 'équipes' : 'teams'} • {drawMode === 'final' ? (lang === 'fr' ? 'Ordre final' : 'Final') : (lang === 'fr' ? 'Ordre aléatoire' : 'Random')} {lang === 'fr' ? '' : 'order'}</span>
         <button className="px-3 py-1 bg-indigo-600 text-white text-xs rounded hover:bg-indigo-700"
           onClick={() => setShowQR(true)}>📱 {lang === 'fr' ? 'Codes QR juges' : 'Judge QR Codes'}</button>
@@ -583,15 +607,20 @@ function ScoringPage({ teams, config, lang }) {
       {showQR && <QRModal config={config} onClose={() => setShowQR(false)} lang={lang} />}
 
       {/* Scoring Grid */}
-      <div className="overflow-auto border border-gray-300 rounded bg-white" ref={gridRef}>
-        <table className="text-[10px] border-collapse min-w-max">
+      <div className="flex-1 min-h-0 w-full min-w-0 max-w-full overflow-auto overscroll-contain border border-gray-300 rounded bg-white" ref={gridRef}>
+        <table className="text-[10px] border-collapse table-fixed" style={{ width: scoreGridWidth }}>
+          <colgroup>
+            <col style={{ width: 176 }} />
+            <col style={{ width: 44 }} />
+            {orderedTeams.map(t => <col key={t.relay_team_id} style={{ width: 132 }} />)}
+          </colgroup>
           <thead>
             <tr className="bg-gray-800 text-white">
-              <th className="px-2 py-1 text-left sticky left-0 bg-gray-800 z-10 w-40">{lang === 'fr' ? 'Critère' : 'Criteria'}</th>
-              <th className="px-1 py-1 text-center w-10">{lang === 'fr' ? 'Fact.' : 'Fact.'}</th>
+              <th className="px-2 py-1 text-left sticky left-0 bg-gray-800 z-10">{lang === 'fr' ? 'Critère' : 'Criteria'}</th>
+              <th className="px-1 py-1 text-center">{lang === 'fr' ? 'Fact.' : 'Fact.'}</th>
               {orderedTeams.map((t, i) => (
-                <th key={t.relay_team_id} className={`px-1 py-1 text-center min-w-[50px] max-w-[70px] truncate ${dsq[t.relay_team_id] ? 'bg-red-900' : ''}`} title={t.name}>
-                  {i + 1}. {t.name?.split('/')[0] || t.club}
+                <th key={t.relay_team_id} className={`px-1 py-1 text-center truncate ${dsq[t.relay_team_id] ? 'bg-red-900' : ''}`} title={t.name}>
+                  {i + 1}. {t.name || t.club}
                 </th>
               ))}
             </tr>
@@ -612,7 +641,7 @@ function ScoringPage({ teams, config, lang }) {
               {orderedTeams.map(t => (
                 <td key={t.relay_team_id} className="px-1 py-0.5 text-center">
                   <select
-                    className={`w-full text-center border rounded px-0.5 py-0.5 text-[10px] ${dsq[t.relay_team_id] ? 'border-red-500 text-red-700 font-bold bg-red-100' : 'border-gray-200 text-gray-500'}`}
+                    className={`w-full min-w-0 text-center border rounded px-0.5 py-0.5 text-[10px] ${dsq[t.relay_team_id] ? 'border-red-500 text-red-700 font-bold bg-red-100' : 'border-gray-200 text-gray-500'}`}
                     value={dsq[t.relay_team_id] || ''}
                     onChange={e => setTeamDsq(t.relay_team_id, e.target.value)}
                     title={lang === 'fr' ? "Règlements Québec, §5.14.5 / Annexe 3" : 'Règlements Québec, §5.14.5 / Annexe 3'}
@@ -644,7 +673,7 @@ function ScoringPage({ teams, config, lang }) {
                       {row.isRough ? (
                         <select
                           data-col={colIdx}
-                          className="w-full text-center border border-red-200 text-red-600 rounded px-0.5 py-0 text-[10px]"
+                          className="w-full min-w-0 text-center border border-red-200 text-red-600 rounded px-0.5 py-0 text-[10px]"
                           value={getScore(t.relay_team_id, row.section, row.field) === '' ? '' : getScore(t.relay_team_id, row.section, row.field)}
                           onChange={e => saveScore(t.relay_team_id, row.section, row.field, e.target.value)}
                           onKeyDown={e => handleKeyDown(e, row.rowIdx, colIdx)}
@@ -657,7 +686,7 @@ function ScoringPage({ teams, config, lang }) {
                         <input
                           type="number" step="0.5" min="0" max="10"
                           data-col={colIdx}
-                          className="w-full text-center border border-gray-200 rounded px-0.5 py-0 text-[10px]"
+                          className="w-full min-w-0 text-center border border-gray-200 rounded px-0.5 py-0 text-[10px]"
                           value={getScore(t.relay_team_id, row.section, row.field)}
                           onChange={e => saveScore(t.relay_team_id, row.section, row.field, e.target.value)}
                           onKeyDown={e => handleKeyDown(e, row.rowIdx, colIdx)}
