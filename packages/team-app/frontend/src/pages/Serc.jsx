@@ -223,6 +223,15 @@ export default function Serc() {
             {option.labels[lang]}
           </a>
         ))}
+        <div className="text-gray-500 text-[10px] uppercase px-3 pt-3">{lang === 'fr' ? 'Rapport des résultats' : 'Results Report'}</div>
+        <a
+          className="block px-3 py-1.5 pl-5 text-xs leading-4 text-gray-300 hover:bg-gray-700"
+          href={`/api/serc/print/results?lang=${lang}`}
+          target="_blank"
+          rel="noreferrer"
+        >
+          {lang === 'fr' ? 'Imprimer les résultats' : 'Print results'}
+        </a>
       </div>
 
       {/* Main content */}
@@ -725,7 +734,17 @@ function ResultsPage({ lang }) {
 
   return (
     <div className="max-w-4xl space-y-4">
-      <h2 className="text-lg font-bold text-gray-800">{lang === 'fr' ? 'Résultats SERC' : 'SERC Results'}</h2>
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <h2 className="text-lg font-bold text-gray-800">{lang === 'fr' ? 'Résultats SERC' : 'SERC Results'}</h2>
+        <a
+          className="px-3 py-1 bg-gray-600 text-white text-xs rounded hover:bg-gray-700"
+          href={`/api/serc/print/results?lang=${lang}`}
+          target="_blank"
+          rel="noreferrer"
+        >
+          🖨 {lang === 'fr' ? 'Imprimer les résultats' : 'Print results'}
+        </a>
+      </div>
 
       <table className="w-full text-xs border-collapse bg-white border border-gray-300 rounded">
         <thead>

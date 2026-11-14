@@ -10,7 +10,11 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "backend"))
 
-from app.routers.serc_print import _render_overall_sheet  # noqa: E402
+from app.routers.serc_print import (  # noqa: E402
+    _print_languages,
+    _render_overall_sheet,
+    _render_results_report,
+)
 
 
 @pytest.mark.parametrize(
@@ -44,3 +48,44 @@ def test_score_sheet_escapes_team_and_member_names():
 
     assert "&lt;Team &amp; Co.&gt;" in sheet
     assert "A &amp; B" in sheet
+
+
+@pytest.mark.parametrize(
+    ("lang", "title", "rank_label"),
+    [
+        ("en", "SERC Results — Overall Standings", "Rank"),
+        ("fr", "Résultats SERC — classement général", "Rang"),
+    ],
+)
+def test_results_report_renders_localized_standings(lang, title, rank_label):
+    report = _render_results_report(
+        [
+            {
+                "rank": 1,
+                "name": "Surf Central Burwell",
+                "club": "Surf Central Lifesaving Club",
+                "total": 298.12,
+                "disqualified": False,
+            },
+            {
+                "rank": None,
+                "name": "PSA Cohen",
+                "club": "Pacific Swim Academy",
+                "total": 0,
+                "disqualified": True,
+                "dsq_code": "4",
+            },
+        ],
+        lang,
+    )
+
+    assert title in report
+    assert f">{rank_label}<" in report
+    assert "Surf Central Burwell" in report
+    assert "298.12" in report
+    assert "PSA Cohen" in report
+    assert "DQ4" in report
+
+
+def test_bilingual_results_are_ordered_french_then_english():
+    assert _print_languages("bilingual") == ["fr", "en"]

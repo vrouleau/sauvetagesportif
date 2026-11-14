@@ -39,6 +39,7 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models_serc import SercConfig, SercDrawOrder
 from ..models_team import Relay, RelayPos, Member, TeamClub
+from .serc import get_results
 
 router = APIRouter(prefix="/api/serc/print")
 
@@ -293,6 +294,93 @@ def _render_team_metadata(t: dict[str, str], draw_num: int | str, team_name: str
             <span>{t['judge_id']} <span class="field"></span></span>
         </div>
     """
+
+
+def _print_languages(lang: str) -> list[str]:
+    return ["fr", "en"] if lang == "bilingual" else [lang if lang in ("fr", "en") else "fr"]
+
+
+RESULTS_REPORT_LABELS = {
+    "fr": {
+        "title": "Résultats SERC — classement général",
+        "rank": "Rang",
+        "team": "Équipe",
+        "club": "Club",
+        "total": "Total",
+        "dsq": "DSQ",
+        "no_results": "Aucun résultat disponible.",
+    },
+    "en": {
+        "title": "SERC Results — Overall Standings",
+        "rank": "Rank",
+        "team": "Team",
+        "club": "Club",
+        "total": "Total",
+        "dsq": "DSQ",
+        "no_results": "No results available.",
+    },
+}
+
+RESULTS_REPORT_CSS = """
+@page { size: letter; margin: 0.5in; }
+* { box-sizing: border-box; }
+body { font-family: Arial, sans-serif; color: #111; font-size: 9pt; }
+.report { page-break-after: always; break-after: page; }
+.report:last-child { page-break-after: avoid; break-after: avoid; }
+h1 { font-size: 16pt; margin: 0 0 12px; }
+table { width: 100%; border-collapse: collapse; }
+thead { display: table-header-group; }
+tr { break-inside: avoid; }
+th { background: #222; color: #fff; text-align: left; }
+th, td { padding: 4px 7px; border-bottom: 1px solid #bbb; }
+.rank { width: 10%; text-align: center; }
+.team { width: 35%; font-weight: bold; }
+.club { width: 40%; }
+.total { width: 15%; text-align: right; font-weight: bold; }
+.dsq { display: block; color: #a00; font-size: 8pt; font-weight: normal; }
+.no-results { text-align: center; padding: 20px; }
+"""
+
+
+def _render_results_report(results: list[dict], lang: str) -> str:
+    labels = RESULTS_REPORT_LABELS[lang]
+    rows = ""
+    for result in results:
+        disqualified = result.get("disqualified", False)
+        rank = labels["dsq"] if disqualified else escape(str(result.get("rank", "")))
+        total = labels["dsq"] if disqualified else f"{float(result.get('total') or 0):.2f}"
+        dsq_code = result.get("dsq_code")
+        dsq_html = (
+            f'<span class="dsq">DQ{escape(str(dsq_code))}</span>'
+            if disqualified and dsq_code
+            else ""
+        )
+        rows += f"""
+        <tr>
+            <td class="rank">{rank}</td>
+            <td class="team">{escape(str(result.get("name") or ""))}{dsq_html}</td>
+            <td class="club">{escape(str(result.get("club") or ""))}</td>
+            <td class="total">{total}</td>
+        </tr>"""
+
+    if not rows:
+        rows = f'<tr><td class="no-results" colspan="4">{labels["no_results"]}</td></tr>'
+
+    return f"""
+    <section class="report">
+        <h1>{labels['title']}</h1>
+        <table>
+            <thead>
+                <tr>
+                    <th class="rank">{labels['rank']}</th>
+                    <th class="team">{labels['team']}</th>
+                    <th class="club">{labels['club']}</th>
+                    <th class="total">{labels['total']}</th>
+                </tr>
+            </thead>
+            <tbody>{rows}</tbody>
+        </table>
+    </section>"""
 
 
 # ── Page CSS (matches XLSX print styling) ─────────────────────────────────────
@@ -638,7 +726,7 @@ def print_sheets(
     bystander_factors = json.loads(config.bystander_factors_json) if config.bystander_factors_json else {}
     victim_factors = json.loads(config.victim_factors_json) if config.victim_factors_json else []
 
-    langs = ["fr", "en"] if lang == "bilingual" else [lang if lang in ("fr", "en") else "fr"]
+    langs = _print_languages(lang)
 
     # Get teams from relay entries in draw order
     relays = db.query(Relay).filter(Relay.stylesid == SERC_STYLE_ID).order_by(Relay.teamnumb).all()
@@ -712,6 +800,30 @@ def print_sheets(
 </head>
 <body>
 {sheets_html}
+</body>
+</html>"""
+    return HTMLResponse(html)
+
+
+@router.get("/results", response_class=HTMLResponse)
+def print_results(
+    lang: str = Query(default="fr", description="Language: 'fr', 'en', or 'bilingual'"),
+    db: Session = Depends(get_db),
+):
+    """Render the overall SERC standings as a print-ready report."""
+    results = get_results(db).get("overall", [])
+    reports_html = "".join(_render_results_report(results, ln) for ln in _print_languages(lang))
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>SERC Results</title>
+<style>
+{RESULTS_REPORT_CSS}
+</style>
+</head>
+<body>
+{reports_html}
 </body>
 </html>"""
     return HTMLResponse(html)
