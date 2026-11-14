@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.5.17] - 2026-11-14
+
+### Other
+
+- Improve SERC setup and draw workflows (`ec7b5f2`)
+- Add printable SERC results report (`07f4e44`)
+- Improve SERC scoring and print sheets (`4602ad4`)
+- Merge pull request #91 from vrouleau/fix/organizer-invite-email (`9150203`)
+- Organizer gets its own invite email, with a link to the organizer manual (`f774113`)
+
 ## [0.5.16] - 2026-11-13
 
 ### Other
