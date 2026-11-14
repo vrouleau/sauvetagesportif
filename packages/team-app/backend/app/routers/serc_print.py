@@ -300,6 +300,54 @@ def _print_languages(lang: str) -> list[str]:
     return ["fr", "en"] if lang == "bilingual" else [lang if lang in ("fr", "en") else "fr"]
 
 
+DRAW_LIST_LABELS = {
+    "fr": {
+        "title": "Liste de tirage SERC",
+        "draw": "Tirage",
+        "team": "Équipe",
+        "members": "Membres",
+        "no_teams": "Aucune équipe.",
+    },
+    "en": {
+        "title": "SERC Draw List",
+        "draw": "Draw",
+        "team": "Team",
+        "members": "Members",
+        "no_teams": "No teams.",
+    },
+}
+
+
+def _render_draw_list(ordered: list[tuple[int, str, str]], lang: str) -> str:
+    labels = DRAW_LIST_LABELS[lang]
+    rows = "".join(
+        f"""
+        <tr>
+            <td class="draw-position">{escape(str(position))}</td>
+            <td class="draw-team">{escape(team_name)}</td>
+            <td>{escape(member_names)}</td>
+        </tr>"""
+        for position, team_name, member_names in ordered
+    )
+    if not rows:
+        rows = f'<tr><td class="draw-empty" colspan="3">{labels["no_teams"]}</td></tr>'
+
+    return f"""
+    <section class="sheet draw-list">
+        <div class="title-bar">{labels['title']}</div>
+        <table>
+            <thead>
+                <tr>
+                    <th>{labels['draw']}</th>
+                    <th>{labels['team']}</th>
+                    <th>{labels['members']}</th>
+                </tr>
+            </thead>
+            <tbody>{rows}</tbody>
+        </table>
+    </section>"""
+
+
 RESULTS_REPORT_LABELS = {
     "fr": {
         "title": "Résultats SERC — classement général",
@@ -395,6 +443,12 @@ body { font-family: Arial, sans-serif; font-size: 10pt; color: #000; }
     min-height: 9.5in;
 }
 .sheet:last-child { page-break-after: avoid; break-after: avoid; }
+.draw-list table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+.draw-list th { background: #333; color: #fff; text-align: left; }
+.draw-list th, .draw-list td { border: 1px solid #777; padding: 6px 8px; }
+.draw-position { width: 12%; text-align: center; font-weight: bold; }
+.draw-team { width: 40%; font-weight: bold; }
+.draw-empty { text-align: center; }
 
 .title-bar {
     background: #000; color: #fff; font-size: 13pt; font-weight: bold;
@@ -763,7 +817,7 @@ def print_sheets(
         # Fall back to natural order
         ordered = [(i + 1, *team_data) for i, team_data in enumerate(teams_map.values())]
 
-    sheets_html = ""
+    sheets_html = "".join(_render_draw_list(ordered, ln) for ln in langs)
 
     # For each team: generate all section pages
     for draw_pos, team_name, member_names in ordered:

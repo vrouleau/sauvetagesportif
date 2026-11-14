@@ -187,9 +187,21 @@ def set_draw_order(draw_number: int, data: dict = Body(default={}), db: Session 
     return {"ok": True, "count": len(team_ids)}
 
 
+def _clear_draw_results(db: Session, config_id: int, draw_number: int) -> tuple[int, int]:
+    scores_removed = db.query(SercScore).filter(
+        SercScore.config_id == config_id,
+        SercScore.draw_number == draw_number,
+    ).delete(synchronize_session=False)
+    disqualifications_removed = db.query(SercDisqualification).filter(
+        SercDisqualification.config_id == config_id,
+        SercDisqualification.draw_number == draw_number,
+    ).delete(synchronize_session=False)
+    return scores_removed, disqualifications_removed
+
+
 @router.post("/draw-order/{draw_number}/randomize")
 def randomize_draw_order(draw_number: int, db: Session = Depends(get_db)):
-    """Randomize draw order using all SERC relay teams."""
+    """Randomize the draw order and clear results for that draw."""
     import random
     config = _get_or_create_config(db)
 
@@ -202,10 +214,17 @@ def randomize_draw_order(draw_number: int, db: Session = Depends(get_db)):
         SercDrawOrder.draw_number == draw_number,
     ).delete()
 
+    scores_removed, disqualifications_removed = _clear_draw_results(db, config.id, draw_number)
+
     for pos, tid in enumerate(team_ids, start=1):
         db.add(SercDrawOrder(config_id=config.id, draw_number=draw_number, position=pos, relay_team_id=tid))
     db.commit()
-    return {"ok": True, "order": team_ids}
+    return {
+        "ok": True,
+        "order": team_ids,
+        "scores_removed": scores_removed,
+        "disqualifications_removed": disqualifications_removed,
+    }
 
 
 # ── Scores ────────────────────────────────────────────────────────────────────

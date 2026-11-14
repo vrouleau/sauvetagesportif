@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "backend"))
 
 from app.routers.serc_print import (  # noqa: E402
     _print_languages,
+    _render_draw_list,
     _render_overall_sheet,
     _render_results_report,
 )
@@ -89,3 +90,26 @@ def test_results_report_renders_localized_standings(lang, title, rank_label):
 
 def test_bilingual_results_are_ordered_french_then_english():
     assert _print_languages("bilingual") == ["fr", "en"]
+
+
+@pytest.mark.parametrize(
+    ("lang", "title", "draw_label"),
+    [
+        ("en", "SERC Draw List", "Draw"),
+        ("fr", "Liste de tirage SERC", "Tirage"),
+    ],
+)
+def test_draw_list_is_localized_and_preserves_draw_order(lang, title, draw_label):
+    page = _render_draw_list(
+        [
+            (1, "Team One", "Avery, Jordan"),
+            (2, "Team Two", "Morgan, Riley"),
+        ],
+        lang,
+    )
+
+    assert 'class="sheet draw-list"' in page
+    assert title in page
+    assert f">{draw_label}<" in page
+    assert page.index("Team One") < page.index("Team Two")
+    assert "Avery, Jordan" in page

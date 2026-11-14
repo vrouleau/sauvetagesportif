@@ -24,7 +24,7 @@
  * - Setup: user picks descriptive labels for Approach/Rescue/Control (factors hidden)
  *   Landing and Care factors are auto-derived from victim type.
  * - Single scoring grid (no multi-draw concept). One scenario, one grid.
- *   Two orderings: "Random Draw" and "Final Draw" (reordered by results).
+ *   Teams compete in a randomized order.
  * - Tab navigation moves down (next criterion same team), not right.
  * - Data is entered by judges/victims on a per-team column basis.
  */
@@ -39,6 +39,19 @@ const PRINT_OPTIONS = [
   { value: 'fr', labels: { fr: 'Français — simple face', en: 'French — single-sided' } },
   { value: 'bilingual', labels: { fr: 'Bilingue — recto-verso', en: 'Bilingual — double-sided' } },
 ]
+
+function defaultVictimFactor() {
+  return { type: 'Non Swimmer', approach: 1.25, rescue: 1.5, control: 1, landing: 1.25, care: 1.25 }
+}
+
+function buildConfigPayload(form) {
+  const victim_factors = Array.from({ length: form.num_victims }, (_, index) => {
+    const victim = form.victim_factors[index] || defaultVictimFactor()
+    const derived = LANDING_CARE_MAP[victim.type] || { landing: 1.25, care: 1.25 }
+    return { ...victim, landing: derived.landing, care: derived.care }
+  })
+  return { ...form, num_draws: 1, victim_factors }
+}
 
 // ─── Factor Catalog ───────────────────────────────────────────────────────────
 // Descriptive labels from the XLSX "Drop Down Info" sheet.
@@ -172,6 +185,7 @@ export default function Serc() {
   const [teams, setTeams] = useState([])
   const [loading, setLoading] = useState(true)
   const pendingSaveRef = useRef(null)
+  const registerPendingSave = useCallback(fn => { pendingSaveRef.current = fn }, [])
 
   const loadAll = useCallback(async () => {
     try {
@@ -188,9 +202,10 @@ export default function Serc() {
   useEffect(() => { loadAll() }, [loadAll])
 
   // Auto-save pending config when navigating away from setup
-  function handleSetPage(newPage) {
+  async function handleSetPage(newPage) {
     if (page === 'setup' && newPage !== 'setup' && pendingSaveRef.current) {
-      pendingSaveRef.current()
+      const saved = await pendingSaveRef.current()
+      if (!saved) return
     }
     setPage(newPage)
   }
@@ -236,7 +251,7 @@ export default function Serc() {
 
       {/* Main content */}
       <div className={`flex-1 min-w-0 min-h-0 p-4 ${page === 'scoring' ? 'overflow-hidden' : 'overflow-auto'}`}>
-        {page === 'setup' && <SetupPage config={config} onSave={loadAll} lang={lang} registerSave={fn => { pendingSaveRef.current = fn }} />}
+        {page === 'setup' && <SetupPage config={config} onSave={loadAll} lang={lang} registerSave={registerPendingSave} />}
         {page === 'scoring' && <ScoringPage teams={teams} config={config} lang={lang} />}
         {page === 'results' && <ResultsPage lang={lang} />}
       </div>
@@ -266,41 +281,99 @@ function SetupPage({ config, onSave, lang, registerSave }) {
     bystander_factors: config?.bystander_factors || { approach: 1, info: 1, directions: 1, monitoring: 1, encouragement: 1 },
     victim_factors: config?.victim_factors || [],
   })
-  const [dirty, setDirty] = useState(false)
+  const [saveStatus, setSaveStatus] = useState(config ? 'saved' : 'idle')
+  const formRef = useRef(form)
+  const dirtyRef = useRef(false)
+  const revisionRef = useRef(0)
+  const saveTimerRef = useRef(null)
+  const saveQueueRef = useRef(Promise.resolve())
+  const pendingRequestsRef = useRef(new Map())
+  const mountedRef = useRef(true)
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => { mountedRef.current = false }
+  }, [])
+
+  function saveSnapshot(snapshot, revision, refreshParent = true) {
+    const existing = pendingRequestsRef.current.get(revision)
+    if (existing) return existing
+
+    const request = saveQueueRef.current
+      .catch(() => undefined)
+      .then(() => api.post('/serc/config', buildConfigPayload(snapshot)))
+    saveQueueRef.current = request.then(() => undefined, () => undefined)
+
+    const completion = request.then(async () => {
+      if (revision === revisionRef.current) {
+        dirtyRef.current = false
+        if (mountedRef.current) setSaveStatus('saved')
+        if (refreshParent && mountedRef.current) await onSave()
+      }
+      return true
+    }).catch(error => {
+      console.error('Failed to save SERC configuration', error)
+      if (revision === revisionRef.current && mountedRef.current) setSaveStatus('error')
+      return false
+    }).finally(() => pendingRequestsRef.current.delete(revision))
+
+    pendingRequestsRef.current.set(revision, completion)
+    if (mountedRef.current) setSaveStatus('saving')
+    return completion
+  }
 
   function updateForm(updater) {
-    setForm(updater)
-    setDirty(true)
+    const nextForm = updater(formRef.current)
+    formRef.current = nextForm
+    setForm(nextForm)
+    dirtyRef.current = true
+    const revision = ++revisionRef.current
+    setSaveStatus('saving')
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    saveTimerRef.current = setTimeout(() => {
+      saveTimerRef.current = null
+      void saveSnapshot(nextForm, revision)
+    }, 400)
   }
 
-  async function save() {
-    // Auto-compute landing/care from victim type before saving
-    const vfs = form.victim_factors.slice(0, form.num_victims).map(vf => {
-      const derived = LANDING_CARE_MAP[vf.type] || { landing: 1.25, care: 1.25 }
-      return { ...vf, landing: derived.landing, care: derived.care }
-    })
-    await api.post('/serc/config', { ...form, num_draws: 1, victim_factors: vfs })
-    setDirty(false)
-    onSave()
+  function flushSave() {
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current)
+      saveTimerRef.current = null
+    }
+    if (!dirtyRef.current && config) return Promise.resolve(true)
+    if (!dirtyRef.current) {
+      dirtyRef.current = true
+      revisionRef.current += 1
+    }
+    return saveSnapshot(formRef.current, revisionRef.current)
   }
 
-  // Register save function so parent can auto-save when navigating away
-  const saveRef = useRef(save)
-  saveRef.current = save
+  const flushSaveRef = useRef(flushSave)
+  flushSaveRef.current = flushSave
   useEffect(() => {
-    if (registerSave) registerSave(() => { if (dirty) saveRef.current() })
-    return () => { if (registerSave) registerSave(null) }
-  }, [registerSave, dirty])
+    if (registerSave) registerSave(() => flushSaveRef.current())
+    return () => {
+      if (registerSave) registerSave(null)
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current)
+        saveTimerRef.current = null
+      }
+      if (dirtyRef.current) {
+        void saveSnapshot(formRef.current, revisionRef.current, false)
+      }
+    }
+  }, [registerSave])
 
   const victimTypes = ['Non Swimmer', 'Weak Swimmer', 'Injured Swimmer', 'Unconscious Non-Breathing']
-
-  // Ensure victim_factors has enough entries
-  while (form.victim_factors.length < form.num_victims) {
-    form.victim_factors.push({ type: 'Non Swimmer', approach: 1.25, rescue: 1.5, control: 1, landing: 1.25, care: 1.25 })
-  }
+  const victimFactors = Array.from(
+    { length: form.num_victims },
+    (_, index) => form.victim_factors[index] || defaultVictimFactor()
+  )
 
   function updateVictim(index, field, value) {
-    const nv = [...form.victim_factors]
+    const nv = [...formRef.current.victim_factors]
+    while (nv.length < formRef.current.num_victims) nv.push(defaultVictimFactor())
     nv[index] = { ...nv[index], [field]: value }
     // Auto-compute landing/care when type changes
     if (field === 'type') {
@@ -308,8 +381,7 @@ function SetupPage({ config, onSave, lang, registerSave }) {
       nv[index].landing = derived.landing
       nv[index].care = derived.care
     }
-    setForm(f => ({ ...f, victim_factors: nv }))
-    setDirty(true)
+    updateForm(f => ({ ...f, victim_factors: nv }))
   }
 
   function getApproachLabel(factor) {
@@ -327,7 +399,26 @@ function SetupPage({ config, onSave, lang, registerSave }) {
 
   return (
     <div className="space-y-4 max-w-6xl">
-      <h2 className="text-lg font-bold text-gray-800">{lang === 'fr' ? 'SERC — Configuration et facteurs' : 'SERC Setup & Factors'}</h2>
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-lg font-bold text-gray-800">{lang === 'fr' ? 'SERC — Configuration et facteurs' : 'SERC Setup & Factors'}</h2>
+        {saveStatus === 'saving' && (
+          <span className="text-xs text-gray-400 italic">{lang === 'fr' ? 'Enregistrement...' : 'Saving...'}</span>
+        )}
+        {saveStatus === 'saved' && (
+          <span className="text-xs text-gray-400 italic">{lang === 'fr' ? 'Enregistré' : 'Saved'}</span>
+        )}
+        {saveStatus === 'error' && (
+          <span className="text-xs text-red-600" role="alert">
+            {lang === 'fr' ? "Échec de l'enregistrement." : 'Could not save changes.'}{' '}
+            <button
+              className="underline font-semibold"
+              onClick={() => void saveSnapshot(formRef.current, revisionRef.current)}
+            >
+              {lang === 'fr' ? 'Réessayer' : 'Retry'}
+            </button>
+          </span>
+        )}
+      </div>
 
       <div className="bg-white border border-gray-300 rounded p-4 space-y-3">
         <h3 className="text-sm font-bold text-gray-700 border-b pb-1">{lang === 'fr' ? 'Paramètres de la compétition' : 'Competition Settings'}</h3>
@@ -385,7 +476,7 @@ function SetupPage({ config, onSave, lang, registerSave }) {
               </tr>
             </thead>
             <tbody>
-              {form.victim_factors.slice(0, form.num_victims).map((vf, i) => {
+              {victimFactors.map((vf, i) => {
                 const derived = LANDING_CARE_MAP[vf.type] || { landing: 1.25, care: 1.25 }
                 return (
                   <tr key={i} className="border-b border-gray-100">
@@ -429,9 +520,6 @@ function SetupPage({ config, onSave, lang, registerSave }) {
         <p className="text-[10px] text-gray-400 mt-1">{lang === 'fr' ? 'Les facteurs Débarquement et Soins sont dérivés du type de victime.' : 'Landing and Care factors are derived from the victim type.'}</p>
       </div>
 
-      <button className="px-4 py-2 bg-blue-600 text-white text-xs font-bold rounded hover:bg-blue-700" onClick={save}>
-        {lang === 'fr' ? 'Enregistrer la configuration' : 'Save Configuration'}
-      </button>
     </div>
   )
 }
@@ -441,34 +529,48 @@ function SetupPage({ config, onSave, lang, registerSave }) {
 function ScoringPage({ teams, config, lang }) {
   const [scores, setScores] = useState({})
   const [order, setOrder] = useState([])
-  const [drawMode, setDrawMode] = useState('random') // 'random' or 'final'
+  const [drawExists, setDrawExists] = useState(false)
+  const [drawDataLoaded, setDrawDataLoaded] = useState(false)
+  const [drawDataError, setDrawDataError] = useState(false)
+  const [drawError, setDrawError] = useState(false)
+  const [drawing, setDrawing] = useState(false)
   const [showQR, setShowQR] = useState(false)
   const [dsqCodes, setDsqCodes] = useState([])
   const [dsq, setDsq] = useState({}) // { [relay_team_id]: dsqCode }
   const gridRef = useRef(null)
 
   useEffect(() => {
-    // Load scores (draw_number=1 always, single grid)
-    api.get('/serc/scores/1').then(r => setScores(r.data || {})).catch(() => {})
-    api.get('/serc/draw-order/1').then(r => {
-      const o = (r.data || []).map(x => x.relay_team_id)
-      setOrder(o.length ? o : teams.map(t => t.relay_team_id))
-    }).catch(() => setOrder(teams.map(t => t.relay_team_id)))
+    let active = true
+    setDrawDataLoaded(false)
+    setDrawDataError(false)
+    Promise.all([
+      api.get('/serc/scores/1'),
+      api.get('/serc/draw-order/1'),
+      api.get('/serc/disqualifications'),
+    ]).then(([scoresResponse, orderResponse, disqualificationsResponse]) => {
+      if (!active) return
+      const currentScores = scoresResponse.data || {}
+      const currentOrder = (orderResponse.data || []).map(item => item.relay_team_id)
+      const currentDsq = {}
+      for (const item of disqualificationsResponse.data || []) {
+        if (item.draw === 1) currentDsq[item.relay_team_id] = item.code
+      }
+      setScores(currentScores)
+      setOrder(currentOrder.length ? currentOrder : teams.map(t => t.relay_team_id))
+      setDrawExists(currentOrder.length > 0)
+      setDsq(currentDsq)
+    }).catch(error => {
+      console.error('Failed to load SERC draw data', error)
+      if (active) setDrawDataError(true)
+    }).finally(() => {
+      if (active) setDrawDataLoaded(true)
+    })
+    return () => { active = false }
   }, [teams])
 
   useEffect(() => {
     api.get(`/serc/dsq-codes?lang=${lang}`).then(r => setDsqCodes(r.data || [])).catch(() => {})
   }, [lang])
-
-  useEffect(() => {
-    api.get('/serc/disqualifications').then(r => {
-      const m = {}
-      for (const d of r.data || []) {
-        if (d.draw === 1) m[d.relay_team_id] = d.code
-      }
-      setDsq(m)
-    }).catch(() => {})
-  }, [])
 
   async function setTeamDsq(teamId, code) {
     await api.put('/serc/disqualification', { draw: 1, relay_team_id: teamId, code: code || null })
@@ -481,19 +583,26 @@ function ScoringPage({ teams, config, lang }) {
   }
 
   async function randomize() {
-    const r = await api.post('/serc/draw-order/1/randomize')
-    setOrder(r.data.order)
-    setDrawMode('random')
-  }
+    if (!drawDataLoaded || drawDataError || drawing) return
+    const hasExistingDraw = drawExists || Object.keys(scores).length > 0 || Object.keys(dsq).length > 0
+    if (hasExistingDraw && !window.confirm(lang === 'fr'
+      ? 'Tous les pointages et disqualifications seront supprimés et un nouveau tirage sera effectué. Continuer ?'
+      : 'This will remove all scores and disqualifications and redo the draw. Continue?')) return
 
-  async function orderByResults() {
-    // Reorder by current totals (lowest first, best goes last)
-    const totals = orderedTeams.map(t => ({ id: t.relay_team_id, total: calcTotal(t.relay_team_id) }))
-    totals.sort((a, b) => a.total - b.total) // worst first, best last
-    const newOrder = totals.map(t => t.id)
-    await api.put('/serc/draw-order/1', { team_ids: newOrder })
-    setOrder(newOrder)
-    setDrawMode('final')
+    setDrawing(true)
+    setDrawError(false)
+    try {
+      const r = await api.post('/serc/draw-order/1/randomize')
+      setOrder(r.data.order)
+      setDrawExists(true)
+      setScores({})
+      setDsq({})
+    } catch (error) {
+      console.error('Failed to randomize SERC draw', error)
+      setDrawError(true)
+    } finally {
+      setDrawing(false)
+    }
   }
 
   async function saveScore(teamId, section, field, value) {
@@ -592,10 +701,15 @@ function ScoringPage({ teams, config, lang }) {
     <div className="h-full min-h-0 flex flex-col gap-3">
       <div className="flex items-center gap-3 flex-wrap shrink-0">
         <h2 className="text-lg font-bold text-gray-800">{lang === 'fr' ? 'Pointages' : 'Scoring'}</h2>
-        <button className={`px-3 py-1 text-xs rounded ${drawMode === 'random' ? 'bg-purple-600 text-white' : 'bg-gray-200 text-gray-700'}`}
-          onClick={randomize}>🎲 {lang === 'fr' ? 'Tirage aléatoire' : 'Random Draw'}</button>
-        <button className={`px-3 py-1 text-xs rounded ${drawMode === 'final' ? 'bg-amber-600 text-white' : 'bg-gray-200 text-gray-700'}`}
-          onClick={orderByResults}>🏆 {lang === 'fr' ? 'Tirage final' : 'Final Draw'}</button>
+        <button
+          className="px-3 py-1 text-xs rounded bg-purple-600 text-white disabled:opacity-50"
+          onClick={randomize}
+          disabled={!drawDataLoaded || drawDataError || drawing}
+        >
+          🎲 {drawing
+            ? (lang === 'fr' ? 'Tirage...' : 'Drawing...')
+            : (lang === 'fr' ? 'Tirage aléatoire' : 'Random Draw')}
+        </button>
         {PRINT_OPTIONS.map(option => (
           <a
             key={option.value}
@@ -607,7 +721,17 @@ function ScoringPage({ teams, config, lang }) {
             🖨 {option.labels[lang]}
           </a>
         ))}
-        <span className="text-xs text-gray-500">{orderedTeams.length} {lang === 'fr' ? 'équipes' : 'teams'} • {drawMode === 'final' ? (lang === 'fr' ? 'Ordre final' : 'Final') : (lang === 'fr' ? 'Ordre aléatoire' : 'Random')} {lang === 'fr' ? '' : 'order'}</span>
+        <span className="text-xs text-gray-500">{orderedTeams.length} {lang === 'fr' ? 'équipes' : 'teams'}</span>
+        {drawDataError && (
+          <span className="text-xs text-red-600" role="alert">
+            {lang === 'fr' ? 'Impossible de charger le tirage et les pointages. Actualisez la page.' : 'Could not load draw and scores. Refresh the page.'}
+          </span>
+        )}
+        {drawError && (
+          <span className="text-xs text-red-600" role="alert">
+            {lang === 'fr' ? 'Échec du tirage; les pointages existants sont conservés.' : 'Draw failed; existing scores have been kept.'}
+          </span>
+        )}
         <button className="px-3 py-1 bg-indigo-600 text-white text-xs rounded hover:bg-indigo-700"
           onClick={() => setShowQR(true)}>📱 {lang === 'fr' ? 'Codes QR juges' : 'Judge QR Codes'}</button>
       </div>
