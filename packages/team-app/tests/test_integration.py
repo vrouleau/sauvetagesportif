@@ -1705,6 +1705,28 @@ class TestGeminiKeyLxfTransport:
             assert "gemini_paid" not in keys, \
                 ".keys must not contain gemini_paid when no Gemini keys are configured"
 
+    def test_live_config_only_exported_while_live_is_on(self, uploaded, admin_headers):
+        """A disabled live secret must not reach meet-app: every push would get
+        409, and re-enabling mints a new secret anyway. .keys is still written
+        (marks a team-app export) so meet-app clears its stale LIVE_* config."""
+        import json as _json
+        r = requests.post(f"{BASE_URL}/api/live/enable", headers=admin_headers, timeout=10)
+        assert r.status_code == 200, r.text
+        secret = r.json()["secret"]
+        try:
+            keys = _json.loads(export_registrations_lxf(admin_headers).read(".keys").decode())
+            assert keys.get("live_push_secret") == secret
+            assert keys.get("live_url")
+
+            requests.post(f"{BASE_URL}/api/live/disable", headers=admin_headers, timeout=5)
+            lxf = export_registrations_lxf(admin_headers)
+            assert ".keys" in lxf.namelist(), ".keys must always be written by team-app"
+            keys = _json.loads(lxf.read(".keys").decode())
+            assert "live_push_secret" not in keys, "disabled live secret must not be exported"
+            assert "live_url" not in keys
+        finally:
+            requests.post(f"{BASE_URL}/api/live/disable", headers=admin_headers, timeout=5)
+
     def test_keys_file_present_when_free_key_set(self, uploaded, admin_headers):
         self._clear_keys(admin_headers)
         requests.post(f"{BASE_URL}/api/admin/gemini-keys",

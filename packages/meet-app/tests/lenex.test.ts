@@ -1250,3 +1250,75 @@ describe.each(LENEX_PARITY_BACKENDS)('importLenex backend parity [%s]', (kind) =
     })
   })
 })
+// ── Live push config transport (.keys) ────────────────────────────────────────
+
+/** Minimal multi-entry ZIP writer (writeZipSingleEntry only does one entry). */
+function writeZipEntries(filePath: string, files: Array<[string, string]>): void {
+  const { deflateRawSync, crc32 } = require('zlib') as typeof import('zlib')
+  const { writeFileSync } = require('fs') as typeof import('fs')
+  const locals: Buffer[] = []
+  const centrals: Buffer[] = []
+  let offset = 0
+  for (const [name, content] of files) {
+    const data = Buffer.from(content, 'utf8')
+    const comp = deflateRawSync(data)
+    const nameBuf = Buffer.from(name, 'utf8')
+    const crc = crc32(data)
+    const lh = Buffer.alloc(30 + nameBuf.length)
+    lh.writeUInt32LE(0x04034b50, 0); lh.writeUInt16LE(20, 4); lh.writeUInt16LE(8, 8)
+    lh.writeUInt32LE(crc, 14); lh.writeUInt32LE(comp.length, 18); lh.writeUInt32LE(data.length, 22)
+    lh.writeUInt16LE(nameBuf.length, 26); nameBuf.copy(lh, 30)
+    const ch = Buffer.alloc(46 + nameBuf.length)
+    ch.writeUInt32LE(0x02014b50, 0); ch.writeUInt16LE(20, 4); ch.writeUInt16LE(20, 6); ch.writeUInt16LE(8, 10)
+    ch.writeUInt32LE(crc, 16); ch.writeUInt32LE(comp.length, 20); ch.writeUInt32LE(data.length, 24)
+    ch.writeUInt16LE(nameBuf.length, 28); ch.writeUInt32LE(offset, 42); nameBuf.copy(ch, 46)
+    locals.push(lh, comp)
+    centrals.push(ch)
+    offset += lh.length + comp.length
+  }
+  const cd = Buffer.concat(centrals)
+  const eocd = Buffer.alloc(22)
+  eocd.writeUInt32LE(0x06054b50, 0); eocd.writeUInt16LE(files.length, 8); eocd.writeUInt16LE(files.length, 10)
+  eocd.writeUInt32LE(cd.length, 12); eocd.writeUInt32LE(offset, 16)
+  writeFileSync(filePath, Buffer.concat([...locals, cd, eocd]))
+}
+
+describe('LENEX importer — live push config (.keys)', () => {
+  let db: Database.Database
+  let cleanup: () => void
+  beforeEach(() => { const t = createTestDb(); db = t.db; cleanup = t.cleanup })
+  afterEach(() => cleanup())
+
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<LENEX version="3.0"><MEETS><MEET name="Live Meet" city="X" nation="CAN" course="LCM"><SESSIONS>
+<SESSION number="1" name="S1"><EVENTS><EVENT eventid="1" number="1" gender="M" round="TIM">
+<SWIMSTYLE swimstyleid="503" distance="50" relaycount="1" name="Nage libre" /></EVENT></EVENTS></SESSION>
+</SESSIONS></MEET></MEETS></LENEX>`
+  const live = () => Object.fromEntries(
+    (db.prepare(`SELECT name, data FROM bsglobal WHERE name LIKE 'LIVE_%'`).all() as Array<{ name: string; data: string }>)
+      .map(r => [r.name, r.data]))
+
+  function importWithKeys(keys: Record<string, string> | null): void {
+    const p = join(tmpdir(), `test-live-keys-${randomBytes(4).toString('hex')}.lxf`)
+    writeZipEntries(p, keys ? [['meet.lef', xml], ['.keys', JSON.stringify(keys)]] : [['meet.lef', xml]])
+    try { importLenex(p, db) } finally { try { unlinkSync(p) } catch {} }
+  }
+
+  it('stores live URL/secret when the team-app export carries them (live on)', () => {
+    importWithKeys({ live_push_secret: 'abc123', live_url: 'http://team.example' })
+    expect(live()).toMatchObject({ LIVE_PUSH_SECRET: 'abc123', LIVE_URL: 'http://team.example' })
+  })
+
+  it('clears stale live config when a team-app export has no secret (live off)', () => {
+    importWithKeys({ live_push_secret: 'abc123', live_url: 'http://team.example' })
+    db.prepare(`INSERT INTO bsglobal (name, data) VALUES ('LIVE_ENABLED', 'T')`).run()
+    importWithKeys({})
+    expect(live()).toEqual({})
+  })
+
+  it('leaves live config alone for a non-team-app LXF (no .keys at all)', () => {
+    importWithKeys({ live_push_secret: 'abc123', live_url: 'http://team.example' })
+    importWithKeys(null)
+    expect(live()).toMatchObject({ LIVE_PUSH_SECRET: 'abc123', LIVE_URL: 'http://team.example' })
+  })
+})

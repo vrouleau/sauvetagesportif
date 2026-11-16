@@ -222,14 +222,18 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
         saveGeminiKeys(freeKey, paidKey)
         summary.geminiKeysImported = true
       }
-      // Extract live push config for live results feature
+      // Live push config. team-app only includes it while live mode is on
+      // (export.py), so a .keys without a secret means "live is off": drop any
+      // stale config, or LivePush keeps pushing with a dead secret (409/401).
       const liveSecret = keys['live_push_secret'] ?? ''
       const liveUrl = keys['live_url'] ?? ''
       if (liveSecret) {
         db.prepare(`INSERT INTO bsglobal (name, data) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET data=excluded.data`).run('LIVE_PUSH_SECRET', liveSecret)
-      }
-      if (liveUrl) {
-        db.prepare(`INSERT INTO bsglobal (name, data) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET data=excluded.data`).run('LIVE_URL', liveUrl)
+        if (liveUrl) {
+          db.prepare(`INSERT INTO bsglobal (name, data) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET data=excluded.data`).run('LIVE_URL', liveUrl)
+        }
+      } else {
+        db.prepare(`DELETE FROM bsglobal WHERE name IN ('LIVE_PUSH_SECRET', 'LIVE_URL', 'LIVE_ENABLED')`).run()
       }
     } catch {
       summary.errors.push('Warning: .keys entry present but could not be parsed')
