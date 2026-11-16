@@ -137,6 +137,10 @@ Regenerating the fixture (only needed if Splash's own schema changes): connect r
 ### Key utility: `msToDisplay(ms)`
 Converts integer milliseconds to display format (`M:SS.cc` or `SS.cc`). Returns `undefined` for `null`, `0`, negative values, and max-int sentinel (2147483647) — all treated as "no time" (NT).
 
+## Critical rule: alert/confirm go through main (Windows focus bug)
+
+On Windows, a renderer-side `window.alert()`/`confirm()` leaves the page without keyboard focus after it closes (fields ignore input until you switch to another window and back — seen after "Générer séries"). `renderer/src/nativeDialogs.ts` (installed in `main.tsx`) replaces both globals with `dialog.showMessageBox` in main via `sendSync` (`dialog:alert-sync` / `dialog:confirm-sync`), then re-focuses `webContents`. Keep calling `alert()`/`confirm()` normally — never bypass this with a different blocking dialog.
+
 ## Critical rule: IPC listener cleanup
 
 Preload `on*` methods return a cleanup function. Always collect them in `useEffect` and call them on unmount:

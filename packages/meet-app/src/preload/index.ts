@@ -318,6 +318,14 @@ const api = {
       return () => { ipcRenderer.removeListener('file:meet-type-changed', handler) }
     },
   },
+  dialogs: {
+    // Synchronous on purpose: they stand in for window.alert/confirm, which
+    // block. See 'dialog:*-sync' in main/index.ts for why they exist.
+    alert: (message: string): boolean =>
+      ipcRenderer.sendSync('dialog:alert-sync', message),
+    confirm: (message: string, okLabel: string, cancelLabel: string): boolean =>
+      ipcRenderer.sendSync('dialog:confirm-sync', message, okLabel, cancelLabel),
+  },
   live: {
     getStatus: () =>
       ipcRenderer.invoke('live:get-status'),

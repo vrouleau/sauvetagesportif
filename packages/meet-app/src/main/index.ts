@@ -306,6 +306,50 @@ ipcMain.handle('db:set-meet-config', (_event, entries: Record<string, { type: st
 
 // ── Live push IPC ─────────────────────────────────────────────────────────────
 
+// ── Native alert/confirm (focus-safe replacements for window.alert/confirm) ──
+// On Windows, a renderer-side window.alert()/confirm() leaves the page without
+// keyboard focus once the dialog closes: the window still looks active, so no
+// 'focus' event fires and the resync in createWindow() never runs. Fields then
+// ignore clicks/typing until the user switches to another window and back
+// (seen right after "Générer séries", which confirms then alerts). The renderer
+// replaces window.alert/confirm with these (renderer/src/nativeDialogs.ts):
+// same blocking semantics via sendSync, but the dialog is shown from main
+// (async — main's event loop keeps running for Quantum/LivePush) and focus is
+// handed back to the page explicitly afterwards.
+function refocusAfterDialog(win: BrowserWindow | null): void {
+  if (!win || win.isDestroyed()) return
+  win.focus()
+  win.webContents.focus()
+}
+
+ipcMain.on('dialog:alert-sync', async (event, message: string) => {
+  const win = BrowserWindow.fromWebContents(event.sender)
+  const opts: Electron.MessageBoxOptions = { type: 'info', title: 'SauvetageMeet', message: String(message ?? ''), buttons: ['OK'], noLink: true }
+  try {
+    if (win) await dialog.showMessageBox(win, opts)
+    else await dialog.showMessageBox(opts)
+  } finally {
+    refocusAfterDialog(win)
+    event.returnValue = true
+  }
+})
+
+ipcMain.on('dialog:confirm-sync', async (event, message: string, okLabel: string, cancelLabel: string) => {
+  const win = BrowserWindow.fromWebContents(event.sender)
+  const opts: Electron.MessageBoxOptions = {
+    type: 'question', title: 'SauvetageMeet', message: String(message ?? ''),
+    buttons: [okLabel || 'OK', cancelLabel || 'Annuler'], defaultId: 0, cancelId: 1, noLink: true,
+  }
+  let ok = false
+  try {
+    const { response } = win ? await dialog.showMessageBox(win, opts) : await dialog.showMessageBox(opts)
+    ok = response === 0
+  } finally {
+    refocusAfterDialog(win)
+    event.returnValue = ok
+  }
+})
+
 ipcMain.handle('live:get-status', () => {
   return { status: livePush.getStatus(), queueSize: livePush.getQueueSize() }
 })
