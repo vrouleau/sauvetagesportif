@@ -35,6 +35,21 @@ export interface RegistrationPanelProps {
   onSetHC?: (eventId: number, ageCode: string, entryTimeMs: number | null, isHC: boolean) => void
 }
 
+/** BT 50 / BT 25 cells — or, for a throw from the deck (course-free style),
+ *  one cell spanning both: the pool's length doesn't matter there. */
+function BestTimeCells({ style }: { style: RegistrationStyle }) {
+  const cls = 'border border-gray-300 px-2 py-0.5 text-right font-mono text-gray-500'
+  if (style.course_free) {
+    return <td colSpan={2} className={`${cls} text-center`}>{msToTime(style.best_time_lcm_ms ?? style.best_time_scm_ms)}</td>
+  }
+  return (
+    <>
+      <td className={cls}>{msToTime(style.best_time_lcm_ms)}</td>
+      <td className={cls}>{msToTime(style.best_time_scm_ms)}</td>
+    </>
+  )
+}
+
 export default function RegistrationPanel({
   data,
   athleteId,
@@ -205,8 +220,7 @@ export default function RegistrationPanel({
                       />
                     </td>
                     <td className="border border-gray-300 px-2 py-0.5">{style.style_name}</td>
-                    {!isBeach && <td className="border border-gray-300 px-2 py-0.5 text-right font-mono text-gray-500">{msToTime(style.best_time_lcm_ms)}</td>}
-                    {!isBeach && <td className="border border-gray-300 px-2 py-0.5 text-right font-mono text-gray-500">{msToTime(style.best_time_scm_ms)}</td>}
+                    {!isBeach && <BestTimeCells style={style} />}
                     {!isBeach && (
                       <td className="border border-gray-300 px-2 py-0.5">
                         {reg && (
@@ -290,8 +304,7 @@ export default function RegistrationPanel({
                           </span>
                         )}
                       </td>
-                      {!isBeach && <td className="border border-gray-300 px-2 py-0.5 text-right font-mono text-gray-500">{msToTime(style.best_time_lcm_ms)}</td>}
-                      {!isBeach && <td className="border border-gray-300 px-2 py-0.5 text-right font-mono text-gray-500">{msToTime(style.best_time_scm_ms)}</td>}
+                      {!isBeach && <BestTimeCells style={style} />}
                       {!isBeach && (
                         <td className="border border-gray-300 px-2 py-0.5">
                           {!lockedBy && reg && (

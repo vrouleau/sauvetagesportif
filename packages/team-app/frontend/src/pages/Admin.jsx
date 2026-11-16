@@ -20,6 +20,7 @@ import { useState, useEffect } from 'react'
 import { useLang } from '../i18n'
 import api, { headers } from '../api'
 import { refreshAuth } from '../authMeet'
+import { notResultsFileMessage } from '../lxfImportGuards'
 import { BUILD_TIMESTAMP } from '../buildInfo'
 import { newSwimstylesDetail, confirmNewSwimstyles } from '../newSwimstylesConfirm'
 
@@ -421,6 +422,8 @@ function HistoricalMeetsSection() {
       }
       loadMeets()
     } catch (err) {
+      const notResults = notResultsFileMessage(err, lang)
+      if (notResults) { setMsg(notResults); return }  // finally resets the uploader
       const nsw = newSwimstylesDetail(err)
       const detail = nsw?.message || err.detail || err.message || 'Error'
       const wantsForce = nsw

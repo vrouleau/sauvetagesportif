@@ -601,27 +601,28 @@ def generate_lxf(db: Session, meetsid: int | None = None) -> bytes:
     buf = BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("meet.lef", xml_bytes)
-        # Embed Gemini API keys as hidden dotfile (key transport to meet-app)
+        # Hidden dotfile carrying Gemini API keys and live-push config to
+        # meet-app. Always written: its presence marks a team-app export, so
+        # meet-app treats a missing live_push_secret as "live is off" and
+        # clears any stale LIVE_* config (lenex.ts importLenex).
+        import json as _json
         gemini_free = db.get(BsGlobal, "GEMINI_KEY_FREE")
         gemini_paid = db.get(BsGlobal, "GEMINI_KEY_PAID")
         live_secret = db.get(BsGlobal, "LIVE_PUSH_SECRET")
+        live_enabled = db.get(BsGlobal, "LIVE_ENABLED")
         live_url = os.environ.get("APP_BASE_URL", "http://localhost:8001")
-        has_keys = (
-            (gemini_free and gemini_free.data)
-            or (gemini_paid and gemini_paid.data)
-            or (live_secret and live_secret.data)
-        )
-        if has_keys:
-            import json as _json
-            keys = {}
-            if gemini_free and gemini_free.data:
-                keys["gemini_free"] = gemini_free.data
-            if gemini_paid and gemini_paid.data:
-                keys["gemini_paid"] = gemini_paid.data
-            if live_secret and live_secret.data:
-                keys["live_push_secret"] = live_secret.data
-                keys["live_url"] = live_url
-            z.writestr(".keys", _json.dumps(keys))
+        keys = {}
+        if gemini_free and gemini_free.data:
+            keys["gemini_free"] = gemini_free.data
+        if gemini_paid and gemini_paid.data:
+            keys["gemini_paid"] = gemini_paid.data
+        # Only while live mode is on: a disabled secret is useless to meet-app
+        # (every push gets 409) and re-enabling mints a new one anyway
+        # (routers/live.py enable_live_mode), so re-export after enabling.
+        if live_secret and live_secret.data and live_enabled and live_enabled.data == "T":
+            keys["live_push_secret"] = live_secret.data
+            keys["live_url"] = live_url
+        z.writestr(".keys", _json.dumps(keys))
     return buf.getvalue()
 
 

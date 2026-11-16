@@ -69,7 +69,7 @@ def test_aggregates_across_clubs_from_results_table():
 
         data = get_public_best_times(db)
 
-        assert data["styles"] == [{"uid": 101, "name": "100 Free"}]
+        assert data["styles"] == [{"uid": 101, "name": "100 Free", "course_free": False}]
         assert [c["name"] for c in data["clubs"]] == ["Alpha Club", "Beta Club"]
 
         alpha = data["clubs"][0]["athletes"]

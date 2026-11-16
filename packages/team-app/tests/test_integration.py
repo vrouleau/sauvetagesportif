@@ -1705,6 +1705,28 @@ class TestGeminiKeyLxfTransport:
             assert "gemini_paid" not in keys, \
                 ".keys must not contain gemini_paid when no Gemini keys are configured"
 
+    def test_live_config_only_exported_while_live_is_on(self, uploaded, admin_headers):
+        """A disabled live secret must not reach meet-app: every push would get
+        409, and re-enabling mints a new secret anyway. .keys is still written
+        (marks a team-app export) so meet-app clears its stale LIVE_* config."""
+        import json as _json
+        r = requests.post(f"{BASE_URL}/api/live/enable", headers=admin_headers, timeout=10)
+        assert r.status_code == 200, r.text
+        secret = r.json()["secret"]
+        try:
+            keys = _json.loads(export_registrations_lxf(admin_headers).read(".keys").decode())
+            assert keys.get("live_push_secret") == secret
+            assert keys.get("live_url")
+
+            requests.post(f"{BASE_URL}/api/live/disable", headers=admin_headers, timeout=5)
+            lxf = export_registrations_lxf(admin_headers)
+            assert ".keys" in lxf.namelist(), ".keys must always be written by team-app"
+            keys = _json.loads(lxf.read(".keys").decode())
+            assert "live_push_secret" not in keys, "disabled live secret must not be exported"
+            assert "live_url" not in keys
+        finally:
+            requests.post(f"{BASE_URL}/api/live/disable", headers=admin_headers, timeout=5)
+
     def test_keys_file_present_when_free_key_set(self, uploaded, admin_headers):
         self._clear_keys(admin_headers)
         requests.post(f"{BASE_URL}/api/admin/gemini-keys",
@@ -2921,7 +2943,8 @@ class TestHistoricalMeetImport:
         # Create a minimal LXF with the current meet name
         import zipfile
         from io import BytesIO
-        lef_content = f'<?xml version="1.0"?><LENEX><MEETS><MEET name="{current_name}" course="SCM"><CLUBS></CLUBS></MEET></MEETS></LENEX>'
+        # One RESULT: import-historical rejects files without any (not_results_file).
+        lef_content = f'<?xml version="1.0"?><LENEX><MEETS><MEET name="{current_name}" course="SCM"><CLUBS><CLUB name="Fab Club" code="FAB"><ATHLETES><ATHLETE firstname="Fab" lastname="Swimmer" gender="M" license="FAB-001"><RESULTS><RESULT eventid="1" swimtime="00:00:01.00"/></RESULTS></ATHLETE></ATHLETES></CLUB></CLUBS></MEET></MEETS></LENEX>'
         buf = BytesIO()
         with zipfile.ZipFile(buf, "w") as z:
             z.writestr("meet.lef", lef_content)
@@ -3148,7 +3171,10 @@ class TestUploadMeetPreservesHistory:
             '<?xml version="1.0"?><LENEX><MEETS><MEET name="Beach Historical Meet" course="LCM">'
             '<SESSIONS><SESSION number="1"><EVENTS><EVENT eventid="1" number="1" gender="M">'
             '<SWIMSTYLE swimstyleid="601" distance="100" name="Beach Flags" relaycount="1"/>'
-            '</EVENT></EVENTS></SESSION></SESSIONS><CLUBS></CLUBS></MEET></MEETS></LENEX>'
+            '</EVENT></EVENTS></SESSION></SESSIONS>'
+            # One RESULT (beach position 1): import-historical rejects files without any.
+            '<CLUBS><CLUB name="Fab Club" code="FAB"><ATHLETES><ATHLETE firstname="Fab" lastname="Swimmer" gender="M" license="FAB-001"><RESULTS><RESULT eventid="1" swimtime="00:00:01.00"/></RESULTS></ATHLETE></ATHLETES></CLUB></CLUBS>'
+            '</MEET></MEETS></LENEX>'
         )
         buf = _BytesIO()
         with _zipfile.ZipFile(buf, "w") as z:
@@ -3644,6 +3670,102 @@ class TestAdminMeetsDashboard:
             )
 
 
+class TestResultsImportGuards:
+    """import-results-lxf closes the open meet (registrations deleted, PINs
+    regenerated), so it must refuse a file that isn't a results file, and
+    ask before closing the open meet with another meet's results. Checked
+    before anything is written. Isolated class: the final test closes the
+    sole active meet."""
+
+    @pytest.fixture(autouse=True, scope="class")
+    def _restore_current_meet(self, admin_headers):
+        yield
+        with open(MEET_TEMPLATE, "rb") as f:
+            requests.post(f"{BASE_URL}/api/upload/meet?force=true",
+                          files={"file": ("meet.lxf", f, "application/octet-stream")},
+                          headers=admin_headers, timeout=60)
+        if ENTRIES_FILE.exists():
+            with open(ENTRIES_FILE, "rb") as f:
+                requests.post(f"{BASE_URL}/api/upload/entries",
+                              files={"file": ("entries.lxf", f, "application/octet-stream")},
+                              headers=admin_headers, timeout=60)
+
+    @staticmethod
+    def _open_meet_state():
+        """(meetsid, registration count) of the active meet."""
+        out = exec_in_backend(
+            "from app.meet_config import get_active_meetsid\n"
+            "from app.database import SessionLocal\n"
+            "from app.models import SwimResult\n"
+            "db = SessionLocal()\n"
+            "m = get_active_meetsid(db)\n"
+            "print(m, db.query(SwimResult).filter(SwimResult.meetsid == m).count())\n"
+        ).split()
+        return int(out[0]), int(out[1])
+
+    @staticmethod
+    def _results_lxf_named(meet_name: str) -> bytes:
+        """The genuine results fixture (event ids match the uploaded meet),
+        with MEET@name set to meet_name."""
+        with zipfile.ZipFile(RESULTS_FILE) as z:
+            lef_name = next(n for n in z.namelist() if n.endswith(".lef"))
+            xml = z.read(lef_name).decode("utf-8")
+        xml = re.sub(r'(<MEET\b[^>]*?\bname=")[^"]*(")',
+                     lambda m: m.group(1) + meet_name.replace("&", "&amp;").replace('"', "&quot;") + m.group(2),
+                     xml, count=1)
+        buf = BytesIO()
+        with zipfile.ZipFile(buf, "w") as z:
+            z.writestr(lef_name, xml)
+        return buf.getvalue()
+
+    def _post(self, content: bytes, headers: dict, query: str = ""):
+        return requests.post(f"{BASE_URL}/api/import-results-lxf{query}",
+                             files={"file": ("results.lxf", content, "application/octet-stream")},
+                             headers=headers, timeout=60)
+
+    def test_entries_file_is_rejected_and_meet_stays_open(self, uploaded, admin_headers):
+        before = self._open_meet_state()
+        r = self._post(ENTRIES_FILE.read_bytes(), admin_headers, "?force=true&force_meet=true")
+        assert r.status_code == 400, r.text
+        assert r.json()["detail"]["code"] == "not_results_file"
+        assert self._open_meet_state() == before, "a rejected file must not close or change the open meet"
+
+    def test_meet_structure_file_is_rejected(self, uploaded, admin_headers):
+        r = self._post(MEET_TEMPLATE.read_bytes(), admin_headers)
+        assert r.status_code == 400, r.text
+        assert r.json()["detail"]["code"] == "not_results_file"
+
+    def test_other_meets_results_ask_before_closing(self, uploaded, admin_headers):
+        before = self._open_meet_state()
+        r = self._post(self._results_lxf_named("Some Other Meet 2025"), admin_headers)
+        assert r.status_code == 409, r.text
+        d = r.json()["detail"]
+        assert d["code"] == "meet_mismatch"
+        assert d["file_meet"] == "Some Other Meet 2025"
+        assert d["open_meet"]
+        assert self._open_meet_state() == before, "a mismatch warning must not close or change the open meet"
+
+    def test_new_swimstyle_confirmation_does_not_skip_meet_check(self, uploaded, admin_headers):
+        # ?force=true (swimstyles) alone must still stop on the meet check.
+        r = self._post(self._results_lxf_named("Some Other Meet 2025"), admin_headers, "?force=true")
+        assert r.status_code == 409, r.text
+        assert r.json()["detail"]["code"] == "meet_mismatch"
+
+    def test_matching_results_file_closes_the_meet_without_confirmation(self, uploaded, admin_headers):
+        open_name = requests.get(f"{BASE_URL}/api/meet-info", headers=admin_headers, timeout=10).json()["meet_name"]
+        meetsid, _ = self._open_meet_state()
+        r = self._post(self._results_lxf_named(open_name), admin_headers, "?force=true")
+        assert r.status_code == 200, r.text
+        assert r.json()["reset"] is True
+        gone = exec_in_backend(
+            "from app.database import SessionLocal\n"
+            "from app.models_team import Meet\n"
+            "db = SessionLocal()\n"
+            f"print(db.get(Meet, {meetsid}) is None)\n"
+        ).strip()
+        assert gone == "True", "the matching file should have closed the open meet"
+
+
 class TestCloseMeetWithoutResults:
     """POST /admin/close-meet-without-results: resets the caller's target
     meet (same _reset_for_next_meet a results import uses) without creating
@@ -3692,6 +3814,22 @@ class TestCloseMeetWithoutResults:
                                   requests.get(f"{BASE_URL}/api/admin/historical-meets", headers=admin_headers, timeout=10).json()}
             assert meet_a_id not in before_historical, (
                 "an open meet must not appear in historical-meets (meetstate==3 only)"
+            )
+
+            # Meet A's clubs were sent their PIN: a secret_links row points at
+            # it (no ON DELETE CASCADE). Regression: the reset used to crash
+            # deleting the meets row (FOREIGN KEY constraint failed), leaving
+            # the meet archived-but-open after a results import.
+            exec_in_backend(
+                "from datetime import datetime, timedelta\n"
+                "from app.database import SessionLocal\n"
+                "from app.models import SecretLink\n"
+                "from app.models_team import TeamClub\n"
+                "db = SessionLocal()\n"
+                "club = db.query(TeamClub).first()\n"
+                f"db.add(SecretLink(token='close-meet-fk-regression', club_id=club.clubsid, meetsid={meet_a_id},\n"
+                "                  pin_encrypted='x', expires_at=datetime.utcnow() + timedelta(days=7)))\n"
+                "db.commit()\n"
             )
 
             r2 = requests.post(f"{BASE_URL}/api/admin/close-meet-without-results",
@@ -3924,7 +4062,9 @@ class TestImportResultsLxfResetScopedToTarget:
                           headers=b_headers, timeout=10).raise_for_status()
 
             with open(RESULTS_FILE, "rb") as f:
-                r2 = requests.post(f"{BASE_URL}/api/import-results-lxf?force=true",
+                # force_meet: the fixture's meet name differs from the uploaded
+                # template's (the meet-match guard is tested in TestResultsImportGuards)
+                r2 = requests.post(f"{BASE_URL}/api/import-results-lxf?force=true&force_meet=true",
                                    files={"file": ("results.lxf", f, "application/octet-stream")},
                                    headers={**admin_headers, "X-Meet-Id": str(meet_a_id)}, timeout=30)
             assert r2.status_code == 200, f"import-results-lxf failed: {r2.text}"
@@ -4039,12 +4179,19 @@ class TestNewSwimstyleConfirmation:
     so a stale/foreign template could otherwise pollute it unnoticed."""
 
     @staticmethod
-    def _fabricate_meet_lxf(style_id: int, meet_name: str) -> bytes:
+    def _fabricate_meet_lxf(style_id: int, meet_name: str, with_result: bool = False) -> bytes:
+        # Results imports reject files without any RESULT (not_results_file).
+        clubs = (
+            '<CLUBS><CLUB name="Fab Club" code="FAB"><ATHLETES>'
+            '<ATHLETE firstname="Fab" lastname="Swimmer" gender="M" license="FAB-001"><RESULTS>'
+            '<RESULT eventid="1" swimtime="00:01:00.00"/></RESULTS></ATHLETE>'
+            '</ATHLETES></CLUB></CLUBS>'
+        ) if with_result else '<CLUBS></CLUBS>'
         lef_content = (
             f'<?xml version="1.0"?><LENEX><MEETS><MEET name="{meet_name}" course="LCM">'
             '<SESSIONS><SESSION number="1"><EVENTS><EVENT eventid="1" number="1" gender="M">'
             f'<SWIMSTYLE swimstyleid="{style_id}" distance="777" name="Totally New Style" relaycount="1"/>'
-            '</EVENT></EVENTS></SESSION></SESSIONS><CLUBS></CLUBS></MEET></MEETS></LENEX>'
+            f'</EVENT></EVENTS></SESSION></SESSIONS>{clubs}</MEET></MEETS></LENEX>'
         )
         buf = BytesIO()
         with zipfile.ZipFile(buf, "w") as z:
@@ -4093,7 +4240,7 @@ class TestNewSwimstyleConfirmation:
         assert r.status_code == 200, f"Known style should not need force: {r.text}"
 
     def test_import_historical_warns_then_accepts_with_force(self, admin_headers):
-        lxf = self._fabricate_meet_lxf(556, "Fabricated Historical Meet")
+        lxf = self._fabricate_meet_lxf(556, "Fabricated Historical Meet", with_result=True)
         r = requests.post(f"{BASE_URL}/api/admin/import-historical",
                           files={"file": ("hist.lxf", lxf, "application/octet-stream")},
                           headers=admin_headers, timeout=30)
@@ -4108,8 +4255,10 @@ class TestNewSwimstyleConfirmation:
         assert r2.status_code == 200, f"force=true should succeed: {r2.text}"
 
     def test_import_results_lxf_warns_then_accepts_with_force(self, admin_headers):
-        lxf = self._fabricate_meet_lxf(557, "Fabricated Results Meet")
-        r = requests.post(f"{BASE_URL}/api/import-results-lxf",
+        lxf = self._fabricate_meet_lxf(557, "Fabricated Results Meet", with_result=True)
+        # force_meet: this fabricated meet is not the open one; only the
+        # swimstyle warning is under test here.
+        r = requests.post(f"{BASE_URL}/api/import-results-lxf?force_meet=true",
                           files={"file": ("results.lxf", lxf, "application/octet-stream")},
                           headers=admin_headers, timeout=30)
         assert r.status_code == 409, f"Expected 409, got {r.status_code}: {r.text}"
@@ -4117,7 +4266,7 @@ class TestNewSwimstyleConfirmation:
         assert detail["code"] == "new_swimstyles"
         assert any(s["id"] == 557 for s in detail["styles"])
 
-        r2 = requests.post(f"{BASE_URL}/api/import-results-lxf?force=true",
+        r2 = requests.post(f"{BASE_URL}/api/import-results-lxf?force=true&force_meet=true",
                            files={"file": ("results.lxf", lxf, "application/octet-stream")},
                            headers=admin_headers, timeout=30)
         assert r2.status_code == 200, f"force=true should succeed: {r2.text}"

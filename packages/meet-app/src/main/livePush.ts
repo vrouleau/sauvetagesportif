@@ -74,6 +74,8 @@ export class LivePushModule {
   private url: string = ''
   private secret: string = ''
   private enabled: boolean = false
+  /** Server answered 409 (live mode off) — no retry loop, log once. */
+  private serverInactive: boolean = false
 
   private debounceBuffer: LiveResultPayload[] = []
   private debounceTimer: ReturnType<typeof setTimeout> | null = null
@@ -335,6 +337,7 @@ export class LivePushModule {
         })
 
         if (response.ok) {
+          this.serverInactive = false
           // Remove from queue
           const idx = this.queue.indexOf(item)
           if (idx >= 0) this.queue.splice(idx, 1)
@@ -346,11 +349,18 @@ export class LivePushModule {
           this.setStatus('disconnected')
           return
         } else if (response.status === 409) {
-          // Live mode not active on server — stop trying
-          console.warn('[LivePush] Live mode not active on server (409)')
+          // Live mode turned off on the server (organizer toggle). Stop the
+          // 10 s retry loop — it can never succeed until live is re-enabled —
+          // but keep the queue: the next result write tries once more, so
+          // pushing resumes by itself (with the backlog) once live is back on.
+          if (!this.serverInactive) {
+            console.warn('[LivePush] Live mode not active on server (409) — pausing until next result')
+          }
+          this.serverInactive = true
+          this.stopRetryLoop()
+          this.saveQueue()
           this.setStatus('disconnected')
-          allSuccess = false
-          break
+          return
         } else {
           // Server error — keep in queue, retry later
           console.warn(`[LivePush] Server returned ${response.status}`)

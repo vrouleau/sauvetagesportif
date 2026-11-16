@@ -259,6 +259,9 @@ export interface RegistrationStyle {
   style_name: string
   best_time_lcm_ms: number | null
   best_time_scm_ms: number | null
+  /** Throw from the deck (pool style < 25 m): one best time whatever the
+   *  course — shown as a single box instead of BT 50 / BT 25 (team-app). */
+  course_free?: boolean
   relay_count?: number
   locked_by_name?: string
   relay_members?: Array<{ position: number; athleteId: number | null }>

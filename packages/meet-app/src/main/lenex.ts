@@ -222,14 +222,18 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
         saveGeminiKeys(freeKey, paidKey)
         summary.geminiKeysImported = true
       }
-      // Extract live push config for live results feature
+      // Live push config. team-app only includes it while live mode is on
+      // (export.py), so a .keys without a secret means "live is off": drop any
+      // stale config, or LivePush keeps pushing with a dead secret (409/401).
       const liveSecret = keys['live_push_secret'] ?? ''
       const liveUrl = keys['live_url'] ?? ''
       if (liveSecret) {
         db.prepare(`INSERT INTO bsglobal (name, data) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET data=excluded.data`).run('LIVE_PUSH_SECRET', liveSecret)
-      }
-      if (liveUrl) {
-        db.prepare(`INSERT INTO bsglobal (name, data) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET data=excluded.data`).run('LIVE_URL', liveUrl)
+        if (liveUrl) {
+          db.prepare(`INSERT INTO bsglobal (name, data) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET data=excluded.data`).run('LIVE_URL', liveUrl)
+        }
+      } else {
+        db.prepare(`DELETE FROM bsglobal WHERE name IN ('LIVE_PUSH_SECRET', 'LIVE_URL', 'LIVE_ENABLED')`).run()
       }
     } catch {
       summary.errors.push('Warning: .keys entry present but could not be parsed')
@@ -1093,8 +1097,8 @@ export function exportLenexResults(filePath: string, db: Database.Database): Exp
 
   // ── Sessions ────────────────────────────────────────────────────────────────
   const sessions = db.prepare(
-    `SELECT swimsessionid, sessionnumber, name, course FROM swimsession ORDER BY sessionnumber`
-  ).all() as Array<{ swimsessionid: number; sessionnumber: number; name: string | null; course: number | null }>
+    `SELECT swimsessionid, sessionnumber, name, course, startdate FROM swimsession ORDER BY sessionnumber`
+  ).all() as Array<{ swimsessionid: number; sessionnumber: number; name: string | null; course: number | null; startdate: string | null }>
 
   // ── Events (include internal/break events with internalevent attribute) ──────
   const events = db.prepare(
@@ -1220,7 +1224,12 @@ export function exportLenexResults(filePath: string, db: Database.Database): Exp
   // Sessions + Events + AgeGroups + Heats
   lines.push('      <SESSIONS>')
   for (const sess of sessions) {
-    lines.push(`        <SESSION${attr('number', sess.sessionnumber)}${attr('name', sess.name)}${attr('course', decodeCourse(sess.course))}>`)
+    // SESSION@date is required by LENEX and is the only date a results file
+    // carries — team-app dates the archived meet and every result from it
+    // (best-time expiry). Fallback: export day (results are exported right
+    // after the meet), not ageDate (Dec 31 of the season — a future date).
+    const sessDate = parseOleDate(sess.startdate) ?? new Date().toISOString().slice(0, 10)
+    lines.push(`        <SESSION${attr('number', sess.sessionnumber)}${attr('name', sess.name)}${attr('date', sessDate)}${attr('course', decodeCourse(sess.course))}>`)
     lines.push('          <EVENTS>')
 
     const sessEvents = events.filter(e => e.swimsessionid === sess.swimsessionid)

@@ -20,6 +20,8 @@ import { useState, useEffect, useRef } from 'react'
 import { useLang } from '../i18n'
 import api, { headers } from '../api'
 import { newSwimstylesDetail, confirmNewSwimstyles } from '../newSwimstylesConfirm'
+import { refreshAuth } from '../authMeet'
+import { notResultsFileMessage, meetMismatchDetail, confirmMeetMismatch } from '../lxfImportGuards'
 
 export default function Organizer() {
   const [meetInfo, setMeetInfo] = useState(null)
@@ -70,6 +72,16 @@ export default function Organizer() {
     } catch (e) { setMsg(e.message || 'Error') }
   }
 
+  // After an admin closes a meet, the stored meet_id still points at it and
+  // every request 404s ("Meet N is not currently open") until re-login.
+  // refreshAuth() re-fetches the open meets and falls back to the first one
+  // (the new stub meet), then the page reloads its data under that id.
+  async function _reloadAfterMeetClosed() {
+    try { await refreshAuth() } catch {}
+    loadMeetInfo(); loadClubs()
+    window.dispatchEvent(new Event('meet-changed'))
+  }
+
   function _applyImportResultsResponse(data) {
     const r = data.results
     if (data.reset) {
@@ -89,7 +101,7 @@ export default function Organizer() {
         setMsg(lang === 'fr'
           ? `✓ Meet archivé et réinitialisé : ${r} résultat(s) — ${data.meet_name}`
           : `✓ Meet archived and reset: ${r} result(s) — ${data.meet_name}`)
-        loadMeetInfo(); loadClubs()
+        _reloadAfterMeetClosed()
       }
     } else {
       setMsg(lang === 'fr'
@@ -98,8 +110,11 @@ export default function Organizer() {
     }
   }
 
-  async function _postImportResultsLxf(fd, force) {
-    const res = await fetch(`/api/import-results-lxf${force ? '?force=true' : ''}`, {
+  async function _postImportResultsLxf(fd, { force = false, forceMeet = false } = {}) {
+    const q = new URLSearchParams()
+    if (force) q.set('force', 'true')
+    if (forceMeet) q.set('force_meet', 'true')
+    const res = await fetch(`/api/import-results-lxf${q.toString() ? `?${q}` : ''}`, {
       method: 'POST',
       headers: headers(),
       body: fd,
@@ -118,23 +133,36 @@ export default function Organizer() {
     const file = e.target.files[0]
     if (!file) return
     setMsg(lang === 'fr' ? 'Importation des résultats...' : 'Importing results...')
-    const fd = new FormData()
-    fd.append('file', file)
     e.target.value = ''
-    try {
-      const data = await _postImportResultsLxf(fd, false)
-      _applyImportResultsResponse(data)
-    } catch (err) {
-      const nsw = newSwimstylesDetail(err)
-      if (nsw && confirmNewSwimstyles(nsw, lang)) {
-        const fd2 = new FormData()
-        fd2.append('file', file)
-        try {
-          const data2 = await _postImportResultsLxf(fd2, true)
-          _applyImportResultsResponse(data2)
-        } catch (err2) { setMsg(err2.detail || err2.message || 'Error') }
-      } else {
-        setMsg(nsw?.message || err.detail || err.message || 'Error')
+    // Each confirmed warning adds its own override and retries: the meet
+    // check (force_meet) and the new-swimstyles check (force) are separate,
+    // so confirming one never silently skips the other.
+    const opts = { force: false, forceMeet: false }
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const fd = new FormData()
+      fd.append('file', file)
+      try {
+        const data = await _postImportResultsLxf(fd, opts)
+        _applyImportResultsResponse(data)
+        return
+      } catch (err) {
+        const notResults = notResultsFileMessage(err, lang)
+        if (notResults) { setMsg(notResults); return }
+        const mm = meetMismatchDetail(err)
+        if (mm && !opts.forceMeet) {
+          if (!confirmMeetMismatch(mm, lang)) { setMsg(lang === 'fr' ? 'Importation annulée.' : 'Import cancelled.'); return }
+          opts.forceMeet = true
+          continue
+        }
+        const nsw = newSwimstylesDetail(err)
+        if (nsw && !opts.force) {
+          if (!confirmNewSwimstyles(nsw, lang)) { setMsg(nsw.message); return }
+          opts.force = true
+          continue
+        }
+        const d = err.detail
+        setMsg((d && typeof d === 'object' ? d.message : d) || err.message || 'Error')
+        return
       }
     }
   }
@@ -158,8 +186,7 @@ export default function Organizer() {
         }, 2500)
       } else {
         setMsg(lang === 'fr' ? `✓ Meet fermé : ${data.meet_name}` : `✓ Meet closed: ${data.meet_name}`)
-        loadMeetInfo(); loadClubs()
-        window.dispatchEvent(new Event('meet-changed'))
+        _reloadAfterMeetClosed()
       }
     } catch (err) { setMsg(err.message || 'Error') }
   }

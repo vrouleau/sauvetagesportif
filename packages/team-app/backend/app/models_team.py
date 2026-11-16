@@ -230,6 +230,21 @@ Index("ix_results_meet", Result.meetsid)
 Index("ix_results_style", Result.stylesid)
 
 
+# ── ATHLETE_BEST_TIMES (durable coach best time per athlete/style/course) ────
+# Captured from the coach's registration entry time when a meet is closed
+# (results upload or close-without-results), before registrations are reset.
+# Lowered to the meet's own result time/date when that result is faster.
+# Authoritative over historical results while within BEST_TIME_MAX_AGE_MONTHS
+# of entered_date — see best_times.py.
+class AthleteBestTime(Base):
+    __tablename__ = "athlete_best_times"
+    membersid = Column(Integer, ForeignKey("members.membersid", ondelete="CASCADE"), primary_key=True)
+    stylesid = Column(Integer, ForeignKey("swimstyle.swimstyleid"), primary_key=True)
+    course = Column(SmallInteger, primary_key=True)  # 1=LCM, 2=SCY, 3=SCM
+    time_ms = Column(Integer, nullable=False)
+    entered_date = Column(DateTime, nullable=False)
+
+
 # ── MEMBERSMEETS (registration link: athlete ↔ meet) ─────────────────────────
 
 class MemberMeet(Base):

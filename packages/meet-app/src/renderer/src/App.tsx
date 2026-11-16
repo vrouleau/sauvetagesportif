@@ -30,6 +30,7 @@ import GuidePage from './pages/GuidePage'
 import { GeminiKeyDialog } from './components/GeminiKeyDialog'
 import { PgConnectDialog, usePgStatus } from './components/PgConnectDialog'
 import { LangProvider, useLang } from '@shared/context/LangContext'
+import { setDialogLang } from './nativeDialogs'
 import logoSrc from '@shared/assets/icon.png'
 
 type Page = 'events' | 'individualEntries' | 'relayEntries' | 'inscription' | 'finals' | 'heats' | 'report' | 'scan' | 'process'
@@ -253,6 +254,7 @@ function SmbStatusDialog({
 function AppInner() {
   const [page, setPage] = useState<Page>('events')
   const { lang, setLang, t } = useLang()
+  useEffect(() => { setDialogLang(lang) }, [lang])
   const [showGeminiConfig, setShowGeminiConfig] = useState(false)
   const [showPgConnect, setShowPgConnect] = useState(false)
   const [showGuide, setShowGuide] = useState<'pool' | 'beach' | null>(null)

@@ -53,7 +53,7 @@ from ..meet_config import (
 )
 from ..seed import seed_from_lxf
 from ..best_times import (
-    get_best_times_for_member, get_best_time_date,
+    get_best_times_for_member, get_best_time_date, capture_coach_best_times,
 )
 from ..export import generate_lxf
 from ..export_entries import generate_entries_lxf
@@ -2174,10 +2174,19 @@ def get_registration(athlete_id: int, request: Request, db: Session = Depends(ge
     best_map_lcm: dict[int, int] = {}
     best_map_scm: dict[int, int] = {}
 
+    # Throws (pool style < 25 m) have one best time whatever the course: the
+    # panel shows a single box, and both values carry it so the pre-filled
+    # entry time works on either course.
+    from ..best_times import course_free_style_ids
+    course_free = course_free_style_ids(db)
     if member.membersid:
         bt_data = get_best_times_for_member(db, member.membersid, _BEST_TIME_MAX_AGE_MONTHS)
         for uid_key, style_data in bt_data.items():
             uid = int(uid_key)
+            if uid in course_free:
+                one = next(iter(style_data.values()))["time_ms"]
+                best_map_lcm[uid] = best_map_scm[uid] = one
+                continue
             if "LCM" in style_data:
                 best_map_lcm[uid] = style_data["LCM"]["time_ms"]
             if "SCM" in style_data:
@@ -2251,6 +2260,7 @@ def get_registration(athlete_id: int, request: Request, db: Session = Depends(ge
     for s in individual_events + relay_events:
         s["best_time_lcm_ms"] = best_map_lcm.get(s["style_uid"])
         s["best_time_scm_ms"] = best_map_scm.get(s["style_uid"])
+        s["course_free"] = s["style_uid"] in course_free
 
     # Relay locks
     relay_uids = [s["style_uid"] for s in relay_events]
@@ -2399,8 +2409,11 @@ def get_athlete_history(athlete_id: int, db: Session = Depends(get_db)):
     # Compute best times from historical results
     best_times = []
     style_best: dict[tuple[int, int], tuple[int, str, str | None]] = {}  # (style, course) → (time, meet_name, date)
+    from ..best_times import BEACH_STYLE_MIN
     for r in results:
         if r.meetsid not in meets_map or not r.stylesid:
+            continue
+        if r.stylesid >= BEACH_STYLE_MIN:  # beach = finishing positions, not times
             continue
         key = (r.stylesid, r.course or 1)
         if key not in style_best or r.totaltime < style_best[key][0]:
@@ -2720,6 +2733,19 @@ async def import_historical(file: UploadFile = File(...), force: bool = False, d
     content = await file.read()
     if len(content) > 10 * 1024 * 1024:
         raise HTTPException(413, "File too large (max 10MB)")
+    # Same "is it a results file?" guard as import-results-lxf (no meet-match
+    # check here: this path is for archiving *other* meets, closes nothing).
+    from ..lxf_to_team import _read_lef_xml, count_results_in_lxf
+    try:
+        lxf_root = _read_lef_xml(content)
+    except Exception as e:
+        raise HTTPException(400, f"Invalid Lenex .lxf: {e}")
+    if count_results_in_lxf(lxf_root) == 0:
+        raise HTTPException(400, {
+            "code": "not_results_file",
+            "message": "This file contains no results (times or DSQ/DNS/DNF) — "
+                       "is it an entries or meet-structure file?",
+        })
     from ..historical_import import import_historical_meet
     result = import_historical_meet(db, content, force=force)
     if result.get("needs_force"):
@@ -2969,6 +2995,12 @@ def _reset_for_next_meet(db: Session, meetsid: int | None) -> None:
         db.query(AgeGroup).filter(AgeGroup.meetsid.in_(current_ids)).delete(synchronize_session=False)
         db.query(SwimEvent).filter(SwimEvent.meetsid.in_(current_ids)).delete(synchronize_session=False)
         db.query(SwimSession).filter(SwimSession.meetsid.in_(current_ids)).delete(synchronize_session=False)
+        # SecretLink.meetsid has no ON DELETE CASCADE: leftover invite-email
+        # links (any meet whose clubs were sent their PIN) blocked the meets
+        # delete below with a FOREIGN KEY error, so the results import
+        # archived the meet but never closed it. Same fix _flush_meet_data
+        # already had.
+        db.query(SecretLink).filter(SecretLink.meetsid.in_(current_ids)).delete(synchronize_session=False)
 
     # Clear Team Manager current (non-historical) meets (FK to swimstyle, and
     # the meets row(s) the Meet Manager tables above just stopped referencing)
@@ -3689,7 +3721,7 @@ async def restore_db(file: UploadFile = File(...)):
             if tmp_path.exists():
                 tmp_path.unlink()
 
-        return {"ok": True, "filename": file.filename}
+        return {"ok": True, "filename": file.filename, "migrations_applied": _upgrade_restored_schema()}
 
     import subprocess
     db_url = os.environ.get("DATABASE_URL", "")
@@ -3714,7 +3746,18 @@ async def restore_db(file: UploadFile = File(...)):
         # psql often returns non-zero for warnings; check if it's fatal
         if "FATAL" in stderr or "could not connect" in stderr:
             raise HTTPException(500, f"Restore failed: {stderr}")
-    return {"ok": True, "filename": file.filename}
+    return {"ok": True, "filename": file.filename, "migrations_applied": _upgrade_restored_schema()}
+
+
+def _upgrade_restored_schema() -> list[str]:
+    """A backup older than the running code brings back an old schema;
+    migrations otherwise only run at container startup. See upgrade_schema."""
+    from ..database import engine
+    from ..migrations.run import upgrade_schema
+    ran = upgrade_schema(engine)
+    if ran:
+        print(f"restore-db: applied {len(ran)} migration(s): {', '.join(ran)}")
+    return ran
 
 
 # ---------------------------------------------------------------------------
@@ -3862,7 +3905,7 @@ def get_historical_best_times(member_id: int, db: Session = Depends(get_db)):
 
 @router.post("/import-results-lxf", dependencies=[Depends(require_organizer_or_admin)])
 async def import_results_lxf(request: Request, file: UploadFile = File(...), force: bool = False,
-                              db: Session = Depends(get_db)):
+                              force_meet: bool = False, db: Session = Depends(get_db)):
     """Import a meet-app results .lxf as a historical meet.
 
     - Organizer: archives meet as historical, then resets current meet,
@@ -3876,10 +3919,30 @@ async def import_results_lxf(request: Request, file: UploadFile = File(...), for
     same name already exists its results are replaced rather than duplicated.
     Warns (409, pass ?force=true to override) about swimstyle ids not already
     in the local catalog.
+
+    Guards, checked before anything is written (closing is destructive):
+    - 400 not_results_file: no RESULT carries a time or status (an entries or
+      meet-structure LXF picked by mistake). Not overridable.
+    - 409 meet_mismatch: only when this import closes a meet — the file's meet
+      name or event ids don't match the open meet. ?force_meet=true overrides
+      (separate from ?force so confirming new swimstyles can't skip it).
     """
     content = await file.read()
     if len(content) > 50 * 1024 * 1024:
         raise HTTPException(413, "File too large (max 50MB)")
+
+    from ..lxf_to_team import _read_lef_xml, count_results_in_lxf, meet_mismatch
+    try:
+        lxf_root = _read_lef_xml(content)
+    except Exception as e:
+        raise HTTPException(400, f"Invalid Lenex .lxf: {e}")
+    if count_results_in_lxf(lxf_root) == 0:
+        raise HTTPException(400, {
+            "code": "not_results_file",
+            "message": "This file contains no results (times or DSQ/DNS/DNF) — "
+                       "is it an entries or meet-structure file? Export the results from "
+                       "meet-app with File → Export LENEX results.",
+        })
 
     # Which *live* meet is being closed by this results file — resolved up
     # front (X-Meet-Id, or today's single-open-meet fallback) so the reset
@@ -3890,6 +3953,23 @@ async def import_results_lxf(request: Request, file: UploadFile = File(...), for
 
     from ..lxf_to_team import import_lxf_as_meet
     from ..models_live import LiveResult, LiveSplit, LiveStartlist, LiveEvent
+
+    pin = request.headers.get("X-Club-Pin", "")
+    role, _ = _resolve_role(pin, db)
+
+    # Only the closing path (organizer/admin) can wipe the wrong meet.
+    if role in ("organizer", "admin") and not force_meet:
+        mismatch = meet_mismatch(db, lxf_root, target_meetsid)
+        if mismatch:
+            raise HTTPException(409, {
+                **mismatch,
+                "message": (
+                    f"This results file looks like it is from another meet: "
+                    f"\"{mismatch['file_meet']}\" (file) vs \"{mismatch['open_meet']}\" (open meet), "
+                    f"{mismatch['events_matched']}/{mismatch['events_in_file']} events match. "
+                    f"Importing will close the open meet."
+                ),
+            })
 
     # LXF import is authoritative — clear any live results if present
     db.query(LiveSplit).delete()
@@ -3903,6 +3983,13 @@ async def import_results_lxf(request: Request, file: UploadFile = File(...), for
             db.delete(cfg)
     db.flush()
 
+    # Coaches' entry times become their stored best times — captured before the
+    # results are imported (so "unchanged default" is judged against the best
+    # time the coach saw) and before the reset below deletes the registrations.
+    # The import then lowers them to any faster result from this meet.
+    if role in ("organizer", "admin"):
+        capture_coach_best_times(db, target_meetsid, _BEST_TIME_MAX_AGE_MONTHS)
+
     try:
         counts = import_lxf_as_meet(db, content, force=force)
     except Exception as e:
@@ -3915,8 +4002,6 @@ async def import_results_lxf(request: Request, file: UploadFile = File(...), for
             "styles": counts["new_swimstyles"],
         })
 
-    pin = request.headers.get("X-Club-Pin", "")
-    role, _ = _resolve_role(pin, db)
     did_reset = False
     if role in ("organizer", "admin"):
         _reset_for_next_meet(db, target_meetsid)
@@ -3947,6 +4032,9 @@ def close_meet_without_results(request: Request, db: Session = Depends(get_db)):
     meet_name = _get_meet_config(db, meetsid, "meet_name") or ""
     pin = request.headers.get("X-Club-Pin", "")
     role, _ = _resolve_role(pin, db)
+    # Coaches' entry times become their stored best times before the reset
+    # deletes the registrations (no results to compare against here).
+    capture_coach_best_times(db, meetsid, _BEST_TIME_MAX_AGE_MONTHS)
     _reset_for_next_meet(db, meetsid)
     db.commit()
     return {"ok": True, "meet_name": meet_name, "role": role}

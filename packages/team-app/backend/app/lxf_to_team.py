@@ -93,6 +93,72 @@ def _read_lef_xml(content: bytes) -> ET.Element:
     return ET.fromstring(xml_bytes)
 
 
+# ── Pre-import guards ─────────────────────────────────────────────────────────
+# A results import that closes a meet is destructive (registrations deleted,
+# PINs regenerated), so before writing anything, check the file actually is a
+# results file and belongs to the meet being closed.
+
+_RESULT_STATUSES = {"DSQ", "DNS", "DNF", "EXH", "WDR", "SICK", "DNQ"}
+
+
+def count_results_in_lxf(root: ET.Element) -> int:
+    """Number of RESULT elements carrying a real time or a status.
+
+    0 means this isn't a results file — e.g. an entries/inscriptions or
+    meet-structure LXF picked by mistake (entries carry only entrytime).
+    """
+    n = 0
+    for r in root.iter("RESULT"):
+        if (_lenex_time_to_ms(r.get("swimtime")) or 0) > 0 or (r.get("status") or "").upper() in _RESULT_STATUSES:
+            n += 1
+    return n
+
+
+def _norm_name(s: str | None) -> str:
+    return " ".join((s or "").lower().split())
+
+
+def meet_mismatch(db: DbSession, root: ET.Element, meetsid: int | None) -> dict | None:
+    """Compare a results file against the open meet it would close.
+
+    Two signals, either one flags a mismatch:
+    - MEET@name differs from the open meet's name (case/whitespace-insensitive);
+    - fewer than half of the file's result event ids exist in the open meet
+      (meet-app keeps team-app's swimevent ids end to end, so a genuine
+      results file for this meet matches them).
+    Returns None when it looks like the same meet, else a detail dict.
+    """
+    from .models import SwimEvent
+    from .meet_config import _get_meet_config
+
+    if not meetsid:
+        return None
+    meet_el = root.find(".//MEET")
+    file_name = (meet_el.get("name") if meet_el is not None else "") or ""
+    open_meet = db.get(Meet, meetsid)
+    open_name = _get_meet_config(db, meetsid, "meet_name") or (open_meet.name if open_meet else "") or ""
+
+    name_differs = bool(_norm_name(file_name)) and bool(_norm_name(open_name)) \
+        and _norm_name(file_name) != _norm_name(open_name)
+
+    # Event ids actually used by results (EVENT elements of a results file
+    # all carry results, but RESULT@eventid is what matters).
+    file_ids = {int(r.get("eventid")) for r in root.iter("RESULT") if (r.get("eventid") or "").isdigit()}
+    open_ids = {eid for (eid,) in db.query(SwimEvent.swimeventid).filter(SwimEvent.meetsid == meetsid).all()}
+    matched = len(file_ids & open_ids)
+    events_differ = bool(file_ids) and bool(open_ids) and matched * 2 < len(file_ids)
+
+    if not (name_differs or events_differ):
+        return None
+    return {
+        "code": "meet_mismatch",
+        "file_meet": file_name,
+        "open_meet": open_name,
+        "events_matched": matched,
+        "events_in_file": len(file_ids),
+    }
+
+
 def import_lxf_as_meet(db: DbSession, content: bytes, force: bool = False) -> dict:
     """Import a results .lxf as a historical meet in the Team Manager schema.
 
@@ -340,6 +406,10 @@ def import_lxf_as_meet(db: DbSession, content: bytes, force: bool = False) -> di
             clubsid=member.clubsid if member else None,
         ))
     db.flush()
+
+    # A faster result from this meet replaces a stored coach best time.
+    from .best_times import refresh_best_times_from_meet
+    refresh_best_times_from_meet(db, meet_id)
 
     db.commit()
     return {
