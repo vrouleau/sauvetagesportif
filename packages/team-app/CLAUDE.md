@@ -193,7 +193,7 @@ Coach best times are written only at meet close, never on registration:
 | `POST /api/admin/import-mdb` | Import Splash Team Manager .mdb file | Admin |
 | `GET /api/admin/historical-meets` | List historical meets (Team Manager schema) | Admin |
 | `DELETE /api/admin/historical-meets/{id}` | Delete a historical meet | Admin |
-| `POST /api/import-results-lxf` | Import results .lxf as historical meet; organizer path also resets current meet + PINs + clears organizer | Organizer/Admin |
+| `POST /api/import-results-lxf` | Import results .lxf as historical meet; organizer path also resets current meet + PINs + clears organizer. Guards (before any write): 400 `not_results_file` if no RESULT has a time/status; 409 `meet_mismatch` (override `?force_meet=true`, separate from `?force`) if the file's meet name or event ids don't match the open meet being closed — see `lxf_to_team.py` | Organizer/Admin |
 | `GET /api/athletes` | Athlete list | Any authenticated |
 | `GET /api/clubs/{id}/invoice-pdf` | One club's invoice PDF | Organizer/Admin |
 | `POST /api/invoices/pdf-zip` | ZIP of invoice PDFs (`{club_ids}`) | Organizer/Admin |
@@ -283,7 +283,7 @@ Full data flow between meet-app and team-app:
 - Clears `organizer_club_id` (organizer path) — organizer is logged out
 - Admin then sets a new organizer for the next meet via Admin page
 
-**Admin import** (`POST /api/import-results-lxf` with admin PIN): same historical archival + reset. If a completed meet with the same name already exists, its results are replaced rather than duplicated.
+**Admin import** (`POST /api/import-results-lxf` with admin PIN): same historical archival + reset. Both paths refuse a file with no results (an entries/meet-structure LXF picked by mistake) and ask for confirmation before closing the open meet with a file whose meet name or event ids don't match it. If a completed meet with the same name already exists, its results are replaced rather than duplicated.
 
 **Empty meet state:** After reset (or fresh install), the meet has no events. Self-invite page shows "no meet planned" when empty. Admin or organizer uploads a new meet .lxf to start the next cycle.
 

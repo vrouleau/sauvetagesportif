@@ -2720,6 +2720,19 @@ async def import_historical(file: UploadFile = File(...), force: bool = False, d
     content = await file.read()
     if len(content) > 10 * 1024 * 1024:
         raise HTTPException(413, "File too large (max 10MB)")
+    # Same "is it a results file?" guard as import-results-lxf (no meet-match
+    # check here: this path is for archiving *other* meets, closes nothing).
+    from ..lxf_to_team import _read_lef_xml, count_results_in_lxf
+    try:
+        lxf_root = _read_lef_xml(content)
+    except Exception as e:
+        raise HTTPException(400, f"Invalid Lenex .lxf: {e}")
+    if count_results_in_lxf(lxf_root) == 0:
+        raise HTTPException(400, {
+            "code": "not_results_file",
+            "message": "This file contains no results (times or DSQ/DNS/DNF) — "
+                       "is it an entries or meet-structure file?",
+        })
     from ..historical_import import import_historical_meet
     result = import_historical_meet(db, content, force=force)
     if result.get("needs_force"):
@@ -3723,6 +3736,7 @@ async def restore_db(file: UploadFile = File(...)):
     return {"ok": True, "filename": file.filename}
 
 
+
 # ---------------------------------------------------------------------------
 # Auto-backup: config + list + download + delete
 # ---------------------------------------------------------------------------
@@ -3868,7 +3882,7 @@ def get_historical_best_times(member_id: int, db: Session = Depends(get_db)):
 
 @router.post("/import-results-lxf", dependencies=[Depends(require_organizer_or_admin)])
 async def import_results_lxf(request: Request, file: UploadFile = File(...), force: bool = False,
-                              db: Session = Depends(get_db)):
+                              force_meet: bool = False, db: Session = Depends(get_db)):
     """Import a meet-app results .lxf as a historical meet.
 
     - Organizer: archives meet as historical, then resets current meet,
@@ -3882,10 +3896,30 @@ async def import_results_lxf(request: Request, file: UploadFile = File(...), for
     same name already exists its results are replaced rather than duplicated.
     Warns (409, pass ?force=true to override) about swimstyle ids not already
     in the local catalog.
+
+    Guards, checked before anything is written (closing is destructive):
+    - 400 not_results_file: no RESULT carries a time or status (an entries or
+      meet-structure LXF picked by mistake). Not overridable.
+    - 409 meet_mismatch: only when this import closes a meet — the file's meet
+      name or event ids don't match the open meet. ?force_meet=true overrides
+      (separate from ?force so confirming new swimstyles can't skip it).
     """
     content = await file.read()
     if len(content) > 50 * 1024 * 1024:
         raise HTTPException(413, "File too large (max 50MB)")
+
+    from ..lxf_to_team import _read_lef_xml, count_results_in_lxf, meet_mismatch
+    try:
+        lxf_root = _read_lef_xml(content)
+    except Exception as e:
+        raise HTTPException(400, f"Invalid Lenex .lxf: {e}")
+    if count_results_in_lxf(lxf_root) == 0:
+        raise HTTPException(400, {
+            "code": "not_results_file",
+            "message": "This file contains no results (times or DSQ/DNS/DNF) — "
+                       "is it an entries or meet-structure file? Export the results from "
+                       "meet-app with File → Export LENEX results.",
+        })
 
     # Which *live* meet is being closed by this results file — resolved up
     # front (X-Meet-Id, or today's single-open-meet fallback) so the reset
@@ -3899,6 +3933,20 @@ async def import_results_lxf(request: Request, file: UploadFile = File(...), for
 
     pin = request.headers.get("X-Club-Pin", "")
     role, _ = _resolve_role(pin, db)
+
+    # Only the closing path (organizer/admin) can wipe the wrong meet.
+    if role in ("organizer", "admin") and not force_meet:
+        mismatch = meet_mismatch(db, lxf_root, target_meetsid)
+        if mismatch:
+            raise HTTPException(409, {
+                **mismatch,
+                "message": (
+                    f"This results file looks like it is from another meet: "
+                    f"\"{mismatch['file_meet']}\" (file) vs \"{mismatch['open_meet']}\" (open meet), "
+                    f"{mismatch['events_matched']}/{mismatch['events_in_file']} events match. "
+                    f"Importing will close the open meet."
+                ),
+            })
 
     # LXF import is authoritative — clear any live results if present
     db.query(LiveSplit).delete()

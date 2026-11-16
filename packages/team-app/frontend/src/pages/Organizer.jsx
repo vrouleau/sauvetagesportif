@@ -21,6 +21,7 @@ import { useLang } from '../i18n'
 import api, { headers } from '../api'
 import { newSwimstylesDetail, confirmNewSwimstyles } from '../newSwimstylesConfirm'
 import { refreshAuth } from '../authMeet'
+import { notResultsFileMessage, meetMismatchDetail, confirmMeetMismatch } from '../lxfImportGuards'
 
 export default function Organizer() {
   const [meetInfo, setMeetInfo] = useState(null)
@@ -109,8 +110,11 @@ export default function Organizer() {
     }
   }
 
-  async function _postImportResultsLxf(fd, force) {
-    const res = await fetch(`/api/import-results-lxf${force ? '?force=true' : ''}`, {
+  async function _postImportResultsLxf(fd, { force = false, forceMeet = false } = {}) {
+    const q = new URLSearchParams()
+    if (force) q.set('force', 'true')
+    if (forceMeet) q.set('force_meet', 'true')
+    const res = await fetch(`/api/import-results-lxf${q.toString() ? `?${q}` : ''}`, {
       method: 'POST',
       headers: headers(),
       body: fd,
@@ -129,23 +133,36 @@ export default function Organizer() {
     const file = e.target.files[0]
     if (!file) return
     setMsg(lang === 'fr' ? 'Importation des résultats...' : 'Importing results...')
-    const fd = new FormData()
-    fd.append('file', file)
     e.target.value = ''
-    try {
-      const data = await _postImportResultsLxf(fd, false)
-      _applyImportResultsResponse(data)
-    } catch (err) {
-      const nsw = newSwimstylesDetail(err)
-      if (nsw && confirmNewSwimstyles(nsw, lang)) {
-        const fd2 = new FormData()
-        fd2.append('file', file)
-        try {
-          const data2 = await _postImportResultsLxf(fd2, true)
-          _applyImportResultsResponse(data2)
-        } catch (err2) { setMsg(err2.detail || err2.message || 'Error') }
-      } else {
-        setMsg(nsw?.message || err.detail || err.message || 'Error')
+    // Each confirmed warning adds its own override and retries: the meet
+    // check (force_meet) and the new-swimstyles check (force) are separate,
+    // so confirming one never silently skips the other.
+    const opts = { force: false, forceMeet: false }
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const fd = new FormData()
+      fd.append('file', file)
+      try {
+        const data = await _postImportResultsLxf(fd, opts)
+        _applyImportResultsResponse(data)
+        return
+      } catch (err) {
+        const notResults = notResultsFileMessage(err, lang)
+        if (notResults) { setMsg(notResults); return }
+        const mm = meetMismatchDetail(err)
+        if (mm && !opts.forceMeet) {
+          if (!confirmMeetMismatch(mm, lang)) { setMsg(lang === 'fr' ? 'Importation annulée.' : 'Import cancelled.'); return }
+          opts.forceMeet = true
+          continue
+        }
+        const nsw = newSwimstylesDetail(err)
+        if (nsw && !opts.force) {
+          if (!confirmNewSwimstyles(nsw, lang)) { setMsg(nsw.message); return }
+          opts.force = true
+          continue
+        }
+        const d = err.detail
+        setMsg((d && typeof d === 'object' ? d.message : d) || err.message || 'Error')
+        return
       }
     }
   }
