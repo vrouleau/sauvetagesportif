@@ -205,6 +205,25 @@ export default function Organizer() {
     } catch (e) { setMsg(e.message || 'Error') }
   }
 
+  // Printable list of every individual + relay entry, grouped by club. The
+  // endpoint needs the organizer PIN header, so fetch it here and write the
+  // HTML into a tab opened synchronously (keeps popup blockers happy). The
+  // page has its own Print button — no automatic print dialog.
+  async function printEntries() {
+    const w = window.open('', '_blank')
+    try {
+      const res = await fetch(`/api/print/entries?lang=${lang}`, { headers: headers() })
+      if (!res.ok) throw new Error(`${res.status}`)
+      const html = await res.text()
+      if (!w) { setMsg(lang === 'fr' ? 'Fenêtre bloquée par le navigateur' : 'Popup blocked by the browser'); return }
+      w.document.open(); w.document.write(html); w.document.close()
+      w.focus()
+    } catch (e) {
+      if (w) w.close()
+      setMsg(e.message || 'Error')
+    }
+  }
+
   async function uploadMeet(e) {
     const file = e.target.files[0]
     if (!file) return
@@ -418,6 +437,10 @@ export default function Organizer() {
             <span className="text-xs font-medium text-red-600">{meetInfo.closure_date}</span>
           </div>
         )}
+        <button onClick={printEntries}
+          className="px-3 py-1 bg-gray-600 text-white text-xs rounded hover:bg-gray-700">
+          🖨 {t.print_entries}
+        </button>
       </div>
 
       {/* Actions bar */}

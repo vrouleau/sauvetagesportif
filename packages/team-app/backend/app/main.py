@@ -38,6 +38,7 @@ from .routers.results import router as results_router
 from .routers.push_notifications import router as push_router
 from .routers.serc import router as serc_router
 from .routers.serc_print import router as serc_print_router
+from .routers.entries_print import router as entries_print_router
 
 app = FastAPI(title="Meet Manager", docs_url=None, redoc_url=None)
 
@@ -101,6 +102,7 @@ app.include_router(results_router)
 app.include_router(push_router)
 app.include_router(serc_router)
 app.include_router(serc_print_router)
+app.include_router(entries_print_router)
 
 
 @app.on_event("startup")
