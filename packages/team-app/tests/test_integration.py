@@ -3716,6 +3716,22 @@ class TestCloseMeetWithoutResults:
                 "an open meet must not appear in historical-meets (meetstate==3 only)"
             )
 
+            # Meet A's clubs were sent their PIN: a secret_links row points at
+            # it (no ON DELETE CASCADE). Regression: the reset used to crash
+            # deleting the meets row (FOREIGN KEY constraint failed), leaving
+            # the meet archived-but-open after a results import.
+            exec_in_backend(
+                "from datetime import datetime, timedelta\n"
+                "from app.database import SessionLocal\n"
+                "from app.models import SecretLink\n"
+                "from app.models_team import TeamClub\n"
+                "db = SessionLocal()\n"
+                "club = db.query(TeamClub).first()\n"
+                f"db.add(SecretLink(token='close-meet-fk-regression', club_id=club.clubsid, meetsid={meet_a_id},\n"
+                "                  pin_encrypted='x', expires_at=datetime.utcnow() + timedelta(days=7)))\n"
+                "db.commit()\n"
+            )
+
             r2 = requests.post(f"{BASE_URL}/api/admin/close-meet-without-results",
                                headers={**admin_headers, "X-Meet-Id": str(meet_a_id)}, timeout=10)
             assert r2.status_code == 200, r2.text

@@ -2969,6 +2969,12 @@ def _reset_for_next_meet(db: Session, meetsid: int | None) -> None:
         db.query(AgeGroup).filter(AgeGroup.meetsid.in_(current_ids)).delete(synchronize_session=False)
         db.query(SwimEvent).filter(SwimEvent.meetsid.in_(current_ids)).delete(synchronize_session=False)
         db.query(SwimSession).filter(SwimSession.meetsid.in_(current_ids)).delete(synchronize_session=False)
+        # SecretLink.meetsid has no ON DELETE CASCADE: leftover invite-email
+        # links (any meet whose clubs were sent their PIN) blocked the meets
+        # delete below with a FOREIGN KEY error, so the results import
+        # archived the meet but never closed it. Same fix _flush_meet_data
+        # already had.
+        db.query(SecretLink).filter(SecretLink.meetsid.in_(current_ids)).delete(synchronize_session=False)
 
     # Clear Team Manager current (non-historical) meets (FK to swimstyle, and
     # the meets row(s) the Meet Manager tables above just stopped referencing)
