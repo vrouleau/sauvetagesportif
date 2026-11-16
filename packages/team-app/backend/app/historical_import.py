@@ -129,6 +129,7 @@ def import_historical_meet(db: Session, file_bytes: bytes, force: bool = False) 
     event_gender: dict[str, int] = {}
     style_names: dict[int, str] = {}
     style_distances: dict[int, int] = {}
+    style_relaycounts: dict[int, int] = {}
 
     for event_el in root.iter("EVENT"):
         eid = event_el.get("eventid", "")
@@ -152,6 +153,10 @@ def import_historical_meet(db: Session, file_bytes: bytes, force: bool = False) 
             distance_raw = ss.get("distance") or ""
             try:
                 style_distances[uid_int] = int(distance_raw)
+            except (ValueError, TypeError):
+                pass
+            try:
+                style_relaycounts[uid_int] = int(ss.get("relaycount") or "")
             except (ValueError, TypeError):
                 pass
 
@@ -218,10 +223,15 @@ def import_historical_meet(db: Session, file_bytes: bytes, force: bool = False) 
     for eid_str, style_uid in event_style.items():
         # Ensure the SwimStyle exists
         if not db.get(SwimStyle, style_uid):
+            # Use the file's own distance/relaycount (used to hard-code
+            # relaycount=1 and drop the distance, so relays and throws were
+            # misclassified until a meet upload corrected them).
+            dist = style_distances.get(style_uid)
             db.add(SwimStyle(
                 swimstyleid=style_uid,
                 name=style_names.get(style_uid, f"Style {style_uid}"),
-                relaycount=1,
+                distance=dist if dist and dist > 0 else None,
+                relaycount=style_relaycounts.get(style_uid) or 1,
             ))
             db.flush()
 

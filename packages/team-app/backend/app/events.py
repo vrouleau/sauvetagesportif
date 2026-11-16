@@ -135,6 +135,11 @@ def _load_from_parsed(db: Session, meet: ParsedMeet, reuse_meetsid: int | None =
                     )
                     db.add(style)
                     db.flush()
+                else:
+                    # A meet file is the authoritative source for a style's
+                    # shape; this used to be insert-only, so styles first
+                    # created half-empty by a historical import never got fixed.
+                    correct_style_shape(style, ev.distance, ev.relaycount)
 
             ev_daytime = _time_to_datetime(ev.daytime)
             ev_duration = _time_to_datetime(ev.duration)
@@ -199,6 +204,26 @@ def _load_from_parsed(db: Session, meet: ParsedMeet, reuse_meetsid: int | None =
 
     db.commit()
     return count
+
+
+def correct_style_shape(style, distance: int | None, relaycount: int | None) -> bool:
+    """Bring an existing SwimStyle's distance/relaycount in line with a meet
+    file (meet upload, or the bundled templates via migration 0007).
+
+    Styles first created by a historical/results import often have no distance
+    and relaycount=1 even for relays. distance drives course-free throws
+    (best_times.py: pool style < 25 m), relaycount drives individual-vs-relay
+    everywhere. Only *upgrades* relaycount: it defaults to 1 when the attribute
+    is absent, which must never demote a relay. Returns True if changed.
+    """
+    changed = False
+    if distance and distance > 0 and style.distance != distance:
+        style.distance = distance
+        changed = True
+    if relaycount and relaycount > 1 and style.relaycount != relaycount:
+        style.relaycount = relaycount
+        changed = True
+    return changed
 
 
 def load_events(db: Session, lxf_path: Path) -> int:
