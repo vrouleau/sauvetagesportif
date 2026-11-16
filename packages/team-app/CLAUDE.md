@@ -157,7 +157,7 @@ sport — this bit us for real once already.
 
 One resolver in `best_times.py` (`get_best_times_for_member` / `get_public_best_times`) feeds registration, the public Best Times page and the LXF exports. Per (athlete, style, course), anything older than `BEST_TIME_MAX_AGE_MONTHS` (default 18) is ignored:
 1. **Coach best time** (`athlete_best_times`, migration m0006) — authoritative while valid, even if a faster historical result exists.
-2. Otherwise the **fastest official, non-HC result** from `results`, with that result's own date.
+2. Otherwise the **fastest official, non-HC result** from `results`, with that result's own date — or its meet's `mindate` when the result has none (most historical rows). Rows with neither date never expire.
 
 Coach best times are written only at meet close, never on registration:
 - `capture_coach_best_times` — `import-results-lxf` (before the import) and `close-meet-without-results` store each individual registration's entry time for the meet's course, dated to the meet start (`mindate`, else first session date). Entry times equal to the current best time (the pre-filled default) are skipped so a historical value isn't re-dated. Relays and beach meets skipped.

@@ -943,6 +943,23 @@ describe('LENEX exporter', () => {
     expect(xml).not.toMatch(/date="\d+\.\d+"/)
   })
 
+  it('exportLenexResults writes SESSION@date (required by LENEX; team-app dates results from it)', () => {
+    seedResultsFixture(db, dateToOle(2014, 7, 3))
+    db.prepare(`UPDATE swimsession SET startdate=? WHERE swimsessionid=1`).run(String(dateToOle(2026, 11, 28)))
+    exportLenexResults(outPath, db)
+    const xml = readLefXml(outPath)
+    expect(xml).toMatch(/<SESSION[^>]*\sdate="2026-11-28"/)
+    expect(xml).not.toMatch(/date="\d+\.\d+"/)
+  })
+
+  it('exportLenexResults falls back to the export day when the session has no date', () => {
+    seedResultsFixture(db, dateToOle(2014, 7, 3))
+    db.prepare(`UPDATE swimsession SET startdate=NULL WHERE swimsessionid=1`).run()
+    exportLenexResults(outPath, db)
+    const xml = readLefXml(outPath)
+    expect(xml).toMatch(new RegExp(`<SESSION[^>]*\\sdate="${new Date().toISOString().slice(0, 10)}"`))
+  })
+
   it('exportMeetLenex writes session lanemin/lanemax when set (was silently dropped before)', () => {
     seedResultsFixture(db, dateToOle(2014, 7, 3))
     db.prepare(`UPDATE swimsession SET lanemin=1, lanemax=40 WHERE swimsessionid=1`).run()

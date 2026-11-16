@@ -35,27 +35,45 @@ from __future__ import annotations
 
 import re
 from datetime import date, datetime
-from sqlalchemy import or_
+from sqlalchemy import DateTime, func, or_
 from sqlalchemy.orm import Session, joinedload
 
 from .models import SwimStyle
-from .models_team import Result, Member, AthleteBestTime
+from .models_team import Result, Member, AthleteBestTime, Meet
 from .meet_config import get_active_meetsid, _get_meet_config, _get_meet_type
 
 
 # --- Core query functions ---
 
 
+def _result_date():
+    """A result's effective date: its own eventdate, else its meet's start date.
+
+    Most historical rows (MDB/older imports) never got a per-result eventdate,
+    only meets.mindate — without this fallback they could never expire.
+    """
+    return func.coalesce(Result.eventdate, Meet.mindate, type_=DateTime)
+
+
 def _eligible_results(db: Session, cutoff: date, member_id: int | None = None):
-    """Official, non-HC, timed results not older than cutoff (undated rows kept)."""
-    q = db.query(Result).filter(
+    """Official, non-HC, timed results not older than cutoff.
+
+    Rows expose membersid/stylesid/course/totaltime/eventdate, eventdate being
+    the effective date (see _result_date). Rows with no date at all (neither
+    result nor meet) are kept rather than silently dropped.
+    """
+    eff = _result_date()
+    q = db.query(
+        Result.membersid, Result.stylesid, Result.course, Result.totaltime,
+        eff.label("eventdate"),
+    ).outerjoin(Meet, Meet.meetsid == Result.meetsid).filter(
         Result.membersid.isnot(None),
         Result.stylesid.isnot(None),
         Result.totaltime.isnot(None),
         Result.totaltime > 0,
         Result.resulttyp == 0,
         or_(Result.resultstatus.is_(None), Result.resultstatus != 4),  # exclude HC/EXH
-        or_(Result.eventdate.is_(None), Result.eventdate >= datetime.combine(cutoff, datetime.min.time())),
+        or_(eff.is_(None), eff >= datetime.combine(cutoff, datetime.min.time())),
     )
     if member_id is not None:
         q = q.filter(Result.membersid == member_id)
@@ -233,7 +251,6 @@ def capture_coach_best_times(db: Session, meetsid: int | None, max_age_months: i
     Beach meets are skipped (no times). Returns the number of rows written.
     """
     from .models import SwimResult, SwimEvent
-    from .models_team import Meet
 
     if not meetsid:
         return 0
@@ -320,6 +337,8 @@ def refresh_best_times_from_meet(db: Session, meetsid: int) -> int:
     comes from the results table. Returns the number of rows updated.
     """
     db.flush()
+    meet = db.get(Meet, meetsid)
+    meet_date = meet.mindate if meet else None
     results = db.query(Result).filter(
         Result.meetsid == meetsid,
         Result.membersid.isnot(None),
@@ -334,11 +353,12 @@ def refresh_best_times_from_meet(db: Session, meetsid: int) -> int:
         row = db.get(AthleteBestTime, (r.membersid, r.stylesid, r.course))
         if row is None or r.totaltime >= row.time_ms:
             continue
-        if r.eventdate and row.entered_date and r.eventdate.date() < row.entered_date.date():
+        when = r.eventdate or meet_date
+        if when and row.entered_date and when.date() < row.entered_date.date():
             continue
         row.time_ms = r.totaltime
-        if r.eventdate:
-            row.entered_date = r.eventdate
+        if when:
+            row.entered_date = when
         updated.add((r.membersid, r.stylesid, r.course))
     db.flush()
     return len(updated)

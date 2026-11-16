@@ -267,3 +267,44 @@ def test_hc_meet_result_does_not_replace_coach_time(db):
     _result(db, 1, 50000, _ago(5), meetsid=20, status=4)
 
     assert refresh_best_times_from_meet(db, 20) == 0
+
+
+# ── Undated results fall back to their meet's date ───────────────────────────
+
+def test_undated_result_expires_by_its_meet_date(db):
+    # Most historical rows have no per-result eventdate, only meets.mindate.
+    db.add(Meet(meetsid=30, name="Old champs", meetstate=3, course=LCM, mindate=_ago(30 * 24)))
+    db.add(Meet(meetsid=31, name="Recent", meetstate=3, course=LCM, mindate=_ago(40)))
+    db.flush()
+    _result(db, 1, 55000, None, meetsid=30)  # fast but 2 years old (via its meet)
+    _result(db, 2, 64000, None, meetsid=31)
+
+    bt = get_best_times_for_member(db, 1)[str(FREE)]["LCM"]
+    assert bt["time_ms"] == 64000
+    assert bt["date"] == _ago(40).strftime("%Y-%m-%d")
+
+
+def test_result_and_meet_both_undated_is_kept(db):
+    _result(db, 1, 60000, None)  # OLD meet has no mindate either
+    assert get_best_times_for_member(db, 1)[str(FREE)]["LCM"]["time_ms"] == 60000
+
+
+def test_undated_result_from_older_meet_never_overrides_coach_time(db):
+    _coach(db, 60000, _ago(10))
+    db.add(Meet(meetsid=30, name="Old champs", meetstate=3, course=LCM, mindate=_ago(100)))
+    db.flush()
+    _result(db, 1, 55000, None, meetsid=30)
+
+    assert refresh_best_times_from_meet(db, 30) == 0
+    assert db.get(AthleteBestTime, (1, FREE, LCM)).time_ms == 60000
+
+
+def test_undated_result_from_newer_meet_replaces_coach_time_with_meet_date(db):
+    _coach(db, 62000, _ago(20))
+    db.add(Meet(meetsid=30, name="This meet", meetstate=3, course=LCM, mindate=_ago(5)))
+    db.flush()
+    _result(db, 1, 60500, None, meetsid=30)
+
+    assert refresh_best_times_from_meet(db, 30) == 1
+    row = db.get(AthleteBestTime, (1, FREE, LCM))
+    assert row.time_ms == 60500 and row.entered_date == _ago(5)
