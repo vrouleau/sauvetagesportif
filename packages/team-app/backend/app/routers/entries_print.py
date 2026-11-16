@@ -219,15 +219,23 @@ def build_entries_html(db: Session, meetsid: int | None, lang: str = "fr") -> st
             f'{n_entries} {txt["entries"]} · {len(club_relays)} {txt["teams"]}</p>'
         )
 
+        # The section title lives in the table's <thead>, which browsers
+        # repeat at the top of every printed page the table spans — so a
+        # continuation page still says which club and section it belongs to.
+        def caption(label: str, ncols: int) -> str:
+            return (f'<tr class="caption"><th colspan="{ncols}">'
+                    f'<span class="cap-club">{escape(club.name or "")}</span> · {label}</th></tr>')
+
         # Individual
-        parts.append(f'<h3>{txt["individual"]}</h3>')
         if not club_indiv:
+            parts.append(f'<h3>{txt["individual"]}</h3>')
             parts.append(f'<p class="empty">{txt["no_individual"]}</p>')
         else:
             time_th = "" if is_beach else f'<th class="time">{txt["entry_time"]}</th>'
             parts.append(
-                f'<table><thead><tr><th>{txt["athlete"]}</th><th>{txt["born"]}</th>'
-                f'<th>{txt["event"]}</th><th>{txt["category"]}</th>{time_th}</tr></thead><tbody>'
+                f'<table><thead>{caption(txt["individual"], 4 if is_beach else 5)}'
+                f'<tr><th>{txt["athlete"]}</th><th>{txt["born"]}</th>'
+                f'<th>{txt["event"]}</th><th>{txt["category"]}</th>{time_th}</tr></thead>'
             )
             ordered = sorted(
                 club_indiv.items(),
@@ -238,6 +246,8 @@ def build_entries_html(db: Session, meetsid: int | None, lang: str = "fr") -> st
                 m = members[mid]
                 mregs = sorted(mregs, key=lambda r: _event_sort_key(r.event))
                 born = str(m.birthdate.year) if m.birthdate else ""
+                # One <tbody> per athlete so their events never split across pages
+                parts.append('<tbody class="athlete">')
                 for i, reg in enumerate(mregs):
                     cls = ' class="first"' if i == 0 else ""
                     if i == 0:
@@ -251,15 +261,17 @@ def build_entries_html(db: Session, meetsid: int | None, lang: str = "fr") -> st
                         f'<tr{cls}>{head}<td>{escape(_event_label(reg.event, txt, str(reg.swimeventid)))}</td>'
                         f'<td>{escape(reg.age_code or "")}</td>{time_td}</tr>'
                     )
-            parts.append("</tbody></table>")
+                parts.append("</tbody>")
+            parts.append("</table>")
 
         # Relays
-        parts.append(f'<h3>{txt["relays"]}</h3>')
         if not club_relays:
+            parts.append(f'<h3>{txt["relays"]}</h3>')
             parts.append(f'<p class="empty">{txt["no_relays"]}</p>')
         else:
             parts.append(
-                f'<table><thead><tr><th>{txt["event"]}</th><th>{txt["category"]}</th>'
+                f'<table class="relays"><thead>{caption(txt["relays"], 4)}'
+                f'<tr><th>{txt["event"]}</th><th>{txt["category"]}</th>'
                 f'<th>{txt["team"]}</th><th>{txt["members"]}</th></tr></thead><tbody>'
             )
             for ev, r in sorted(club_relays, key=lambda t: (_event_sort_key(t[0]), t[1].teamnumb or 0)):
@@ -305,8 +317,12 @@ def build_entries_html(db: Session, meetsid: int | None, lang: str = "fr") -> st
   table {{ width: 100%; border-collapse: collapse; }}
   th, td {{ text-align: left; padding: 2px 6px; vertical-align: top; }}
   th {{ border-bottom: 1px solid #111; font-size: 10px; text-transform: uppercase; }}
+  table.relays {{ margin-top: 10px; }}
+  tr.caption th {{ border-bottom: none; padding: 6px 6px 3px; font-size: 12px;
+                   text-transform: none; }}
+  .cap-club {{ color: #555; font-weight: normal; }}
   tr.first td {{ border-top: 1px solid #ccc; }}
-  tr {{ break-inside: avoid; page-break-inside: avoid; }}
+  tr, tbody.athlete {{ break-inside: avoid; page-break-inside: avoid; }}
   td.ath {{ font-weight: bold; }}
   .time {{ text-align: right; white-space: nowrap; }}
   .print-btn {{ position: fixed; top: 12px; right: 12px; padding: 6px 14px; font-size: 12px; }}
