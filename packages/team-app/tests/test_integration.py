@@ -24,6 +24,7 @@ no SPLASH involved. Run: `pytest tests/ -v` from repo root.
 from __future__ import annotations
 
 import base64
+from html import escape as html_escape
 import re
 import zipfile
 from datetime import date
@@ -325,6 +326,22 @@ class TestExport:
                 delete_registration(c["reg_id"], admin_headers)
             except Exception:
                 pass
+
+    def test_print_entries_lists_registrations_by_club(self, with_registrations, admin_headers):
+        r = requests.get(f"{BASE_URL}/api/print/entries?lang=en",
+                         headers=admin_headers, timeout=20)
+        assert r.status_code == 200, r.text
+        assert r.headers["content-type"].startswith("text/html")
+        html = r.text
+        assert "Individual entries" in html and "Relay entries" in html
+        for c in with_registrations:
+            ath = c["athlete"]
+            assert html_escape(ath["club"]) in html
+            assert html_escape(ath["last_name"]) in html
+
+    def test_print_entries_requires_organizer(self):
+        r = requests.get(f"{BASE_URL}/api/print/entries", timeout=10)
+        assert r.status_code == 403
 
     def test_export_bundle_contains_scripts(self, with_registrations, admin_headers):
         bundle = export_bundle(admin_headers)

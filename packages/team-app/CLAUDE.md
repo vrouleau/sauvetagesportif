@@ -184,6 +184,7 @@ Coach best times are written only at meet close, never on registration:
 | `GET /api/export` | Export registrations as .lxf bundle (.zip) | Admin |
 | `GET /api/export/entries` | Export entries .lxf (clubs + athletes + best times) | Admin |
 | `GET /api/export/registrations-lxf` | Export registrations .lxf (for meet-app import) | Organizer/Admin |
+| `GET /api/print/entries?lang=fr` | Printable HTML of all individual + relay entries, grouped by club (one page per club) — Invitation page "Print Entries" button | Organizer/Admin |
 | `PUT /api/sessions/{id}` | Update session fields (name, date, times, lanes) | Organizer/Admin |
 | `PUT /api/closure-date` | Set registration deadline (syncs to MEETVALUES DEADLINE) | Organizer/Admin |
 | `GET /api/admin/backup-db` | Download full PostgreSQL dump (.sql) | Admin |
