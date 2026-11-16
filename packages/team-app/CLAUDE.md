@@ -155,7 +155,13 @@ sport — this bit us for real once already.
 
 ## Best times storage
 
-Best times are computed from the Team Manager `results` table via `best_times_v2.py` — SQL query across all historical results (18-month expiry). Fed by results upload and MDB import.
+One resolver in `best_times.py` (`get_best_times_for_member` / `get_public_best_times`) feeds registration, the public Best Times page and the LXF exports. Per (athlete, style, course), anything older than `BEST_TIME_MAX_AGE_MONTHS` (default 18) is ignored:
+1. **Coach best time** (`athlete_best_times`, migration m0006) — authoritative while valid, even if a faster historical result exists.
+2. Otherwise the **fastest official, non-HC result** from `results`, with that result's own date.
+
+Coach best times are written only at meet close, never on registration:
+- `capture_coach_best_times` — `import-results-lxf` (before the import) and `close-meet-without-results` store each individual registration's entry time for the meet's course, dated to the meet start (`mindate`, else first session date). Entry times equal to the current best time (the pre-filled default) are skipped so a historical value isn't re-dated. Relays and beach meets skipped.
+- `refresh_best_times_from_meet` — end of every results import (`lxf_to_team.py`, `historical_import.py`): a faster result replaces the stored time/date, unless the meet is older than the stored value.
 
 **Not updated for beach meets** (positions are not times). Pool styles use 5xx IDs, beach styles use 6xx — no collisions.
 

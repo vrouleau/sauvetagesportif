@@ -341,6 +341,10 @@ def import_lxf_as_meet(db: DbSession, content: bytes, force: bool = False) -> di
         ))
     db.flush()
 
+    # A faster result from this meet replaces a stored coach best time.
+    from .best_times import refresh_best_times_from_meet
+    refresh_best_times_from_meet(db, meet_id)
+
     db.commit()
     return {
         "meet_name": meet_name,

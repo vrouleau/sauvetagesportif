@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Vincent Rouleau <https://github.com/vrouleau/sauvetagesportif>
+#
+# This file is part of Sauvetage Sportif.
+#
+# Sauvetage Sportif is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# Sauvetage Sportif is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with Sauvetage Sportif. If not, see <https://www.gnu.org/licenses/>.
+
+"""Durable coach best times: `athlete_best_times` (member, style, course).
+
+New table only — nothing to backfill (coach entry times on past meets were
+deleted by each meet reset). See best_times.py for how it is read/written.
+
+Idempotent: create_all is a no-op when the table already exists.
+"""
+from __future__ import annotations
+
+NAME = "0006_athlete_best_times"
+
+
+def upgrade(engine) -> None:
+    from ...models import Base
+    from ... import models_team  # noqa: F401 — registers members/athlete_best_times
+    from ... import models_live, models_serc  # noqa: F401 — same FK-resolution need as m0001
+
+    Base.metadata.create_all(bind=engine)

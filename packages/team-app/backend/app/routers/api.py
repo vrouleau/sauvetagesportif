@@ -53,7 +53,7 @@ from ..meet_config import (
 )
 from ..seed import seed_from_lxf
 from ..best_times import (
-    get_best_times_for_member, get_best_time_date,
+    get_best_times_for_member, get_best_time_date, capture_coach_best_times,
 )
 from ..export import generate_lxf
 from ..export_entries import generate_entries_lxf
@@ -3891,6 +3891,9 @@ async def import_results_lxf(request: Request, file: UploadFile = File(...), for
     from ..lxf_to_team import import_lxf_as_meet
     from ..models_live import LiveResult, LiveSplit, LiveStartlist, LiveEvent
 
+    pin = request.headers.get("X-Club-Pin", "")
+    role, _ = _resolve_role(pin, db)
+
     # LXF import is authoritative — clear any live results if present
     db.query(LiveSplit).delete()
     db.query(LiveResult).delete()
@@ -3902,6 +3905,13 @@ async def import_results_lxf(request: Request, file: UploadFile = File(...), for
         if cfg:
             db.delete(cfg)
     db.flush()
+
+    # Coaches' entry times become their stored best times — captured before the
+    # results are imported (so "unchanged default" is judged against the best
+    # time the coach saw) and before the reset below deletes the registrations.
+    # The import then lowers them to any faster result from this meet.
+    if role in ("organizer", "admin"):
+        capture_coach_best_times(db, target_meetsid, _BEST_TIME_MAX_AGE_MONTHS)
 
     try:
         counts = import_lxf_as_meet(db, content, force=force)
@@ -3915,8 +3925,6 @@ async def import_results_lxf(request: Request, file: UploadFile = File(...), for
             "styles": counts["new_swimstyles"],
         })
 
-    pin = request.headers.get("X-Club-Pin", "")
-    role, _ = _resolve_role(pin, db)
     did_reset = False
     if role in ("organizer", "admin"):
         _reset_for_next_meet(db, target_meetsid)
@@ -3947,6 +3955,9 @@ def close_meet_without_results(request: Request, db: Session = Depends(get_db)):
     meet_name = _get_meet_config(db, meetsid, "meet_name") or ""
     pin = request.headers.get("X-Club-Pin", "")
     role, _ = _resolve_role(pin, db)
+    # Coaches' entry times become their stored best times before the reset
+    # deletes the registrations (no results to compare against here).
+    capture_coach_best_times(db, meetsid, _BEST_TIME_MAX_AGE_MONTHS)
     _reset_for_next_meet(db, meetsid)
     db.commit()
     return {"ok": True, "meet_name": meet_name, "role": role}
