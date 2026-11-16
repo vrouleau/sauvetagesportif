@@ -43,6 +43,13 @@ from .models_team import Result, Member, AthleteBestTime, Meet
 from .meet_config import get_active_meetsid, _get_meet_config, _get_meet_type
 
 
+# Beach styles (601-624) are ranked, not timed: their "results" are finishing
+# positions stored as ms (1st = 1000, 2nd = 2000…), meaningless as best times.
+# Pool styles are 5xx; the ranges never overlap (see the meet-type detection in
+# routers/api.py, which uses the same >= 600 threshold).
+BEACH_STYLE_MIN = 600
+
+
 # --- Core query functions ---
 
 
@@ -69,6 +76,7 @@ def _eligible_results(db: Session, cutoff: date, member_id: int | None = None):
     ).outerjoin(Meet, Meet.meetsid == Result.meetsid).filter(
         Result.membersid.isnot(None),
         Result.stylesid.isnot(None),
+        Result.stylesid < BEACH_STYLE_MIN,  # beach = positions, not times
         Result.totaltime.isnot(None),
         Result.totaltime > 0,
         Result.resulttyp == 0,
@@ -84,6 +92,7 @@ def _valid_coach_rows(db: Session, cutoff: date, member_id: int | None = None):
     q = db.query(AthleteBestTime).filter(
         AthleteBestTime.entered_date >= datetime.combine(cutoff, datetime.min.time()),
         AthleteBestTime.time_ms > 0,
+        AthleteBestTime.stylesid < BEACH_STYLE_MIN,
     )
     if member_id is not None:
         q = q.filter(AthleteBestTime.membersid == member_id)
@@ -274,6 +283,7 @@ def capture_coach_best_times(db: Session, meetsid: int | None, max_age_months: i
             SwimResult.athleteid.isnot(None),
             SwimResult.entrytime.isnot(None),
             SwimResult.entrytime > 0,
+            SwimEvent.swimstyleid < BEACH_STYLE_MIN,  # even if MEET_TYPE is wrong
             or_(SwimStyle.relaycount.is_(None), SwimStyle.relaycount <= 1),
         )
         .all()
@@ -343,6 +353,7 @@ def refresh_best_times_from_meet(db: Session, meetsid: int) -> int:
         Result.meetsid == meetsid,
         Result.membersid.isnot(None),
         Result.stylesid.isnot(None),
+        Result.stylesid < BEACH_STYLE_MIN,
         Result.totaltime.isnot(None),
         Result.totaltime > 0,
         Result.resulttyp == 0,

@@ -163,7 +163,7 @@ Coach best times are written only at meet close, never on registration:
 - `capture_coach_best_times` — `import-results-lxf` (before the import) and `close-meet-without-results` store each individual registration's entry time for the meet's course, dated to the meet start (`mindate`, else first session date). Entry times equal to the current best time (the pre-filled default) are skipped so a historical value isn't re-dated. Relays and beach meets skipped.
 - `refresh_best_times_from_meet` — end of every results import (`lxf_to_team.py`, `historical_import.py`): a faster result replaces the stored time/date, unless the meet is older than the stored value.
 
-**Not updated for beach meets** (positions are not times). Pool styles use 5xx IDs, beach styles use 6xx — no collisions.
+**Beach meets never count** (results are finishing positions stored as ms, not times): the resolver, refresh, capture and the athlete-history best times all exclude styles `>= BEACH_STYLE_MIN` (600). Pool styles use 5xx IDs, beach styles use 6xx — no collisions. Beach results are still archived and shown per meet.
 
 ## API endpoints
 

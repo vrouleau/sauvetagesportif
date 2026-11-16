@@ -308,3 +308,47 @@ def test_undated_result_from_newer_meet_replaces_coach_time_with_meet_date(db):
     assert refresh_best_times_from_meet(db, 30) == 1
     row = db.get(AthleteBestTime, (1, FREE, LCM))
     assert row.time_ms == 60500 and row.entered_date == _ago(5)
+
+
+# ── Beach meets are ranked, not timed ────────────────────────────────────────
+
+BEACH = 601
+
+
+def _beach_style(db):
+    db.add(SwimStyle(swimstyleid=BEACH, code="S601", name="Drapeaux", distance=16, stroke=0, relaycount=1))
+    db.flush()
+
+
+def test_beach_positions_are_never_best_times(db):
+    # A beach "result" is a finishing position stored as ms (1st = 1000).
+    _beach_style(db)
+    _result(db, 1, 1000, _ago(30), style=BEACH)
+    _result(db, 2, 61000, _ago(30))  # a real pool time
+    db.commit()
+
+    bt = get_best_times_for_member(db, 1)
+    assert str(BEACH) not in bt
+    assert bt[str(FREE)]["LCM"]["time_ms"] == 61000
+
+    data = get_public_best_times(db)
+    assert data["styles"] == [{"uid": FREE, "name": "100 Free"}]
+    assert data["clubs"][0]["athletes"][0]["times"] == {"101_LCM": 61000}
+
+
+def test_athlete_with_only_beach_results_is_not_on_the_public_page(db):
+    _beach_style(db)
+    _result(db, 1, 2000, _ago(30), style=BEACH)
+    db.commit()
+    assert get_public_best_times(db)["clubs"] == []
+
+
+def test_beach_result_never_refreshes_a_coach_row(db):
+    _beach_style(db)
+    db.add(AthleteBestTime(membersid=1, stylesid=BEACH, course=LCM, time_ms=5000, entered_date=_ago(10)))
+    db.add(Meet(meetsid=40, name="Plage", meetstate=3, course=LCM, mindate=_ago(5)))
+    db.flush()
+    _result(db, 1, 1000, _ago(5), meetsid=40, style=BEACH)
+
+    assert refresh_best_times_from_meet(db, 40) == 0
+    assert str(BEACH) not in get_best_times_for_member(db, 1)  # stray beach coach row ignored too

@@ -2399,8 +2399,11 @@ def get_athlete_history(athlete_id: int, db: Session = Depends(get_db)):
     # Compute best times from historical results
     best_times = []
     style_best: dict[tuple[int, int], tuple[int, str, str | None]] = {}  # (style, course) → (time, meet_name, date)
+    from ..best_times import BEACH_STYLE_MIN
     for r in results:
         if r.meetsid not in meets_map or not r.stylesid:
+            continue
+        if r.stylesid >= BEACH_STYLE_MIN:  # beach = finishing positions, not times
             continue
         key = (r.stylesid, r.course or 1)
         if key not in style_best or r.totaltime < style_best[key][0]:
