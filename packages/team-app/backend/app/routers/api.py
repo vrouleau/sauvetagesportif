@@ -3708,7 +3708,7 @@ async def restore_db(file: UploadFile = File(...)):
             if tmp_path.exists():
                 tmp_path.unlink()
 
-        return {"ok": True, "filename": file.filename}
+        return {"ok": True, "filename": file.filename, "migrations_applied": _upgrade_restored_schema()}
 
     import subprocess
     db_url = os.environ.get("DATABASE_URL", "")
@@ -3733,8 +3733,18 @@ async def restore_db(file: UploadFile = File(...)):
         # psql often returns non-zero for warnings; check if it's fatal
         if "FATAL" in stderr or "could not connect" in stderr:
             raise HTTPException(500, f"Restore failed: {stderr}")
-    return {"ok": True, "filename": file.filename}
+    return {"ok": True, "filename": file.filename, "migrations_applied": _upgrade_restored_schema()}
 
+
+def _upgrade_restored_schema() -> list[str]:
+    """A backup older than the running code brings back an old schema;
+    migrations otherwise only run at container startup. See upgrade_schema."""
+    from ..database import engine
+    from ..migrations.run import upgrade_schema
+    ran = upgrade_schema(engine)
+    if ran:
+        print(f"restore-db: applied {len(ran)} migration(s): {', '.join(ran)}")
+    return ran
 
 
 # ---------------------------------------------------------------------------
