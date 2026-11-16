@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.5.21] - 2026-11-16
+
+### ✨ Features
+
+- keep print entries readable across page breaks (`5ed64bc`)
+- print entries button on Invitation page (`f0f59ca`)
+
+### Other
+
+- Merge pull request #97 from vrouleau/feature/print-entries (`00464ce`)
+
 ## [0.5.20] - 2026-11-16
 
 ### 🏗️ CI
