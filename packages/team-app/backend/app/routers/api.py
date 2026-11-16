@@ -892,7 +892,8 @@ def reset_meet(request: Request, data: dict = Body(default={}), db: Session = De
 
 @router.get("/meet-info")
 def meet_info(request: Request, db: Session = Depends(get_db)):
-    import json as _json
+    from ..invoices import _meet_fees
+
     meetsid = resolve_meetsid(request, db)
     filename = _get_meet_config(db, meetsid, "meet_filename") if meetsid else None
     uploaded = _get_meet_config(db, meetsid, "meet_uploaded_at") if meetsid else None
@@ -901,11 +902,7 @@ def meet_info(request: Request, db: Session = Depends(get_db)):
     masters = _get_meet_config(db, meetsid, "meet_masters") if meetsid else None
     closure = _get_closure_date(db, meetsid=meetsid)
     currency = _get_meet_config(db, meetsid, "meet_currency") if meetsid else None
-    fees_json = _get_meet_config(db, meetsid, "meet_fees_json") if meetsid else None
-    try:
-        meet_fees = _json.loads(fees_json) if fees_json else {}
-    except ValueError:
-        meet_fees = {}
+    meet_fees = _meet_fees(db, meetsid=meetsid)
     events = db.query(SwimEvent).options(
         joinedload(SwimEvent.swimstyle)
     ).filter(SwimEvent.meetsid == meetsid).order_by(SwimEvent.eventnumber).all()
