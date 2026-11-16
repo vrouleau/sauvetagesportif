@@ -14,16 +14,33 @@ jobs:
   create-release:
     name: Create Release with Notes
     runs-on: ubuntu-latest
+    outputs:
+      is_latest: ${{ steps.latest.outputs.IS_LATEST }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0  # full history for changelog generation
 
+      # Only the highest version gets the "Latest" badge / :latest Docker tag.
+      # Without this, pushing several tags at once lets whichever run finishes
+      # last win, even if it's an older version.
+      - name: Determine if this is the highest version
+        id: latest
+        run: |
+          HIGHEST=$(git tag -l 'v*' --sort=-v:refname | head -1)
+          echo "Highest tag: $HIGHEST, this tag: $GITHUB_REF_NAME"
+          if [ "$HIGHEST" = "$GITHUB_REF_NAME" ]; then
+            echo "IS_LATEST=true" >> $GITHUB_OUTPUT
+          else
+            echo "IS_LATEST=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Generate release notes from commits
         id: notes
         run: |
-          # Find previous tag
-          PREV_TAG=$(git tag --sort=-v:refname | sed -n '2p')
+          # Find previous tag reachable from this tag's parent (not just the
+          # second-highest tag overall, which is wrong for older tags)
+          PREV_TAG=$(git describe --tags --abbrev=0 --match 'v*' "${GITHUB_REF_NAME}^" 2>/dev/null || true)
           if [ -z "$PREV_TAG" ]; then
             PREV_TAG=$(git rev-list --max-parents=0 HEAD)
           fi
@@ -78,6 +95,7 @@ jobs:
           body: ${{ steps.notes.outputs.NOTES }}
           draft: false
           prerelease: false
+          make_latest: ${{ steps.latest.outputs.IS_LATEST }}
 
   # ─── Meet App: Windows x64 Installer ──────────────────────────────────────
   meet-app-windows:
@@ -166,7 +184,7 @@ jobs:
           push: true
           tags: |
             ghcr.io/${{ github.repository }}/team-backend:${{ steps.version.outputs.VERSION }}
-            ghcr.io/${{ github.repository }}/team-backend:latest
+            ${{ needs.create-release.outputs.is_latest == 'true' && format('ghcr.io/{0}/team-backend:latest', github.repository) || '' }}
 
       - name: Build and push frontend image
         uses: docker/build-push-action@v7
@@ -176,4 +194,4 @@ jobs:
           push: true
           tags: |
             ghcr.io/${{ github.repository }}/team-frontend:${{ steps.version.outputs.VERSION }}
-            ghcr.io/${{ github.repository }}/team-frontend:latest
+            ${{ needs.create-release.outputs.is_latest == 'true' && format('ghcr.io/{0}/team-frontend:latest', github.repository) || '' }}
