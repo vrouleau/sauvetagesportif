@@ -507,12 +507,16 @@ function BestTimesView() {
     )
   }
 
-  const { styles, clubs, course } = data
+  const { styles, clubs } = data
+  // Both courses side by side, like BT 50 / BT 25 in the registration window
+  // (this used to show one value per style, silently falling back from the
+  // current meet's course to the other, so you couldn't tell which it was).
+  const COURSES = [['LCM', '50 m'], ['SCM', '25 m']]
 
   return (
     <div className="best-times-print p-4 h-full overflow-auto">
       <div className="print:hidden flex justify-between items-center mb-3">
-        <p className="text-sm text-gray-600">{t.best_times_course}: {course}</p>
+        <p className="text-sm text-gray-600">{t.best_times_course}: 50 m / 25 m</p>
         <button
           onClick={() => window.print()}
           className="text-xs bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700"
@@ -524,31 +528,37 @@ function BestTimesView() {
       <table className="w-full text-xs border-collapse border border-gray-300">
         <thead>
           <tr>
-            <th className="border border-gray-300 px-1 py-1 bg-gray-100 text-left sticky left-0">{t.best_times_athlete}</th>
+            <th rowSpan={2} className="border border-gray-300 px-1 py-1 bg-gray-100 text-left sticky left-0">{t.best_times_athlete}</th>
             {styles.map(s => (
-              <th key={s.uid} className="border border-gray-300 px-1 py-1 bg-gray-100">
+              <th key={s.uid} colSpan={2} className="border border-gray-300 px-1 py-1 bg-gray-100">
                 <span className="best-times-header">{s.name}</span>
               </th>
             ))}
+          </tr>
+          <tr>
+            {styles.map(s => COURSES.map(([c, label]) => (
+              <th key={`${s.uid}_${c}`} className={`border border-gray-300 px-1 py-0.5 font-normal text-gray-600 whitespace-nowrap ${c === 'SCM' ? 'bg-gray-50' : 'bg-gray-100'}`}>
+                {label}
+              </th>
+            )))}
           </tr>
         </thead>
         <tbody>
           {clubs.map(club => (
             <Fragment key={club.name}>
               <tr>
-                <td colSpan={styles.length + 1} className="border border-gray-300 px-1 py-1 bg-blue-50 font-bold">
+                <td colSpan={styles.length * COURSES.length + 1} className="border border-gray-300 px-1 py-1 bg-blue-50 font-bold">
                   {club.name}
                 </td>
               </tr>
               {club.athletes.map((ath, i) => (
                 <tr key={`${club.name}-${i}`}>
                   <td className="border border-gray-300 px-1 py-0.5 whitespace-nowrap">{ath.name}</td>
-                  {styles.map(s => {
-                    const lcm = ath.times[`${s.uid}_LCM`]
-                    const scm = ath.times[`${s.uid}_SCM`]
-                    const val = course === 'SCM' ? (scm || lcm) : (lcm || scm)
-                    return <td key={s.uid} className="border border-gray-300 px-1 py-0.5 text-center font-mono">{formatTime(val)}</td>
-                  })}
+                  {styles.map(s => COURSES.map(([c]) => (
+                    <td key={`${s.uid}_${c}`} className={`border border-gray-300 px-1 py-0.5 text-center font-mono ${c === 'SCM' ? 'bg-gray-50' : ''}`}>
+                      {formatTime(ath.times[`${s.uid}_${c}`])}
+                    </td>
+                  )))}
                 </tr>
               ))}
             </Fragment>
