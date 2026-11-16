@@ -611,12 +611,18 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
   function handleKeyDown(e: React.KeyboardEvent, lane: number, maxLane: number) {
     if (e.key === 'Enter' || e.key === 'Tab') {
       e.preventDefault()
-      saveEdit(lane)
-      const next = lane < maxLane ? lane + 1 : lane
-      setSelectedLane(next)
-      setEditingLane(next)
-      const nextEntry = entries.find((en) => en.lane === next)
-      setEditValue(nextEntry?.finalTime ?? '')
+      saveEdit(lane) // also closes the editor
+      // Move on to the next lane that has an athlete. On the last one, just
+      // stay closed: re-opening the same lane here put the stale pre-save
+      // value ('' for a new time) back in the input, and the next blur saved
+      // that over the time just entered.
+      const nextEntry = entries
+        .filter((en) => en.lane > lane && en.lane <= maxLane)
+        .sort((a, b) => a.lane - b.lane)[0]
+      if (!nextEntry) return
+      setSelectedLane(nextEntry.lane)
+      setEditingLane(nextEntry.lane)
+      setEditValue(nextEntry.finalTime ?? '')
     }
     if (e.key === 'Escape') setEditingLane(null)
   }
