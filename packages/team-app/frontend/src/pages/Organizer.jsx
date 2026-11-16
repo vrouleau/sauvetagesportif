@@ -20,6 +20,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useLang } from '../i18n'
 import api, { headers } from '../api'
 import { newSwimstylesDetail, confirmNewSwimstyles } from '../newSwimstylesConfirm'
+import { refreshAuth } from '../authMeet'
 
 export default function Organizer() {
   const [meetInfo, setMeetInfo] = useState(null)
@@ -70,6 +71,16 @@ export default function Organizer() {
     } catch (e) { setMsg(e.message || 'Error') }
   }
 
+  // After an admin closes a meet, the stored meet_id still points at it and
+  // every request 404s ("Meet N is not currently open") until re-login.
+  // refreshAuth() re-fetches the open meets and falls back to the first one
+  // (the new stub meet), then the page reloads its data under that id.
+  async function _reloadAfterMeetClosed() {
+    try { await refreshAuth() } catch {}
+    loadMeetInfo(); loadClubs()
+    window.dispatchEvent(new Event('meet-changed'))
+  }
+
   function _applyImportResultsResponse(data) {
     const r = data.results
     if (data.reset) {
@@ -89,7 +100,7 @@ export default function Organizer() {
         setMsg(lang === 'fr'
           ? `✓ Meet archivé et réinitialisé : ${r} résultat(s) — ${data.meet_name}`
           : `✓ Meet archived and reset: ${r} result(s) — ${data.meet_name}`)
-        loadMeetInfo(); loadClubs()
+        _reloadAfterMeetClosed()
       }
     } else {
       setMsg(lang === 'fr'
@@ -158,8 +169,7 @@ export default function Organizer() {
         }, 2500)
       } else {
         setMsg(lang === 'fr' ? `✓ Meet fermé : ${data.meet_name}` : `✓ Meet closed: ${data.meet_name}`)
-        loadMeetInfo(); loadClubs()
-        window.dispatchEvent(new Event('meet-changed'))
+        _reloadAfterMeetClosed()
       }
     } catch (err) { setMsg(err.message || 'Error') }
   }
