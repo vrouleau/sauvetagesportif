@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.5.19] - 2026-11-16
+
+### 🔧 Chores
+
+- bump the npm-minor-patch group with 4 updates (`b103858`)
+- bump the frontend-minor-patch group (`706c35d`)
+- bump stripe in /packages/team-app/backend (`08a6c3c`)
+- bump fastapi (`a17ea6c`)
+
+### Other
+
+- Merge pull request #96 from vrouleau/feature/athlete-course-best-times (`c75fd50`)
+- One best time for throws; team events never have best times (`9962ec2`)
+- Correct swimstyle distance/relaycount from meet files (`1118459`)
+- Show both 50 m and 25 m best times on the public page (`277d7ed`)
+- Exclude beach results from best times (`d04ac0d`)
+- Run schema migrations after restoring a database backup (`2d586fa`)
+- Guard results import against wrong files and wrong meets (`acccb6c`)
+- Switch to the open meet after an admin closes one (`bd53a8b`)
+- Fix meet close crashing when clubs were sent invite links (`6d5561e`)
+- Date archived results so best-time expiry actually applies (`c50af52`)
+- Fix Enter on the last lane wiping the time just entered (`ba50eb8`)
+- Route alert/confirm through main to fix lost keyboard focus (`b0b6c9a`)
+- Only export live-push config while live mode is on (`a1ab192`)
+- Stop LivePush retry loop when live mode is off on the server (`cb49510`)
+- Merge pull request #95 from vrouleau/dependabot/npm_and_yarn/npm-minor-patch-def0bf389a (`4fb6aed`)
+- Merge pull request #94 from vrouleau/dependabot/npm_and_yarn/packages/team-app/frontend/frontend-minor-patch-ef5dd1169f (`7421c84`)
+- Merge pull request #93 from vrouleau/dependabot/pip/packages/team-app/backend/stripe-17.0.0 (`bf2bbfa`)
+- Merge pull request #92 from vrouleau/dependabot/pip/packages/team-app/backend/pip-minor-patch-9552183834 (`e0efb81`)
+- Persist coach best times per athlete/style/course (`8ec2b3a`)
+- Fix invitation fee summary (`f300d91`)
+
 ## [0.5.18] - 2026-11-16
 
 ### 🔧 Chores
