@@ -172,7 +172,7 @@ def test_public_page_lists_athlete_with_only_a_coach_time(db):
     db.commit()
 
     data = get_public_best_times(db)
-    assert data["styles"] == [{"uid": FREE, "name": "100 Free"}]
+    assert data["styles"] == [{"uid": FREE, "name": "100 Free", "course_free": False}]
     assert data["clubs"][0]["athletes"][0]["times"] == {"101_LCM": 62000}
 
 
@@ -332,7 +332,7 @@ def test_beach_positions_are_never_best_times(db):
     assert bt[str(FREE)]["LCM"]["time_ms"] == 61000
 
     data = get_public_best_times(db)
-    assert data["styles"] == [{"uid": FREE, "name": "100 Free"}]
+    assert data["styles"] == [{"uid": FREE, "name": "100 Free", "course_free": False}]
     assert data["clubs"][0]["athletes"][0]["times"] == {"101_LCM": 61000}
 
 

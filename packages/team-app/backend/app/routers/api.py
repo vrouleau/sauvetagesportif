@@ -2174,10 +2174,19 @@ def get_registration(athlete_id: int, request: Request, db: Session = Depends(ge
     best_map_lcm: dict[int, int] = {}
     best_map_scm: dict[int, int] = {}
 
+    # Throws (pool style < 25 m) have one best time whatever the course: the
+    # panel shows a single box, and both values carry it so the pre-filled
+    # entry time works on either course.
+    from ..best_times import course_free_style_ids
+    course_free = course_free_style_ids(db)
     if member.membersid:
         bt_data = get_best_times_for_member(db, member.membersid, _BEST_TIME_MAX_AGE_MONTHS)
         for uid_key, style_data in bt_data.items():
             uid = int(uid_key)
+            if uid in course_free:
+                one = next(iter(style_data.values()))["time_ms"]
+                best_map_lcm[uid] = best_map_scm[uid] = one
+                continue
             if "LCM" in style_data:
                 best_map_lcm[uid] = style_data["LCM"]["time_ms"]
             if "SCM" in style_data:
@@ -2251,6 +2260,7 @@ def get_registration(athlete_id: int, request: Request, db: Session = Depends(ge
     for s in individual_events + relay_events:
         s["best_time_lcm_ms"] = best_map_lcm.get(s["style_uid"])
         s["best_time_scm_ms"] = best_map_scm.get(s["style_uid"])
+        s["course_free"] = s["style_uid"] in course_free
 
     # Relay locks
     relay_uids = [s["style_uid"] for s in relay_events]

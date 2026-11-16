@@ -163,6 +163,10 @@ Coach best times are written only at meet close, never on registration:
 - `capture_coach_best_times` — `import-results-lxf` (before the import) and `close-meet-without-results` store each individual registration's entry time for the meet's course, dated to the meet start (`mindate`, else first session date). Entry times equal to the current best time (the pre-filled default) are skipped so a historical value isn't re-dated. Relays and beach meets skipped.
 - `refresh_best_times_from_meet` — end of every results import (`lxf_to_team.py`, `historical_import.py`): a faster result replaces the stored time/date, unless the meet is older than the stored value.
 
+**Team events never have best times:** styles with `relaycount > 1` (relays, SERC, Lancer de la corde 10/12.5 m 523/524 — a pair, entered in the relay tab with no time) are excluded from the resolver, even if a file recorded them per athlete.
+
+**Throws are course-free:** individual pool styles with `0 < distance < 25` (`COURSE_FREE_MAX_DISTANCE`) — Lancer de précision 4/7 m (521/522) — don't depend on the pool's length: one best time across 50 m and 25 m (latest coach value, else fastest result), kept under the course it was actually done in (`pick_course()` reads it for any course). Registration and the public page get a `course_free` flag and show a single box. This relies on `swimstyle.distance`: meet uploads (`events.py`) now correct distance and upgrade relaycount of existing styles from the meet file (historical imports used to create them with no distance and relaycount=1); migration `m0007` applied the bundled pool/beach templates once to existing catalogs (an open meet can't be re-uploaded without losing its registrations).
+
 **Beach meets never count** (results are finishing positions stored as ms, not times): the resolver, refresh, capture and the athlete-history best times all exclude styles `>= BEACH_STYLE_MIN` (600). Pool styles use 5xx IDs, beach styles use 6xx — no collisions. Beach results are still archived and shown per meet.
 
 ## API endpoints

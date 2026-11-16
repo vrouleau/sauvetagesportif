@@ -536,11 +536,14 @@ function BestTimesView() {
             ))}
           </tr>
           <tr>
-            {styles.map(s => COURSES.map(([c, label]) => (
-              <th key={`${s.uid}_${c}`} className={`border border-gray-300 px-1 py-0.5 font-normal text-gray-600 whitespace-nowrap ${c === 'SCM' ? 'bg-gray-50' : 'bg-gray-100'}`}>
-                {label}
-              </th>
-            )))}
+            {styles.map(s => s.course_free
+              // Throws from the deck: the pool's length doesn't matter — one value.
+              ? <th key={s.uid} colSpan={2} className="border border-gray-300 px-1 py-0.5 font-normal text-gray-600 whitespace-nowrap bg-gray-100">50/25 m</th>
+              : COURSES.map(([c, label]) => (
+                <th key={`${s.uid}_${c}`} className={`border border-gray-300 px-1 py-0.5 font-normal text-gray-600 whitespace-nowrap ${c === 'SCM' ? 'bg-gray-50' : 'bg-gray-100'}`}>
+                  {label}
+                </th>
+              )))}
           </tr>
         </thead>
         <tbody>
@@ -554,11 +557,15 @@ function BestTimesView() {
               {club.athletes.map((ath, i) => (
                 <tr key={`${club.name}-${i}`}>
                   <td className="border border-gray-300 px-1 py-0.5 whitespace-nowrap">{ath.name}</td>
-                  {styles.map(s => COURSES.map(([c]) => (
-                    <td key={`${s.uid}_${c}`} className={`border border-gray-300 px-1 py-0.5 text-center font-mono ${c === 'SCM' ? 'bg-gray-50' : ''}`}>
-                      {formatTime(ath.times[`${s.uid}_${c}`])}
-                    </td>
-                  )))}
+                  {styles.map(s => s.course_free
+                    ? <td key={s.uid} colSpan={2} className="border border-gray-300 px-1 py-0.5 text-center font-mono">
+                        {formatTime(ath.times[`${s.uid}_LCM`] ?? ath.times[`${s.uid}_SCM`])}
+                      </td>
+                    : COURSES.map(([c]) => (
+                      <td key={`${s.uid}_${c}`} className={`border border-gray-300 px-1 py-0.5 text-center font-mono ${c === 'SCM' ? 'bg-gray-50' : ''}`}>
+                        {formatTime(ath.times[`${s.uid}_${c}`])}
+                      </td>
+                    )))}
                 </tr>
               ))}
             </Fragment>
