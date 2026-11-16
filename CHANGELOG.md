@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.20] - 2026-11-16
+
+### 🏗️ CI
+
+- only mark the highest version as latest release (`03bb4c5`)
+
 ## [0.5.19] - 2026-11-16
 
 ### 🔧 Chores
