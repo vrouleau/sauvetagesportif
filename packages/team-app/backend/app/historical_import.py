@@ -178,9 +178,13 @@ def import_historical_meet(db: Session, file_bytes: bytes, force: bool = False) 
     # ── Deduplication: check if this meet was already imported ──
     existing_meet = None
     if meta["startdate"]:
+        # Compare the calendar day only: SQLite stores DateTime as text, and
+        # older rows hold '2025-05-24 00:00:00' while SQLAlchemy binds
+        # '2025-05-24 00:00:00.000000' — a plain == never matched those,
+        # so re-importing created a duplicate meet instead of replacing it.
         existing_meet = db.query(Meet).filter(
             Meet.name == meta["name"],
-            Meet.mindate == _dt(meta["startdate"].year, meta["startdate"].month, meta["startdate"].day),
+            func.date(Meet.mindate) == meta["startdate"].isoformat(),
         ).first()
     else:
         # A file with no date at all (no MEET or SESSION date — e.g. some normalized
