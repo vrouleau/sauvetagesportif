@@ -916,10 +916,13 @@ def meet_info(request: Request, db: Session = Depends(get_db)):
         }
         for e in events
     ]
+    org_id = _get_organizer_club_id(db, meetsid=meetsid) if meetsid else None
+    org_club = db.get(TeamClub, int(org_id)) if org_id else None
     return {
         "filename": filename,
         "uploaded_at": uploaded,
         "meet_name": name,
+        "organizer_club_name": org_club.name if org_club else None,
         "course": course,
         "masters": (masters == "T") if masters else False,
         "events": len(events),

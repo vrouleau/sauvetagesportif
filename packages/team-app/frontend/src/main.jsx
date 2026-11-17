@@ -195,7 +195,7 @@ function RegisterPage() {
   )
 }
 
-function AuthLayout({ children, canOrganizer, canAdmin, meetName, toggle, lang, logout, auth, setAuth, t }) {
+function AuthLayout({ children, canOrganizer, canAdmin, meetName, organizerName, toggle, lang, logout, auth, setAuth, t }) {
   const location = useLocation()
   const navigate = useNavigate()
   const standalone = location.pathname === '/results'
@@ -230,6 +230,11 @@ function AuthLayout({ children, canOrganizer, canAdmin, meetName, toggle, lang, 
         <span className="text-gray-500 mr-1">|</span>
         <span className="text-gray-300 truncate mr-4">
           {lang === 'fr' ? 'Gestion des inscriptions' : 'Registration Management'}{meetName ? ` — ${meetName}` : ''}
+          {organizerName && (
+            <span className="text-gray-400">
+              {' '}({lang === 'fr' ? 'organisé par' : 'hosted by'} {organizerName})
+            </span>
+          )}
         </span>
         <div className="ml-auto flex items-center gap-2 pr-3">
           {auth.meets && auth.meets.length > 1 && (
@@ -292,6 +297,7 @@ function AuthLayout({ children, canOrganizer, canAdmin, meetName, toggle, lang, 
 function AppInner() {
   const [auth, setAuth] = useState(null)
   const [meetName, setMeetName] = useState('')
+  const [organizerName, setOrganizerName] = useState('')
   const { t, lang, toggle } = useLang()
 
   useEffect(() => {
@@ -304,14 +310,19 @@ function AppInner() {
         meets, meet_id: localStorage.getItem('meet_id') || '',
       })
     }
-    import('./api').then(m => m.default.get('/meet-info').then(r => setMeetName(r.data.meet_name || '')).catch(() => {}))
+    loadMeetInfo()
   }, [])
+
+  function loadMeetInfo() {
+    import('./api').then(m => m.default.get('/meet-info').then(r => {
+      setMeetName(r.data.meet_name || '')
+      setOrganizerName(r.data.organizer_club_name || '')
+    }).catch(() => {}))
+  }
 
   // Refresh title bar meet name when a new meet is loaded anywhere in the app
   useEffect(() => {
-    function onMeetChanged() {
-      import('./api').then(m => m.default.get('/meet-info').then(r => setMeetName(r.data.meet_name || '')).catch(() => {}))
-    }
+    function onMeetChanged() { loadMeetInfo() }
     window.addEventListener('meet-changed', onMeetChanged)
     return () => window.removeEventListener('meet-changed', onMeetChanged)
   }, [])
@@ -362,7 +373,7 @@ function AppInner() {
 
   return (
     <BrowserRouter>
-      <AuthLayout canOrganizer={canOrganizer} canAdmin={canAdmin} meetName={meetName} toggle={toggle} lang={lang} logout={logout} auth={auth} setAuth={setAuth} t={t}>
+      <AuthLayout canOrganizer={canOrganizer} canAdmin={canAdmin} meetName={meetName} organizerName={organizerName} toggle={toggle} lang={lang} logout={logout} auth={auth} setAuth={setAuth} t={t}>
         {/* Keyed on meet_id: pages like EventsPage/Organizer fetch their data
             once on mount (empty-deps useEffect) and have no reason to know
             about meet switching — remounting the whole routed subtree when
