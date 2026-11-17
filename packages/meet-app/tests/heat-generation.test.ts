@@ -431,6 +431,47 @@ describe.each(BACKENDS)('Heat generation [%s]', (kind) => {
       expect(h1).toHaveLength(4)
       expect(h2).toHaveLength(4)
     })
+
+    // HC (hors concours) entries carry resultstatus=4 — set by the HC checkbox in
+    // either app and by an LXF ENTRY status="EXH" — not Splash's infocode 'EXH'.
+    function addHCEntries(count: number, startTime: number) {
+      const baseId = (db.prepare('SELECT COALESCE(MAX(swimresultid),0)+1 AS n FROM swimresult').get() as { n: number }).n
+      for (let i = 0; i < count; i++) {
+        db.prepare(
+          `INSERT INTO swimresult (swimresultid, athleteid, swimeventid, agegroupid, entrytime, resultstatus)
+           VALUES (?, 1, 1, 1, ?, 4)`
+        ).run(baseId + i, startTime + i * 1000)
+      }
+    }
+
+    function hcCountByHeat(): number[] {
+      return getHeats(1).map(h => (db.prepare(
+        `SELECT COUNT(*) AS c FROM swimresult WHERE heatid=? AND resultstatus=4`
+      ).get(h.heatid) as { c: number }).c)
+    }
+
+    it('seeds HC entries (resultstatus=4) last when SEEDEXHLAST is set', async () => {
+      setLanes(1, 4)
+      setMeetValues('SEEDMETHOD=I;2\r\nSEEDEXHLAST=B;T')  // straight: fastest in heat 1
+      addEntries(1, 1, 4, 60000)
+      addHCEntries(4, 50000)  // faster, but exhibition
+
+      await generateHeats(1, undefined, db)
+
+      // Regular entries fill heat 1; the HC entries are pushed to heat 2.
+      expect(hcCountByHeat()).toEqual([0, 4])
+    })
+
+    it('seeds HC entries by time when SEEDEXHLAST is not set', async () => {
+      setLanes(1, 4)
+      setMeetValues('SEEDMETHOD=I;2')
+      addEntries(1, 1, 4, 60000)
+      addHCEntries(4, 50000)
+
+      await generateHeats(1, undefined, db)
+
+      expect(hcCountByHeat()).toEqual([4, 0])
+    })
   })
 
   // ── Qualification period tests ──────────────────────────────────────────────
@@ -721,6 +762,41 @@ describe.each(BACKENDS)('Heat generation [%s]', (kind) => {
       const relayCount = (db.prepare(`SELECT COUNT(*) as c FROM relay WHERE heatid IS NOT NULL`).get() as { c: number }).c
       expect(swimresultCount).toBe(6)
       expect(relayCount).toBe(6)
+    })
+
+    it('seeds HC relay teams (resultstatus=4) last when SEEDEXHLAST is set', async () => {
+      setLanes(1, 4)
+      setMeetValues('SEEDMETHOD=I;2\r\nSEEDEXHLAST=B;T')  // straight: fastest in heat 1
+      addRelayEntries(4, 4, 120000)
+      addRelayEntries(4, 4, 100000)  // faster teams…
+      db.prepare(`UPDATE relay SET resultstatus=4 WHERE entrytime < 110000`).run()  // …but HC
+
+      await generateHeats(4, undefined, db)
+
+      const heats = getHeats(4)
+      expect(heats).toHaveLength(2)
+      const hcIn = (heatId: number) => (db.prepare(
+        `SELECT COUNT(*) AS c FROM relay WHERE heatid=? AND resultstatus=4`
+      ).get(heatId) as { c: number }).c
+      expect(hcIn(heats[0].heatid)).toBe(0)
+      expect(hcIn(heats[1].heatid)).toBe(4)
+    })
+
+    it('puts no-time relay teams after timed ones', async () => {
+      setLanes(1, 4)
+      setMeetValues('SEEDMETHOD=I;2')
+      addRelayEntries(4, 4, 120000)
+      addRelayEntries(4, 4, 100000)
+      db.prepare(`UPDATE relay SET entrytime=NULL WHERE entrytime < 110000`).run()
+
+      await generateHeats(4, undefined, db)
+
+      const heats = getHeats(4)
+      const ntIn = (heatId: number) => (db.prepare(
+        `SELECT COUNT(*) AS c FROM relay WHERE heatid=? AND entrytime IS NULL`
+      ).get(heatId) as { c: number }).c
+      expect(ntIn(heats[0].heatid)).toBe(0)
+      expect(ntIn(heats[1].heatid)).toBe(4)
     })
   })
 })

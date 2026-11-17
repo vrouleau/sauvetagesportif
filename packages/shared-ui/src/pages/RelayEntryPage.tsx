@@ -21,6 +21,9 @@ import { useLang } from '../context/LangContext'
 import { useRegistrationApi } from '../context/RegistrationApiContext'
 import type { RelayPageData, RelayEventGroup, RelayTeam, EligibleAthlete, Club } from '../data/api'
 import { isAgeCodeAllowedOnTeam, wouldMissNativeAnchor } from '../logic/relayRules'
+import { entryTimeAfterMemberChange } from '../logic/relayEntryTime'
+import { formatEntryTime, parseEntryTime } from '../logic/timeFormat'
+import TimeInput from '../components/TimeInput'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -53,6 +56,16 @@ interface FlatRelayEvent {
   ageCodes: string[]  // all age codes for this event
 }
 
+const SERC_STYLE_ID = 530
+
+function findTeam(data: RelayPageData, teamId: number): RelayTeam | undefined {
+  for (const teams of Object.values(data.teamsByEvent)) {
+    const found = teams.find(team => team.id === teamId)
+    if (found) return found
+  }
+  return undefined
+}
+
 // A team is complete once every position (1..relaycount) has an assigned athlete.
 function isTeamComplete(team: RelayTeam, relaycount: number): boolean {
   const filledPositionCount = new Set(
@@ -77,6 +90,7 @@ function RelayEventCard({
   onMemberChange,
   onNameChange,
   onSetHC,
+  onEntryTimeChange,
   onCreateTeam,
   onDeleteTeam,
 }: {
@@ -88,6 +102,8 @@ function RelayEventCard({
   onMemberChange: (teamId: number, position: number, athleteId: number | null) => void
   onNameChange: (teamId: number, name: string | null) => void
   onSetHC?: (teamId: number, isHC: boolean) => void
+  /** Present only when this event takes an entry time (pool, not SERC). */
+  onEntryTimeChange?: (teamId: number, entryTimeMs: number | null) => void
   onCreateTeam: (eventId: number) => void
   onDeleteTeam: (team: RelayTeam) => void
 }) {
@@ -148,6 +164,7 @@ function RelayEventCard({
               onMemberChange={onMemberChange}
               onNameChange={onNameChange}
               onSetHC={onSetHC}
+              onEntryTimeChange={onEntryTimeChange}
               onDeleteTeam={onDeleteTeam}
             />
           ))}
@@ -170,6 +187,7 @@ function RelayTeamRow({
   onMemberChange,
   onNameChange,
   onSetHC,
+  onEntryTimeChange,
   onDeleteTeam,
 }: {
   team: RelayTeam
@@ -182,9 +200,13 @@ function RelayTeamRow({
   onMemberChange: (teamId: number, position: number, athleteId: number | null) => void
   onNameChange: (teamId: number, name: string | null) => void
   onSetHC?: (teamId: number, isHC: boolean) => void
+  onEntryTimeChange?: (teamId: number, entryTimeMs: number | null) => void
   onDeleteTeam: (team: RelayTeam) => void
 }) {
   const { t } = useLang()
+  // A legacy lock (team-app virtual team) has no relay row yet to hold a time or status;
+  // assigning a member materializes it.
+  const fieldsDisabled = isDisabled || !!team.isVirtual
 
   // Generate default display name:
   // - If no custom name + at least one member assigned: hyphenated last names
@@ -260,12 +282,29 @@ function RelayTeamRow({
           aria-label={t.relay.teamName}
           className="flex-1 text-xs border border-gray-300 rounded px-2 py-1 bg-white disabled:bg-gray-100 disabled:text-gray-500 min-w-0"
         />
+        {onEntryTimeChange && (
+          <label className="flex items-center gap-1 text-xs text-gray-600 shrink-0">
+            {t.relay.entryTime}
+            <TimeInput
+              key={`${team.id}-${team.entryTimeMs ?? ''}`}
+              defaultValue={formatEntryTime(team.entryTimeMs)}
+              disabled={fieldsDisabled}
+              title={t.relay.entryTimeTitle}
+              onSave={v => {
+                const ms = parseEntryTime(v)
+                if (ms === undefined) return
+                if ((ms ?? null) === (team.entryTimeMs || null)) return
+                onEntryTimeChange(team.id, ms)
+              }}
+            />
+          </label>
+        )}
         {onSetHC && (
           <label className="flex items-center gap-1 text-xs text-gray-600 shrink-0" title={t.relay.hcTitle}>
             <input
               type="checkbox"
               checked={!!team.hc}
-              disabled={isDisabled}
+              disabled={fieldsDisabled}
               className="w-3.5 h-3.5"
               onChange={(e) => onSetHC(team.id, e.target.checked)}
             />
@@ -428,15 +467,17 @@ export default function RelayEntryPage({ role, clubId, refreshKey }: RelayEntryP
   }, [role, api])
 
   // Load relay page data — for admin/organizer, loads when a club is selected; for coach, loads immediately
-  const loadData = useCallback(async () => {
-    if ((role === 'admin' || role === 'organizer') && !selectedClubId) return
+  const loadData = useCallback(async (): Promise<RelayPageData | null> => {
+    if ((role === 'admin' || role === 'organizer') && !selectedClubId) return null
     setLoading(true)
     setError(null)
     try {
       const data = await api.getRelayPageData(selectedClubId)
       setPageData(data)
+      return data
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load relay data')
+      return null
     } finally {
       setLoading(false)
     }
@@ -468,10 +509,21 @@ export default function RelayEntryPage({ role, clubId, refreshKey }: RelayEntryP
 
   // ─── Member assignment handler ──────────────────────────────────────────────
   const handleMemberChange = useCallback(async (teamId: number, position: number, athleteId: number | null) => {
+    const before = pageData ? findTeam(pageData, teamId) : undefined
     try {
       await api.setRelayTeamMember(teamId, position, athleteId)
       // Reload data to reflect changes across all teams/dropdowns
-      await loadData()
+      const fresh = await loadData()
+      // Pool relays: keep the suggested entry time (average of members' relay best
+      // times) in step with the members, unless the coach typed a time.
+      const after = fresh ? findTeam(fresh, teamId) : undefined
+      if (before && after && api.setRelayTeamEntryTime && fresh?.meetType !== 'BEACH') {
+        const next = entryTimeAfterMemberChange(before.members, before.entryTimeMs, after.members)
+        if (next !== undefined) {
+          await api.setRelayTeamEntryTime(teamId, next)
+          await loadData()
+        }
+      }
     } catch (err: unknown) {
       // Detect 409 Conflict: HTTP adapter sets err.status = 409 + err.detail,
       // IPC adapter throws plain Error with message containing conflict info
@@ -499,7 +551,7 @@ export default function RelayEntryPage({ role, clubId, refreshKey }: RelayEntryP
       }
       // Do NOT modify local state — dropdown reverts on next render since loadData is not called
     }
-  }, [api, loadData])
+  }, [api, loadData, pageData])
 
   // ─── Team name change handler ───────────────────────────────────────────────
   const handleNameChange = useCallback(async (teamId: number, name: string | null) => {
@@ -520,7 +572,7 @@ export default function RelayEntryPage({ role, clubId, refreshKey }: RelayEntryP
     }
   }, [api, pageData])
 
-  // ─── HC (hors concours / exhibition) toggle handler — meet-app only ─────────
+  // ─── HC (hors concours / exhibition) toggle handler ─────────────────────────
   const handleSetHC = useCallback(async (teamId: number, isHC: boolean) => {
     try {
       await api.setRelayTeamHC?.(teamId, isHC)
@@ -538,6 +590,27 @@ export default function RelayEntryPage({ role, clubId, refreshKey }: RelayEntryP
       setError(err instanceof Error ? err.message : 'Failed to update HC status')
     }
   }, [api, pageData])
+
+  // ─── Entry time handler (pool relays) ───────────────────────────────────────
+  const handleEntryTimeChange = useCallback(async (teamId: number, entryTimeMs: number | null) => {
+    try {
+      await api.setRelayTeamEntryTime?.(teamId, entryTimeMs)
+      if (pageData) {
+        const updated = { ...pageData, teamsByEvent: { ...pageData.teamsByEvent } }
+        for (const key of Object.keys(updated.teamsByEvent)) {
+          updated.teamsByEvent[key] = updated.teamsByEvent[key].map(team =>
+            team.id === teamId ? { ...team, entryTimeMs } : team
+          )
+        }
+        setPageData(updated)
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update entry time')
+    }
+  }, [api, pageData])
+
+  // Entry times apply to pool relays only — beach relays are ranked, SERC is judged.
+  const isBeachMeet = pageData?.meetType === 'BEACH'
 
   // ─── Team creation handler ──────────────────────────────────────────────────
   const [creatingTeam, setCreatingTeam] = useState(false)
@@ -759,6 +832,11 @@ export default function RelayEntryPage({ role, clubId, refreshKey }: RelayEntryP
                   onMemberChange={handleMemberChange}
                   onNameChange={handleNameChange}
                   onSetHC={api.setRelayTeamHC ? handleSetHC : undefined}
+                  onEntryTimeChange={
+                    api.setRelayTeamEntryTime && !isBeachMeet && event.swimstyleId !== SERC_STYLE_ID
+                      ? handleEntryTimeChange
+                      : undefined
+                  }
                   onCreateTeam={handleCreateTeam}
                   onDeleteTeam={handleDeleteTeam}
                 />

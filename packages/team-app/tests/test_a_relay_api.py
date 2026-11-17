@@ -794,3 +794,111 @@ class TestRelayInvalidPosition:
         r = requests.delete(f"{BASE_URL}/api/relay-teams/999999",
                             headers=admin_headers, timeout=5)
         assert r.status_code == 404
+
+# ---------------------------------------------------------------------------
+# Test class: Entry time + HC (exhibition)
+# ---------------------------------------------------------------------------
+
+def _find_timed_relay_event(admin_headers: dict) -> dict | None:
+    """First relay event that takes an entry time (not SERC, which is judged)."""
+    r = requests.get(f"{BASE_URL}/api/events", headers=admin_headers, timeout=10)
+    r.raise_for_status()
+    for e in r.json():
+        if e.get("relay_count", 1) > 1 and e.get("style_uid") != 530:
+            return e
+    return None
+
+
+def _team_in_page(data: dict, team_id: int) -> dict | None:
+    for teams in data["teamsByEvent"].values():
+        for t in teams:
+            if t["id"] == team_id:
+                return t
+    return None
+
+
+class TestRelayEntryTimeAndHC:
+    """PUT /relay-teams/{id}/entry-time and /hc, read back via GET /relay-teams."""
+
+    @pytest.fixture()
+    def team(self, uploaded, admin_headers, clubs):
+        ev = _find_timed_relay_event(admin_headers)
+        if not ev:
+            pytest.skip("No timed relay event in test meet")
+        data = _get_relay_page_data(admin_headers, club_id=clubs[0]["id"])
+        age_code = next((c["ageCode"] for c in data["ageCategories"]
+                         for e in c["events"] if e["eventId"] == ev["id"]), "Open")
+        r = requests.post(f"{BASE_URL}/api/relay-teams",
+                          json={"event_id": ev["id"], "age_code": age_code, "club_id": clubs[0]["id"]},
+                          headers=admin_headers, timeout=10)
+        r.raise_for_status()
+        team_id = r.json()["teamId"]
+        yield team_id
+        requests.delete(f"{BASE_URL}/api/relay-teams/{team_id}", headers=admin_headers, timeout=5)
+
+    def test_page_data_reports_pool_meet_type(self, uploaded, admin_headers, clubs):
+        data = _get_relay_page_data(admin_headers, club_id=clubs[0]["id"])
+        assert data["meetType"] == "POOL"
+
+    def test_coach_sets_and_clears_entry_time(self, admin_headers, clubs, team):
+        coach = {"X-Club-Pin": clubs[0]["pin"]}
+        r = requests.put(f"{BASE_URL}/api/relay-teams/{team}/entry-time",
+                         json={"entryTimeMs": 125430}, headers=coach, timeout=5)
+        assert r.status_code == 200, r.text
+        t = _team_in_page(_get_relay_page_data(admin_headers, club_id=clubs[0]["id"]), team)
+        assert t["entryTimeMs"] == 125430
+
+        r = requests.put(f"{BASE_URL}/api/relay-teams/{team}/entry-time",
+                         json={"entryTimeMs": None}, headers=coach, timeout=5)
+        assert r.status_code == 200
+        t = _team_in_page(_get_relay_page_data(admin_headers, club_id=clubs[0]["id"]), team)
+        assert t["entryTimeMs"] is None
+
+    def test_coach_sets_hc(self, admin_headers, clubs, team):
+        coach = {"X-Club-Pin": clubs[0]["pin"]}
+        r = requests.put(f"{BASE_URL}/api/relay-teams/{team}/hc",
+                         json={"isHC": True}, headers=coach, timeout=5)
+        assert r.status_code == 200, r.text
+        t = _team_in_page(_get_relay_page_data(admin_headers, club_id=clubs[0]["id"]), team)
+        assert t["hc"] is True
+
+        requests.put(f"{BASE_URL}/api/relay-teams/{team}/hc",
+                     json={"isHC": False}, headers=coach, timeout=5).raise_for_status()
+        t = _team_in_page(_get_relay_page_data(admin_headers, club_id=clubs[0]["id"]), team)
+        assert t["hc"] is False
+
+    def test_other_club_coach_is_refused(self, clubs, team):
+        # clubs[1] may be the organizer (TestRelayClosureDate sets it), and an
+        # organizer may edit any club's teams — use a plain coach of a third club.
+        if len(clubs) < 3:
+            pytest.skip("Need three clubs")
+        other = {"X-Club-Pin": clubs[2]["pin"]}
+        r = requests.put(f"{BASE_URL}/api/relay-teams/{team}/entry-time",
+                         json={"entryTimeMs": 100000}, headers=other, timeout=5)
+        assert r.status_code == 403
+        r = requests.put(f"{BASE_URL}/api/relay-teams/{team}/hc",
+                         json={"isHC": True}, headers=other, timeout=5)
+        assert r.status_code == 403
+
+    def test_closure_blocks_coach(self, admin_headers, clubs, team):
+        _set_closure_date(admin_headers, (date.today() - timedelta(days=1)).isoformat())
+        try:
+            coach = {"X-Club-Pin": clubs[0]["pin"]}
+            r = requests.put(f"{BASE_URL}/api/relay-teams/{team}/entry-time",
+                             json={"entryTimeMs": 100000}, headers=coach, timeout=5)
+            assert r.status_code == 403
+            r = requests.put(f"{BASE_URL}/api/relay-teams/{team}/hc",
+                             json={"isHC": True}, headers=coach, timeout=5)
+            assert r.status_code == 403
+        finally:
+            _set_closure_date(admin_headers, "")
+
+    def test_negative_time_rejected(self, admin_headers, team):
+        r = requests.put(f"{BASE_URL}/api/relay-teams/{team}/entry-time",
+                         json={"entryTimeMs": -5}, headers=admin_headers, timeout=5)
+        assert r.status_code == 422
+
+    def test_unknown_team_404(self, uploaded, admin_headers):
+        r = requests.put(f"{BASE_URL}/api/relay-teams/999999/entry-time",
+                         json={"entryTimeMs": 100000}, headers=admin_headers, timeout=5)
+        assert r.status_code == 404

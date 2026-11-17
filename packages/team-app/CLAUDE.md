@@ -165,7 +165,9 @@ Coach best times are written only at meet close, never on registration:
 - `capture_coach_best_times` — `import-results-lxf` (before the import) and `close-meet-without-results` store each individual registration's entry time for the meet's course, dated to the meet start (`mindate`, else first session date). Entry times equal to the current best time (the pre-filled default) are skipped so a historical value isn't re-dated. Relays and beach meets skipped.
 - `refresh_best_times_from_meet` — end of every results import (`lxf_to_team.py`, `historical_import.py`): a faster result replaces the stored time/date, unless the meet is older than the stored value.
 
-**Team events never have best times:** styles with `relaycount > 1` (relays, SERC, Lancer de la corde 10/12.5 m 523/524 — a pair, entered in the relay tab with no time) are excluded from the resolver, even if a file recorded them per athlete.
+**Team events never have individual best times:** styles with `relaycount > 1` (relays, SERC, Lancer de la corde 10/12.5 m 523/524 — a pair, entered in the relay tab) are excluded from the resolver, even if a file recorded them per athlete.
+
+**Relay best times (separate, only to suggest relay entry times):** `get_relay_best_times(db, member_ids, style, course)` — every member of an archived relay team (`relays.totaltime` + `relayspos`, written by both results imports via `relay_archive.py`) is credited with the team's total; a member's relay best time is the fastest one. Same rules as individual: pool only, official, `relays.resultstatus` NULL/0 (HC/DSQ/DNS/DNF excluded), 18-month expiry (team's `eventdate`, else meet `mindate`), SERC excluded, deck throws (distance < 25 m) course-free. Live registrations (no `totaltime`) never count. `GET /api/relay-teams` returns it per member (`relayBestTimeMs`); the shared relay page suggests the team entry time as the average of the members who have one.
 
 **Throws are course-free:** individual pool styles with `0 < distance < 25` (`COURSE_FREE_MAX_DISTANCE`) — Lancer de précision 4/7 m (521/522) — don't depend on the pool's length: one best time across 50 m and 25 m (latest coach value, else fastest result), kept under the course it was actually done in (`pick_course()` reads it for any course). Registration and the public page get a `course_free` flag and show a single box. This relies on `swimstyle.distance`: meet uploads (`events.py`) now correct distance and upgrade relaycount of existing styles from the meet file (historical imports used to create them with no distance and relaycount=1); migration `m0007` applied the bundled pool/beach templates once to existing catalogs (an open meet can't be re-uploaded without losing its registrations).
 
@@ -213,6 +215,8 @@ Coach best times are written only at meet close, never on registration:
 | `DELETE /api/relay-teams/{id}` | Delete relay team | Authenticated |
 | `PUT /api/relay-teams/{id}/members/{pos}` | Assign/remove member at position | Authenticated |
 | `PUT /api/relay-teams/{id}/name` | Set custom team name | Authenticated |
+| `PUT /api/relay-teams/{id}/entry-time` | Set/clear pool relay entry time `{entryTimeMs}` — 400 on beach/SERC, 400 on a virtual (legacy-lock) team | Authenticated (own club) |
+| `PUT /api/relay-teams/{id}/hc` | Set/clear HC `{isHC}` (`relays.resultstatus=4`) | Authenticated (own club) |
 | `GET/POST /api/serc/config` | SERC configuration (victims, factors, bystander) | Organizer/Admin |
 | `GET /api/serc/teams` | SERC relay teams (swimstyle 530) | Organizer/Admin |
 | `PUT /api/serc/score` | Save individual score (0-10 or -10 rough) | Public |
@@ -238,6 +242,9 @@ Full CRUD management for relay team entries (events with `relaycount > 1`).
 - **SERC events (swimstyle 530): NO gender/age restrictions** — any mix allowed
 - Member eligibility: same club, registered for individual events, not on another team for same event
 - Team naming: auto = concatenated last names; custom name via `PUT /api/relay-teams/{id}/name`
+- **HC (exhibition) teams**: no gender/age restrictions (like SERC); exported as relay `ENTRY status="EXH"` (individual HC registrations too, `swimresult.resultstatus=4`)
+- **Entry time** (pool, not SERC): exported as the relay `ENTRY@entrytime`; suggested from the members' relay best times (see "Best times storage")
+- Closure date and club ownership apply to entry time and HC like every other relay edit
 
 ### LXF import
 `upload_entries` (seed.py) also imports relay teams from uploaded .lxf files.

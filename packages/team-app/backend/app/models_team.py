@@ -297,6 +297,7 @@ class Relay(Base):
     gender = Column(SmallInteger)
     minage = Column(SmallInteger)
     maxage = Column(SmallInteger)
+    resultstatus = Column(SmallInteger)  # NULL/0=normal, 4=HC/EXH (Splash encoding, same as results.resultstatus)
 
 
 class RelayPos(Base):

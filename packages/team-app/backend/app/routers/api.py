@@ -54,6 +54,7 @@ from ..meet_config import (
 from ..seed import seed_from_lxf
 from ..best_times import (
     get_best_times_for_member, get_best_time_date, capture_coach_best_times,
+    get_relay_best_times,
 )
 from ..export import generate_lxf
 from ..export_entries import generate_entries_lxf
@@ -3968,6 +3969,14 @@ class RelayMemberUpdate(BaseModel):
     athleteId: int | None = None
 
 
+class RelayTeamEntryTimeUpdate(BaseModel):
+    entryTimeMs: int | None = Field(default=None, ge=0)
+
+
+class RelayTeamHCUpdate(BaseModel):
+    isHC: bool
+
+
 class RelayTeamNameUpdate(BaseModel):
     name: str | None = None
 
@@ -4094,6 +4103,7 @@ def _import_relays_from_lxf(db: "Session", file_bytes: bytes, meetsid: int | Non
                 if not event_id:
                     continue
                 style_id = event_style.get(event_id)
+                from ..lxf_to_team import _lenex_time_to_ms
 
                 max_relay_id += 1
                 relay = Relay(
@@ -4106,6 +4116,9 @@ def _import_relays_from_lxf(db: "Session", file_bytes: bytes, meetsid: int | Non
                     minage=agemin,
                     maxage=agemax,
                     eventnumb=event_number.get(event_id),
+                    entrytime=_lenex_time_to_ms(entry_el.get("entrytime")),
+                    # ENTRY status="EXH" = hors concours team (Splash resultstatus=4)
+                    resultstatus=4 if (entry_el.get("status") or "").upper() == "EXH" else None,
                 )
                 db.add(relay)
                 db.flush()
@@ -4373,6 +4386,21 @@ def get_relay_teams(request: Request, club_id: int | None = None, db: Session = 
                 seen_members.add(row.athleteid)
                 member_age_group_map[row.athleteid] = _relay_age_code(row.agemin, row.agemax)
 
+    # Relay best time per member, per relay style, for the meet's course (pool only):
+    # the fastest total of any archived team the member swam on. Drives the suggested
+    # entry time (average of the members who have one) in the shared relay page.
+    meet_type = _get_meet_type(db)
+    meet_course = _get_meet_config(db, meet_id, "meet_course") if meet_id else None
+    relay_bests_by_style: dict[int, dict[int, int]] = {}
+    if meet_type != "BEACH":
+        members_by_style: dict[int, set[int]] = {}
+        for relay in existing_relays:
+            for pos in relay_positions.get(relay.relaysid, []):
+                if pos.membersid and relay.stylesid:
+                    members_by_style.setdefault(relay.stylesid, set()).add(pos.membersid)
+        for style_id, mids in members_by_style.items():
+            relay_bests_by_style[style_id] = get_relay_best_times(db, mids, style_id, meet_course)
+
     for relay in existing_relays:
         age_code = _relay_age_code(relay.minage, relay.maxage)
         # Find the event key. Prefer an exact eventnumb match — style+gender alone
@@ -4405,6 +4433,7 @@ def get_relay_teams(request: Request, club_id: int | None = None, db: Session = 
         positions_list = relay_positions.get(relay.relaysid, [])
 
         # Build members array
+        style_bests = relay_bests_by_style.get(relay.stylesid, {})
         members_arr = []
         member_age_codes_for_team: list[str] = []
         for i in range(1, relaycount + 1):
@@ -4415,6 +4444,7 @@ def get_relay_teams(request: Request, club_id: int | None = None, db: Session = 
                 "position": i,
                 "athleteId": athlete_id,
                 "athleteName": athlete_name,
+                "relayBestTimeMs": style_bests.get(athlete_id) if athlete_id else None,
             })
             if athlete_id and athlete_id in member_age_group_map:
                 member_age_codes_for_team.append(member_age_group_map[athlete_id])
@@ -4434,6 +4464,8 @@ def get_relay_teams(request: Request, club_id: int | None = None, db: Session = 
             "members": members_arr,
             "clubId": relay.clubsid,
             "clubName": club_names.get(relay.clubsid) if relay.clubsid else None,
+            "hc": relay.resultstatus == 4,
+            "entryTimeMs": relay.entrytime or None,
         }
         teams_by_event.setdefault(event_key, []).append(team_data)
 
@@ -4668,6 +4700,7 @@ def get_relay_teams(request: Request, club_id: int | None = None, db: Session = 
         "eligibleAthletes": eligible_athletes,
         "closureDate": closure_date_str,
         "isClosed": is_closed and role == "coach",
+        "meetType": "BEACH" if meet_type == "BEACH" else "POOL",
     }
 
 
@@ -5154,9 +5187,12 @@ def set_relay_team_member(
         # Gender balance validation for mixed (X) events:
         # Exactly N/2 men and N/2 women required (e.g., 2M+2F for 4-person relay)
         # In the DB, gender=1 is M-only, gender=2 is F-only, anything else (0/3/None) is mixed
-        # SERC events (swimstyle 530) have NO gender/age restrictions
+        # SERC events (swimstyle 530) have NO gender/age restrictions, and neither
+        # does an HC (exhibition) team — often an ad-hoc team that couldn't validly
+        # compose otherwise; its result is excluded from rankings anyway.
         is_serc = relay.stylesid == 530
-        if not is_serc and relay.gender not in (GENDER_M, GENDER_F):
+        skip_composition = is_serc or relay.resultstatus == 4
+        if not skip_composition and relay.gender not in (GENDER_M, GENDER_F):
             max_per_gender = relaycount // 2
 
             # Count current gender assignments on this team (excluding current position)
@@ -5193,8 +5229,8 @@ def set_relay_team_member(
         # Age group composition validation: a team is anchored to the event's own
         # age category — members must be from that exact category, or the single
         # adjacent-younger one (swim-up), and at least 1 member must match the
-        # exact category. SERC events skip this check.
-        if not is_serc:
+        # exact category. SERC events and HC teams skip this check.
+        if not skip_composition:
             native_code = _get_event_native_age_code(db, relay.stylesid, relay.eventnumb, relay.gender, meetsid=meet_id)
             new_athlete_age_code = _resolve_athlete_age_codes(db, [athlete_id], meetsid=meet_id).get(athlete_id)
 
@@ -5350,3 +5386,65 @@ def set_relay_team_name(
 
     db.commit()
     return {"ok": True}
+
+
+def _owned_real_relay(team_id: int, request: Request, db: Session):
+    """The relay row a coach/organizer/admin may edit (closure + ownership checks).
+
+    Virtual teams (negative ids, legacy swimresult locks) have no relay row to hold
+    a time or status yet — assigning a member materializes them first.
+    """
+    from ..models_team import Relay
+
+    pin = request.headers.get("X-Club-Pin", "")
+    _check_closure(db, pin)
+    role, caller_club = _resolve_role(pin, db)
+    if team_id < 0:
+        raise HTTPException(400, "Assign a member to this team first")
+    relay = db.get(Relay, team_id)
+    if not relay:
+        raise HTTPException(404, "Relay team not found")
+    if role == "coach" and relay.clubsid != caller_club:
+        raise HTTPException(403, "Cannot modify another club's relay teams")
+    return relay
+
+
+@router.put("/relay-teams/{team_id}/entry-time")
+def set_relay_team_entry_time(
+    team_id: int,
+    data: RelayTeamEntryTimeUpdate,
+    request: Request, db: Session = Depends(get_db)
+):
+    """Set or clear a pool relay team's entry time (ms; null/0 = NT).
+
+    Exported as the relay ENTRY's entrytime; meet-app seeds relay heats by it.
+    Beach relays are ranked (no times) and SERC is judged — both refuse a time.
+    """
+    relay = _owned_real_relay(team_id, request, db)
+    ms = data.entryTimeMs or None
+    if ms is not None:
+        if _get_meet_type(db) == "BEACH":
+            raise HTTPException(400, "Beach relays have no entry time")
+        if relay.stylesid == 530:
+            raise HTTPException(400, "SERC has no entry time")
+    relay.entrytime = ms
+    db.commit()
+    return {"ok": True, "entryTimeMs": ms}
+
+
+@router.put("/relay-teams/{team_id}/hc")
+def set_relay_team_hc(
+    team_id: int,
+    data: RelayTeamHCUpdate,
+    request: Request, db: Session = Depends(get_db)
+):
+    """Mark a relay team hors concours / exhibition (resultstatus=4, Splash encoding).
+
+    Set by the club's coach. Exported as the relay ENTRY's status="EXH"; an HC team
+    skips the age/gender composition rules and is left out of rankings and of relay
+    best times.
+    """
+    relay = _owned_real_relay(team_id, request, db)
+    relay.resultstatus = 4 if data.isHC else None
+    db.commit()
+    return {"ok": True, "hc": data.isHC}

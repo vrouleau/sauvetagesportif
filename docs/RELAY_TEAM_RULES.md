@@ -79,6 +79,15 @@ An athlete is eligible for a relay team if:
 4. **Uniqueness**: athlete cannot be on another team for the same event (cross-team uniqueness)
 5. **Intra-team**: athlete cannot appear twice on the same team
 
+## Exemptions: SERC and HC teams
+
+The age-group and gender rules above don't apply to:
+
+- **SERC events** (swimstyle 530) — judged team event, any composition.
+- **HC (hors concours / exhibition) teams** — the club's coach ticks HC on the team card (both apps). Often an ad-hoc team that couldn't compose validly; its result is kept but excluded from rankings and from relay best times. Stored as `resultstatus=4` (Splash encoding), sent to meet-app as the relay `ENTRY status="EXH"`.
+
+Club, uniqueness and intra-team rules still apply.
+
 ## Data Source for Athlete Age Group
 
 Each athlete's age group for relay composition is read from their individual registrations:

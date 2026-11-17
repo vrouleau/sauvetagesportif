@@ -135,7 +135,7 @@ When enabled, certain entry types are seeded after regular entries, placing them
 | 1 | Regular entries with valid times | Default |
 | 2 | Late entries | `seedlateentrylast='T'` and `swimresult.lateentry='T'` |
 | 3 | Bonus entries | `seedbonuslast='T'` and `swimresult.bonusentry='T'` |
-| 4 | Exhibition entries | `seedexhlast='T'` and `swimresult.infocode` contains 'EXH' |
+| 4 | Exhibition entries | `seedexhlast='T'` and HC (`resultstatus=4` on `swimresult` or `relay`) or `swimresult.infocode` contains 'EXH' |
 | 5 | No-time entries (NT) | Always last |
 
 Within each priority group, entries are sorted by seed time (fastest first).

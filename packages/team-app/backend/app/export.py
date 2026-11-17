@@ -357,6 +357,8 @@ def generate_lxf(db: Session, meetsid: int | None = None) -> bytes:
                     entry_attrs["agegroupid"] = str(ag.agegroupid)
                 if reg.entrytime:
                     entry_attrs["entrytime"] = _ms_to_lenex(reg.entrytime)
+                if reg.resultstatus == 4:  # HC — LENEX ENTRY status "EXH" (exhibition)
+                    entry_attrs["status"] = "EXH"
                 entry_xml = ET.SubElement(entries_xml, "ENTRY", entry_attrs)
                 if reg.entrytime and ev.swimstyleid:
                     bt_date = get_best_time_date(db, ath.membersid, ev.swimstyleid,
@@ -496,6 +498,8 @@ def generate_lxf(db: Session, meetsid: int | None = None) -> bytes:
             }
             if relay.entrytime:
                 relay_entry_attrs["entrytime"] = _ms_to_lenex(relay.entrytime)
+            if relay.resultstatus == 4:  # HC — LENEX ENTRY status "EXH" (exhibition)
+                relay_entry_attrs["status"] = "EXH"
             m_ev = _find_relay_event(meet_struct, relay)
             if m_ev:
                 relay_entry_attrs["eventid"] = str(m_ev.eventid)
@@ -580,6 +584,8 @@ def generate_lxf(db: Session, meetsid: int | None = None) -> bytes:
             }
             if relay.entrytime:
                 relay_entry_attrs["entrytime"] = _ms_to_lenex(relay.entrytime)
+            if relay.resultstatus == 4:  # HC — LENEX ENTRY status "EXH" (exhibition)
+                relay_entry_attrs["status"] = "EXH"
             m_ev = _find_relay_event(meet_struct, relay)
             if m_ev:
                 relay_entry_attrs["eventid"] = str(m_ev.eventid)
