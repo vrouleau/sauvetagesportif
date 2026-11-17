@@ -524,7 +524,20 @@ def _replace_current_meet_structure(db: Session, meet, content: bytes, filename:
 
     Archived meets (meetstate=3) and their results/events/sessions survive,
     same as _reset_for_next_meet.
+
+    Refuses (400 mixed_swimstyles, not overridable) a structure mixing pool
+    and beach style series — a meet is one type, and meet_type detection
+    below would silently call it BEACH. Checked before anything is written.
     """
+    from ..swimstyle_check import mixed_meet_types, ranges_label
+    style_ids = [ev.swimstyleid for ses in meet.sessions for ev in ses.events]
+    if mixed_meet_types(style_ids):
+        raise HTTPException(400, {
+            "code": "mixed_swimstyles",
+            "message": f"This file mixes pool and beach events ({ranges_label()}). "
+                       f"A meet must be either pool or beach.",
+        })
+
     MEET_STORAGE.parent.mkdir(parents=True, exist_ok=True)
     MEET_STORAGE.write_bytes(content)
 
@@ -630,7 +643,7 @@ async def upload_meet(request: Request, file: UploadFile = File(...), force: boo
         raise HTTPException(400, f"Invalid meet .lxf: {e}")
 
     if not force:
-        from ..swimstyle_check import find_new_swimstyles
+        from ..swimstyle_check import find_new_swimstyles, describe_new_swimstyles
         new_styles = find_new_swimstyles(db, (
             (ev.swimstyleid, ev.style_name, ev.distance)
             for ses in meet.sessions for ev in ses.events
@@ -638,7 +651,7 @@ async def upload_meet(request: Request, file: UploadFile = File(...), force: boo
         if new_styles:
             raise HTTPException(409, {
                 "code": "new_swimstyles",
-                "message": f"{len(new_styles)} swimstyle id(s) in this file are not in the local catalog.",
+                "message": describe_new_swimstyles(new_styles),
                 "styles": new_styles,
             })
 
@@ -1733,7 +1746,7 @@ def list_swim_styles(db: Session = Depends(get_db)):
     The style catalog is never pruned across meets (historical events/results
     keep referencing old style ids — see create_new_meet), so without this
     filter a beach meet would still offer every pool style ever loaded, and
-    vice versa. Pool/beach ids never overlap (501-540 vs 601-605).
+    vice versa. Pool/beach ids never overlap (500-531 vs 601-624, config/swimstyle-ranges.json).
     """
     styles = db.query(SwimStyle).order_by(SwimStyle.distance, SwimStyle.stroke).all()
     if _get_meet_type(db) == "BEACH":
@@ -2623,7 +2636,7 @@ async def upload_entries(request: Request, file: UploadFile = File(...), force: 
         needs_reload = bool(missing_ids)
 
     if needs_reload and not force:
-        from ..swimstyle_check import find_new_swimstyles
+        from ..swimstyle_check import find_new_swimstyles, describe_new_swimstyles
         new_styles = find_new_swimstyles(db, (
             (ev.swimstyleid, ev.style_name, ev.distance)
             for ses in events_meet.sessions for ev in ses.events
@@ -2635,7 +2648,7 @@ async def upload_entries(request: Request, file: UploadFile = File(...), force: 
             f"this file's own structure, and reset club PINs."
         )
         if new_styles:
-            message += f" It also introduces {len(new_styles)} new swimstyle id(s)."
+            message += " " + describe_new_swimstyles(new_styles)
         raise HTTPException(409, {
             "code": "new_swimstyles",
             "message": message,
@@ -2696,7 +2709,7 @@ async def upload_results(request: Request, file: UploadFile = File(...), force: 
                 except (TypeError, ValueError):
                     return None
 
-            from ..swimstyle_check import find_new_swimstyles
+            from ..swimstyle_check import find_new_swimstyles, describe_new_swimstyles
             new_styles = find_new_swimstyles(db, (
                 (_to_int(ss.get("swimstyleid")), ss.get("name"), _to_int(ss.get("distance")))
                 for ss in xml_root.iter("SWIMSTYLE")
@@ -2704,7 +2717,7 @@ async def upload_results(request: Request, file: UploadFile = File(...), force: 
             if new_styles:
                 raise HTTPException(409, {
                     "code": "new_swimstyles",
-                    "message": f"{len(new_styles)} swimstyle id(s) in this file are not in the local catalog.",
+                    "message": describe_new_swimstyles(new_styles),
                     "styles": new_styles,
                 })
         except (zipfile.BadZipFile, StopIteration, HTTPException) as e:

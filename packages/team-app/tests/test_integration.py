@@ -4248,13 +4248,49 @@ class TestNewSwimstyleConfirmation:
         assert any(s["id"] == 555 for s in r3.json())
 
     def test_upload_meet_known_style_does_not_warn(self, admin_headers):
-        """Once a style id is in the catalog (from the previous test), later
-        uploads referencing it must not warn again."""
+        """A style id already in the catalog and inside a known series
+        uploads without any confirmation."""
+        lxf = self._fabricate_meet_lxf(501, "Fabricated Known Style Meet")
+        r = requests.post(f"{BASE_URL}/api/upload/meet",
+                          files={"file": ("known.lxf", lxf, "application/octet-stream")},
+                          headers=admin_headers, timeout=30)
+        assert r.status_code == 200, f"Known style should not need force: {r.text}"
+
+    def test_out_of_range_style_warns_even_once_in_catalog(self, admin_headers):
+        """555 entered the catalog in the first test (forced) — it's still
+        outside the 5xx/6xx series, so a polluted catalog never stops it
+        being flagged."""
         lxf = self._fabricate_meet_lxf(555, "Fabricated New Style Meet Reupload")
         r = requests.post(f"{BASE_URL}/api/upload/meet",
                           files={"file": ("new.lxf", lxf, "application/octet-stream")},
                           headers=admin_headers, timeout=30)
-        assert r.status_code == 200, f"Known style should not need force: {r.text}"
+        assert r.status_code == 409, r.text
+        detail = r.json()["detail"]
+        assert detail["code"] == "new_swimstyles"
+        assert [s["reason"] for s in detail["styles"] if s["id"] == 555] == ["out_of_range"]
+        assert "outside the known series" in detail["message"]
+
+    def test_mixed_pool_and_beach_structure_is_refused_even_with_force(self, admin_headers):
+        before = requests.get(f"{BASE_URL}/api/meet-info", headers=admin_headers, timeout=10).json()
+        lef_content = (
+            '<?xml version="1.0"?><LENEX><MEETS><MEET name="Mixed Meet" course="LCM">'
+            '<SESSIONS><SESSION number="1"><EVENTS>'
+            '<EVENT eventid="1" number="1" gender="M">'
+            '<SWIMSTYLE swimstyleid="501" distance="100" name="Pool" relaycount="1"/></EVENT>'
+            '<EVENT eventid="2" number="2" gender="M">'
+            '<SWIMSTYLE swimstyleid="601" distance="0" name="Beach" relaycount="1"/></EVENT>'
+            '</EVENTS></SESSION></SESSIONS><CLUBS></CLUBS></MEET></MEETS></LENEX>'
+        )
+        buf = BytesIO()
+        with zipfile.ZipFile(buf, "w") as z:
+            z.writestr("meet.lef", lef_content)
+        r = requests.post(f"{BASE_URL}/api/upload/meet?force=true",
+                          files={"file": ("mixed.lxf", buf.getvalue(), "application/octet-stream")},
+                          headers=admin_headers, timeout=30)
+        assert r.status_code == 400, r.text
+        assert r.json()["detail"]["code"] == "mixed_swimstyles"
+        after = requests.get(f"{BASE_URL}/api/meet-info", headers=admin_headers, timeout=10).json()
+        assert after["meet_name"] == before["meet_name"], "a refused file must not touch the open meet"
 
     def test_import_historical_warns_then_accepts_with_force(self, admin_headers):
         lxf = self._fabricate_meet_lxf(556, "Fabricated Historical Meet", with_result=True)

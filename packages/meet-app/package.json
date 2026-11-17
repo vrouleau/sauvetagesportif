@@ -54,6 +54,10 @@
       {
         "from": "../../config/age-group-rules.json",
         "to": "age-group-rules.json"
+      },
+      {
+        "from": "../../config/swimstyle-ranges.json",
+        "to": "swimstyle-ranges.json"
       }
     ],
     "win": {

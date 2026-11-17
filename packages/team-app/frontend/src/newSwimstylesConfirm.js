@@ -30,8 +30,9 @@ export function newSwimstylesDetail(err) {
 /** Shows a confirm() dialog listing the new style ids; returns true if the
  *  user wants to proceed anyway. */
 export function confirmNewSwimstyles(detail, lang) {
+  const outTag = lang === 'fr' ? ' ⚠ hors série 5xx/6xx' : ' ⚠ outside 5xx/6xx series'
   const lines = detail.styles
-    .map(s => `  • ${s.id} — ${s.name}${s.distance ? ` (${s.distance}m)` : ''}`)
+    .map(s => `  • ${s.id} — ${s.name}${s.distance ? ` (${s.distance}m)` : ''}${s.reason === 'out_of_range' ? outTag : ''}`)
     .join('\n')
   const msg = lang === 'fr'
     ? `${detail.message}\n\n${lines}\n\nVoulez-vous quand même importer ?`

@@ -1,0 +1,5 @@
+{
+  "$comment": "Known swimstyle id series (inclusive), from config/template_pool.lxf (5xx) and config/template_beach.lxf (6xx). LXF imports in both apps flag any style id outside these ranges (stale or foreign template) and refuse a meet structure mixing pool and beach ids. Consumed by meet-app (src/main/swimstyleRanges.ts) and team-app (backend/app/swimstyle_check.py). Widen a range here when a template gains a new style.",
+  "POOL": { "min": 500, "max": 531 },
+  "BEACH": { "min": 601, "max": 624 }
+}

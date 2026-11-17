@@ -50,6 +50,14 @@ The `serc` list (4 codes, Règlements Québec Annexe 3 — §5.14.5) is a separa
 | `template_pool.lxf` | Pool (winter) | 500-531 |
 | `template_beach.lxf` | Beach (summer) | 601-624 |
 
+## Swimstyle ID ranges (`swimstyle-ranges.json`)
+
+The known id series above, as data (`POOL`/`BEACH` → `{min, max}`, inclusive). **Widen a range here when a template gains a new style** — otherwise every import of that template warns. LXF imports in both apps check incoming `SWIMSTYLE` ids against it:
+- **team-app** (`backend/app/swimstyle_check.py`): `find_new_swimstyles` flags ids outside both series (`reason: "out_of_range"`, even on an empty catalog or when a polluted catalog already has the id) alongside ids not in the catalog (`reason: "not_in_catalog"`). All LXF uploads (meet, entries, historical, results) → 409 `new_swimstyles`, `?force=true` overrides. A meet structure mixing pool and beach ids → 400 `mixed_swimstyles`, not overridable (`_replace_current_meet_structure`, checked before any write).
+- **meet-app** (`src/main/swimstyleRanges.ts` + `checkLenexSwimstyles` in `lenex.ts`): the `file:import-lenex` handler pre-scans the file **before** it wipes the database — mixed pool/beach → refused; out-of-range ids → "Import anyway?" dialog. Packaged via `extraResources` in `package.json`.
+- Tests: `packages/team-app/tests/unit/test_swimstyle_check.py`, `packages/meet-app/tests/swimstyle-ranges.test.ts` (includes "both shipped templates pass cleanly").
+- Note: the team-app integration fixture `tests/fixtures/meet_template.lxf` is an older meet with relays at 538-540 — it's always uploaded with `?force=true`.
+
 Templates are the single source of truth for event structure. They are loaded at meet creation
 and reloaded (empty meet, no registrations) after a meet reset or result import:
 - **meet-app**: File → Nouveau meet

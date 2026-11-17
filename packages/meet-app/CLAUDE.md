@@ -264,6 +264,7 @@ time, `.smb` export carries them through correctly too.
 ### LXF round-trip details
 
 **Import (`importLenex`):**
+- Swimstyle id guard (`file:import-lenex` handler, runs before the DB wipe): ids outside `config/swimstyle-ranges.json` (pool 500-531 / beach 601-624) → confirmation dialog; pool+beach mixed → refused. See `config/CLAUDE.md`.
 - Remaps `swimstyleid` via `uniqueid` attribute (Splash uses internal auto-increment IDs in MDB but canonical 5xx UIDs in Lenex)
 - Events with `round=11` (MDB encoding for Break/Pause) are marked `internalevent='T'`
 - Extracts MEETVALUES metadata from meet attributes (name, course, agedate, deadline, etc.)

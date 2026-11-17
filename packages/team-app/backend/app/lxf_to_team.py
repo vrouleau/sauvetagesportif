@@ -178,7 +178,7 @@ def import_lxf_as_meet(db: DbSession, content: bytes, force: bool = False) -> di
         raise ValueError("No MEET element found in LENEX file")
 
     if not force:
-        from .swimstyle_check import find_new_swimstyles
+        from .swimstyle_check import find_new_swimstyles, describe_new_swimstyles
 
         def _to_int(s):
             try:
@@ -193,7 +193,7 @@ def import_lxf_as_meet(db: DbSession, content: bytes, force: bool = False) -> di
         if new_styles:
             return {
                 "needs_force": True,
-                "warning": f"{len(new_styles)} swimstyle id(s) in this file are not in the local catalog.",
+                "warning": describe_new_swimstyles(new_styles),
                 "new_swimstyles": new_styles,
             }
 
