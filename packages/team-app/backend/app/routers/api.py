@@ -3656,112 +3656,61 @@ def export_registrations_lxf(request: Request, db: Session = Depends(get_db)):
 
 
 # ---------------------------------------------------------------------------
-# Database backup / restore (pg_dump / psql or SQLite file copy)
+# Database backup / restore (SQLite backup API)
 # ---------------------------------------------------------------------------
 
 @router.get("/admin/backup-db", dependencies=[Depends(require_admin)])
 def backup_db():
-    """Download a full database backup (pg_dump SQL for Postgres, raw .db file for SQLite)."""
-    from ..database import is_sqlite, DATABASE_URL, sqlite_snapshot_bytes
-    if is_sqlite():
-        db_path = DATABASE_URL.replace("sqlite:///", "")
-        try:
-            content = sqlite_snapshot_bytes(db_path)
-        except FileNotFoundError:
-            raise HTTPException(404, "Database file not found")
-        return Response(
-            content=content,
-            media_type="application/octet-stream",
-            headers={"Content-Disposition": "attachment; filename=team_backup.db"},
-        )
-    else:
-        import subprocess
-        db_url = os.environ.get("DATABASE_URL", "")
-        from urllib.parse import urlparse
-        parsed = urlparse(db_url)
-        env = {**os.environ, "PGPASSWORD": parsed.password or ""}
-        cmd = [
-            "pg_dump",
-            "-h", parsed.hostname or "db",
-            "-p", str(parsed.port or 5432),
-            "-U", parsed.username or "meetmgr",
-            "-d", parsed.path.lstrip("/") or "meet",
-            "--no-owner", "--no-acl",
-        ]
-        result = subprocess.run(cmd, capture_output=True, env=env, timeout=60)
-        if result.returncode != 0:
-            raise HTTPException(500, f"pg_dump failed: {result.stderr.decode()[:500]}")
-        return Response(
-            content=result.stdout,
-            media_type="application/sql",
-            headers={"Content-Disposition": "attachment; filename=team_backup.sql"},
-        )
+    """Download a full database backup (consistent SQLite .db snapshot)."""
+    from ..database import sqlite_snapshot_bytes
+    try:
+        content = sqlite_snapshot_bytes()
+    except FileNotFoundError:
+        raise HTTPException(404, "Database file not found")
+    return Response(
+        content=content,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": "attachment; filename=team_backup.db"},
+    )
 
 
 @router.post("/admin/restore-db", dependencies=[Depends(require_admin)])
 async def restore_db(file: UploadFile = File(...)):
-    """Restore database from a backup file (.db for SQLite, .sql for Postgres)."""
-    from ..database import is_sqlite, DATABASE_URL
+    """Restore database from a SQLite .db backup file."""
     content = await file.read()
     if len(content) > 50 * 1024 * 1024:
         raise HTTPException(413, "File too large (max 50MB)")
 
-    if is_sqlite():
-        # SQLite restore: use the backup API to safely replace the contents
-        # of the live database without file-level replacement
-        import sqlite3 as _sqlite3
-        import tempfile
+    # Use the backup API to safely replace the contents of the live database
+    # without file-level replacement
+    import sqlite3 as _sqlite3
+    import tempfile
 
-        # Validate that the uploaded file is a valid SQLite database
-        if not content[:16].startswith(b"SQLite format 3"):
-            raise HTTPException(400, "Invalid SQLite database file")
+    # Validate that the uploaded file is a valid SQLite database
+    if not content[:16].startswith(b"SQLite format 3"):
+        raise HTTPException(400, "Invalid SQLite database file")
 
-        # Write uploaded file to a temp path
-        tmp_path = Path(tempfile.mktemp(suffix=".db"))
-        tmp_path.write_bytes(content)
+    # Write uploaded file to a temp path
+    tmp_path = Path(tempfile.mktemp(suffix=".db"))
+    tmp_path.write_bytes(content)
 
-        try:
-            # Open the source (uploaded backup) using raw sqlite3
-            src_conn = _sqlite3.connect(str(tmp_path))
+    try:
+        # Open the source (uploaded backup) using raw sqlite3
+        src_conn = _sqlite3.connect(str(tmp_path))
 
-            # Get a raw connection to the LIVE database through SQLAlchemy's pool
-            from ..database import engine
-            raw_conn = engine.raw_connection()
-            dst_conn = raw_conn.connection  # underlying sqlite3 connection
+        # Get a raw connection to the LIVE database through SQLAlchemy's pool
+        from ..database import engine
+        raw_conn = engine.raw_connection()
+        dst_conn = raw_conn.connection  # underlying sqlite3 connection
 
-            # Use SQLite backup API: copies source into destination (overwrites all data)
-            src_conn.backup(dst_conn)
-            src_conn.close()
-            raw_conn.close()
-        finally:
-            if tmp_path.exists():
-                tmp_path.unlink()
+        # Use SQLite backup API: copies source into destination (overwrites all data)
+        src_conn.backup(dst_conn)
+        src_conn.close()
+        raw_conn.close()
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink()
 
-        return {"ok": True, "filename": file.filename, "migrations_applied": _upgrade_restored_schema()}
-
-    import subprocess
-    db_url = os.environ.get("DATABASE_URL", "")
-    from urllib.parse import urlparse
-    parsed = urlparse(db_url)
-    dbname = parsed.path.lstrip("/") or "meet"
-    env = {**os.environ, "PGPASSWORD": parsed.password or ""}
-    host_args = ["-h", parsed.hostname or "db", "-p", str(parsed.port or 5432),
-                 "-U", parsed.username or "meetmgr"]
-    # Drop and recreate the database
-    subprocess.run(["psql", *host_args, "-d", "postgres",
-                    "-c", f"DROP DATABASE IF EXISTS {dbname}"],
-                   env=env, capture_output=True, timeout=30)
-    subprocess.run(["psql", *host_args, "-d", "postgres",
-                    "-c", f"CREATE DATABASE {dbname}"],
-                   env=env, capture_output=True, timeout=30)
-    # Restore from dump
-    result = subprocess.run(["psql", *host_args, "-d", dbname],
-                            input=content, capture_output=True, env=env, timeout=120)
-    if result.returncode != 0:
-        stderr = result.stderr.decode()[:500]
-        # psql often returns non-zero for warnings; check if it's fatal
-        if "FATAL" in stderr or "could not connect" in stderr:
-            raise HTTPException(500, f"Restore failed: {stderr}")
     return {"ok": True, "filename": file.filename, "migrations_applied": _upgrade_restored_schema()}
 
 
@@ -3781,31 +3730,6 @@ def _upgrade_restored_schema() -> list[str]:
 # ---------------------------------------------------------------------------
 
 BACKUP_DIR = Path(os.environ.get("DATA_DIR", "/app/data")) / "backups"
-
-
-def _run_pg_dump_bytes() -> bytes:
-    """Run pg_dump and return SQL bytes (Postgres) or read .db file (SQLite)."""
-    from ..database import is_sqlite, DATABASE_URL, sqlite_snapshot_bytes
-    if is_sqlite():
-        db_path = DATABASE_URL.replace("sqlite:///", "")
-        return sqlite_snapshot_bytes(db_path)
-    import subprocess
-    from urllib.parse import urlparse
-    db_url = os.environ.get("DATABASE_URL", "")
-    parsed = urlparse(db_url)
-    env = {**os.environ, "PGPASSWORD": parsed.password or ""}
-    cmd = [
-        "pg_dump",
-        "-h", parsed.hostname or "db",
-        "-p", str(parsed.port or 5432),
-        "-U", parsed.username or "meetmgr",
-        "-d", parsed.path.lstrip("/") or "meetmgr",
-        "--no-owner", "--no-acl",
-    ]
-    result = subprocess.run(cmd, capture_output=True, env=env, timeout=60)
-    if result.returncode != 0:
-        raise RuntimeError(f"pg_dump failed: {result.stderr.decode()[:500]}")
-    return result.stdout
 
 
 @router.get("/admin/backup-config", dependencies=[Depends(require_admin)])
@@ -3835,8 +3759,7 @@ def list_backups():
     if not BACKUP_DIR.exists():
         return []
     backups = []
-    # Include both .sql (pg_dump) and .db (SQLite copy) backup files
-    backup_files = list(BACKUP_DIR.glob("*.sql")) + list(BACKUP_DIR.glob("*.db"))
+    backup_files = list(BACKUP_DIR.glob("*.db"))
     for f in sorted(backup_files, key=lambda p: p.stat().st_mtime, reverse=True):
         stat = f.stat()
         backups.append({
@@ -3851,14 +3774,13 @@ def list_backups():
 @router.post("/admin/backups/create", dependencies=[Depends(require_admin)])
 def create_backup_now():
     """Create a manual backup and store it."""
-    from ..database import is_sqlite
+    from ..database import sqlite_snapshot_bytes
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y-%m-%d-%H%M%S")
-    ext = "db" if is_sqlite() else "sql"
-    filename = f"manual-{timestamp}.{ext}"
-    sql = _run_pg_dump_bytes()
-    (BACKUP_DIR / filename).write_bytes(sql)
-    return {"filename": filename, "size_bytes": len(sql)}
+    filename = f"manual-{timestamp}.db"
+    content = sqlite_snapshot_bytes()
+    (BACKUP_DIR / filename).write_bytes(content)
+    return {"filename": filename, "size_bytes": len(content)}
 
 
 @router.get("/admin/backups/{filename}", dependencies=[Depends(require_admin)])
@@ -3871,7 +3793,7 @@ def download_backup(filename: str):
         raise HTTPException(404, "Backup not found")
     return Response(
         content=filepath.read_bytes(),
-        media_type="application/sql",
+        media_type="application/octet-stream",
         headers={"Content-Disposition": f"attachment; filename={safe_name}"},
     )
 

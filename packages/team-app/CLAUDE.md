@@ -189,8 +189,8 @@ Coach best times are written only at meet close, never on registration:
 | `GET /api/print/entries?lang=fr` | Printable HTML of all individual + relay entries, grouped by club (one page per club) — Invitation page "Print Entries" button | Organizer/Admin |
 | `PUT /api/sessions/{id}` | Update session fields (name, date, times, lanes) | Organizer/Admin |
 | `PUT /api/closure-date` | Set registration deadline (syncs to MEETVALUES DEADLINE) | Organizer/Admin |
-| `GET /api/admin/backup-db` | Download full PostgreSQL dump (.sql) | Admin |
-| `POST /api/admin/restore-db` | Restore database from .sql dump | Admin |
+| `GET /api/admin/backup-db` | Download consistent SQLite snapshot (.db) | Admin |
+| `POST /api/admin/restore-db` | Restore database from .db backup | Admin |
 | `GET /api/admin/backup-config` | Get auto-backup config (interval + retention) | Admin |
 | `PUT /api/admin/backup-config` | Update auto-backup config | Admin |
 | `GET /api/admin/backups` | List all stored backups | Admin |
@@ -317,14 +317,14 @@ combined-events implementation of its own, and doesn't need one.
 Dedicated backup/restore section in the Admin page (replaces the old Data Management page backup).
 
 **Manual backup/restore:**
-- `GET /api/admin/backup-db` — download full pg_dump (.sql)
-- `POST /api/admin/restore-db` — restore from .sql dump (wipes all data)
+- `GET /api/admin/backup-db` — download consistent SQLite snapshot (.db, WAL-safe backup API)
+- `POST /api/admin/restore-db` — restore from .db backup (wipes all data)
 - `POST /api/admin/backups/create` — create a named backup stored server-side
 
 **Auto-backup scheduler:**
-- Background loop in `main.py` (`_auto_backup_loop`) runs pg_dump on a configurable interval
+- Background loop in `main.py` (`_auto_backup_loop`) snapshots the SQLite DB on a configurable interval
 - Config stored in bsglobal: `backup_interval_days` (default 1), `backup_max_count` (default 7)
-- Backups stored in `{MEET_STORAGE}/../backups/` as `auto-YYYY-MM-DD-HHMMSS.sql`
+- Backups stored in `{MEET_STORAGE}/../backups/` as `auto-YYYY-MM-DD-HHMMSS.db`
 - Retention enforced: oldest backups deleted when count exceeds `backup_max_count`
 
 **Backup list UI:**

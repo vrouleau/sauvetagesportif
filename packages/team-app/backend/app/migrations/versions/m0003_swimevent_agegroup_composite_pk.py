@@ -35,16 +35,13 @@ m0001_concurrent_meets) — this migration only changes constraints, no new
 columns except making `swimevent.meetsid`/`agegroup.meetsid` NOT NULL (a
 composite PK member can't be nullable).
 
-Two dialect-specific upgrade paths, since the local dev stack defaults to
-SQLite (docker-compose.yml) while the Docker test stack and any real
-deployment use Postgres:
-- Postgres supports ALTER TABLE ... DROP/ADD CONSTRAINT directly.
-- SQLite supports neither DROP CONSTRAINT nor ADD PRIMARY KEY/FOREIGN KEY
-  after the fact — the standard approach there is the "12-step" table
-  rebuild: create a new table with the target schema, copy the data across,
-  drop the old table, rename the new one into place. Column lists are
-  pulled from the live table via `inspect()` rather than hardcoded, so nothing
-  is silently dropped if the physical schema ever drifts from models.py.
+SQLite supports neither DROP CONSTRAINT nor ADD PRIMARY KEY/FOREIGN KEY after
+the fact, so this uses the standard "12-step" table rebuild: create a new
+table with the target schema, copy the data across, drop the old table,
+rename the new one into place. Column lists are pulled from the live table
+via `inspect()` rather than hardcoded, so nothing is silently dropped if the
+physical schema ever drifts from models.py. (A PostgreSQL ALTER-based path
+existed until the team-app went SQLite-only.)
 
 Idempotent: no-op on a fresh install (updated models.py + create_all
 already builds the composite-PK shape directly) and on a database whose
@@ -78,10 +75,7 @@ def upgrade(engine) -> None:
     if "meetsid" in (pk.get("constrained_columns") or []):
         return  # already composite
 
-    if engine.dialect.name == "sqlite":
-        _upgrade_sqlite(engine)
-    else:
-        _upgrade_postgres(engine)
+    _upgrade_sqlite(engine)
 
 
 def _backfill_null_meetsid(conn, meets_open_expr: str) -> None:
@@ -92,78 +86,6 @@ def _backfill_null_meetsid(conn, meets_open_expr: str) -> None:
     if fallback is not None:
         conn.execute(text("UPDATE swimevent SET meetsid = :m WHERE meetsid IS NULL"), {"m": fallback})
         conn.execute(text("UPDATE agegroup SET meetsid = :m WHERE meetsid IS NULL"), {"m": fallback})
-
-
-def _upgrade_postgres(engine) -> None:
-    with engine.begin() as conn:
-        # Backfill any stray NULL meetsid (shouldn't exist post-Stage-1, but
-        # a composite PK member can't be nullable, so be defensive) using
-        # whichever meet is currently open.
-        _backfill_null_meetsid(conn, "true")
-
-        insp2 = inspect(conn)
-
-        # Drop FKs that depend on swimevent's current single-column PK.
-        for table in _SWIMEVENT_FK_TABLES:
-            fk_name = _fk_name(insp2, table, "swimeventid")
-            if fk_name:
-                conn.execute(text(f"ALTER TABLE {table} DROP CONSTRAINT {fk_name}"))
-
-        # Drop the FK that depends on agegroup's current single-column PK.
-        fk_name = _fk_name(insp2, "swimresult", "agegroupid")
-        if fk_name:
-            conn.execute(text(f"ALTER TABLE swimresult DROP CONSTRAINT {fk_name}"))
-
-        # Drop the old single-column PKs.
-        swimevent_pk = insp2.get_pk_constraint("swimevent")["name"]
-        conn.execute(text(f"ALTER TABLE swimevent DROP CONSTRAINT {swimevent_pk}"))
-        agegroup_pk = insp2.get_pk_constraint("agegroup")["name"]
-        conn.execute(text(f"ALTER TABLE agegroup DROP CONSTRAINT {agegroup_pk}"))
-
-        # Composite PK members can't be nullable.
-        conn.execute(text("ALTER TABLE swimevent ALTER COLUMN meetsid SET NOT NULL"))
-        conn.execute(text("ALTER TABLE agegroup ALTER COLUMN meetsid SET NOT NULL"))
-
-        # Add the composite PKs.
-        conn.execute(text("ALTER TABLE swimevent ADD PRIMARY KEY (meetsid, swimeventid)"))
-        conn.execute(text("ALTER TABLE agegroup ADD PRIMARY KEY (meetsid, agegroupid)"))
-
-        # Re-add the FKs as composite, referencing the new composite PKs.
-        conn.execute(text(
-            "ALTER TABLE agegroup ADD FOREIGN KEY (meetsid, swimeventid) "
-            "REFERENCES swimevent (meetsid, swimeventid) ON DELETE CASCADE"
-        ))
-        conn.execute(text(
-            "ALTER TABLE heat ADD FOREIGN KEY (meetsid, swimeventid) "
-            "REFERENCES swimevent (meetsid, swimeventid) ON DELETE CASCADE"
-        ))
-        conn.execute(text(
-            "ALTER TABLE swimresult ADD FOREIGN KEY (meetsid, swimeventid) "
-            "REFERENCES swimevent (meetsid, swimeventid)"
-        ))
-        conn.execute(text(
-            "ALTER TABLE swimresult ADD FOREIGN KEY (meetsid, agegroupid) "
-            "REFERENCES agegroup (meetsid, agegroupid)"
-        ))
-        # heat.agegroupid had no FK declared before this migration.
-        conn.execute(text(
-            "ALTER TABLE heat ADD FOREIGN KEY (meetsid, agegroupid) "
-            "REFERENCES agegroup (meetsid, agegroupid)"
-        ))
-
-        # uq_swimresult_entry must include meetsid or it blocks the same
-        # athlete registering for "event 1065" in two concurrently-open meets.
-        uq_name = None
-        for uq in insp2.get_unique_constraints("swimresult"):
-            if uq["name"] == "uq_swimresult_entry":
-                uq_name = uq["name"]
-                break
-        if uq_name:
-            conn.execute(text(f"ALTER TABLE swimresult DROP CONSTRAINT {uq_name}"))
-        conn.execute(text(
-            "ALTER TABLE swimresult ADD CONSTRAINT uq_swimresult_entry "
-            "UNIQUE (meetsid, athleteid, swimeventid, age_code)"
-        ))
 
 
 def _rebuild_table_sqlite(conn, insp, table_name: str, target_table) -> None:

@@ -110,7 +110,7 @@ Both apps use the same EventsPage from shared-ui. Changes go in:
 ### Docker build context
 Team-app `docker-compose.yml` uses `context: ../..` (monorepo root). Always run `docker compose` from `packages/team-app/`, never from the root.
 
-### Column encoding (SQLite + PostgreSQL)
+### Column encoding (SQLite; also meet-app's optional shared PostgreSQL)
 - `swimevent.roundname` — event name (NOT `name`)
 - `swimevent.internalevent` — `'T'` = pause/admin event
 - `swimevent.round` — `11` in MDB encoding means Break/Pause → converted to `internalevent='T'` on import
@@ -199,7 +199,7 @@ Both apps show two entry tabs:
 RelayEntryPage.tsx
     ↓ useApi()
     ├── meet-app: registrationApiElectron.ts → Electron IPC → SQLite (relay/relayposition tables)
-    └── team-app: meetApi.js → HTTP fetch → FastAPI → PostgreSQL (relays/relayspos tables)
+    └── team-app: meetApi.js → HTTP fetch → FastAPI → SQLite (relays/relayspos tables)
 ```
 
 ### LXF Import (relay)

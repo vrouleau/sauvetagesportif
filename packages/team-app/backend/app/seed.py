@@ -242,13 +242,6 @@ def seed_from_lxf(db: Session, file_bytes: bytes, meetsid: int | None = None) ->
                     entries_added += 1
 
     db.commit()
-    # Reset PostgreSQL sequences to avoid PK conflicts after bulk insert
-    from sqlalchemy import text
-    dialect = db.bind.dialect.name if db.bind else "unknown"
-    if dialect == "postgresql":
-        db.execute(text("SELECT setval('clubs_clubsid_seq', GREATEST(COALESCE((SELECT MAX(clubsid) FROM clubs), 0), 1))"))
-        db.execute(text("SELECT setval('members_membersid_seq', GREATEST(COALESCE((SELECT MAX(membersid) FROM members), 0), 1))"))
-        db.commit()
     return {
         "clubs_added": clubs_added,
         "athletes_added": athletes_added,

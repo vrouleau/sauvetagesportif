@@ -1,8 +1,5 @@
 # Default compose — SQLite backend (no external DB needed)
 # Usage: docker compose up --build -d
-#
-# To use PostgreSQL instead:
-#   docker compose -f docker-compose.yml -f docker-compose.postgres.yml up --build -d
 
 services:
   backend:

@@ -1,7 +1,7 @@
 # Test overlay — exposes backend on port 8000 for integration tests, and
 # replaces Resend with a local fake (tests/fake_resend) so email flows are
 # tested end to end without ever sending real email.
-# Usage: docker compose -f docker-compose.yml -f docker-compose.postgres.yml -f docker-compose.test.yml --env-file tests/test.env up --build -d
+# Usage: docker compose -f docker-compose.yml -f docker-compose.test.yml --env-file tests/test.env up --build -d
 
 services:
   backend:
