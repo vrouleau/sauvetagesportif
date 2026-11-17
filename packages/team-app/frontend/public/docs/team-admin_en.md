@@ -95,11 +95,6 @@ See the [Organizer Guide](team-organizer) for details on these workflows.
 
 The **Historical Meets** section lets you import past competition results. These results are used to compute athletes' best times for future meets.
 
-### Import Team.mdb (legacy)
-
-1. Click **Import Team.mdb** and select the legacy Access database
-2. All meets, members, and results are imported
-
 ### Import results .lxf
 
 1. Click **Import results .lxf** and select a Lenex results file

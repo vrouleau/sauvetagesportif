@@ -247,7 +247,7 @@ Web app for team registration before the competition.
 - **React frontend** with shared EventsPage from `shared-ui`
 - **Unified schema**: Team Manager tables (clubs, members, meets, results) + Meet Manager tables (swimresult.athleteid → members.membersid directly, no separate athlete/club tables)
 - **Features**: athlete registration, relay assignment, best times (from historical results), invoices (Stripe), email invitations, backup/restore (SQLite snapshots with auto-scheduler)
-- **Historical meets**: import from Team.mdb or results .lxf (from meet-app); best times computed across all results (18-month expiry); meets deduplicated by name on re-import
+- **Historical meets**: import from results .lxf (from meet-app); best times computed across all results (18-month expiry); meets deduplicated by name on re-import
 - **Close-meet flow**: organizer imports results .lxf → archived as historical meet → current meet reset → all club PINs regenerated → organizer cleared → admin invites next organizer
 - **Data adapter**: `meetApi.js` wraps HTTP `fetch('/api/...')` → FastAPI backend
 

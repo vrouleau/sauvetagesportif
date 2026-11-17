@@ -197,7 +197,6 @@ Coach best times are written only at meet close, never on registration:
 | `POST /api/admin/backups/create` | Create a manual backup now | Admin |
 | `GET /api/admin/backups/{filename}` | Download a specific backup | Admin |
 | `DELETE /api/admin/backups/{filename}` | Delete a specific backup | Admin |
-| `POST /api/admin/import-mdb` | Import Splash Team Manager .mdb file | Admin |
 | `GET /api/admin/historical-meets` | List historical meets (Team Manager schema) | Admin |
 | `DELETE /api/admin/historical-meets/{id}` | Delete a historical meet | Admin |
 | `POST /api/import-results-lxf` | Import results .lxf as historical meet; organizer path also resets current meet + PINs + clears organizer. Guards (before any write): 400 `not_results_file` if no RESULT has a time/status; 409 `meet_mismatch` (override `?force_meet=true`, separate from `?force`) if the file's meet name or event ids don't match the open meet being closed — see `lxf_to_team.py` | Organizer/Admin |
@@ -261,7 +260,6 @@ backend/app/
   invoices.py           — Invoice line items, deterministic invoice numbers (YEAR-MEET-CLUB[-Rn]), PDF renderer
   emailing.py           — Resend transport, shared email footer, invoice + organizer-summary email templates
   seed.py               — Entries .lxf parser (clubs/athletes/HANDICAP into members table)
-  mdb_import.py         — Splash Team Manager .mdb import (via mdbtools)
   lxf_to_team.py        — Import results .lxf as historical meet (merges clubs/members/HANDICAP, upserts if same name)
   historical_import.py  — Import older results .lxf as historical meet (merges clubs/members/HANDICAP)
 frontend/src/
