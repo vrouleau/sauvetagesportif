@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.5.22] - 2026-11-17
+
+### ✨ Features
+
+- relay entry time + HC (exhibition) for pool relays, relay history (`5029b17`)
+- guard LXF imports against swimstyle ids outside the 5xx/6xx series (`4798b59`)
+- show organizing club in top bar (`b7685c9`)
+
+### ♻️ Refactoring
+
+- drop PostgreSQL support, SQLite only (`8a34b84`)
+
+### 🔧 Chores
+
+- remove obsolete Team Manager .mdb import (`3434eda`)
+
+### Other
+
+- Merge pull request #102 from vrouleau/feature/relay-entrytime-exhibition (`c052938`)
+- Merge pull request #101 from vrouleau/chore/remove-team-mdb-import (`d67ddda`)
+- Merge pull request #100 from vrouleau/feature/team-app-sqlite-only (`57fd8b6`)
+- Merge pull request #99 from vrouleau/feature/swimstyle-id-guard (`8db9a5b`)
+- Merge pull request #98 from vrouleau/feature/topbar-organizer (`a552a4c`)
+
 ## [0.5.21] - 2026-11-16
 
 ### ✨ Features
