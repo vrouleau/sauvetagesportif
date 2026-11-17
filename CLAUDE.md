@@ -177,6 +177,8 @@ Both apps show two entry tabs:
 | `db:delete-relay-team` | Delete relay team |
 | `db:set-relay-team-member` | Assign/remove member at position |
 | `db:set-relay-team-name` | Set custom team name |
+| `db:set-relay-team-hc` | Set/clear HC (hors concours) — `relay.resultstatus=4` |
+| `db:set-relay-team-entry-time` | Set/clear pool relay entry time (ms) — `relay.entrytime` |
 
 ### Team-app API Endpoints (relay)
 | Endpoint | Purpose |
@@ -186,11 +188,20 @@ Both apps show two entry tabs:
 | `DELETE /api/relay-teams/{id}` | Delete relay team |
 | `PUT /api/relay-teams/{id}/members/{pos}` | Assign member at position |
 | `PUT /api/relay-teams/{id}/name` | Set custom team name |
+| `PUT /api/relay-teams/{id}/entry-time` | Set/clear pool relay entry time `{entryTimeMs}` (400 on beach/SERC) |
+| `PUT /api/relay-teams/{id}/hc` | Set/clear HC `{isHC}` — `relays.resultstatus=4` (migration m0008) |
+
+### Relay entry time + HC (exhibition)
+- **Entry time** (pool relays only — beach relays are ranked, SERC is judged): typed by the coach on each team card (`RelayEntryPage`), exported as the relay `ENTRY@entrytime`; meet-app seeds relay heats by `relay.entrytime` like individual entries (NT last).
+- **Suggested time**: each member's *relay best time* = the fastest total of any archived team they swam on, per style/course (`best_times.get_relay_best_times`, team-app; 18-month expiry, HC/DSQ/DNS excluded; Lancer de la corde is course-free). The suggestion is the **average of the members who have one** (`shared-ui/src/logic/relayEntryTime.ts`), filled in and kept in step as members change — until the coach types a time, which is then kept.
+- **Relay history**: meet-app's results export writes `RELAY > RESULTS > RESULT` (team total, status, the swimmers) and relay-only swimmers as `ATHLETE`s; both team-app results imports archive them into `relays`/`relayspos` under the historical meet (`relay_archive.py`).
+- **HC**: set by the club's coach in either app; stored in Splash's own encoding (`resultstatus=4`) on `relay`/`relays` and `swimresult`; travels as LXF `ENTRY status="EXH"` (individual and relay). An HC team skips the composition rules; heat seeding puts HC entries in the exhibition group (`SEEDEXHLAST`).
 
 ### Team Composition Rules (see `docs/RELAY_TEAM_RULES.md`)
 - **Age group**: a team's category = the event it was created under (not computed from members). Members must be that exact category or the single adjacent-younger one (swim-up, never the reverse). At least 2 members must match the exact category — 1-3 and 0-4 splits are invalid. Beyond that, any split is valid (4-0, 3-1, 2-2) — no majority requirement. No per-team age label is shown in the UI; the event card's own category applies.
 - **Mixed events (gender=X)**: exactly 2M + 2F required (for 4-person relay)
 - **SERC events (swimstyle 530)**: NO gender or age restrictions — any composition allowed
+- **HC (exhibition) teams**: no gender or age restrictions either, in both apps
 - **Eligibility**: same club, registered for individual events, no duplicate across teams for same event
 - **Team naming**: concatenated last names ("Tremblay/Gagnon/Roy/Boucher") or custom name
 
@@ -203,8 +214,8 @@ RelayEntryPage.tsx
 ```
 
 ### LXF Import (relay)
-- **meet-app**: `importLenex` now processes `RELAY` and `RELAYPOSITION` elements from .lxf files
-- **team-app**: `upload_entries` also imports relay teams from LXF
+- **meet-app**: `importLenex` now processes `RELAY` and `RELAYPOSITION` elements from .lxf files, including `ENTRY@entrytime` and `ENTRY@status="EXH"`
+- **team-app**: `upload_entries` also imports relay teams from LXF (entry time + EXH too); the results imports archive relay results as relay history
 
 ### SMB Import/Export (relay)
 meet-app handles `relay`, `relayposition`, and `relaysplit` tables in its own SMB backup/restore (Splash interop). team-app has no `.smb` support (removed — superseded by LXF).

@@ -2054,6 +2054,7 @@ interface EntryRow {
   infocode: string | null
   qtdate: string | number | null
   entrycourse: number | null
+  resultstatus: number | null
 }
 
 function loadEntries(
@@ -2069,14 +2070,14 @@ function loadEntries(
   eventCourse: number,
   isRelay = false,
 ): EntryRow[] {
-  // `relay` has no bonusentry/lateentry/infocode/qtdate/entrycourse columns —
-  // relay entries always fall into the "regular timed"/NT priority bucket.
+  // `relay` has no bonusentry/lateentry/infocode/qtdate/entrycourse columns — a relay
+  // entry is regular timed / NT, or exhibition when the team is HC (resultstatus=4).
   const sql = isRelay
-    ? `SELECT relayid AS id, entrytime, NULL AS bonusentry, NULL AS lateentry, NULL AS infocode, NULL AS qtdate, NULL AS entrycourse
+    ? `SELECT relayid AS id, entrytime, NULL AS bonusentry, NULL AS lateentry, NULL AS infocode, NULL AS qtdate, NULL AS entrycourse, resultstatus
        FROM relay
        WHERE swimeventid=?${agegroupId != null ? ' AND agegroupid=?' : ''}
        ORDER BY relayid`
-    : `SELECT swimresultid AS id, entrytime, bonusentry, lateentry, infocode, qtdate, entrycourse
+    : `SELECT swimresultid AS id, entrytime, bonusentry, lateentry, infocode, qtdate, entrycourse, resultstatus
        FROM swimresult
        WHERE swimeventid=?${agegroupId != null ? ' AND agegroupid=?' : ''}
        ORDER BY swimresultid`
@@ -2118,8 +2119,9 @@ function loadEntries(
 }
 
 function entryPriority(e: EntryRow, seedBonusLast: boolean, seedExhLast: boolean, seedLateLast: boolean): number {
-  // Exhibition entries (identified by infocode containing 'EXH')
-  if (seedExhLast && e.infocode && e.infocode.toUpperCase().includes('EXH')) return 4
+  // Exhibition entries: HC (resultstatus=4, how the app and team-app mark hors concours)
+  // or Splash's infocode containing 'EXH'
+  if (seedExhLast && (e.resultstatus === 4 || (e.infocode && e.infocode.toUpperCase().includes('EXH')))) return 4
   // Bonus entries
   if (seedBonusLast && e.bonusentry === 'T') return 3
   // Late entries

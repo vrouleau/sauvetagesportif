@@ -296,6 +296,8 @@ time, `.smb` export carries them through correctly too.
 | `db:delete-relay-team` | Delete relay team |
 | `db:set-relay-team-member` | Assign/remove member at position |
 | `db:set-relay-team-name` | Set custom team name |
+| `db:set-relay-team-hc` | Set/clear HC — `relay.resultstatus=4` |
+| `db:set-relay-team-entry-time` | Set/clear pool relay entry time (ms) — `relay.entrytime`, used for relay heat seeding |
 | `db:get-meet-type` | Get meet type (POOL/BEACH) from BSGLOBAL |
 | `db:get-matching-age` | Age to use for age-group matching (season-reference-date rules, see `config/CLAUDE.md`) |
 | `menu:open-guide` | Open in-app workflow guide (pool/beach) |
@@ -318,7 +320,8 @@ Relay team management for events with `relaycount > 1`.
 RelayEntryPage (shared-ui)
   → registrationApiElectron.ts
     → IPC: db:get-relay-page-data, db:create-relay-team, db:delete-relay-team,
-           db:set-relay-team-member, db:set-relay-team-name
+           db:set-relay-team-member, db:set-relay-team-name,
+           db:set-relay-team-hc, db:set-relay-team-entry-time
       → SQLite: relay, relayposition tables
 ```
 
@@ -377,7 +380,7 @@ Custom: `swimsession.lanesbyplace` (comma-separated lane numbers).
 1. Regular timed entries
 2. Late entries (`swimresult.lateentry='T'`)
 3. Bonus entries (`swimresult.bonusentry='T'`)
-4. Exhibition entries (`swimresult.infocode` contains 'EXH')
+4. Exhibition entries — HC (`resultstatus=4` on `swimresult`/`relay`, from the HC checkbox or an LXF `ENTRY status="EXH"`) or Splash's `infocode` containing 'EXH'
 5. No-time entries (NT)
 
 ### Beach mode

@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import re
 from datetime import date, datetime
-from sqlalchemy import DateTime, func, or_
+from sqlalchemy import DateTime, func, or_, true
 from sqlalchemy.orm import Session, joinedload
 
 from .models import SwimStyle
@@ -527,3 +527,58 @@ def _course_int(course_str: str) -> int | None:
     if course_str == "SCM":
         return 3
     return None
+
+
+# --- Relay best times ---------------------------------------------------------
+#
+# A relay time belongs to the team, but every member of an archived relay team
+# is credited with that team's total: a member's relay best time for a style and
+# course is the fastest total of any team they swam on. Archived relays live in
+# `relays` (totaltime, resultstatus) + `relayspos` (members), written by the
+# results imports. Used only to suggest a new team's entry time at registration
+# (the average of its members' relay best times) — never as an individual best.
+#
+# Same rules as individual best times: pool only, official and non-HC/DSQ/DNS/DNF
+# (resultstatus NULL/0), not older than max_age_months (team's eventdate, else
+# its meet's start date). SERC (530) is judged, not timed. Throws from the deck
+# (Lancer de la corde, distance < 25 m) are course-free, like individual throws.
+
+SERC_STYLE_ID = 530
+
+
+def get_relay_best_times(
+    db: Session,
+    member_ids: list[int] | set[int],
+    style_id: int,
+    course: str | None,
+    max_age_months: int = 18,
+) -> dict[int, int]:
+    """{membersid: best relay team total (ms)} for one relay style and course."""
+    from .models_team import Relay, RelayPos
+
+    course_int = _course_int(course or "")
+    ids = [m for m in member_ids if m]
+    if not ids or course_int is None or style_id >= BEACH_STYLE_MIN or style_id == SERC_STYLE_ID:
+        return {}
+    cutoff = datetime.combine(_cutoff_date(max_age_months), datetime.min.time())
+    eff = func.coalesce(Relay.eventdate, Meet.mindate, type_=DateTime)
+    style = db.get(SwimStyle, style_id)
+    course_free = bool(style and style.distance and 0 < style.distance < COURSE_FREE_MAX_DISTANCE)
+    rows = (
+        db.query(RelayPos.membersid, func.min(Relay.totaltime))
+        .join(Relay, Relay.relaysid == RelayPos.relaysid)
+        .outerjoin(Meet, Meet.meetsid == Relay.meetsid)
+        .filter(
+            RelayPos.membersid.in_(ids),
+            Relay.stylesid == style_id,
+            true() if course_free else Relay.course == course_int,
+            Relay.totaltime.isnot(None),
+            Relay.totaltime > 0,
+            or_(Relay.resulttyp.is_(None), Relay.resulttyp == 0),
+            or_(Relay.resultstatus.is_(None), Relay.resultstatus == 0),
+            or_(eff.is_(None), eff >= cutoff),
+        )
+        .group_by(RelayPos.membersid)
+        .all()
+    )
+    return {mid: t for mid, t in rows if t}

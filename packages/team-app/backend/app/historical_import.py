@@ -182,6 +182,18 @@ def import_historical_meet(db: Session, file_bytes: bytes, force: bool = False) 
             Meet.name == meta["name"],
             Meet.mindate == _dt(meta["startdate"].year, meta["startdate"].month, meta["startdate"].day),
         ).first()
+    else:
+        # A file with no date at all (no MEET or SESSION date — e.g. some normalized
+        # Splash exports) can't be matched by name + date. Match the one completed
+        # meet with that name instead, and keep that meet's own date: re-importing
+        # such a file used to create a second, undated copy of the meet (whose
+        # results never expire).
+        same_name = db.query(Meet).filter(
+            func.lower(Meet.name) == meta["name"].lower(),
+            Meet.meetstate == 3,
+        ).all()
+        if len(same_name) == 1:
+            existing_meet = same_name[0]
 
     if existing_meet and not force:
         return {
@@ -193,6 +205,8 @@ def import_historical_meet(db: Session, file_bytes: bytes, force: bool = False) 
 
     # If re-importing, wipe old results for this meet
     if existing_meet:
+        from .relay_archive import delete_archived_relays
+        delete_archived_relays(db, existing_meet.meetsid)
         db.query(Result).filter(Result.meetsid == existing_meet.meetsid).delete()
         db.query(MemberMeet).filter(MemberMeet.meetsid == existing_meet.meetsid).delete()
         db.query(Event).filter(Event.meetsid == existing_meet.meetsid).delete()
@@ -254,6 +268,10 @@ def import_historical_meet(db: Session, file_bytes: bytes, force: bool = False) 
     clubs_matched = 0
     clubs_created = 0
     member_meet_ids: set[int] = set()
+    relays_imported = 0
+    # The file's date, else (re-import of a dateless file) the existing meet's own date
+    meet_date = (_dt(meta["startdate"].year, meta["startdate"].month, meta["startdate"].day)
+                 if meta["startdate"] else meet.mindate)
     # Get next result ID to avoid PK conflicts
     next_result_id = (db.query(_func.max(Result.resultsid)).scalar() or 0) + 1
 
@@ -276,6 +294,7 @@ def import_historical_meet(db: Session, file_bytes: bytes, force: bool = False) 
             clubs_created += 1
         clubs_matched += 1
 
+        athlete_members: dict[str, int] = {}  # file athleteid -> membersid (relay positions)
         for ath_el in club_el.iter("ATHLETE"):
             first = ath_el.get("firstname", "").strip().rstrip(",")
             last = ath_el.get("lastname", "").strip().rstrip(",")
@@ -315,6 +334,8 @@ def import_historical_meet(db: Session, file_bytes: bytes, force: bool = False) 
                 member.handicapex = exception_code
 
             athletes_matched += 1
+            if ath_el.get("athleteid"):
+                athlete_members[ath_el.get("athleteid")] = member.membersid
 
             # Track MemberMeet link
             if member.membersid not in member_meet_ids:
@@ -356,11 +377,21 @@ def import_historical_meet(db: Session, file_bytes: bytes, force: bool = False) 
                     course=course_int,
                     eventnumb=event_number.get(eid, 0),
                     resulttyp=0,  # official
-                    eventdate=_dt(meta["startdate"].year, meta["startdate"].month, meta["startdate"].day) if meta["startdate"] else None,
+                    eventdate=meet_date,
                     resultstatus=4 if is_hc else None,
                 ))
                 next_result_id += 1
                 results_imported += 1
+
+        # Relay results: team total + members (relay history, see relay_archive.py)
+        from .relay_archive import archive_club_relays
+        n_relays, _members = archive_club_relays(
+            db, club_el,
+            club_id=club.clubsid, meet_id=meet.meetsid, meet_date=meet_date, course=course_int,
+            event_style=event_style, event_number=event_number,
+            athlete_members=athlete_members,
+        )
+        relays_imported += n_relays
 
     # A faster result from this meet replaces a stored coach best time
     # (only when the meet isn't older than the stored value).
@@ -372,9 +403,10 @@ def import_historical_meet(db: Session, file_bytes: bytes, force: bool = False) 
     return {
         "meet_id": meet.meetsid,
         "meet_name": meta["name"],
-        "meet_date": str(meta["startdate"]) if meta["startdate"] else None,
+        "meet_date": str(meet_date.date()) if meet_date else None,
         "course": meta["course"],
         "results_imported": results_imported,
+        "relays_imported": relays_imported,
         "events_created": events_created,
         "athletes_matched": athletes_matched,
         "athletes_created": athletes_created,

@@ -318,6 +318,10 @@ export const registrationApiElectron: RegistrationAPI = {
     await ipc()?.setRelayTeamHC(teamId, isHC)
   },
 
+  async setRelayTeamEntryTime(teamId: number, entryTimeMs: number | null): Promise<void> {
+    await ipc()?.setRelayTeamEntryTime(teamId, entryTimeMs)
+  },
+
   async setRelayTeamName(teamId: number, name: string | null): Promise<void> {
     await ipc()?.setRelayTeamName(teamId, name)
   },

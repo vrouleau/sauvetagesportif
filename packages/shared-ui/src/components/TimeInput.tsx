@@ -24,7 +24,7 @@ import { useState } from 'react'
  * → "1:32.45"). Shared by RegistrationPanel and RegistrationPage — both offer
  * the same free-text entry-time editing UX.
  */
-export default function TimeInput({ defaultValue, onSave }: { defaultValue: string; onSave: (v: string) => void }) {
+export default function TimeInput({ defaultValue, onSave, disabled, title }: { defaultValue: string; onSave: (v: string) => void; disabled?: boolean; title?: string }) {
   const [value, setValue] = useState(defaultValue || '')
   const [error, setError] = useState(false)
 
@@ -46,8 +46,10 @@ export default function TimeInput({ defaultValue, onSave }: { defaultValue: stri
 
   return (
     <input
-      className={`border border-gray-300 px-1 py-0.5 rounded text-xs w-20 font-mono ${error ? 'border-red-500 bg-red-50' : ''}`}
+      className={`border border-gray-300 px-1 py-0.5 rounded text-xs w-20 font-mono disabled:bg-gray-100 disabled:text-gray-500 ${error ? 'border-red-500 bg-red-50' : ''}`}
       placeholder="m:ss.cc"
+      title={title}
+      disabled={disabled}
       value={value}
       onChange={e => { setValue(e.target.value); setError(false) }}
       onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}

@@ -227,7 +227,9 @@ def import_lxf_as_meet(db: DbSession, content: bytes, force: bool = False) -> di
         if meet_date:
             existing_meet.mindate = meet_date
             existing_meet.maxdate = meet_date
-        # Replace existing results/events/sessions for this meet
+        # Replace existing results/relays/events/sessions for this meet
+        from .relay_archive import delete_archived_relays
+        delete_archived_relays(db, meet_id)
         db.query(MemberMeet).filter(MemberMeet.meetsid == meet_id).delete()
         db.query(Result).filter(Result.meetsid == meet_id).delete()
         db.query(Event).filter(Event.meetsid == meet_id).delete()
@@ -248,11 +250,16 @@ def import_lxf_as_meet(db: DbSession, content: bytes, force: bool = False) -> di
 
     # ── Build eventid → swimstyleid map from SESSIONS/EVENTS ─────────────────
     event_style_map: dict[str, int | None] = {}
+    event_number_map: dict[str, int] = {}
     events_imported = 0
     for ev_el in root.iter("EVENT"):
         eid = ev_el.get("eventid")
         if not eid:
             continue
+        try:
+            event_number_map[eid] = int(ev_el.get("number") or 0)
+        except ValueError:
+            pass
         style_el = ev_el.find("SWIMSTYLE")
         if style_el is not None:
             style_id_str = style_el.get("swimstyleid")
@@ -308,6 +315,7 @@ def import_lxf_as_meet(db: DbSession, content: bytes, force: bool = False) -> di
     clubs_imported = 0
     members_imported = 0
     results_imported = 0
+    relays_imported = 0
     member_ids_with_results: set[int] = set()
 
     for club_el in root.iter("CLUB"):
@@ -333,6 +341,7 @@ def import_lxf_as_meet(db: DbSession, content: bytes, force: bool = False) -> di
             db.flush()
             clubs_imported += 1
 
+        athlete_members: dict[str, int] = {}  # file athleteid -> membersid (relay positions)
         for ath_el in club_el.iter("ATHLETE"):
             license_val = (ath_el.get("license") or "").strip()
             firstname = ath_el.get("firstname") or ""
@@ -371,6 +380,9 @@ def import_lxf_as_meet(db: DbSession, content: bytes, force: bool = False) -> di
                 db.flush()
                 members_imported += 1
 
+            if ath_el.get("athleteid"):
+                athlete_members[ath_el.get("athleteid")] = member_id
+
             for result_el in ath_el.iter("RESULT"):
                 eid = result_el.get("eventid")
                 swimtime_ms = _lenex_time_to_ms(result_el.get("swimtime"))
@@ -395,6 +407,17 @@ def import_lxf_as_meet(db: DbSession, content: bytes, force: bool = False) -> di
                 ))
                 results_imported += 1
                 member_ids_with_results.add(member_id)
+
+        # Relay results: team total + members (relay history, see relay_archive.py)
+        from .relay_archive import archive_club_relays
+        n_relays, relay_members = archive_club_relays(
+            db, club_el,
+            club_id=club_team_id, meet_id=meet_id, meet_date=meet_date, course=meet_course,
+            event_style=event_style_map, event_number=event_number_map,
+            athlete_members=athlete_members,
+        )
+        relays_imported += n_relays
+        member_ids_with_results |= relay_members
     db.flush()
 
     # ── MemberMeet links ──────────────────────────────────────────────────────
@@ -420,4 +443,5 @@ def import_lxf_as_meet(db: DbSession, content: bytes, force: bool = False) -> di
         "sessions": sessions_imported,
         "events": events_imported,
         "results": results_imported,
+        "relays": relays_imported,
     }

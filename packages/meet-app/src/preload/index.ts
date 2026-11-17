@@ -163,6 +163,8 @@ const api = {
       ipcRenderer.invoke('db:set-relay-team-name', teamId, name),
     setRelayTeamHC: (teamId: number, isHC: boolean) =>
       ipcRenderer.invoke('db:set-relay-team-hc', teamId, isHC),
+    setRelayTeamEntryTime: (teamId: number, entryTimeMs: number | null) =>
+      ipcRenderer.invoke('db:set-relay-team-entry-time', teamId, entryTimeMs),
     reorderEvents: (updates: Array<{ eventId: number; sessionId: number; sortcode: number }>) =>
       ipcRenderer.invoke('db:reorder-events', updates),
     generateHeats: (eventId?: number, sessionId?: number) =>

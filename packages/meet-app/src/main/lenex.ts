@@ -446,12 +446,14 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
     // that now-stale registration so it doesn't linger as an orphan (no heat, no time,
     // no status — never touched) that's invisible everywhere heats/results are shown
     // but still counted as a registration. Never touches a row that has any real
-    // heat/lane/time/status data.
+    // heat/lane/time/result-status data (an HC flag, resultstatus=4, comes from the
+    // registration itself, not from a result).
     clearStaleCategoryEntries: db.prepare(`
       DELETE FROM swimresult
       WHERE athleteid = ?
         AND swimeventid != ?
-        AND heatid IS NULL AND lane IS NULL AND swimtime IS NULL AND resultstatus IS NULL
+        AND heatid IS NULL AND lane IS NULL AND swimtime IS NULL
+        AND (resultstatus IS NULL OR resultstatus = 4)
         AND swimeventid IN (
           SELECT swimeventid FROM swimevent
           WHERE swimstyleid = (SELECT swimstyleid FROM swimevent WHERE swimeventid = ?)
@@ -719,12 +721,16 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
         const entrytime = lenexTimeToMs(ea2.entrytime)
         const agegroupid = parseInt(ea2.agegroupid ?? '0', 10) || null
         const entrycourse = ea2.entrycourse ? encodeCourse(ea2.entrycourse) : null
+        // ENTRY status="EXH" = hors concours (team-app HC checkbox) → resultstatus=4, the
+        // same Splash encoding HC already uses everywhere else. Other ENTRY statuses
+        // (RJC/SICK/WDR) aren't modelled here.
+        const entryStatus = (ea2.status ?? '').toUpperCase() === 'EXH' ? 4 : null
         const resId = mintId()
         try {
           stmts.clearStaleCategoryEntries.run(athId, eventId, eventId)
           stmts.upsertResult.run(
             resId, athId, eventId, agegroupid, null, null, entrytime, entrycourse,
-            null, null, null
+            null, entryStatus, null
           )
           summary.results++
         } catch (e) {
@@ -784,6 +790,7 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
         let agegroupid = parseInt(ea3.agegroupid ?? '0', 10) || null
         const entrytime = lenexTimeToMs(ea3.entrytime)
         const entrycourse = ea3.entrycourse ? encodeCourse(ea3.entrycourse) : null
+        const relayStatus = (ea3.status ?? '').toUpperCase() === 'EXH' ? 4 : null  // HC team
 
         // If no agegroupid in ENTRY, infer from the event's age groups
         if (!agegroupid) {
@@ -797,9 +804,9 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
         const relayId = mintId()
         try {
           db.prepare(
-            `INSERT INTO relay (relayid, clubid, swimeventid, agegroupid, teamnumber, name, gender, entrytime, entrycourse)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-          ).run(relayId, clubId, eventId, agegroupid, teamNumber, teamName, relayGender, entrytime, entrycourse)
+            `INSERT INTO relay (relayid, clubid, swimeventid, agegroupid, teamnumber, name, gender, entrytime, entrycourse, resultstatus)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          ).run(relayId, clubId, eventId, agegroupid, teamNumber, teamName, relayGender, entrytime, entrycourse, relayStatus)
 
           // Import relay positions — check ENTRY first, then fall back to RELAY level
           const entryPositions = child(entry, 'RELAYPOSITIONS')
@@ -1192,6 +1199,19 @@ export function exportLenexResults(filePath: string, db: Database.Database): Exp
     clubid: number | null
   }>).filter(r => r.heatid != null && validatedHeatIds.has(r.heatid))
 
+  // ── Relay results (validated heats only) — written as RELAY > RESULTS > RESULT ──
+  // team-app archives them (team total + members) as relay history: every member is
+  // credited with the team's time, which suggests future relay entry times.
+  const relayResults = (db.prepare(
+    `SELECT relayid, swimeventid, heatid, lane, swimtime, reactiontime, resultstatus
+     FROM relay
+     WHERE swimtime IS NOT NULL OR resultstatus IS NOT NULL`
+  ).all() as Array<{
+    relayid: number; swimeventid: number | null; heatid: number | null; lane: number | null
+    swimtime: number | null; reactiontime: number | null; resultstatus: number | null
+  }>).filter(r => r.heatid != null && validatedHeatIds.has(r.heatid))
+  const relayResultById = new Map(relayResults.map(r => [r.relayid, r]))
+
   // ── Splits ──────────────────────────────────────────────────────────────────
   const splits = db.prepare(
     `SELECT swimresultid, distance, swimtime FROM split ORDER BY swimresultid, distance`
@@ -1240,6 +1260,38 @@ export function exportLenexResults(filePath: string, db: Database.Database): Exp
         nation: r.athnation,
         license: r.license,
       })
+    }
+  }
+
+  // Relay swimmers need an ATHLETE element too (RELAYPOSITION references it by
+  // athleteid), even when they have no individual result.
+  if (relayResults.length > 0) {
+    const rrph = relayResults.map(() => '?').join(',')
+    const relaySwimmers = db.prepare(
+      `SELECT DISTINCT a.athleteid, a.firstname, a.lastname, a.birthdate, a.gender, a.nation, a.license, a.clubid
+       FROM relayposition rp
+       JOIN athlete a ON a.athleteid = rp.athleteid
+       WHERE rp.relayid IN (${rrph})
+       ORDER BY a.athleteid`
+    ).all(...relayResults.map(r => r.relayid)) as Array<{
+      athleteid: number; firstname: string | null; lastname: string | null; birthdate: string | null
+      gender: number | null; nation: string | null; license: string | null; clubid: number | null
+    }>
+    for (const a of relaySwimmers) {
+      if (!a.clubid) continue
+      if (!athletesByClub.has(a.clubid)) athletesByClub.set(a.clubid, [])
+      const list = athletesByClub.get(a.clubid)!
+      if (!list.find(x => x.athleteid === a.athleteid)) {
+        list.push({
+          athleteid: a.athleteid,
+          firstname: a.firstname ?? '',
+          lastname: a.lastname ?? '',
+          birthdate: a.birthdate,
+          gender: a.gender ?? 3,
+          nation: a.nation,
+          license: a.license,
+        })
+      }
     }
   }
 
@@ -1353,12 +1405,13 @@ export function exportLenexResults(filePath: string, db: Database.Database): Exp
 
     // ── RELAYS (relay teams from relay/relayposition tables) ────────────
     const clubRelays = db.prepare(
-      `SELECT r.relayid, r.teamnumber, r.swimeventid, r.agegroupid
+      `SELECT r.relayid, r.teamnumber, r.swimeventid, r.agegroupid, r.name
        FROM relay r
        WHERE r.clubid = ?
        ORDER BY r.swimeventid, r.teamnumber`
     ).all(clubId) as Array<{
       relayid: number; teamnumber: number | null; swimeventid: number | null; agegroupid: number | null
+      name: string | null
     }>
     if (clubRelays.length > 0) {
       // Get event gender info for relay gender attribute
@@ -1389,7 +1442,7 @@ export function exportLenexResults(filePath: string, db: Database.Database): Exp
       lines.push('          <RELAYS>')
       for (const relay of clubRelays) {
         const gender = relay.swimeventid ? eventGenderMap.get(relay.swimeventid) : undefined
-        lines.push(`            <RELAY${attr('number', relay.teamnumber ?? 1)}${attr('gender', gender != null ? decodeGender(gender) : undefined)}>`)
+        lines.push(`            <RELAY${attr('number', relay.teamnumber ?? 1)}${attr('name', relay.name)}${attr('gender', gender != null ? decodeGender(gender) : undefined)}>`)
         const positions = posByRelay.get(relay.relayid) ?? []
         if (positions.length > 0) {
           lines.push('              <RELAYPOSITIONS>')
@@ -1397,6 +1450,26 @@ export function exportLenexResults(filePath: string, db: Database.Database): Exp
             lines.push(`                <RELAYPOSITION${attr('number', pos.relaynumber)}${attr('athleteid', pos.athleteid)} />`)
           }
           lines.push('              </RELAYPOSITIONS>')
+        }
+        // The team's result (LENEX: RELAY > RESULTS > RESULT, with the swimmers who
+        // swam it as RELAYPOSITIONS) — only once its heat is validated, like individuals.
+        const rr = relayResultById.get(relay.relayid)
+        if (rr) {
+          const timeStr = msToLenexTime(rr.swimtime)
+          const status = decodeResultStatus(rr.resultstatus)
+          const rtStr = rr.reactiontime != null ? msToLenexTime(rr.reactiontime) : null
+          lines.push('              <RESULTS>')
+          lines.push(`                <RESULT${attr('resultid', rr.relayid)}${attr('eventid', rr.swimeventid)}${attr('heatid', rr.heatid)}${attr('lane', rr.lane)}${attr('swimtime', timeStr)}${attr('reactiontime', rtStr)}${attr('status', status)}>`)
+          if (positions.length > 0) {
+            lines.push('                  <RELAYPOSITIONS>')
+            for (const pos of positions) {
+              lines.push(`                    <RELAYPOSITION${attr('number', pos.relaynumber)}${attr('athleteid', pos.athleteid)} />`)
+            }
+            lines.push('                  </RELAYPOSITIONS>')
+          }
+          lines.push('                </RESULT>')
+          lines.push('              </RESULTS>')
+          summary.results++
         }
         lines.push('            </RELAY>')
       }

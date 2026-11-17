@@ -173,4 +173,12 @@ export const registrationApiHttp = {
   async setRelayTeamName(teamId, name) {
     await relayRequest('PUT', `/relay-teams/${teamId}/name`, { name })
   },
+
+  async setRelayTeamHC(teamId, isHC) {
+    await relayRequest('PUT', `/relay-teams/${teamId}/hc`, { isHC })
+  },
+
+  async setRelayTeamEntryTime(teamId, entryTimeMs) {
+    await relayRequest('PUT', `/relay-teams/${teamId}/entry-time`, { entryTimeMs })
+  },
 }

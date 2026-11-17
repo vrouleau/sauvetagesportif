@@ -751,7 +751,7 @@ ipcMain.handle('db:get-relay-page-data', (_event, clubId?: number) => {
     id: number; teamNumber: string; teamName: string | null
     ageGroup?: string
     members: Array<{ position: number; athleteId: number | null; athleteName: string | null }>
-    clubId?: number; clubName?: string; hc?: boolean
+    clubId?: number; clubName?: string; hc?: boolean; entryTimeMs?: number | null
   }>> = {}
 
   // Build a lookup for agegroupid -> ageCode
@@ -762,7 +762,7 @@ ipcMain.handle('db:get-relay-page-data', (_event, clubId?: number) => {
 
   // Query relays
   let relayQuery = `
-    SELECT r.relayid, r.clubid, r.swimeventid, r.agegroupid, r.teamnumber, r.name, r.resultstatus
+    SELECT r.relayid, r.clubid, r.swimeventid, r.agegroupid, r.teamnumber, r.name, r.resultstatus, r.entrytime
     FROM relay r
     WHERE r.swimeventid IN (${placeholders})
   `
@@ -776,6 +776,7 @@ ipcMain.handle('db:get-relay-page-data', (_event, clubId?: number) => {
   const relays = db.prepare(relayQuery).all(...relayParams) as Array<{
     relayid: number; clubid: number; swimeventid: number
     agegroupid: number | null; teamnumber: number | null; name: string | null; resultstatus: number | null
+    entrytime: number | null
   }>
 
   // Load all relay positions for these relays
@@ -891,6 +892,7 @@ ipcMain.handle('db:get-relay-page-data', (_event, clubId?: number) => {
       clubId: r.clubid,
       clubName: clubNamesMap.get(r.clubid) ?? undefined,
       hc: r.resultstatus === 4,
+      entryTimeMs: r.entrytime || null,
     })
   }
 
@@ -934,12 +936,15 @@ ipcMain.handle('db:get-relay-page-data', (_event, clubId?: number) => {
     }
   }
 
+  const meetTypeRow = db.prepare(`SELECT data FROM bsglobal WHERE name = 'MEET_TYPE'`).get() as { data: string } | undefined
+
   return {
     ageCategories,
     teamsByEvent,
     eligibleAthletes,
     closureDate,
     isClosed,
+    meetType: (meetTypeRow?.data ?? 'POOL').toUpperCase() === 'BEACH' ? 'BEACH' : 'POOL',
   }
 })
 
@@ -1195,6 +1200,16 @@ ipcMain.handle('db:set-relay-team-hc', (_event, teamId: number, isHC: boolean) =
   // Hors concours / exhibition — result kept but excluded from points/standings and from
   // composition rules (mirrors resultstatus=4 on the individual swimresult path).
   db.prepare(`UPDATE relay SET resultstatus = ? WHERE relayid = ?`).run(isHC ? 4 : null, teamId)
+
+  return { ok: true }
+})
+
+ipcMain.handle('db:set-relay-team-entry-time', (_event, teamId: number, entryTimeMs: number | null) => {
+  const db = getLocalDb()
+
+  // Pool relay seed time (ms, null = NT). generateHeats seeds relays by relay.entrytime.
+  const ms = entryTimeMs != null && entryTimeMs > 0 ? Math.round(entryTimeMs) : null
+  db.prepare(`UPDATE relay SET entrytime = ? WHERE relayid = ?`).run(ms, teamId)
 
   return { ok: true }
 })

@@ -181,6 +181,10 @@ export interface RelayTeamMember {
   position: number          // 1-based position (1 through relaycount)
   athleteId: number | null  // null = unassigned
   athleteName: string | null // "LastName, FirstName" or null
+  /** This member's relay best time (ms) for the event's style and the meet's course: the
+   *  fastest total of any past relay team they swam on. Team-app only; drives the suggested
+   *  team entry time (average of members who have one). */
+  relayBestTimeMs?: number | null
 }
 
 export interface RelayTeam {
@@ -191,8 +195,13 @@ export interface RelayTeam {
   members: RelayTeamMember[]
   clubId?: number           // Owning club ID (included in admin all-clubs view)
   clubName?: string         // Owning club name (included in admin all-clubs view)
-  /** Hors concours / exhibition — bypasses age/gender composition rules, same as SERC. meet-app only. */
+  /** Hors concours / exhibition — bypasses age/gender composition rules, same as SERC.
+   *  Stored as resultstatus=4 (Splash encoding), exported as LXF ENTRY status="EXH". */
   hc?: boolean
+  /** Team entry (seed) time in ms, null = NT. Pool relays only — beach relays are ranked. */
+  entryTimeMs?: number | null
+  /** Legacy swimresult relay lock not yet materialized into a real team (team-app, negative id). */
+  isVirtual?: boolean
 }
 
 export interface RelayEventGroup {
@@ -217,6 +226,8 @@ export interface RelayPageData {
   eligibleAthletes: Record<string, EligibleAthlete[]> // key: `${eventId}-${ageCode}`
   closureDate: string | null
   isClosed: boolean
+  /** Current meet type; entry times are shown for POOL only. Missing = POOL. */
+  meetType?: 'POOL' | 'BEACH'
 }
 
 export interface EligibleAthlete {
@@ -309,6 +320,8 @@ export interface RegistrationAPI {
   deleteRelayTeam(teamId: number): Promise<void>
   setRelayTeamMember(teamId: number, position: number, athleteId: number | null): Promise<void>
   setRelayTeamName(teamId: number, name: string | null): Promise<void>
-  /** Hors concours / exhibition for a relay team — meet-app only (team-app has no status column on its relay schema yet). */
+  /** Hors concours / exhibition for a relay team (resultstatus=4). */
   setRelayTeamHC?(teamId: number, isHC: boolean): Promise<void>
+  /** Pool relay team entry time (ms, null = NT). */
+  setRelayTeamEntryTime?(teamId: number, entryTimeMs: number | null): Promise<void>
 }
