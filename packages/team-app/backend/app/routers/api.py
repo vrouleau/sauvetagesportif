@@ -3809,30 +3809,6 @@ def delete_backup(filename: str):
     return {"deleted": safe_name}
 
 
-# ---------------------------------------------------------------------------
-# Team Manager MDB Import (historical meets)
-# ---------------------------------------------------------------------------
-
-@router.post("/admin/import-mdb", dependencies=[Depends(require_admin)])
-async def import_team_mdb_endpoint(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    """Import a Splash Team Manager .mdb file (admin only).
-
-    This imports historical meets, members, results, clubs, and swim styles
-    from the Team Manager database into the new team-schema tables.
-    """
-    content = await file.read()
-    if len(content) > 50 * 1024 * 1024:
-        raise HTTPException(413, "File too large (max 50MB)")
-
-    from ..mdb_import import import_team_mdb
-    try:
-        counts = import_team_mdb(db, content)
-    except Exception as e:
-        raise HTTPException(400, f"MDB import failed: {e}")
-
-    return {"ok": True, "tables": counts, "filename": file.filename}
-
-
 @router.get("/admin/historical-best-times/{member_id}", dependencies=[Depends(require_admin)])
 def get_historical_best_times(member_id: int, db: Session = Depends(get_db)):
     """Get best times for a member computed from historical results."""

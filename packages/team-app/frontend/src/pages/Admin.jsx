@@ -347,7 +347,6 @@ function Section({ title, desc, children }) {
 
 function HistoricalMeetsSection() {
   const [meets, setMeets] = useState([])
-  const [mdbUploading, setMdbUploading] = useState(false)
   const [lxfUploading, setLxfUploading] = useState(false)
   const [msg, setMsg] = useState('')
   const { lang } = useLang()
@@ -371,23 +370,6 @@ function HistoricalMeetsSection() {
       setMsg(lang === 'fr' ? 'Compétition supprimée' : 'Meet deleted')
       loadMeets()
     } catch (e) { setMsg(e.detail || e.message || 'Error') }
-  }
-
-  async function importMdb(e) {
-    const file = e.target.files?.[0]
-    if (!file) return
-    setMdbUploading(true)
-    try {
-      const form = new FormData()
-      form.append('file', file)
-      const r = await api.post('/admin/import-mdb', form)
-      const t = r.data.tables
-      setMsg(lang === 'fr'
-        ? `Importé: ${t.MEETS} compétitions, ${t.MEMBERS} athlètes, ${t.RESULTS} résultats`
-        : `Imported: ${t.MEETS} meets, ${t.MEMBERS} members, ${t.RESULTS} results`)
-      loadMeets()
-    } catch (err) { setMsg(err.detail || err.message || 'Error') }
-    finally { setMdbUploading(false); e.target.value = '' }
   }
 
   async function importLxf(e) {
@@ -465,10 +447,6 @@ function HistoricalMeetsSection() {
           {msg && <span className="ml-3 text-xs text-green-700">{msg}</span>}
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <label className={`px-3 py-1 text-xs rounded cursor-pointer ${mdbUploading ? 'bg-gray-400' : 'bg-green-600 hover:bg-green-700'} text-white`}>
-            {mdbUploading ? (lang === 'fr' ? 'Import…' : 'Importing…') : (lang === 'fr' ? 'Importer Team.mdb' : 'Import Team.mdb')}
-            <input type="file" accept=".mdb" className="hidden" onChange={importMdb} disabled={mdbUploading} />
-          </label>
           <label className={`px-3 py-1 text-xs rounded cursor-pointer ${lxfUploading ? 'bg-gray-400' : 'bg-blue-600 hover:bg-blue-700'} text-white`}>
             {lxfUploading ? (lang === 'fr' ? 'Import…' : 'Importing…') : (lang === 'fr' ? 'Importer résultats .lxf' : 'Import results .lxf')}
             <input type="file" accept=".lxf" className="hidden" onChange={importLxf} disabled={lxfUploading} />

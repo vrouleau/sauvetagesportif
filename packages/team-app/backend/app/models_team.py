@@ -21,7 +21,7 @@
 This replaces the Meet Manager schema (single-meet) to support:
 - Multiple meets (historical + current)
 - Best times computed from historical results
-- Compatibility with Splash Team Manager .mdb import
+- Table/column layout mirroring Splash Team Manager's own schema
 """
 from __future__ import annotations
 

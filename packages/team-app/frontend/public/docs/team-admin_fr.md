@@ -95,11 +95,6 @@ Voir le [Guide de l'organisateur](team-organizer) pour les détails.
 
 La section **Compétitions historiques** permet d'importer les résultats de compétitions passées. Ces résultats sont utilisés pour calculer les meilleurs temps des athlètes pour les futurs meets.
 
-### Importer Team.mdb (ancien format)
-
-1. Cliquer **Importer Team.mdb** et sélectionner la base Access existante
-2. Toutes les compétitions, membres et résultats sont importés
-
 ### Importer résultats .lxf
 
 1. Cliquer **Importer résultats .lxf** et sélectionner un fichier Lenex de résultats
