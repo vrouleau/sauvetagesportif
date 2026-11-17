@@ -146,6 +146,8 @@ so a stale historical style can't misclassify a new upload. `POST
 /api/admin/new-meet` sets it explicitly from the request body. Historical
 imports (`import-historical`, `import-results-lxf`) never touch it.
 
+**Swimstyle id guard:** every LXF upload flags style ids outside `config/swimstyle-ranges.json` (pool 500-531 / beach 601-624) in the same 409 `new_swimstyles` warning as catalog-new ids (`reason` field per style, `?force=true` overrides); a meet structure mixing pool and beach ids is a 400 `mixed_swimstyles` (not overridable). See `config/CLAUDE.md`.
+
 **SwimStyle catalog is never pruned across meets.** Historical events/results
 keep referencing old style ids, so once a pool meet has ever run, its 5xx
 styles stay in the catalog forever (same in reverse for 6xx beach styles).

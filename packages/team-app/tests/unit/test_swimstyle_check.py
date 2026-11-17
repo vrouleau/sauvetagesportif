@@ -16,7 +16,8 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with Sauvetage Sportif. If not, see <https://www.gnu.org/licenses/>.
 
-"""Tests: find_new_swimstyles diffs LXF style references against the catalog."""
+"""Tests: find_new_swimstyles flags LXF style ids outside the known 5xx/6xx
+series (config/swimstyle-ranges.json) or not yet in the catalog."""
 from __future__ import annotations
 
 import sys
@@ -29,7 +30,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "backend"))
 
 from app.models import Base, SwimStyle
 from app import models_team  # noqa: F401 — registers cross-schema FK targets
-from app.swimstyle_check import find_new_swimstyles
+from app.swimstyle_check import (
+    describe_new_swimstyles, find_new_swimstyles, mixed_meet_types, style_meet_type,
+)
 
 
 def _make_db():
@@ -60,10 +63,10 @@ def test_all_styles_already_known_returns_empty():
     assert result == []
 
 
-def test_unknown_style_is_reported():
+def test_unknown_in_range_style_is_reported_as_not_in_catalog():
     db = _make_db_with_baseline()
-    result = find_new_swimstyles(db, [(999, "Mystery Style", 100)])
-    assert result == [{"id": 999, "name": "Mystery Style", "distance": 100}]
+    result = find_new_swimstyles(db, [(520, "Mystery Style", 100)])
+    assert result == [{"id": 520, "name": "Mystery Style", "distance": 100, "reason": "not_in_catalog"}]
 
 
 def test_mix_of_known_and_unknown():
@@ -73,21 +76,21 @@ def test_mix_of_known_and_unknown():
     result = find_new_swimstyles(db, [
         (501, "50m Freestyle", 50),
         (999, "Mystery Style", 100),
-        (998, "Another New Style", 200),
+        (520, "Another New Style", 200),
     ])
     assert result == [
-        {"id": 998, "name": "Another New Style", "distance": 200},
-        {"id": 999, "name": "Mystery Style", "distance": 100},
+        {"id": 520, "name": "Another New Style", "distance": 200, "reason": "not_in_catalog"},
+        {"id": 999, "name": "Mystery Style", "distance": 100, "reason": "out_of_range"},
     ]
 
 
 def test_duplicate_unknown_ids_deduplicated():
     db = _make_db_with_baseline()
     result = find_new_swimstyles(db, [
-        (999, "Mystery Style", 100),
-        (999, "Mystery Style", 100),
+        (520, "Mystery Style", 100),
+        (520, "Mystery Style", 100),
     ])
-    assert result == [{"id": 999, "name": "Mystery Style", "distance": 100}]
+    assert result == [{"id": 520, "name": "Mystery Style", "distance": 100, "reason": "not_in_catalog"}]
 
 
 def test_falsy_ids_ignored():
@@ -99,18 +102,18 @@ def test_falsy_ids_ignored():
 
 def test_missing_name_falls_back_to_generated_label():
     db = _make_db_with_baseline()
-    result = find_new_swimstyles(db, [(999, "", 0)])
-    assert result == [{"id": 999, "name": "Style 999", "distance": 0}]
+    result = find_new_swimstyles(db, [(520, "", 0)])
+    assert result == [{"id": 520, "name": "Style 520", "distance": 0, "reason": "not_in_catalog"}]
 
 
-def test_empty_catalog_is_bootstrap_and_never_warns():
+def test_empty_catalog_is_bootstrap_for_in_range_styles():
     """A brand new install's first meet upload sees an empty catalog — every
     style in the file is technically 'new', but there's nothing established
-    yet to protect, so nothing should be reported."""
+    yet to protect, so in-range styles aren't reported."""
     db = _make_db()
     result = find_new_swimstyles(db, [
         (501, "50m Freestyle", 50),
-        (502, "100m Freestyle", 100),
+        (602, "Beach Flags", 0),
     ])
     assert result == []
 
@@ -121,5 +124,56 @@ def test_non_empty_catalog_still_warns_even_if_unrelated_style_known():
     db = _make_db()
     db.add(SwimStyle(swimstyleid=501, name="50m Freestyle", distance=50, relaycount=1))
     db.commit()
-    result = find_new_swimstyles(db, [(999, "Mystery Style", 100)])
-    assert result == [{"id": 999, "name": "Mystery Style", "distance": 100}]
+    result = find_new_swimstyles(db, [(530, "SERC", 0)])
+    assert result == [{"id": 530, "name": "SERC", "distance": 0, "reason": "not_in_catalog"}]
+
+
+# ── Known-series range check ────────────────────────────────────────────────
+
+def test_out_of_range_reported_even_on_empty_catalog():
+    """The bootstrap exemption covers the catalog diff only — a stale id is
+    never one of our templates' styles, first upload or not."""
+    db = _make_db()
+    result = find_new_swimstyles(db, [(501, "ok", 50), (538, "4x50 Relais Medley", 50)])
+    assert result == [{"id": 538, "name": "4x50 Relais Medley", "distance": 50, "reason": "out_of_range"}]
+
+
+def test_out_of_range_reported_even_if_already_in_catalog():
+    """A polluted catalog must not launder a stale id."""
+    db = _make_db()
+    db.add(SwimStyle(swimstyleid=540, name="Old relay", distance=50, relaycount=4))
+    db.commit()
+    result = find_new_swimstyles(db, [(540, "Old relay", 50)])
+    assert [r["reason"] for r in result] == ["out_of_range"]
+
+
+def test_range_boundaries():
+    assert style_meet_type(499) is None
+    assert style_meet_type(500) == "POOL"
+    assert style_meet_type(531) == "POOL"
+    assert style_meet_type(532) is None
+    assert style_meet_type(600) is None
+    assert style_meet_type(601) == "BEACH"
+    assert style_meet_type(624) == "BEACH"
+    assert style_meet_type(625) is None
+    assert style_meet_type(0) is None
+    assert style_meet_type(None) is None
+
+
+def test_mixed_meet_types():
+    assert mixed_meet_types([501, 530, 0, None]) is False
+    assert mixed_meet_types([601, 624]) is False
+    assert mixed_meet_types([501, 601]) is True
+    # out-of-range ids don't count as either type
+    assert mixed_meet_types([501, 999]) is False
+
+
+def test_describe_counts_each_reason():
+    msg = describe_new_swimstyles([
+        {"id": 999, "reason": "out_of_range"},
+        {"id": 520, "reason": "not_in_catalog"},
+        {"id": 521, "reason": "not_in_catalog"},
+    ])
+    assert "1 swimstyle id(s) in this file are outside the known series" in msg
+    assert "pool 500-531" in msg and "beach 601-624" in msg
+    assert "2 swimstyle id(s) in this file are not in the local catalog" in msg

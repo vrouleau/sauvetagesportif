@@ -162,14 +162,14 @@ def import_historical_meet(db: Session, file_bytes: bytes, force: bool = False) 
 
     # ── Warn about swimstyle ids not already in the local catalog ──
     if not force:
-        from .swimstyle_check import find_new_swimstyles
+        from .swimstyle_check import find_new_swimstyles, describe_new_swimstyles
         new_styles = find_new_swimstyles(db, (
             (uid, style_names.get(uid), style_distances.get(uid))
             for uid in set(event_style.values())
         ))
         if new_styles:
             return {
-                "warning": f"{len(new_styles)} swimstyle id(s) in this file are not in the local catalog.",
+                "warning": describe_new_swimstyles(new_styles),
                 "meet_name": meta["name"],
                 "needs_force": True,
                 "new_swimstyles": new_styles,

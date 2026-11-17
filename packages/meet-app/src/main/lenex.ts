@@ -23,6 +23,7 @@ import { saveGeminiKeys } from './ocrGemini'
 import { generateBeachNumbers } from './beachNumber'
 import { parseOleDate, nextId } from './db'
 import { getSeasonYear, loadAgeGroupRules } from './ageGroupRules'
+import { findSwimstyleIssues, type SwimstyleIssues } from './swimstyleRanges'
 
 // ── ZIP reader ────────────────────────────────────────────────────────────────
 
@@ -180,6 +181,35 @@ export interface ImportSummary {
   results: number
   errors: string[]
   geminiKeysImported?: boolean
+}
+
+// ── Swimstyle id pre-check ──────────────────────────────────────────────────────
+
+/** Scans an LXF's EVENT/SWIMSTYLE ids against the known 5xx/6xx series
+ *  (config/swimstyle-ranges.json) without touching any database. The
+ *  file:import-lenex handler runs this BEFORE it wipes the meet, so a refused
+ *  file never leaves an empty database behind. Pause/break placeholders
+ *  (code="ID0") are skipped, same as importLenex. */
+export function checkLenexSwimstylesXml(xml: string): SwimstyleIssues {
+  const styles: Array<{ id: number; name: string }> = []
+  const walk = (e: XmlElem): void => {
+    if (e.tag === 'EVENT') {
+      const sa = child(e, 'SWIMSTYLE')?.attrs
+      if (sa && sa.code !== 'ID0') {
+        styles.push({ id: parseInt(sa.swimstyleid ?? '0', 10) || 0, name: sa.name ?? '' })
+      }
+    }
+    e.children.forEach(walk)
+  }
+  walk(parseXml(xml))
+  return findSwimstyleIssues(styles)
+}
+
+export function checkLenexSwimstyles(filePath: string): SwimstyleIssues {
+  const entries = readZipEntries(filePath)
+  const lefName = [...entries.keys()].find(n => n.endsWith('.lef'))
+  if (!lefName) throw new Error('No .lef entry found in LXF file')
+  return checkLenexSwimstylesXml(entries.get(lefName)!.toString('utf8'))
 }
 
 // ── Main import function (now uses local SQLite) ──────────────────────────────

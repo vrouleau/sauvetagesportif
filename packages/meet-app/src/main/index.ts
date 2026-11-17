@@ -64,7 +64,8 @@ import {
   type EventUpdate,
   type AgeGroupUpdate,
 } from './db'
-import { importLenex, exportLenexResults, exportMeetLenex } from './lenex'
+import { importLenex, exportLenexResults, exportMeetLenex, checkLenexSwimstyles } from './lenex'
+import { rangesLabel } from './swimstyleRanges'
 import { saveSMB, restoreSMB } from './smb'
 import { regenerateCombinedEvents } from './combinedEvents'
 import { regeneratePointScores } from './pointScores'
@@ -1374,6 +1375,44 @@ ipcMain.handle('file:open-lenex-dialog', async (event) => {
 ipcMain.handle('file:import-lenex', async (event, filePath: string, lang?: string) => {
   try {
     const db = getLocalDb()
+
+    // Swimstyle ids must belong to the known 5xx (pool) / 6xx (beach) series —
+    // checked BEFORE the wipe below so a refused file leaves the meet intact.
+    // Mixed pool+beach is refused outright; out-of-range ids (stale/foreign
+    // template) ask for confirmation.
+    const fr = (lang || 'fr') !== 'en'
+    const issues = checkLenexSwimstyles(filePath)
+    if (issues.mixed) {
+      return {
+        ok: false,
+        error: fr
+          ? `Ce fichier mélange des épreuves piscine et plage (séries ${rangesLabel()}). Un meet doit être soit piscine, soit plage.`
+          : `This file mixes pool and beach events (series ${rangesLabel()}). A meet must be either pool or beach.`,
+      }
+    }
+    if (issues.outOfRange.length) {
+      const win = BrowserWindow.fromWebContents(event.sender)
+      const list = issues.outOfRange.map(s => `  • ${s.id} — ${s.name || '?'}`).join('\n')
+      const opts: Electron.MessageBoxOptions = {
+        type: 'warning', title: 'SauvetageMeet', noLink: true, defaultId: 1, cancelId: 1,
+        message: fr
+          ? `${issues.outOfRange.length} style(s) de nage hors des séries connues (${rangesLabel()}) :`
+          : `${issues.outOfRange.length} swim style(s) outside the known series (${rangesLabel()}):`,
+        detail: fr
+          ? `${list}\n\nLe fichier provient probablement d'un ancien gabarit. Importer quand même ?`
+          : `${list}\n\nThe file probably comes from an old template. Import anyway?`,
+        buttons: fr ? ['Importer quand même', 'Annuler'] : ['Import anyway', 'Cancel'],
+      }
+      let response = 1
+      try {
+        response = (win ? await dialog.showMessageBox(win, opts) : await dialog.showMessageBox(opts)).response
+      } finally {
+        refocusAfterDialog(win)
+      }
+      if (response !== 0) {
+        return { ok: false, error: fr ? 'Importation annulée.' : 'Import cancelled.' }
+      }
+    }
 
     // Wipe all meet data (clubs, athletes, and event structure)
     db.exec(`DELETE FROM relaysplit`)
