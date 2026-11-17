@@ -1527,6 +1527,13 @@ def delete_athlete(athlete_id: int, request: Request, db: Session = Depends(get_
     if caller_club is not None and member.clubsid != caller_club:
         raise HTTPException(403, "Cannot delete athletes from another club")
     db.query(SwimResult).filter(SwimResult.athleteid == athlete_id).delete()
+    # relayspos.membersid has no ON DELETE rule (results/membersmeets/
+    # athlete_best_times cascade) — an athlete on any relay team, live or
+    # archived, made this a FOREIGN KEY 500. Empty the slot, as removing the
+    # member from the team in the UI does; the team itself is kept.
+    from ..models_team import RelayPos
+    db.query(RelayPos).filter(RelayPos.membersid == athlete_id).update(
+        {RelayPos.membersid: None}, synchronize_session=False)
     db.delete(member)
     db.commit()
     return {"deleted": True}
