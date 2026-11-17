@@ -1,7 +1,6 @@
 fastapi==0.162.5
 uvicorn==0.54.0
 sqlalchemy==2.1.8
-psycopg2-binary==2.9.13
 pydantic==2.14.3
 python-multipart==0.0.33
 cryptography==50.0.2

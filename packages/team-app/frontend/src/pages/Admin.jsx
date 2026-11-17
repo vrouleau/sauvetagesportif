@@ -761,8 +761,8 @@ function BackupSection() {
         </span>
         <p className="text-xs text-gray-500 mt-0.5">
           {lang === 'fr'
-            ? 'Sauvegarde et restauration PostgreSQL. Les sauvegardes automatiques sont créées selon la configuration.'
-            : 'PostgreSQL backup and restore. Auto-backups are created based on the configuration below.'}
+            ? 'Sauvegarde et restauration de la base de données SQLite. Les sauvegardes automatiques sont créées selon la configuration.'
+            : 'SQLite database backup and restore. Auto-backups are created based on the configuration below.'}
         </p>
       </div>
       <div className="px-3 py-2 space-y-3">
@@ -773,8 +773,8 @@ function BackupSection() {
             {lang === 'fr' ? 'Créer une sauvegarde' : 'Create Backup'}
           </button>
           <label className="px-3 py-1 bg-orange-600 text-white text-xs rounded hover:bg-orange-700 cursor-pointer">
-            {lang === 'fr' ? 'Restaurer (.db/.sql)' : 'Restore (.db/.sql)'}
-            <input type="file" accept=".sql,.db" className="hidden" onChange={restoreBackup} />
+            {lang === 'fr' ? 'Restaurer (.db)' : 'Restore (.db)'}
+            <input type="file" accept=".db" className="hidden" onChange={restoreBackup} />
           </label>
           {msg && <span className="text-xs text-green-700">{msg}</span>}
         </div>

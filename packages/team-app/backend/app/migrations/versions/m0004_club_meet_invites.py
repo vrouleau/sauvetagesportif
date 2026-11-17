@@ -59,9 +59,7 @@ def upgrade(engine) -> None:
         return  # already migrated, or fresh install with nothing to backfill
 
     with engine.begin() as conn:
-        # Postgres and SQLite disagree on boolean literal syntax — mirrors
-        # m0003_swimevent_agegroup_composite_pk.py's _backfill_null_meetsid.
-        open_expr = "true" if engine.dialect.name == "postgresql" else "1"
+        open_expr = "1"  # SQLite boolean literal
         # Pick the open meet with the most registrations, not the highest
         # meetsid — see module docstring. Ties (including "every open meet
         # has zero registrations") fall back to highest meetsid, matching

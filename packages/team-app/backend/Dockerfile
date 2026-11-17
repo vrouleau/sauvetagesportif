@@ -2,7 +2,7 @@ FROM python:3.12-slim
 WORKDIR /app
 COPY packages/team-app/backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-RUN apt-get update && apt-get install -y --no-install-recommends mdbtools postgresql-client && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends mdbtools && rm -rf /var/lib/apt/lists/*
 COPY packages/team-app/backend/app ./app
 COPY packages/team-app/backend/scripts ./scripts
 COPY packages/team-app/backend/docker-entrypoint.sh .

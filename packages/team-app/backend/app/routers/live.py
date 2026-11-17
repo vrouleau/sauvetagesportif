@@ -24,41 +24,19 @@ import secrets
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
-from ..database import get_db, is_sqlite
+from ..database import get_db
 from ..models import BsGlobal
 from ..models_live import LiveEvent, LiveResult, LiveSplit, LiveStartlist
 from ..meet_config import get_active_meetsid, _get_meet_config, _get_meet_type
 
 
 def _upsert(db: Session, model, conflict_columns: list[str], values: dict, update_values: dict):
-    """Dialect-agnostic upsert: INSERT ... ON CONFLICT DO UPDATE.
-
-    Works on both PostgreSQL and SQLite (3.24+).
-    """
-    if is_sqlite():
-        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-        stmt = sqlite_insert(model).values(**values)
-        stmt = stmt.on_conflict_do_update(
-            index_elements=conflict_columns,
-            set_=update_values,
-        )
-    else:
-        from sqlalchemy.dialects.postgresql import insert as pg_insert
-        stmt = pg_insert(model).values(**values)
-        # Try constraint name first, fall back to index_elements
-        constraint_name = getattr(model, '__table__', None)
-        if any('uq_' in str(c.name) for c in model.__table__.constraints if hasattr(c, 'name') and c.name):
-            # Find the unique constraint matching our conflict columns
-            for c in model.__table__.constraints:
-                if hasattr(c, 'columns') and set(col.name for col in c.columns) == set(conflict_columns):
-                    stmt = stmt.on_conflict_do_update(constraint=c.name, set_=update_values)
-                    break
-            else:
-                stmt = stmt.on_conflict_do_update(index_elements=conflict_columns, set_=update_values)
-        else:
-            stmt = stmt.on_conflict_do_update(index_elements=conflict_columns, set_=update_values)
+    """Upsert: INSERT ... ON CONFLICT DO UPDATE (SQLite 3.24+)."""
+    stmt = sqlite_insert(model).values(**values)
+    stmt = stmt.on_conflict_do_update(index_elements=conflict_columns, set_=update_values)
     db.execute(stmt)
 
 router = APIRouter(prefix="/api/live")

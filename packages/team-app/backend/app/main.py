@@ -112,18 +112,16 @@ async def startup():
         raise RuntimeError("SECRET_KEY must be changed from the default value")
 
     # Migrate old SERC schema: if serc_team table exists, drop all serc_* and let create_all rebuild
-    from .database import is_sqlite
-    if is_sqlite():
-        from sqlalchemy import text
-        with engine.connect() as conn:
-            result = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='serc_team'"))
-            if result.fetchone():
-                print("Migrating SERC tables: dropping old schema (serc_team → relay-based)")
-                conn.execute(text("DROP TABLE IF EXISTS serc_score"))
-                conn.execute(text("DROP TABLE IF EXISTS serc_draw_order"))
-                conn.execute(text("DROP TABLE IF EXISTS serc_team"))
-                conn.execute(text("DROP TABLE IF EXISTS serc_config"))
-                conn.commit()
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        result = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='serc_team'"))
+        if result.fetchone():
+            print("Migrating SERC tables: dropping old schema (serc_team → relay-based)")
+            conn.execute(text("DROP TABLE IF EXISTS serc_score"))
+            conn.execute(text("DROP TABLE IF EXISTS serc_draw_order"))
+            conn.execute(text("DROP TABLE IF EXISTS serc_team"))
+            conn.execute(text("DROP TABLE IF EXISTS serc_config"))
+            conn.commit()
 
     Base.metadata.create_all(bind=engine)
 
@@ -145,14 +143,11 @@ async def startup():
 
 
 async def _auto_backup_loop():
-    """Background loop: create periodic database backups (SQLite file copy or pg_dump)."""
+    """Background loop: create periodic SQLite database backups."""
     import asyncio
-    import shutil
-    import subprocess
     import traceback
-    from urllib.parse import urlparse
     from .models import BsGlobal
-    from .database import is_sqlite, DATABASE_URL
+    from .database import sqlite_snapshot_bytes, DB_PATH
 
     BACKUP_DIR = Path(os.environ.get("DATA_DIR", "/app/data")) / "backups"
 
@@ -176,8 +171,7 @@ async def _auto_backup_loop():
 
             # Check if a backup is needed (last backup older than interval)
             BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-            backup_ext = "db" if is_sqlite() else "sql"
-            existing = sorted(BACKUP_DIR.glob(f"auto-*.{backup_ext}"), key=lambda p: p.stat().st_mtime)
+            existing = sorted(BACKUP_DIR.glob("auto-*.db"), key=lambda p: p.stat().st_mtime)
             needs_backup = True
             if existing:
                 from datetime import datetime, timedelta
@@ -194,41 +188,18 @@ async def _auto_backup_loop():
                 from datetime import datetime
                 timestamp = datetime.now().strftime("%Y-%m-%d-%H%M%S")
 
-                if is_sqlite():
-                    # SQLite: consistent snapshot via the backup API (WAL-safe — a raw file
-                    # copy would silently omit recent commits still sitting in the -wal file)
-                    from .database import sqlite_snapshot_bytes
-                    db_path = DATABASE_URL.replace("sqlite:///", "")
-                    try:
-                        content = sqlite_snapshot_bytes(db_path)
-                        filename = f"auto-{timestamp}.db"
-                        (BACKUP_DIR / filename).write_bytes(content)
-                        print(f"Auto-backup created: {filename} ({len(content)} bytes)")
-                    except FileNotFoundError:
-                        print(f"Auto-backup ERROR: SQLite DB not found at {db_path}")
-                else:
-                    # PostgreSQL: pg_dump
-                    db_url = os.environ.get("DATABASE_URL", "")
-                    parsed = urlparse(db_url)
-                    env = {**os.environ, "PGPASSWORD": parsed.password or ""}
-                    cmd = [
-                        "pg_dump",
-                        "-h", parsed.hostname or "db",
-                        "-p", str(parsed.port or 5432),
-                        "-U", parsed.username or "meetmgr",
-                        "-d", parsed.path.lstrip("/") or "meetmgr",
-                        "--no-owner", "--no-acl",
-                    ]
-                    result = subprocess.run(cmd, capture_output=True, env=env, timeout=60)
-                    if result.returncode == 0:
-                        filename = f"auto-{timestamp}.sql"
-                        (BACKUP_DIR / filename).write_bytes(result.stdout)
-                        print(f"Auto-backup created: {filename} ({len(result.stdout)} bytes)")
-                    else:
-                        print(f"Auto-backup pg_dump failed: {result.stderr.decode()[:200]}")
+                # Consistent snapshot via the backup API (WAL-safe — a raw file
+                # copy would silently omit recent commits still sitting in the -wal file)
+                try:
+                    content = sqlite_snapshot_bytes()
+                    filename = f"auto-{timestamp}.db"
+                    (BACKUP_DIR / filename).write_bytes(content)
+                    print(f"Auto-backup created: {filename} ({len(content)} bytes)")
+                except FileNotFoundError:
+                    print(f"Auto-backup ERROR: SQLite DB not found at {DB_PATH}")
 
                 # Enforce retention
-                backups = sorted(BACKUP_DIR.glob(f"auto-*.{backup_ext}"), key=lambda p: p.stat().st_mtime)
+                backups = sorted(BACKUP_DIR.glob("auto-*.db"), key=lambda p: p.stat().st_mtime)
                 while len(backups) > max_count:
                     removed = backups.pop(0)
                     removed.unlink()

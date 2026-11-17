@@ -1,7 +1,5 @@
-# Production compose — pulls pre-built images, SQLite by default
+# Production compose — pulls pre-built images, SQLite backend
 # Usage: docker compose -f docker-compose.prod.yml up -d
-#
-# For PostgreSQL: docker compose -f docker-compose.prod.yml -f docker-compose.postgres.yml up -d
 #
 # Requires .env file with secrets (ADMIN_PIN, SECRET_KEY, etc.)
 

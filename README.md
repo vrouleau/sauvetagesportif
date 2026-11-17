@@ -243,10 +243,10 @@ Electron desktop app for running competitions at the venue.
 
 Web app for team registration before the competition.
 
-- **FastAPI backend** (Python) + PostgreSQL (Docker)
+- **FastAPI backend** (Python) + SQLite (Docker)
 - **React frontend** with shared EventsPage from `shared-ui`
 - **Unified schema**: Team Manager tables (clubs, members, meets, results) + Meet Manager tables (swimresult.athleteid → members.membersid directly, no separate athlete/club tables)
-- **Features**: athlete registration, relay assignment, best times (from historical results), invoices (Stripe), email invitations, backup/restore (pg_dump with auto-scheduler)
+- **Features**: athlete registration, relay assignment, best times (from historical results), invoices (Stripe), email invitations, backup/restore (SQLite snapshots with auto-scheduler)
 - **Historical meets**: import from Team.mdb or results .lxf (from meet-app); best times computed across all results (18-month expiry); meets deduplicated by name on re-import
 - **Close-meet flow**: organizer imports results .lxf → archived as historical meet → current meet reset → all club PINs regenerated → organizer cleared → admin invites next organizer
 - **Data adapter**: `meetApi.js` wraps HTTP `fetch('/api/...')` → FastAPI backend
@@ -275,7 +275,7 @@ Both apps render the same `EventsPage` component. Each provides its own `MeetAPI
 shared-ui/EventsPage.tsx
     ↓ useApi()
     ├── meet-app: meetApiElectron.ts → Electron IPC → SQLite
-    └── team-app: meetApi.js → HTTP fetch → FastAPI → PostgreSQL
+    └── team-app: meetApi.js → HTTP fetch → FastAPI → SQLite
 ```
 
 ## Database Schema
@@ -285,7 +285,7 @@ Uses the **Splash Meet Manager schema** — identical table names, column names,
 
 Key tables: `swimstyle`, `club`, `swimsession`, `athlete`, `swimevent`, `agegroup`, `heat`, `swimresult`, `split`, `relay`, `relayposition`, `relaysplit`, `bsglobal`
 
-### Team-app (PostgreSQL)
+### Team-app (SQLite)
 
 **Team Manager tables** (authoritative for clubs, athletes, historical data):
 - `clubs`, `members`, `meets`, `sessions`, `events`, `results`, `membersmeets`, `relays`, `relayspos`

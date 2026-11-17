@@ -3,7 +3,7 @@
 Web app for team registration, athlete entries, best times, and invoices.
 
 ## Stack
-- **Backend**: FastAPI (Python 3.12) + PostgreSQL
+- **Backend**: FastAPI (Python 3.12) + SQLite
 - **Frontend**: React 18 + Tailwind (via @meetmgr/shared-ui)
 - **Deployment**: Docker (ghcr.io images)
 
