@@ -355,10 +355,31 @@ def import_lxf_as_meet(db: DbSession, content: bytes, force: bool = False) -> di
                 handicap_el.get("exception") if handicap_el is not None else None
             ) or ath_el.get("exception") or None
 
-            # Merge by license
+            # Merge by license, else by exact name: same name + birthdate in
+            # any club (athlete changed clubs), else same name in this club
+            # unless the birthdates disagree. License-only matching created a
+            # new member on every import for athletes without a license, so
+            # re-importing a results file duplicated them.
             existing_member = None
             if license_val:
                 existing_member = db.query(Member).filter(Member.license == license_val).first()
+            if not existing_member and firstname and lastname:
+                same_name = db.query(Member).filter(
+                    Member.firstname == firstname,
+                    Member.lastname == lastname,
+                ).order_by(Member.membersid).all()
+
+                def _bd(m):
+                    return m.birthdate.date() if hasattr(m.birthdate, "date") else m.birthdate
+
+                if birthdate:
+                    existing_member = next((m for m in same_name if _bd(m) == birthdate), None)
+                if not existing_member:
+                    existing_member = next((
+                        m for m in same_name
+                        if m.clubsid == club_team_id
+                        and (not birthdate or not m.birthdate or _bd(m) == birthdate)
+                    ), None)
 
             if existing_member:
                 member_id = existing_member.membersid
