@@ -305,7 +305,6 @@ time, `.smb` export carries them through correctly too.
 | `menu:open-guide` | Open in-app workflow guide (pool/beach) |
 | `db:register` | Register athlete for event (create swimresult) |
 | `db:unregister` | Unregister athlete from event (delete unseeded swimresult) |
-| `db:get-relay-members` | Get relay position members by relay ID |
 
 ## Relay Entry
 

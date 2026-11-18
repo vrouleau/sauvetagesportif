@@ -3847,10 +3847,6 @@ def _team_number_to_letter(n: int) -> str:
     return chr(ord('A') + n - 1)
 
 
-def _get_current_meet_id(request: Request, db: Session) -> int | None:
-    return resolve_meetsid(request, db)
-
-
 def _import_relays_from_lxf(db: "Session", file_bytes: bytes, meetsid: int | None = None) -> int:
     """Parse RELAY elements from LXF and import them into the relays/relayspos tables."""
     import zipfile
@@ -4075,7 +4071,7 @@ def get_relay_teams(request: Request, club_id: int | None = None, db: Session = 
         is_closed = d.today() > d.fromisoformat(closure_date_str)
 
     # Get current meet ID
-    meet_id = _get_current_meet_id(request, db)
+    meet_id = resolve_meetsid(request, db)
 
     # Get all relay events (relaycount > 1) with their age groups
     relay_events = (
@@ -4500,7 +4496,7 @@ def create_relay_team(data: RelayTeamCreate, request: Request, db: Session = Dep
         raise HTTPException(400, "Cannot determine club")
 
     # Get current meet ID
-    meet_id = _get_current_meet_id(request, db)
+    meet_id = resolve_meetsid(request, db)
 
     # Resolve event
     event = db.query(SwimEvent).options(joinedload(SwimEvent.swimstyle)).get((meet_id, data.event_id))
@@ -4650,7 +4646,7 @@ def set_relay_team_member(
 
         # Cross-team uniqueness: athlete not on another team for same event/age/club
         # Find all other relay teams for same style/age/club
-        meet_id = _get_current_meet_id(request, db)
+        meet_id = resolve_meetsid(request, db)
         other_relays_query = (
             db.query(Relay)
             .filter(

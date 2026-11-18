@@ -407,11 +407,6 @@ export interface AthleteRow {
 
 // ── Query: all sessions + events + heats + entries for HeatsPage ──────────────
 
-export async function getHeatListEvents(): Promise<HeatListEventRow[]> {
-  const sessions = await getHeatListSessions()
-  return sessions.flatMap(s => s.events)
-}
-
 export async function getHeatListSessions(injectedDb?: ReturnType<typeof getLocalDb>): Promise<HeatListSessionRow[]> {
   const db = injectedDb ?? getLocalDb()
 

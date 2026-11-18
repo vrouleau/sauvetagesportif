@@ -75,12 +75,3 @@ def sqlite_snapshot_bytes(db_path: str = DB_PATH) -> bytes:
     finally:
         if tmp_path.exists():
             tmp_path.unlink()
-
-
-def reset_engine():
-    """Dispose all pooled connections and force reconnection.
-
-    Call this after replacing the SQLite database file on disk so that
-    SQLAlchemy picks up the new file instead of using stale connections.
-    """
-    engine.dispose()

@@ -26,7 +26,6 @@ import type Database from 'better-sqlite3'
 import { SqliteBackend } from '../src/main/sqliteBackend'
 import { saveSMB, restoreSMB } from '../src/main/smb'
 import { encodeBarcode, decodeBarcode } from '../src/main/timingBarcode'
-import { parseTimeToMs, formatMsToTime, assembleTimeString } from '../src/main/ocrEngine'
 
 // ── Barcode tests ─────────────────────────────────────────────────────────────
 
@@ -78,50 +77,6 @@ describe('Barcode encoding/decoding', () => {
 })
 
 // ── Time parsing tests ────────────────────────────────────────────────────────
-
-describe('Time parsing utilities', () => {
-  it('parses M:SS.HH format', () => {
-    expect(parseTimeToMs('1:23.45')).toBe(83450)
-    expect(parseTimeToMs('0:45.12')).toBe(45120)
-    expect(parseTimeToMs('2:01.00')).toBe(121000)
-  })
-
-  it('parses SS.HH format', () => {
-    expect(parseTimeToMs('45.12')).toBe(45120)
-    expect(parseTimeToMs('59.99')).toBe(59990)
-  })
-
-  it('formats ms to M:SS.HH', () => {
-    expect(formatMsToTime(83450)).toBe('1:23.45')
-    expect(formatMsToTime(45120)).toBe('0:45.12')
-    expect(formatMsToTime(121000)).toBe('2:01.00')
-  })
-
-  it('roundtrips parse/format', () => {
-    const times = ['1:23.45', '0:45.12', '2:01.00', '0:30.00', '3:59.99']
-    for (const t of times) {
-      expect(formatMsToTime(parseTimeToMs(t))).toBe(t)
-    }
-  })
-
-  it('throws on invalid format', () => {
-    expect(() => parseTimeToMs('invalid')).toThrow()
-    expect(() => parseTimeToMs('')).toThrow()
-  })
-
-  it('assembles digit results into time string', () => {
-    const digits = [
-      { text: '1', confidence: 0.9 },
-      { text: '2', confidence: 0.9 },
-      { text: '3', confidence: 0.9 },
-      { text: '4', confidence: 0.9 },
-      { text: '5', confidence: 0.9 },
-    ]
-    expect(assembleTimeString(digits)).toBe('1:23.45')
-  })
-})
-
-// ── Gemini keys in BSGLOBAL roundtrip via SMB ─────────────────────────────────
 
 describe('Gemini keys roundtrip via SMB', () => {
   let db: Database.Database

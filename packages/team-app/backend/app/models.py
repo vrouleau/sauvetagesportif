@@ -416,22 +416,6 @@ def gender_from_str(s: str) -> int:
     return GENDER_M if s == "M" else GENDER_F
 
 
-def course_to_str(c: int | None) -> str:
-    if c == COURSE_SCM:
-        return "SCM"
-    if c == COURSE_SCY:
-        return "SCY"
-    return "LCM"
-
-
-def course_from_str(s: str) -> int:
-    if s == "SCM":
-        return COURSE_SCM
-    if s == "SCY":
-        return COURSE_SCY
-    return COURSE_LCM
-
-
 def fee_dollars_to_cents(fee: float | None) -> int:
     if fee is None:
         return 0

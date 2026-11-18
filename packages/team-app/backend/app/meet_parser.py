@@ -78,10 +78,6 @@ class MeetEvent:
         return self.event_type == "MASTERS"
 
     @property
-    def is_prelim(self) -> bool:
-        return self.round == "PRE"
-
-    @property
     def gender_int(self) -> int:
         # "ALL" and any unrecognized/blank value both fall through to 0 (ALL) —
         # matching our own gender encoding (0=All, 1=M, 2=F, 3=Mixed).
