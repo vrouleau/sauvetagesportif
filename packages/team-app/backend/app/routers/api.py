@@ -44,6 +44,7 @@ from ..models import (
 )
 from ..models_team import TeamClub, Member, Meet as TeamMeet
 from ..meet_config import (
+    _get_config, _set_config,
     get_active_meetsid, resolve_meetsid, _get_meet_config, _set_meet_config,
     _get_meet_type, _set_meet_type, _update_meetvalue,
     _get_meet_course, _set_meet_course, COURSE_TO_INT, INT_TO_COURSE,
@@ -188,19 +189,6 @@ class PinChange(BaseModel):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def _get_config(db: Session, key: str) -> str | None:
-    cfg = db.get(BsGlobal, key)
-    return cfg.data if cfg else None
-
-
-def _set_config(db: Session, key: str, value: str):
-    cfg = db.get(BsGlobal, key)
-    if cfg:
-        cfg.data = value
-    else:
-        db.add(BsGlobal(name=key, data=value))
-
 
 def _get_admin_pin(db: Session) -> str:
     return _get_config(db, "admin_pin") or _DEFAULT_ADMIN_PIN
