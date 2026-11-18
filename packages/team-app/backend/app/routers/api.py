@@ -33,6 +33,7 @@ from sqlalchemy.exc import IntegrityError
 from collections import defaultdict
 import time as _time
 
+from ..age_codes import age_group_code, relay_age_code, age_code_to_range
 from ..age_group_rules import resolve_matching_age
 from ..database import get_db
 from pydantic import BaseModel, Field, field_validator
@@ -197,20 +198,6 @@ def _get_admin_pin(db: Session) -> str:
 _AGE_CODE_ORDER = ("10-", "11-12", "13-14", "15-18", "Open", "Masters")
 
 
-def _age_group_code(age_min: int, age_max: int) -> str | None:
-    if age_min <= 10 and age_max == 10:
-        return "10-"
-    if age_min == 11 and age_max == 12:
-        return "11-12"
-    if age_min == 13 and age_max == 14:
-        return "13-14"
-    if age_min == 15 and age_max == 18:
-        return "15-18"
-    if age_min == 19 and (age_max == -1 or age_max >= 99):
-        return "Open"
-    return None
-
-
 def _age_code_allowed_on_team(candidate_code: str, native_code: str) -> bool:
     """Is candidate_code allowed on a team anchored to native_code (the relay
     event's own age category)? Members must be the exact native category, or the
@@ -266,7 +253,7 @@ def _get_event_native_age_code(db: Session, stylesid: int, eventnumb: int | None
     rows = db.query(AgeGroup.agemin, AgeGroup.agemax).filter(
         AgeGroup.meetsid == meetsid, AgeGroup.swimeventid == event.swimeventid
     ).distinct().all()
-    codes = {_age_group_code(r.agemin, r.agemax) for r in rows}
+    codes = {age_group_code(r.agemin, r.agemax) for r in rows}
     codes.discard(None)
     return next(iter(codes)) if len(codes) == 1 else None
 
@@ -328,7 +315,7 @@ def _resolve_athlete_age_codes(db: Session, athlete_ids: list[int], meetsid: int
             .all()
         )
         for row in ag_counts:
-            result.setdefault(row.athleteid, _relay_age_code(row.agemin, row.agemax))
+            result.setdefault(row.athleteid, relay_age_code(row.agemin, row.agemax))
     return result
 
 
@@ -2133,10 +2120,10 @@ def move_age_group(agegroup_id: int, request: Request, data: dict = Body(default
     # Registrations in this schema aren't linked via agegroupid (that column is
     # only populated by historical/LXF imports) — the live coach-registration
     # flow stamps swimresult.age_code with an event-independent string code
-    # ("15-18", "Open", etc. — see _age_group_code) instead. Match on that
+    # ("15-18", "Open", etc. — see age_codes.age_group_code) instead. Match on that
     # (plus the athlete's gender, in case one event hosts the same age
     # bracket for two genders) to find the entries that actually belong here.
-    age_code = _age_group_code(ag.agemin, ag.agemax)
+    age_code = age_group_code(ag.agemin, ag.agemax)
     if age_code is None:
         raise HTTPException(400, "Cannot determine the age code for this age group")
 
@@ -2259,7 +2246,7 @@ def get_registration(athlete_id: int, request: Request, db: Session = Depends(ge
         else:
             event_codes = []
             for ag in ev.agegroups:
-                code = _age_group_code(ag.agemin, ag.agemax)
+                code = age_group_code(ag.agemin, ag.agemax)
                 if code and code not in event_codes:
                     event_codes.append(code)
         if not event_codes:
@@ -2487,7 +2474,7 @@ def create_registration(data: RegistrationCreate, request: Request, db: Session 
         if event.masters != "T":
             raise HTTPException(422, "Event does not accept Masters category")
     else:
-        valid_codes = [_age_group_code(ag.agemin, ag.agemax)
+        valid_codes = [age_group_code(ag.agemin, ag.agemax)
                        for ag in db.query(AgeGroup).filter(
                            AgeGroup.meetsid == meetsid, AgeGroup.swimeventid == event_id).all()]
         if age_code not in valid_codes:
@@ -3980,51 +3967,6 @@ def _import_relays_from_lxf(db: "Session", file_bytes: bytes, meetsid: int | Non
     return relays_imported
 
 
-def _relay_age_code(minage: int | None, maxage: int | None) -> str:
-    """Convert relay minage/maxage to an age code string."""
-    minage = minage or 0
-    maxage = maxage or 0
-    if minage <= 10 and maxage == 10:
-        return "10-"
-    if minage == 11 and maxage == 12:
-        return "11-12"
-    if minage == 13 and maxage == 14:
-        return "13-14"
-    if minage == 15 and maxage == 18:
-        return "15-18"
-    if minage == 19 and (maxage == 0 or maxage == -1 or maxage >= 99):
-        return "Open"
-    if minage == 0 and (maxage == 0 or maxage == -1 or maxage is None):
-        return "Open"
-    # Fallback: construct from values
-    if maxage and maxage > 0 and maxage < 99:
-        return f"{minage}-{maxage}"
-    return f"{minage}-"
-
-
-def _age_code_to_range(age_code: str) -> tuple[int, int | None]:
-    """Convert an age code string to (minage, maxage). maxage=None means open-ended."""
-    if age_code == "10-":
-        return (0, 10)
-    if age_code == "11-12":
-        return (11, 12)
-    if age_code == "13-14":
-        return (13, 14)
-    if age_code == "15-18":
-        return (15, 18)
-    if age_code == "Open":
-        return (19, None)
-    if age_code == "Masters":
-        return (25, None)
-    # Try to parse "X-Y" or "X-"
-    parts = age_code.split("-")
-    if len(parts) == 2:
-        minage = int(parts[0]) if parts[0] else 0
-        maxage = int(parts[1]) if parts[1] else None
-        return (minage, maxage)
-    return (0, None)
-
-
 @router.get("/relay-teams")
 def get_relay_teams(request: Request, club_id: int | None = None, db: Session = Depends(get_db)):
     """Return RelayPageData: relay events grouped by age category, teams, eligible athletes."""
@@ -4086,7 +4028,7 @@ def get_relay_teams(request: Request, club_id: int | None = None, db: Session = 
             )
         else:
             for ag in ev.agegroups:
-                age_code = _age_group_code(ag.agemin, ag.agemax) or _relay_age_code(ag.agemin, ag.agemax)
+                age_code = age_group_code(ag.agemin, ag.agemax) or relay_age_code(ag.agemin, ag.agemax)
                 age_min = ag.agemin or 0
                 age_max = ag.agemax if (ag.agemax and ag.agemax > 0 and ag.agemax < 99) else None
                 _process_relay_event_age_group(
@@ -4213,7 +4155,7 @@ def get_relay_teams(request: Request, club_id: int | None = None, db: Session = 
                 if row.athleteid in seen_members:
                     continue
                 seen_members.add(row.athleteid)
-                member_age_group_map[row.athleteid] = _relay_age_code(row.agemin, row.agemax)
+                member_age_group_map[row.athleteid] = relay_age_code(row.agemin, row.agemax)
 
     # Relay best time per member, per relay style, for the meet's course (pool only):
     # the fastest total of any archived team the member swam on. Drives the suggested
@@ -4231,7 +4173,7 @@ def get_relay_teams(request: Request, club_id: int | None = None, db: Session = 
             relay_bests_by_style[style_id] = get_relay_best_times(db, mids, style_id, meet_course)
 
     for relay in existing_relays:
-        age_code = _relay_age_code(relay.minage, relay.maxage)
+        age_code = relay_age_code(relay.minage, relay.maxage)
         # Find the event key. Prefer an exact eventnumb match — style+gender alone
         # is ambiguous when two distinct relay events share the same style and
         # gender (e.g. the same relay offered at two age categories), which used
@@ -4373,7 +4315,7 @@ def get_relay_teams(request: Request, club_id: int | None = None, db: Session = 
                     if row.athleteid in seen_ag:
                         continue
                     seen_ag.add(row.athleteid)
-                    athlete_age_group_map[row.athleteid] = _relay_age_code(row.agemin, row.agemax)
+                    athlete_age_group_map[row.athleteid] = relay_age_code(row.agemin, row.agemax)
 
         for key, group in event_groups_by_key.items():
             parts = key.split("-", 1)
@@ -4488,7 +4430,7 @@ def create_relay_team(data: RelayTeamCreate, request: Request, db: Session = Dep
         raise HTTPException(400, "Event is not a relay event")
 
     # Resolve age range
-    age_min, age_max = _age_code_to_range(data.age_code)
+    age_min, age_max = age_code_to_range(data.age_code)
 
     # Determine next team number
     existing_teams = (

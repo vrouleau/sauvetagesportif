@@ -26,23 +26,9 @@ from sqlalchemy.orm import Session
 from .models import gender_from_str, SwimEvent, AgeGroup, SwimResult, SwimStyle
 from .meet_config import get_active_meetsid
 from .models_team import TeamClub, Member
+from .age_codes import age_group_code
 from .lxf_io import read_lef_xml
 from .lxf_to_team import _lenex_time_to_ms
-
-
-def _age_code_from_bounds(agemin: int, agemax: int) -> str:
-    """Derive age_code from agegroup bounds (matches _age_group_code in api.py)."""
-    if agemin <= 10 and agemax == 10:
-        return "10-"
-    if agemin == 11 and agemax == 12:
-        return "11-12"
-    if agemin == 13 and agemax == 14:
-        return "13-14"
-    if agemin == 15 and agemax == 18:
-        return "15-18"
-    if agemin == 19 and (agemax == -1 or agemax >= 99):
-        return "Open"
-    return "Open"
 
 
 def parse_lxf(file_bytes: bytes) -> list[dict]:
@@ -188,7 +174,7 @@ def seed_from_lxf(db: Session, file_bytes: bytes, meetsid: int | None = None) ->
                 elif entry["agegroup_id"]:
                     ag = db.get(AgeGroup, (meetsid, entry["agegroup_id"]))
                     if ag:
-                        age_code = _age_code_from_bounds(ag.agemin or 0, ag.agemax or 99)
+                        age_code = age_group_code(ag.agemin or 0, ag.agemax or 99) or "Open"
                         agegroup_id = entry["agegroup_id"]
                     else:
                         age_code = "Open"
