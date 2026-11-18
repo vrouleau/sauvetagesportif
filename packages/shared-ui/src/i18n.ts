@@ -322,6 +322,7 @@ const fr = {
     loading: 'Chargement...',
     importLxf: 'Importer (.lxf)',
     exportLxf: 'Exporter (.lxf)',
+    printEntries: '🖨 Imprimer les inscriptions',
     entriesCount: (n: number) => `${n} athlète${n !== 1 ? 's' : ''} inscrit${n !== 1 ? 's' : ''}`,
   },
   relay: {
@@ -342,6 +343,7 @@ const fr = {
     selectClubToAdd: 'Sélectionnez un club pour ajouter une équipe',
     incompleteTeam: 'Équipe incomplète — il manque des athlètes',
     incompleteTeamsWarning: 'Équipes incomplètes',
+    printEntries: '🖨 Imprimer les inscriptions',
     errors: {
       uniquenessViolation: 'Cet athlète est déjà assigné à une autre équipe pour cette épreuve',
       entriesClosed: 'Les inscriptions sont fermées',
@@ -652,6 +654,7 @@ const en = {
     loading: 'Loading...',
     importLxf: 'Import (.lxf)',
     exportLxf: 'Export (.lxf)',
+    printEntries: '🖨 Print Entries',
     entriesCount: (n: number) => `${n} athlete${n !== 1 ? 's' : ''} entered`,
   },
   relay: {
@@ -672,6 +675,7 @@ const en = {
     selectClubToAdd: 'Select a club to add a team',
     incompleteTeam: 'Incomplete team — missing athletes',
     incompleteTeamsWarning: 'Incomplete teams',
+    printEntries: '🖨 Print Entries',
     errors: {
       uniquenessViolation: 'This athlete is already assigned to another team for this event',
       entriesClosed: 'Entries are closed',

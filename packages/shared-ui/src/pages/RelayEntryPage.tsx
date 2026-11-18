@@ -31,6 +31,7 @@ interface RelayEntryPageProps {
   role: 'admin' | 'coach' | 'organizer'
   clubId?: number
   refreshKey?: number
+  onPrint?: () => void   // Callback to open the printable entries report (team-app)
 }
 
 interface DeleteConfirmState {
@@ -436,7 +437,7 @@ function RelayTeamRow({
 
 // ─── RelayEntryPage Component ─────────────────────────────────────────────────
 
-export default function RelayEntryPage({ role, clubId, refreshKey }: RelayEntryPageProps) {
+export default function RelayEntryPage({ role, clubId, refreshKey, onPrint }: RelayEntryPageProps) {
   const { t } = useLang()
   const api = useRegistrationApi()
 
@@ -774,20 +775,30 @@ export default function RelayEntryPage({ role, clubId, refreshKey }: RelayEntryP
           )}
         </div>
 
-        {/* Admin/organizer club filter */}
-        {(role === 'admin' || role === 'organizer') && clubs.length > 0 && (
-          <select
-            value={selectedClubId ?? ''}
-            onChange={handleClubFilterChange}
-            className="border border-gray-300 px-2 py-1 rounded text-xs"
-          >
-            {clubs.map(club => (
-              <option key={club.id} value={club.id}>
-                {club.name}
-              </option>
-            ))}
-          </select>
-        )}
+        <div className="flex items-center gap-2">
+          {/* Admin/organizer club filter */}
+          {(role === 'admin' || role === 'organizer') && clubs.length > 0 && (
+            <select
+              value={selectedClubId ?? ''}
+              onChange={handleClubFilterChange}
+              className="border border-gray-300 px-2 py-1 rounded text-xs"
+            >
+              {clubs.map(club => (
+                <option key={club.id} value={club.id}>
+                  {club.name}
+                </option>
+              ))}
+            </select>
+          )}
+          {onPrint && (
+            <button
+              onClick={onPrint}
+              className="px-3 py-1 bg-gray-600 text-white text-xs rounded hover:bg-gray-700"
+            >
+              {t.relay.printEntries}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Closure message */}

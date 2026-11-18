@@ -34,6 +34,7 @@ interface IndividualEntryPageProps {
   refreshKey?: number    // Trigger re-fetch
   onImportLxf?: () => void   // Callback to trigger LXF import (individual + relay entries)
   onExportLxf?: () => void   // Callback to trigger LXF export (individual + relay entries)
+  onPrint?: () => void       // Callback to open the printable entries report (team-app)
 }
 
 interface IndividualEntryPageState {
@@ -468,7 +469,7 @@ function SplitPanel({ topPanel, bottomPanel }: { topPanel: React.ReactNode; bott
 
 // ─── IndividualEntryPage Component ────────────────────────────────────────────
 
-export default function IndividualEntryPage({ role, clubId, refreshKey, onImportLxf, onExportLxf }: IndividualEntryPageProps) {
+export default function IndividualEntryPage({ role, clubId, refreshKey, onImportLxf, onExportLxf, onPrint }: IndividualEntryPageProps) {
   const { t } = useLang()
   const api = useRegistrationApi()
   const tr = t.registration
@@ -619,6 +620,14 @@ export default function IndividualEntryPage({ role, clubId, refreshKey, onImport
           {tr.delete}
         </button>
         <div className="flex-1" />
+        {onPrint && (
+          <button
+            onClick={onPrint}
+            className="px-3 py-0.5 bg-gray-600 text-white text-xs rounded hover:bg-gray-700"
+          >
+            {tr.printEntries}
+          </button>
+        )}
         {onImportLxf && (
           <button
             onClick={onImportLxf}
