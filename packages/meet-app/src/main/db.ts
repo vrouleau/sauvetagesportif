@@ -3870,6 +3870,42 @@ export interface PointStandingsGroup {
   }>
 }
 
+type ClubPointsMap = Map<string, { clubName: string; clubCode: string; totalPoints: number; catPoints: Map<string, number> }>
+
+/**
+ * Rank one event/age group's results (already sorted best first; equal times
+ * share a place) and add each place's points from `pointsScale` to its club,
+ * in total and under `category`. Clubs are keyed by code, else name.
+ */
+function awardPlacePoints(
+  results: Array<{ swimtime: number; clubname: string; clubcode: string }>,
+  pointsScale: number[],
+  category: string,
+  clubPoints: ClubPointsMap,
+): void {
+  let place = 0
+  let lastTime: number | null = null
+
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i]
+    if (r.swimtime !== lastTime) {
+      place = i + 1
+      lastTime = r.swimtime
+    }
+
+    const pts = (place - 1 < pointsScale.length) ? pointsScale[place - 1] : 0
+    if (pts <= 0) continue
+
+    const key = r.clubcode || r.clubname
+    if (!clubPoints.has(key)) {
+      clubPoints.set(key, { clubName: r.clubname, clubCode: r.clubcode, totalPoints: 0, catPoints: new Map() })
+    }
+    const club = clubPoints.get(key)!
+    club.totalPoints += pts
+    club.catPoints.set(category, (club.catPoints.get(category) ?? 0) + pts)
+  }
+}
+
 export function getPointStandings(selectedEventIds: number[], injectedDb?: ReturnType<typeof getLocalDb>): {
   clubs: PointStandingsClub[]
   categories: string[]
@@ -3888,7 +3924,7 @@ export function getPointStandings(selectedEventIds: number[], injectedDb?: Retur
 
   const xml = row.data
   const categoryNames: string[] = []
-  const clubPoints = new Map<string, { clubName: string; clubCode: string; totalPoints: number; catPoints: Map<string, number> }>()
+  const clubPoints: ClubPointsMap = new Map()
 
   const ceRegex = /<COMBINEDEVENT\s([^>]*?)(?:\/>|>([\s\S]*?)<\/COMBINEDEVENT>)/g
   let ceMatch: RegExpExecArray | null
@@ -3950,27 +3986,7 @@ export function getPointStandings(selectedEventIds: number[], injectedDb?: Retur
         clubname: string; clubcode: string
       }>
 
-      let place = 0
-      let lastTime: number | null = null
-
-      for (let i = 0; i < results.length; i++) {
-        const r = results[i]
-        if (r.swimtime !== lastTime) {
-          place = i + 1
-          lastTime = r.swimtime
-        }
-
-        const pts = (place - 1 < pointsScale.length) ? pointsScale[place - 1] : 0
-        if (pts <= 0) continue
-
-        const key = r.clubcode || r.clubname
-        if (!clubPoints.has(key)) {
-          clubPoints.set(key, { clubName: r.clubname, clubCode: r.clubcode, totalPoints: 0, catPoints: new Map() })
-        }
-        const club = clubPoints.get(key)!
-        club.totalPoints += pts
-        club.catPoints.set(categoryName, (club.catPoints.get(categoryName) ?? 0) + pts)
-      }
+      awardPlacePoints(results, pointsScale, categoryName, clubPoints)
     }
   }
 
@@ -4030,27 +4046,7 @@ export function getPointStandings(selectedEventIds: number[], injectedDb?: Retur
         clubname: string; clubcode: string
       }>
 
-      let place = 0
-      let lastTime: number | null = null
-
-      for (let i = 0; i < results.length; i++) {
-        const r = results[i]
-        if (r.swimtime !== lastTime) {
-          place = i + 1
-          lastTime = r.swimtime
-        }
-
-        const pts = (place - 1 < pointsScale.length) ? pointsScale[place - 1] : 0
-        if (pts <= 0) continue
-
-        const key = r.clubcode || r.clubname
-        if (!clubPoints.has(key)) {
-          clubPoints.set(key, { clubName: r.clubname, clubCode: r.clubcode, totalPoints: 0, catPoints: new Map() })
-        }
-        const club = clubPoints.get(key)!
-        club.totalPoints += pts
-        club.catPoints.set(category.name, (club.catPoints.get(category.name) ?? 0) + pts)
-      }
+      awardPlacePoints(results, pointsScale, category.name, clubPoints)
     }
   }
 
@@ -4095,27 +4091,7 @@ export function getPointStandings(selectedEventIds: number[], injectedDb?: Retur
         clubname: string; clubcode: string
       }>
 
-      let place = 0
-      let lastTime: number | null = null
-
-      for (let i = 0; i < results.length; i++) {
-        const r = results[i]
-        if (r.swimtime !== lastTime) {
-          place = i + 1
-          lastTime = r.swimtime
-        }
-
-        const pts = (place - 1 < pointsScale.length) ? pointsScale[place - 1] : 0
-        if (pts <= 0) continue
-
-        const key = r.clubcode || r.clubname
-        if (!clubPoints.has(key)) {
-          clubPoints.set(key, { clubName: r.clubname, clubCode: r.clubcode, totalPoints: 0, catPoints: new Map() })
-        }
-        const club = clubPoints.get(key)!
-        club.totalPoints += pts
-        club.catPoints.set(category.name, (club.catPoints.get(category.name) ?? 0) + pts)
-      }
+      awardPlacePoints(results, pointsScale, category.name, clubPoints)
     }
   }
 
