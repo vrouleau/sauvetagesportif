@@ -170,10 +170,8 @@ src/main/
   timingBarcode.ts      — Barcode encode/decode (E{n}-H{n}-L{n} format)
   timingSheets.ts       — Timing sheet PDF generator (HTML + Code128 SVG)
   timingScanDb.ts       — Local SQLite for scanned images + processing state
-  timingImageProcess.ts — Image crop/preprocessing for OCR
-  ocrEngine.ts          — OCR engine interface + time parsing utilities
+  ocrEngine.ts          — OCR engine interface
   ocrGemini.ts          — Gemini 2.5 Flash Lite vision OCR (primary)
-  ocrOllama.ts          — Ollama local vision model (fallback)
   geminiBackground.ts   — Background Gemini processing loop (main process)
 src/preload/index.ts    — contextBridge API
 src/renderer/src/
@@ -182,7 +180,6 @@ src/renderer/src/
   registrationApiElectron.ts — RegistrationAPI adapter (IPC → SQLite)
   pages/EventsPage.tsx  — Thin wrapper: ApiProvider + shared EventsPage
   pages/HeatsPage.tsx   — Heat runner + Quantum toolbar + Print timing sheets
-  pages/AthletesPage.tsx— Athlete list + editor
   pages/TimingScanPage.tsx — Camera barcode scanner (batch mode)
   pages/TimingProcessPage.tsx — OCR processing queue + manual time entry
 ```
@@ -285,7 +282,7 @@ time, `.smb` export carries them through correctly too.
   fixed to write it too.
 | `timing:save-scan` | Store scanned image + barcode metadata |
 | `timing:get-scans-for-processing` | List scans by status filter |
-| `timing:run-ocr` | Run OCR engine on a scan (Gemini/Ollama/etc) |
+| `timing:run-ocr` | Run OCR engine on a scan (Gemini) |
 | `timing:validate-scan` | Accept times → write to swimresult |
 | `timing:generate-sheets` | Generate timing sheet HTML for a session |
 | `timing:set-gemini-background` | Enable/disable background Gemini processing |
@@ -425,7 +422,6 @@ Athletes in beach meets get a unique jersey/bib identifier stored in `athlete.na
 
 ### Display
 - HeatsPage: shown next to athlete name
-- AthletesPage: read-only column
 - "Identifiants plage" PDF report
 
 ### Tests: `tests/beach-number.test.ts`

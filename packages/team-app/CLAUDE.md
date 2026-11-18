@@ -265,7 +265,7 @@ backend/app/
   routers/serc.py       — SERC API (config, teams, scores, draw order, results)
   routers/serc_print.py — SERC printable judge sheets (bilingual, one page per team per section)
   events.py             — LENEX meet structure parser
-  best_times_v2.py      — Best times computed from Team Manager results table
+  best_times.py         — Best times: one resolver over archived results + coach-entered times (see "Best times storage")
   export.py             — LENEX export (registrations + Gemini key transport; session names + pause events included; SERC events/relays excluded — meet-app has no notion of them)
   invoices.py           — Invoice line items, deterministic invoice numbers (YEAR-MEET-CLUB[-Rn]), PDF renderer
   emailing.py           — Resend transport, shared email footer, invoice + organizer-summary email templates
