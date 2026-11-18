@@ -27,9 +27,6 @@ export { RegistrationApiProvider, useRegistrationApi } from './context/Registrat
 
 // Pages
 export { default as EventsPage } from './pages/EventsPage'
-export { default as AthletesListPage } from './pages/AthletesListPage'
-export { default as RegistrationPage } from './pages/RegistrationPage'
-export { default as InscriptionPage } from './pages/InscriptionPage'
 export { default as IndividualEntryPage } from './pages/IndividualEntryPage'
 export { default as RelayEntryPage } from './pages/RelayEntryPage'
 

@@ -239,7 +239,7 @@ export interface EligibleAthlete {
   ageGroup?: string        // Registration age code (e.g., "15-18", "19+") from individual entries
 }
 
-// ─── Registration API (used by AthletesListPage & RegistrationPage) ───────────
+// ─── Registration API (used by IndividualEntryPage and its panels) ────────────
 
 export interface Club {
   id: number
@@ -317,7 +317,6 @@ export interface RegistrationData {
 export interface RegistrationAPI {
   getClubs(): Promise<Club[]>
   getAthletesByClub(clubId: string): Promise<AthleteListItem[]>
-  getAllAthletes(): Promise<AthleteListItem[]>
   /** Bulk fetch: returns all athletes keyed by club ID. Avoids N+1 requests. */
   getAllAthletesGrouped?(): Promise<Record<string, AthleteListItem[]>>
   addAthlete(data: { first_name: string; last_name: string; gender: string; birthdate: string | null; license: string; club_id: number }): Promise<void>

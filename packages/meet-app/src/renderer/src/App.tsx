@@ -19,7 +19,6 @@
 import { useState, useEffect } from 'react'
 import EventsPage from './pages/EventsPage'
 import HeatsPage from './pages/HeatsPage'
-import InscriptionPageWrapper from './pages/InscriptionPageWrapper'
 import IndividualEntryPageWrapper from './pages/IndividualEntryPageWrapper'
 import RelayEntryPageWrapper from './pages/RelayEntryPageWrapper'
 import FinalsPage from './pages/FinalsPage'
@@ -33,7 +32,7 @@ import { LangProvider, useLang } from '@shared/context/LangContext'
 import { setDialogLang } from './nativeDialogs'
 import logoSrc from '@shared/assets/icon.png'
 
-type Page = 'events' | 'individualEntries' | 'relayEntries' | 'inscription' | 'finals' | 'heats' | 'report' | 'scan' | 'process'
+type Page = 'events' | 'individualEntries' | 'relayEntries' | 'finals' | 'heats' | 'report' | 'scan' | 'process'
 
 interface ImportSummary {
   sessions: number; events: number; ageGroups: number
@@ -491,7 +490,6 @@ function AppInner() {
             events: t.nav.events,
             individualEntries: t.nav.individualEntries,
             relayEntries: t.nav.relayEntries,
-            inscription: t.nav.inscription,
             finals: t.nav.finals,
             heats: t.nav.heats,
             report: t.nav.report,
@@ -529,7 +527,6 @@ function AppInner() {
         {page === 'events' && <EventsPage refreshKey={refreshKey} />}
         {page === 'individualEntries' && <IndividualEntryPageWrapper refreshKey={refreshKey} onImportLxf={handleImportLenex} onExportLxf={handleExportMeetLenex} />}
         {page === 'relayEntries' && <RelayEntryPageWrapper refreshKey={refreshKey} />}
-        {page === 'inscription' && <InscriptionPageWrapper refreshKey={refreshKey} />}
         {page === 'finals' && <FinalsPage refreshKey={refreshKey} meetType={meetType} />}
         {page === 'heats' && <HeatsPage refreshKey={refreshKey} meetType={meetType} />}
         {page === 'report' && <ReportPage refreshKey={refreshKey} meetType={meetType} />}

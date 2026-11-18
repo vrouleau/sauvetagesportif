@@ -122,19 +122,6 @@ export const registrationApiElectron: RegistrationAPI = {
       }))
   },
 
-  async getAllAthletes(): Promise<AthleteListItem[]> {
-    const athletes = (await ipc()?.getAthletes()) as LocalAthlete[] ?? []
-    return athletes.map(a => ({
-      id: a.id,
-      first_name: a.firstName,
-      last_name: a.lastName,
-      gender: a.gender,
-      birthdate: a.birthDate,
-      license: a.licence ?? '',
-      entry_count: a.entries?.length ?? 0,
-    }))
-  },
-
   async addAthlete(data) {
     const created = await ipc()?.saveAthlete({
       id: 0, // new

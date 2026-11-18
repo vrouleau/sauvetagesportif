@@ -21,7 +21,6 @@ export type Lang = 'fr' | 'en'
 const fr = {
   nav: {
     events: 'Épreuves / Sessions',
-    inscription: 'Inscription',
     individualEntries: 'Inscriptions individuelles',
     relayEntries: 'Inscriptions relais',
     finals: 'Finales',
@@ -292,12 +291,9 @@ const fr = {
     },
   },
   registration: {
-    athletes: 'Athlètes',
     search: 'Rechercher...',
-    edit: 'Modifier',
     delete: 'Supprimer',
     addAthlete: '+ Ajouter athlète',
-    resetPin: 'Réinitialiser PIN',
     firstName: 'Prénom',
     lastName: 'Nom',
     gender: 'Sexe',
@@ -379,7 +375,6 @@ const fr = {
 const en = {
   nav: {
     events: 'Events / Sessions',
-    inscription: 'Registration',
     individualEntries: 'Individual Entries',
     relayEntries: 'Relay Entries',
     finals: 'Finals',
@@ -648,12 +643,9 @@ const en = {
     },
   },
   registration: {
-    athletes: 'Athletes',
     search: 'Search...',
-    edit: 'Edit',
     delete: 'Delete',
     addAthlete: '+ Add Athlete',
-    resetPin: 'Reset PIN',
     firstName: 'First Name',
     lastName: 'Last Name',
     gender: 'Gender',
