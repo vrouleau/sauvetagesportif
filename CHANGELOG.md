@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.5.24] - 2026-11-18
+
+### ✨ Features
+
+- highlight athletes and clubs with entries on the Individual entries page (`c6a816c`)
+- print entries button on Individual and Relay entries pages (`50dbfd2`)
+
+### Other
+
+- Merge pull request #104 from vrouleau/claude/sleepy-darwin-3fap62 (`b4aa7ec`)
+
 ## [0.5.23] - 2026-11-18
 
 ### 🐛 Bug Fixes
