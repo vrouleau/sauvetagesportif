@@ -182,6 +182,28 @@ def test_import_without_any_date_leaves_mindate_null(db_session):
     assert m.mindate is None
 
 
+def test_reimport_matches_meet_stored_without_microseconds(db_session):
+    """Regression: a meet whose mindate was stored as '2025-05-24 00:00:00'
+    (older rows, no '.000000') must still be found by the name + date dedup,
+    so re-importing replaces it instead of creating a duplicate meet."""
+    from sqlalchemy import text
+    lxf = _build_lxf(name="CAEM", session_dates=["2025-05-24"])
+    import_historical_meet(db_session, lxf, force=True)
+    m = _only_meet(db_session)
+    db_session.execute(
+        text("UPDATE meets SET mindate = '2025-05-24 00:00:00' WHERE meetsid = :id"),
+        {"id": m.meetsid},
+    )
+    db_session.commit()
+
+    res = import_historical_meet(db_session, lxf, force=False)
+    assert res.get("needs_force") and res.get("meet_id") == m.meetsid
+
+    res = import_historical_meet(db_session, lxf, force=True)
+    assert res["reimported"] is True
+    assert _only_meet(db_session).meetsid == m.meetsid
+
+
 # ── GET /admin/historical-meets scope, ordering, and field mapping ─────────────
 
 def _add_meet(db, *, meetsid, name, place, mindate, meetstate):

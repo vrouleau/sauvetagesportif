@@ -317,6 +317,11 @@ def import_lxf_as_meet(db: DbSession, content: bytes, force: bool = False) -> di
     results_imported = 0
     relays_imported = 0
     member_ids_with_results: set[int] = set()
+    # File athleteid -> membersid across ALL clubs: a relay can include an
+    # athlete listed under another club (athlete switched clubs, composite
+    # team), so relays are archived once every club's athletes are known.
+    athlete_members: dict[str, int] = {}
+    relay_clubs: list[tuple] = []  # (club_el, club_team_id)
 
     for club_el in root.iter("CLUB"):
         code = (club_el.get("code") or "").strip()
@@ -341,7 +346,6 @@ def import_lxf_as_meet(db: DbSession, content: bytes, force: bool = False) -> di
             db.flush()
             clubs_imported += 1
 
-        athlete_members: dict[str, int] = {}  # file athleteid -> membersid (relay positions)
         for ath_el in club_el.iter("ATHLETE"):
             license_val = (ath_el.get("license") or "").strip()
             firstname = ath_el.get("firstname") or ""
@@ -355,10 +359,31 @@ def import_lxf_as_meet(db: DbSession, content: bytes, force: bool = False) -> di
                 handicap_el.get("exception") if handicap_el is not None else None
             ) or ath_el.get("exception") or None
 
-            # Merge by license
+            # Merge by license, else by exact name: same name + birthdate in
+            # any club (athlete changed clubs), else same name in this club
+            # unless the birthdates disagree. License-only matching created a
+            # new member on every import for athletes without a license, so
+            # re-importing a results file duplicated them.
             existing_member = None
             if license_val:
                 existing_member = db.query(Member).filter(Member.license == license_val).first()
+            if not existing_member and firstname and lastname:
+                same_name = db.query(Member).filter(
+                    Member.firstname == firstname,
+                    Member.lastname == lastname,
+                ).order_by(Member.membersid).all()
+
+                def _bd(m):
+                    return m.birthdate.date() if hasattr(m.birthdate, "date") else m.birthdate
+
+                if birthdate:
+                    existing_member = next((m for m in same_name if _bd(m) == birthdate), None)
+                if not existing_member:
+                    existing_member = next((
+                        m for m in same_name
+                        if m.clubsid == club_team_id
+                        and (not birthdate or not m.birthdate or _bd(m) == birthdate)
+                    ), None)
 
             if existing_member:
                 member_id = existing_member.membersid
@@ -408,8 +433,11 @@ def import_lxf_as_meet(db: DbSession, content: bytes, force: bool = False) -> di
                 results_imported += 1
                 member_ids_with_results.add(member_id)
 
-        # Relay results: team total + members (relay history, see relay_archive.py)
-        from .relay_archive import archive_club_relays
+        relay_clubs.append((club_el, club_team_id))
+
+    # Relay results: team total + members (relay history, see relay_archive.py)
+    from .relay_archive import archive_club_relays
+    for club_el, club_team_id in relay_clubs:
         n_relays, relay_members = archive_club_relays(
             db, club_el,
             club_id=club_team_id, meet_id=meet_id, meet_date=meet_date, course=meet_course,

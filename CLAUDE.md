@@ -97,6 +97,16 @@ scripts/
                              --type pool|beach --output FILE.lxf [--seed N]
                              Pairs with packages/meet-app/scripts/generate_results.py (see
                              packages/meet-app/CLAUDE.md) to fill in realistic results afterward.
+  audit_duplicate_athletes.py — Read-only audit of duplicate team-app members (same name +
+                             birthdate, same license, similar names, blank names) with what
+                             references each copy. Usage: python scripts/audit_duplicate_athletes.py
+                             DB.db [--csv plan.csv]. The CSV is the merge plan (edit suggest_keep).
+  merge_duplicate_athletes.py — Merges the duplicates listed in that plan (results, meet links,
+                             relay slots, registrations, best times → keeper; deletes the copies).
+                             Input DB opened read-only; dry run by default, --out FILE writes a
+                             merged copy to restore via Admin. Usage: python
+                             scripts/merge_duplicate_athletes.py DB.db plan.csv [--out merged.db]
+                             [--delete-blank]
 ```
 
 ## Shared critical rules
