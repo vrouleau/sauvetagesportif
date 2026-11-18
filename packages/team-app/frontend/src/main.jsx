@@ -34,6 +34,7 @@ import RegistrationPageShared from '@shared/pages/RegistrationPage'
 import { meetApiHttp } from './meetApi'
 import { registrationApiHttp } from './registrationApi'
 import api, { headers } from './api'
+import { openPrintEntries } from './printEntries'
 import { selectMeet } from './authMeet'
 import Admin from './pages/Admin'
 import Organizer from './pages/Organizer'
@@ -143,6 +144,10 @@ function IndividualEntryPage({ role, clubId }) {
     } catch (e) { alert(e.message || 'Export failed') }
   }
 
+  async function handlePrint() {
+    try { await openPrintEntries(lang, 'individual') } catch (e) { alert(e.message || 'Error') }
+  }
+
   // Only show import/export for admin and organizer roles
   const showImportExport = role === 'admin' || role === 'organizer'
 
@@ -154,6 +159,7 @@ function IndividualEntryPage({ role, clubId }) {
           clubId={clubId}
           onImportLxf={showImportExport ? handleImportLxf : undefined}
           onExportLxf={showImportExport ? handleExportLxf : undefined}
+          onPrint={handlePrint}
         />
         {showImportExport && (
           <input ref={importRef} type="file" accept=".lxf" className="hidden" onChange={handleImportFile} />
@@ -166,12 +172,16 @@ function IndividualEntryPage({ role, clubId }) {
 // Wrap the shared RelayEntryPage
 function RelayEntryPage({ role, clubId }) {
   const { lang } = useLang()
+  async function handlePrint() {
+    try { await openPrintEntries(lang, 'relays') } catch (e) { alert(e.message || 'Error') }
+  }
   return (
     <SharedLangProvider initialLang={lang}>
       <RegistrationApiProvider api={registrationApiHttp}>
         <RelayEntryPageShared
           role={role}
           clubId={clubId ? parseInt(clubId) : undefined}
+          onPrint={handlePrint}
         />
       </RegistrationApiProvider>
     </SharedLangProvider>

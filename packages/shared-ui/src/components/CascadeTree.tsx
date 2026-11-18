@@ -24,6 +24,9 @@ export interface CascadeTreeProps {
   clubs: Club[]
   athletesByClub: Map<number, AthleteListItem[]>
   selectedAthleteId: number | null
+  /** Athletes that already have entries — their row (and their club's) is
+   *  highlighted green so coaches can see whose entries are done. */
+  enteredAthleteIds?: Set<number>
   filterText: string
   defaultExpanded: boolean
   onSelectAthlete: (athleteId: number) => void
@@ -45,6 +48,7 @@ export default function CascadeTree({
   clubs,
   athletesByClub,
   selectedAthleteId,
+  enteredAthleteIds,
   filterText,
   defaultExpanded,
   onSelectAthlete,
@@ -136,6 +140,10 @@ export default function CascadeTree({
       {clubs.map((club) => {
         const athletes = athletesByClub.get(club.id) || []
         const expanded = expandedClubs.has(club.id)
+        // With a search active, `athletes` is the matching athletes only.
+        const enteredCount = enteredAthleteIds
+          ? athletes.filter((a) => enteredAthleteIds.has(a.id)).length
+          : 0
 
         // When filter is active, hide clubs with no matching athletes
         if (filterText && athletes.length === 0) return null
@@ -144,7 +152,11 @@ export default function CascadeTree({
           <div key={club.id}>
             {/* Club node */}
             <div
-              className="flex items-center h-6 px-2 cursor-pointer hover:bg-gray-50 border-b border-gray-100"
+              className={`flex items-center h-6 px-2 cursor-pointer border-b border-gray-100 ${
+                enteredCount > 0
+                  ? 'bg-green-100 text-green-900 hover:bg-green-200'
+                  : 'hover:bg-gray-50'
+              }`}
               onClick={() => toggleClub(club.id)}
               onContextMenu={(e) => handleClubContextMenu(e, club.id)}
             >
@@ -154,8 +166,8 @@ export default function CascadeTree({
               <span className="flex-1 font-medium truncate">
                 {club.name}
               </span>
-              <span className="text-gray-400 mr-1">
-                ({athletes.length})
+              <span className={`mr-1 ${enteredCount > 0 ? 'text-green-700' : 'text-gray-400'}`}>
+                ({enteredCount > 0 ? `${enteredCount}/${athletes.length}` : athletes.length})
               </span>
             </div>
 
@@ -163,13 +175,16 @@ export default function CascadeTree({
             {expanded &&
               athletes.map((athlete) => {
                 const isSelected = selectedAthleteId === athlete.id
+                const isEntered = enteredAthleteIds?.has(athlete.id) ?? false
                 return (
                   <div
                     key={athlete.id}
                     className={`flex items-center h-6 pl-7 pr-2 cursor-pointer border-b border-gray-50 ${
                       isSelected
                         ? 'bg-blue-600 text-white'
-                        : 'hover:bg-blue-50'
+                        : isEntered
+                          ? 'bg-green-50 text-green-900 hover:bg-green-100'
+                          : 'hover:bg-blue-50'
                     }`}
                     onClick={() => onSelectAthlete(athlete.id)}
                     onContextMenu={(e) =>
@@ -183,6 +198,9 @@ export default function CascadeTree({
                     <span className="flex-1 truncate">
                       {athlete.last_name}, {athlete.first_name}
                     </span>
+                    {isEntered && (
+                      <span className={`mr-1 ${isSelected ? 'text-white' : 'text-green-600'}`}>✓</span>
+                    )}
                     <span className={`text-xs ${isSelected ? 'text-blue-200' : 'text-gray-400'}`}>
                       {athlete.gender}
                     </span>

@@ -118,6 +118,7 @@ export const registrationApiElectron: RegistrationAPI = {
         gender: a.gender,
         birthdate: a.birthDate,
         license: a.licence ?? '',
+        entry_count: a.entries?.length ?? 0,
       }))
   },
 
@@ -130,6 +131,7 @@ export const registrationApiElectron: RegistrationAPI = {
       gender: a.gender,
       birthdate: a.birthDate,
       license: a.licence ?? '',
+      entry_count: a.entries?.length ?? 0,
     }))
   },
 

@@ -34,6 +34,7 @@ interface IndividualEntryPageProps {
   refreshKey?: number    // Trigger re-fetch
   onImportLxf?: () => void   // Callback to trigger LXF import (individual + relay entries)
   onExportLxf?: () => void   // Callback to trigger LXF export (individual + relay entries)
+  onPrint?: () => void       // Callback to open the printable entries report (team-app)
 }
 
 interface IndividualEntryPageState {
@@ -149,6 +150,10 @@ function useIndividualEntryPage(api: RegistrationAPI, role: string, clubId?: str
   const [addDialog, setAddDialog] = useState<AddAthleteDialogState>({ open: false, clubId: 0, clubName: '' })
   const [deleteConfirm, setDeleteConfirm] = useState<DeleteConfirmState>({ open: false, athleteId: 0, athleteName: '' })
   const [selectedClubId, setSelectedClubId] = useState<number | null>(null)
+  // Athletes with at least one individual entry — highlighted in the tree so
+  // coaches can see whose entries are done. Seeded from the athlete list's
+  // entry_count, then kept in step with the selected athlete's registrations.
+  const [enteredAthleteIds, setEnteredAthleteIds] = useState<Set<number>>(new Set())
 
   // Debounced filter
   const [debouncedFilter, setDebouncedFilter] = useState('')
@@ -167,6 +172,11 @@ function useIndividualEntryPage(api: RegistrationAPI, role: string, clubId?: str
     setState(prev => ({ ...prev, loading: true, error: null }))
     try {
       const { clubs, athletesByClub } = await loadInscriptionData(api, role, clubId)
+      const entered = new Set<number>()
+      for (const athletes of athletesByClub.values()) {
+        for (const a of athletes) if ((a.entry_count ?? 0) > 0) entered.add(a.id)
+      }
+      setEnteredAthleteIds(entered)
       setState(prev => ({ ...prev, clubs, athletesByClub, loading: false }))
     } catch (err) {
       setState(prev => ({
@@ -201,6 +211,22 @@ function useIndividualEntryPage(api: RegistrationAPI, role: string, clubId?: str
       }))
     }
   }, [api, state.athletesByClub])
+
+  // Keep the selected athlete's "has entries" mark in step with their
+  // registrations as they are added/removed.
+  useEffect(() => {
+    const id = state.selectedAthleteId
+    const data = state.registrationData
+    if (!id || !data) return
+    const has = filterToIndividualOnly(data).individual_events
+      .some(style => style.categories.some(c => c.registered))
+    setEnteredAthleteIds(prev => {
+      if (prev.has(id) === has) return prev
+      const next = new Set(prev)
+      if (has) next.add(id); else next.delete(id)
+      return next
+    })
+  }, [state.registrationData])
 
   // Reload registration data for currently selected athlete
   const reloadRegistration = useCallback(async () => {
@@ -408,6 +434,7 @@ function useIndividualEntryPage(api: RegistrationAPI, role: string, clubId?: str
     handleUpdateEntryTime,
     handleSetHC,
     handleRetry,
+    enteredAthleteIds,
   }
 }
 
@@ -468,7 +495,7 @@ function SplitPanel({ topPanel, bottomPanel }: { topPanel: React.ReactNode; bott
 
 // ─── IndividualEntryPage Component ────────────────────────────────────────────
 
-export default function IndividualEntryPage({ role, clubId, refreshKey, onImportLxf, onExportLxf }: IndividualEntryPageProps) {
+export default function IndividualEntryPage({ role, clubId, refreshKey, onImportLxf, onExportLxf, onPrint }: IndividualEntryPageProps) {
   const { t } = useLang()
   const api = useRegistrationApi()
   const tr = t.registration
@@ -497,6 +524,7 @@ export default function IndividualEntryPage({ role, clubId, refreshKey, onImport
     handleUpdateEntryTime,
     handleSetHC,
     handleRetry,
+    enteredAthleteIds,
   } = useIndividualEntryPage(api, role, clubId, refreshKey)
 
   // ─── Closure date enforcement ─────────────────────────────────────────────
@@ -527,6 +555,7 @@ export default function IndividualEntryPage({ role, clubId, refreshKey, onImport
               clubs={state.clubs}
               athletesByClub={filteredAthletesByClub}
               selectedAthleteId={state.selectedAthleteId}
+              enteredAthleteIds={enteredAthleteIds}
               filterText={debouncedFilter}
               defaultExpanded={false}
               onSelectAthlete={handleSelectAthlete}
@@ -619,6 +648,14 @@ export default function IndividualEntryPage({ role, clubId, refreshKey, onImport
           {tr.delete}
         </button>
         <div className="flex-1" />
+        {onPrint && (
+          <button
+            onClick={onPrint}
+            className="px-3 py-0.5 bg-gray-600 text-white text-xs rounded hover:bg-gray-700"
+          >
+            {tr.printEntries}
+          </button>
+        )}
         {onImportLxf && (
           <button
             onClick={onImportLxf}
@@ -644,6 +681,7 @@ export default function IndividualEntryPage({ role, clubId, refreshKey, onImport
             clubs={state.clubs}
             athletesByClub={filteredAthletesByClub}
             selectedAthleteId={state.selectedAthleteId}
+            enteredAthleteIds={enteredAthleteIds}
             filterText={debouncedFilter}
             defaultExpanded={false}
             onSelectAthlete={handleSelectAthlete}

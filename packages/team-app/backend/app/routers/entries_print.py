@@ -19,16 +19,19 @@
 """Printable entries list — every individual and relay entry of the current
 meet, grouped by club (one club per printed page).
 
-Served as a self-contained HTML page; the Invitation page fetches it with the
-organizer's PIN and opens it in a new tab; the page's own Print button opens
-the browser's print dialog.
+Served as a self-contained HTML page; the Invitation page and the Individual /
+Relay entries pages fetch it with the caller's PIN and open it in a new tab; the
+page's own Print button opens the browser's print dialog.
+
+Admin / organizer get every club; a coach only ever gets their own club. The
+entries pages pass `section` so each prints only what it shows.
 """
 from __future__ import annotations
 
 from datetime import datetime
 from html import escape
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session, joinedload
 
@@ -36,7 +39,7 @@ from ..database import get_db
 from ..meet_config import resolve_meetsid, _get_meet_config, _get_meet_type
 from ..models import BsGlobal, SwimEvent, SwimResult
 from ..models_team import Member, Relay, RelayPos, TeamClub
-from .api import require_organizer_or_admin
+from .api import _resolve_role
 
 router = APIRouter(prefix="/api/print")
 
@@ -122,8 +125,17 @@ def _event_sort_key(ev: SwimEvent | None):
     return (ev.eventnumber or 1 << 30, ev.sortcode or 0)
 
 
-def build_entries_html(db: Session, meetsid: int | None, lang: str = "fr") -> str:
+SECTIONS = ("all", "individual", "relays")
+
+
+def build_entries_html(db: Session, meetsid: int | None, lang: str = "fr",
+                       club_id: int | None = None, section: str = "all") -> str:
+    """`club_id` restricts the report to one club; `section` to the individual
+    or the relay entries ("all" = both)."""
     txt = _TXT.get(lang, _TXT["fr"])
+    show_indiv = section in ("all", "individual")
+    show_relays = section in ("all", "relays")
+    title = {"individual": txt["individual"], "relays": txt["relays"]}.get(section, txt["title"])
     is_beach = _get_meet_type(db) == "BEACH"
     meet_name = _get_meet_config(db, meetsid, "meet_name") or txt["title"]
 
@@ -149,7 +161,7 @@ def build_entries_html(db: Session, meetsid: int | None, lang: str = "fr") -> st
     members: dict[int, Member] = {}
     for reg in regs:
         m = reg.member
-        if m is None:
+        if m is None or (club_id is not None and m.clubsid != club_id):
             continue
         ev = reg.event
         if ev is not None and ev.swimstyle and (ev.swimstyle.relaycount or 1) > 1:
@@ -163,6 +175,8 @@ def build_entries_html(db: Session, meetsid: int | None, lang: str = "fr") -> st
         .filter(Relay.meetsid == meetsid, Relay.clubsid.isnot(None))
         .all()
     )
+    if club_id is not None:
+        relays = [r for r in relays if r.clubsid == club_id]
     relay_ids = [r.relaysid for r in relays]
     positions: dict[int, list[RelayPos]] = {}
     if relay_ids:
@@ -196,7 +210,13 @@ def build_entries_html(db: Session, meetsid: int | None, lang: str = "fr") -> st
     for r in relays:
         relays_by_club.setdefault(r.clubsid, []).append((relay_event(r), r))
 
+    if not show_indiv:
+        indiv = {}
+    if not show_relays:
+        relays_by_club = {}
     club_ids = set(indiv) | set(relays_by_club)
+    if club_id is not None:
+        club_ids = {club_id}  # a coach's own club page, even when empty
     clubs = db.query(TeamClub).filter(TeamClub.clubsid.in_(club_ids)).all() if club_ids else []
     clubs.sort(key=lambda c: (c.name or "").lower())
 
@@ -213,10 +233,14 @@ def build_entries_html(db: Session, meetsid: int | None, lang: str = "fr") -> st
         n_entries = sum(len(v) for v in club_indiv.values())
         code = f" ({escape(club.code)})" if club.code else ""
         parts.append('<section class="club">')
+        summary = []
+        if show_indiv:
+            summary += [f'{len(club_indiv)} {txt["athletes"]}', f'{n_entries} {txt["entries"]}']
+        if show_relays:
+            summary.append(f'{len(club_relays)} {txt["teams"]}')
         parts.append(
             f'<h2>{escape(club.name or "")}{code}</h2>'
-            f'<p class="summary">{len(club_indiv)} {txt["athletes"]} · '
-            f'{n_entries} {txt["entries"]} · {len(club_relays)} {txt["teams"]}</p>'
+            f'<p class="summary">{" · ".join(summary)}</p>'
         )
 
         # The section title lives in the table's <thead>, which browsers
@@ -227,7 +251,9 @@ def build_entries_html(db: Session, meetsid: int | None, lang: str = "fr") -> st
                     f'<span class="cap-club">{escape(club.name or "")}</span> · {label}</th></tr>')
 
         # Individual
-        if not club_indiv:
+        if not show_indiv:
+            pass
+        elif not club_indiv:
             parts.append(f'<h3>{txt["individual"]}</h3>')
             parts.append(f'<p class="empty">{txt["no_individual"]}</p>')
         else:
@@ -265,7 +291,9 @@ def build_entries_html(db: Session, meetsid: int | None, lang: str = "fr") -> st
             parts.append("</table>")
 
         # Relays
-        if not club_relays:
+        if not show_relays:
+            pass
+        elif not club_relays:
             parts.append(f'<h3>{txt["relays"]}</h3>')
             parts.append(f'<p class="empty">{txt["no_relays"]}</p>')
         else:
@@ -294,14 +322,15 @@ def build_entries_html(db: Session, meetsid: int | None, lang: str = "fr") -> st
         parts.append("</section>")
 
     if not clubs:
-        parts.append(f'<p class="empty">{txt["no_entries"]}</p>')
+        empty = {"individual": txt["no_individual"], "relays": txt["no_relays"]}.get(section, txt["no_entries"])
+        parts.append(f'<p class="empty">{empty}</p>')
 
     printed = datetime.now().strftime("%Y-%m-%d %H:%M")
     return f"""<!doctype html>
 <html lang="{lang}">
 <head>
 <meta charset="utf-8">
-<title>{escape(txt["title"])} — {escape(meet_name)}</title>
+<title>{escape(title)} — {escape(meet_name)}</title>
 <style>
   body {{ font-family: Arial, Helvetica, sans-serif; font-size: 11px; color: #111; margin: 16px; }}
   header {{ display: flex; justify-content: space-between; align-items: baseline;
@@ -332,15 +361,25 @@ def build_entries_html(db: Session, meetsid: int | None, lang: str = "fr") -> st
 </head>
 <body>
 <button class="print-btn" onclick="window.print()">{txt["print"]}</button>
-<header><h1>{escape(txt["title"])} — {escape(meet_name)}</h1>
+<header><h1>{escape(title)} — {escape(meet_name)}</h1>
 <span class="meta">{txt["printed"]} {printed}</span></header>
 {''.join(parts)}
 </body>
 </html>"""
 
 
-@router.get("/entries", response_class=HTMLResponse,
-            dependencies=[Depends(require_organizer_or_admin)])
-def print_entries(request: Request, lang: str = Query("fr"), db: Session = Depends(get_db)):
-    """All individual + relay entries of the current meet, grouped by club."""
-    return HTMLResponse(build_entries_html(db, resolve_meetsid(request, db), lang))
+@router.get("/entries", response_class=HTMLResponse)
+def print_entries(request: Request, lang: str = Query("fr"),
+                  section: str = Query("all"), db: Session = Depends(get_db)):
+    """Individual and/or relay entries of the current meet, grouped by club.
+
+    Admin / organizer: every club. Coach: their own club only.
+    """
+    if section not in SECTIONS:
+        raise HTTPException(400, f"section must be one of {', '.join(SECTIONS)}")
+    role, caller_club = _resolve_role(request.headers.get("X-Club-Pin", ""), db)
+    if role == "none":
+        raise HTTPException(403, "Authentication required")
+    club_id = caller_club if role == "coach" else None
+    return HTMLResponse(build_entries_html(db, resolve_meetsid(request, db), lang,
+                                           club_id=club_id, section=section))

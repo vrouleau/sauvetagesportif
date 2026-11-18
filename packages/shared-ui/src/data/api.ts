@@ -253,6 +253,9 @@ export interface AthleteListItem {
   gender: string
   birthdate: string
   license: string
+  /** Individual entries in the current meet (team-app / meet-app); used to
+   *  mark athletes whose entries are done on the Individual entries page. */
+  entry_count?: number
 }
 
 export interface RegistrationCategory {

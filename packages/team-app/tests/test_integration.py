@@ -339,9 +339,28 @@ class TestExport:
             assert html_escape(ath["club"]) in html
             assert html_escape(ath["last_name"]) in html
 
-    def test_print_entries_requires_organizer(self):
+    def test_print_entries_requires_auth(self):
         r = requests.get(f"{BASE_URL}/api/print/entries", timeout=10)
         assert r.status_code == 403
+
+    def test_print_entries_coach_sees_only_own_club(self, with_registrations, clubs):
+        """Individual / Relay entries pages: a coach's report is their club only."""
+        club = next(c for c in clubs
+                    if any(w["athlete"]["club"] == c["name"] for w in with_registrations))
+        others = {w["athlete"]["club"] for w in with_registrations} - {club["name"]}
+        r = requests.get(f"{BASE_URL}/api/print/entries?lang=en&section=individual",
+                         headers={"X-Club-Pin": club["pin"]}, timeout=20)
+        assert r.status_code == 200, r.text
+        html = r.text
+        assert html_escape(club["name"]) in html
+        assert "Relay entries" not in html
+        for name in others:
+            assert f"<h2>{html_escape(name)}" not in html
+
+    def test_print_entries_rejects_bad_section(self, admin_headers):
+        r = requests.get(f"{BASE_URL}/api/print/entries?section=nope",
+                         headers=admin_headers, timeout=10)
+        assert r.status_code == 400
 
     def test_export_bundle_contains_scripts(self, with_registrations, admin_headers):
         bundle = export_bundle(admin_headers)
