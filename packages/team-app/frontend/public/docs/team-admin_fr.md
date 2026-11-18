@@ -100,6 +100,8 @@ La section **Compétitions historiques** permet d'importer les résultats de com
 1. Cliquer **Importer résultats .lxf** et sélectionner un fichier Lenex de résultats
 2. Si un meet en double est détecté, vous pouvez forcer l'importation
 
+Les fichiers de résultats de plage sont refusés : des positions d'arrivée ne sont pas des temps et ne comptent jamais pour les meilleurs temps.
+
 ### Gérer les compétitions historiques
 
 - Le tableau affiche toutes les compétitions importées avec leur date, lieu et nombre de résultats

@@ -21,7 +21,7 @@ import { useLang } from '../i18n'
 import api, { headers } from '../api'
 import { newSwimstylesDetail, confirmNewSwimstyles } from '../newSwimstylesConfirm'
 import { refreshAuth } from '../authMeet'
-import { notResultsFileMessage, meetMismatchDetail, confirmMeetMismatch } from '../lxfImportGuards'
+import { notResultsFileMessage, beachResultsMessage, meetMismatchDetail, confirmMeetMismatch } from '../lxfImportGuards'
 import { openPrintEntries } from '../printEntries'
 
 export default function Organizer() {
@@ -147,7 +147,7 @@ export default function Organizer() {
         _applyImportResultsResponse(data)
         return
       } catch (err) {
-        const notResults = notResultsFileMessage(err, lang)
+        const notResults = notResultsFileMessage(err, lang) || beachResultsMessage(err, lang)
         if (notResults) { setMsg(notResults); return }
         const mm = meetMismatchDetail(err)
         if (mm && !opts.forceMeet) {
@@ -456,12 +456,18 @@ export default function Organizer() {
         )}
         <div className="w-px h-4 bg-gray-300" />
         <button onClick={exportLxf} className="px-3 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700">{t.download_lxf}</button>
-        <input ref={importResultsRef} type="file" accept=".lxf" className="hidden" onChange={importResults} />
-        <button
-          onClick={() => setShowImportConfirm(true)}
-          className="px-3 py-1 bg-indigo-600 text-white text-xs rounded hover:bg-indigo-700">
-          {lang === 'fr' ? 'Importer résultats' : 'Import Results'}
-        </button>
+        {/* Beach meets are closed without results: positions, not times —
+            nothing for best times (the backend refuses beach results too). */}
+        {meetInfo?.meet_type !== 'BEACH' && (
+          <>
+            <input ref={importResultsRef} type="file" accept=".lxf" className="hidden" onChange={importResults} />
+            <button
+              onClick={() => setShowImportConfirm(true)}
+              className="px-3 py-1 bg-indigo-600 text-white text-xs rounded hover:bg-indigo-700">
+              {lang === 'fr' ? 'Importer résultats' : 'Import Results'}
+            </button>
+          </>
+        )}
         <button
           onClick={() => setShowCloseConfirm(true)}
           className="px-3 py-1 bg-gray-500 text-white text-xs rounded hover:bg-gray-600">

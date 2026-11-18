@@ -114,6 +114,36 @@ def count_results_in_lxf(root: ET.Element) -> int:
     return n
 
 
+class BeachResultsNotArchived(ValueError):
+    """A beach results file was handed to a historical-results importer."""
+
+
+def is_beach_results(root) -> bool:
+    """True if the file uses any beach swimstyle (id >= BEACH_STYLE_MIN).
+
+    Beach results are finishing positions, not times: they never feed best
+    times, so archiving them as a historical meet only adds noise. A beach
+    meet is closed with close-meet-without-results instead. Decided from the
+    file's own styles, not the global meet_type flag (one per install, not
+    per meet).
+    """
+    from .best_times import BEACH_STYLE_MIN
+    for ss in root.iter("SWIMSTYLE"):
+        try:
+            if int(ss.get("swimstyleid") or 0) >= BEACH_STYLE_MIN:
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+BEACH_RESULTS_DETAIL = {
+    "code": "beach_results_not_archived",
+    "message": "Beach results are not archived (positions, not times — no best "
+               "times). Close the beach meet with \"Close without results\".",
+}
+
+
 def _norm_name(s: str | None) -> str:
     return " ".join((s or "").lower().split())
 
@@ -176,6 +206,8 @@ def import_lxf_as_meet(db: DbSession, content: bytes, force: bool = False) -> di
     meet_el = root.find(".//MEET")
     if meet_el is None:
         raise ValueError("No MEET element found in LENEX file")
+    if is_beach_results(root):
+        raise BeachResultsNotArchived(BEACH_RESULTS_DETAIL["message"])
 
     if not force:
         from .swimstyle_check import find_new_swimstyles, describe_new_swimstyles
@@ -424,6 +456,9 @@ def import_lxf_as_meet(db: DbSession, content: bytes, force: bool = False) -> di
                     meetsid=meet_id,
                     eventdate=meet_date,
                     stylesid=style_id,
+                    # Needed to group a historical meet's results by event
+                    # (results.py, athlete history) — was left NULL here.
+                    eventnumb=event_number_map.get(eid) if eid else None,
                     totaltime=swimtime_ms,
                     entrytime=entrytime_ms,
                     course=meet_course,

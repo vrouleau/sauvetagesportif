@@ -158,6 +158,8 @@ Once the competition is over and results have been exported from SauvetageMeet:
    - Clear the organizer role and **log you out**
 4. After logout, the administrator can invite the organizer for the next meet
 
+> **Beach meets**: results are not imported — they are finishing positions, not times, so they never feed best times. The **Import Results** button is hidden for a beach meet; use **Close without results** instead (same reset, nothing archived).
+
 > **Admin note**: After a results import, the system is back to step ①. The meet is reset for both admin and organizer. Designate the next organizer in the Admin page.
 
 ---
