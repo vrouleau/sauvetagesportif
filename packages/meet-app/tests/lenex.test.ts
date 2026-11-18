@@ -23,7 +23,7 @@ import { existsSync, unlinkSync } from 'fs'
 import { tmpdir } from 'os'
 import { randomBytes } from 'crypto'
 import type Database from 'better-sqlite3'
-import { importLenex, exportLenexResults, exportMeetLenex, readZipEntries, writeZipSingleEntry } from '../src/main/lenex'
+import { importLenex, exportLenexResults, exportMeetLenex, readZipEntries, writeZipSingleEntry, writeZipEntries } from '../src/main/lenex'
 
 // Use the test fixture from team-app if available
 const FIXTURE_PATH = join(__dirname, '../../team-app/tests/fixtures/meet_template.lxf')
@@ -335,6 +335,44 @@ describe('LENEX importer', () => {
       const style = db.prepare('SELECT swimstyleid, uniqueid FROM swimstyle WHERE swimstyleid=504').get() as
         { swimstyleid: number; uniqueid: number | null }
       expect(style.uniqueid).toBe(504)
+    } finally {
+      try { unlinkSync(lxfPath) } catch {}
+    }
+  })
+
+  // team-app ships its whole swimstyle catalog in a hidden `.swimstyles` dotfile (LENEX only
+  // carries a SWIMSTYLE inside an EVENT), so a last-minute event can use a style no event had.
+  it('loads the full swimstyle catalog from a .swimstyles entry, the event style winning', () => {
+    const lxfPath = join(tmpdir(), `test-styles-${randomBytes(4).toString('hex')}.lxf`)
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<LENEX version="3.0">
+  <MEETS>
+    <MEET name="Test Meet" city="Test City" nation="CAN" course="LCM">
+      <SESSIONS>
+        <SESSION number="1" name="Session 1">
+          <EVENTS>
+            <EVENT eventid="1" number="1" gender="M" round="TIM">
+              <SWIMSTYLE swimstyleid="504" distance="50" relaycount="1" name="50m Portage du mannequin plein" />
+            </EVENT>
+          </EVENTS>
+        </SESSION>
+      </SESSIONS>
+    </MEET>
+  </MEETS>
+</LENEX>`
+    const catalog = [
+      { swimstyleid: 504, distance: 50, relaycount: 1, name: 'stale catalog name' },
+      { swimstyleid: 528, distance: 50, relaycount: 4, name: '4x50m Relais obstacles' },
+    ]
+    writeZipEntries(lxfPath, [['meet.lef', xml], ['.swimstyles', JSON.stringify(catalog)]])
+
+    try {
+      importLenex(lxfPath, db)
+      const extra = db.prepare('SELECT distance, relaycount, name, stroke, technique, code, uniqueid FROM swimstyle WHERE swimstyleid=528').get()
+      expect(extra).toEqual({ distance: 50, relaycount: 4, name: '4x50m Relais obstacles', stroke: 0, technique: 0, code: 'ID528', uniqueid: 528 })
+      const used = db.prepare('SELECT name FROM swimstyle WHERE swimstyleid=504').get() as { name: string }
+      expect(used.name).toBe('50m Portage du mannequin plein')
+      expect((db.prepare('SELECT COUNT(*) AS n FROM swimevent').get() as { n: number }).n).toBe(1)
     } finally {
       try { unlinkSync(lxfPath) } catch {}
     }
