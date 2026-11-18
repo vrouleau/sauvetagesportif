@@ -1780,11 +1780,8 @@ def list_swim_styles(db: Session = Depends(get_db)):
     filter a beach meet would still offer every pool style ever loaded, and
     vice versa. Pool/beach ids never overlap (500-531 vs 601-624, config/swimstyle-ranges.json).
     """
-    styles = db.query(SwimStyle).order_by(SwimStyle.distance, SwimStyle.stroke).all()
-    if _get_meet_type(db) == "BEACH":
-        styles = [s for s in styles if s.swimstyleid and s.swimstyleid >= 600]
-    else:
-        styles = [s for s in styles if s.swimstyleid and s.swimstyleid < 600]
+    from ..export import current_meet_swimstyles
+    styles = current_meet_swimstyles(db)
     return [{
         "id": s.swimstyleid,
         "distance": s.distance or 0,

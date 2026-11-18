@@ -53,3 +53,19 @@ export function entryTimeAfterMemberChange(
   const next = suggestRelayEntryTime(newMembers)
   return next === current ? undefined : next
 }
+
+/**
+ * Where a team's stored entry time stands relative to the suggestion, for the
+ * help bubble: `'none'` — no member has a relay best time; `'following'` — the
+ * time is empty or equals the suggestion, so member changes recompute it;
+ * `'typed'` — the coach typed another time, which member changes keep.
+ */
+export function relayEntryTimeStatus(
+  members: RelayTeamMember[],
+  entryTimeMs: number | null | undefined,
+): 'none' | 'following' | 'typed' {
+  const suggested = suggestRelayEntryTime(members)
+  if (suggested == null) return 'none'
+  const current = entryTimeMs || null
+  return current == null || current === suggested ? 'following' : 'typed'
+}

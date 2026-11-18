@@ -155,6 +155,12 @@ Any endpoint that reads the catalog directly (`GET /api/swim-styles`) must
 filter by the current `meet_type`, or it'll offer styles from the wrong
 sport — this bit us for real once already.
 
+**Full catalog travels with every LXF export** (`generate_lxf`, `generate_meet_lxf_from_db`):
+LENEX only carries a SWIMSTYLE inside an EVENT, so the zip also gets a hidden
+`.swimstyles` JSON dotfile (`export.current_meet_swimstyles` — the same
+meet-type-filtered list `GET /api/swim-styles` returns). meet-app loads it on
+import so a last-minute event can use a style no event had. Splash ignores dotfiles.
+
 ## Best times storage
 
 One resolver in `best_times.py` (`get_best_times_for_member` / `get_public_best_times`) feeds registration, the public Best Times page and the LXF exports. Per (athlete, style, course), anything older than `BEST_TIME_MAX_AGE_MONTHS` (default 18) is ignored:

@@ -33,7 +33,7 @@ from .models import (
 from .models_team import TeamClub, Member, Relay, RelayPos
 from .models_team import gender_to_str as relay_gender_to_str
 from .best_times import get_best_time_date
-from .meet_config import get_active_meetsid, _get_meet_config
+from .meet_config import get_active_meetsid, _get_meet_config, _get_meet_type
 
 
 def _ms_to_lenex(ms: int | None) -> str:
@@ -52,6 +52,32 @@ _ROUND_LINK_ORDER = {"PRE": 0, "SEM": 1, "FIN": 2, "TIM": 0}
 # scored entirely within team-app (see routers/serc.py) — meet-app has no notion
 # of it, so it's stripped from every LENEX export produced here.
 SERC_STYLE_ID = 530
+
+
+def current_meet_swimstyles(db: Session) -> list[SwimStyle]:
+    """Every catalog style of the current meet's sport (pool 5xx / beach 6xx).
+
+    The catalog is never pruned across meets, so it's filtered by meet type
+    (ids never overlap, config/swimstyle-ranges.json).
+    """
+    styles = db.query(SwimStyle).order_by(SwimStyle.distance, SwimStyle.stroke).all()
+    beach = _get_meet_type(db) == "BEACH"
+    return [s for s in styles if s.swimstyleid and (s.swimstyleid >= 600) == beach]
+
+
+def _write_swimstyles_entry(z: zipfile.ZipFile, db: Session) -> None:
+    """Hidden ``.swimstyles`` dotfile: the full style catalog, not just the
+    styles the meet's events use (LENEX only carries a SWIMSTYLE inside an
+    EVENT). meet-app loads it on import so a last-minute event can use any
+    style. Splash ignores dotfiles, like ``.keys``.
+    """
+    import json as _json
+    z.writestr(".swimstyles", _json.dumps([{
+        "swimstyleid": s.swimstyleid,
+        "distance": s.distance or 0,
+        "relaycount": s.relaycount or 1,
+        "name": s.name or "",
+    } for s in current_meet_swimstyles(db)]))
 
 
 def _compute_preveventids(events: list[tuple]) -> dict:
@@ -629,6 +655,7 @@ def generate_lxf(db: Session, meetsid: int | None = None) -> bytes:
             keys["live_push_secret"] = live_secret.data
             keys["live_url"] = live_url
         z.writestr(".keys", _json.dumps(keys))
+        _write_swimstyles_entry(z, db)
     return buf.getvalue()
 
 
@@ -743,4 +770,5 @@ def generate_meet_lxf_from_db(db: Session, meetsid: int | None = None) -> bytes:
     buf = BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("meet.lef", xml_bytes)
+        _write_swimstyles_entry(z, db)
     return buf.getvalue()

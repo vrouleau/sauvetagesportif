@@ -18,7 +18,7 @@
 
 
 import { describe, it, expect } from 'vitest'
-import { suggestRelayEntryTime, entryTimeAfterMemberChange } from './relayEntryTime'
+import { suggestRelayEntryTime, entryTimeAfterMemberChange, relayEntryTimeStatus } from './relayEntryTime'
 import type { RelayTeamMember } from '../data/api'
 
 const m = (position: number, athleteId: number | null, relayBestTimeMs?: number | null): RelayTeamMember =>
@@ -68,5 +68,23 @@ describe('entryTimeAfterMemberChange', () => {
   it('leaves the time alone when the suggestion does not change', () => {
     expect(entryTimeAfterMemberChange(before, 120000, [m(1, 1, 120000), m(2, 3, null)])).toBeUndefined()
     expect(entryTimeAfterMemberChange([m(1, 1, null)], null, [m(1, 2, null)])).toBeUndefined()
+  })
+})
+
+describe('relayEntryTimeStatus', () => {
+  const team = [m(1, 1, 120000), m(2, 2, 124000), m(3, 3, null)]
+
+  it('is none when no member has a relay best time', () => {
+    expect(relayEntryTimeStatus([m(1, 1, null), m(2, null)], 118000)).toBe('none')
+  })
+
+  it('is following when the time is empty or equals the suggestion', () => {
+    expect(relayEntryTimeStatus(team, null)).toBe('following')
+    expect(relayEntryTimeStatus(team, 0)).toBe('following')
+    expect(relayEntryTimeStatus(team, 122000)).toBe('following')
+  })
+
+  it('is typed when the coach entered another time', () => {
+    expect(relayEntryTimeStatus(team, 118500)).toBe('typed')
   })
 })

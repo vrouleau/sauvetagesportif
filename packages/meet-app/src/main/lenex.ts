@@ -461,6 +461,28 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
     `),
   }
 
+  // ── Full swimstyle catalog (team-app `.swimstyles` dotfile) ──────────────
+  // LENEX only carries a SWIMSTYLE inside an EVENT, so styles no event uses would
+  // be missing — and a last-minute event couldn't pick them. team-app ships its
+  // whole catalog (current meet type only) alongside. Loaded before the events so
+  // a style an event carries still has the final word. Custom lifesaving styles:
+  // stroke 0, technique 0, code "ID{id}" — same as the event path below.
+  const stylesEntry = entries.get('.swimstyles')
+  if (stylesEntry) {
+    try {
+      const styles = JSON.parse(stylesEntry.toString('utf8')) as Array<{
+        swimstyleid: number; distance?: number; relaycount?: number; name?: string
+      }>
+      for (const st of styles) {
+        const id = Number(st.swimstyleid)
+        if (!Number.isInteger(id) || id <= 0) continue
+        stmts.upsertStyle.run(id, st.distance ?? 0, st.relaycount ?? 1, 0, st.name ?? '', 0, `ID${id}`, id)
+      }
+    } catch (e) {
+      summary.errors.push(`Warning: .swimstyles entry could not be loaded: ${e}`)
+    }
+  }
+
   // ── Sessions → swimsession ─────────────────────────────────────────────
   // (skipEventStructure computed above, before the meet-level bsglobal writes)
   const sessionsElem = child(meet, 'SESSIONS')
@@ -989,69 +1011,81 @@ function parseLenexDaytimeToStore(v: string | undefined | null): string | null {
   return `2000-01-01 ${m[1].padStart(2, '0')}:${m[2]}:00`
 }
 
-// ── ZIP writer (minimal, single-entry) ────────────────────────────────────────
+// ── ZIP writer (minimal) ──────────────────────────────────────────────────────
 
 export function writeZipSingleEntry(filePath: string, entryName: string, content: string): void {
-  const data = Buffer.from(content, 'utf8')
-  const compressed = deflateRawSync(data)
-  const nameBytes = Buffer.from(entryName, 'utf8')
+  writeZipEntries(filePath, [[entryName, content]])
+}
+
+export function writeZipEntries(filePath: string, files: Array<[name: string, content: string]>): void {
   const now = new Date()
   const dosTime = ((now.getHours() << 11) | (now.getMinutes() << 5) | (now.getSeconds() >> 1)) & 0xFFFF
   const dosDate = (((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate()) & 0xFFFF
 
-  // CRC-32
-  const crc = crc32(data)
+  const locals: Buffer[] = []
+  const centrals: Buffer[] = []
+  let offset = 0
+  for (const [entryName, content] of files) {
+    const data = Buffer.from(content, 'utf8')
+    const compressed = deflateRawSync(data)
+    const nameBytes = Buffer.from(entryName, 'utf8')
+    const crc = crc32(data)
 
-  // Local file header
-  const localHeader = Buffer.alloc(30 + nameBytes.length)
-  localHeader.writeUInt32LE(0x04034b50, 0)  // signature
-  localHeader.writeUInt16LE(20, 4)           // version needed
-  localHeader.writeUInt16LE(0, 6)            // flags
-  localHeader.writeUInt16LE(8, 8)            // compression: deflate
-  localHeader.writeUInt16LE(dosTime, 10)
-  localHeader.writeUInt16LE(dosDate, 12)
-  localHeader.writeUInt32LE(crc, 14)
-  localHeader.writeUInt32LE(compressed.length, 18)
-  localHeader.writeUInt32LE(data.length, 22)
-  localHeader.writeUInt16LE(nameBytes.length, 26)
-  localHeader.writeUInt16LE(0, 28)           // extra field length
-  nameBytes.copy(localHeader, 30)
+    // Local file header
+    const localHeader = Buffer.alloc(30 + nameBytes.length)
+    localHeader.writeUInt32LE(0x04034b50, 0)  // signature
+    localHeader.writeUInt16LE(20, 4)           // version needed
+    localHeader.writeUInt16LE(0, 6)            // flags
+    localHeader.writeUInt16LE(8, 8)            // compression: deflate
+    localHeader.writeUInt16LE(dosTime, 10)
+    localHeader.writeUInt16LE(dosDate, 12)
+    localHeader.writeUInt32LE(crc, 14)
+    localHeader.writeUInt32LE(compressed.length, 18)
+    localHeader.writeUInt32LE(data.length, 22)
+    localHeader.writeUInt16LE(nameBytes.length, 26)
+    localHeader.writeUInt16LE(0, 28)           // extra field length
+    nameBytes.copy(localHeader, 30)
 
-  // Central directory header
-  const centralHeader = Buffer.alloc(46 + nameBytes.length)
-  centralHeader.writeUInt32LE(0x02014b50, 0)  // signature
-  centralHeader.writeUInt16LE(20, 4)           // version made by
-  centralHeader.writeUInt16LE(20, 6)           // version needed
-  centralHeader.writeUInt16LE(0, 8)            // flags
-  centralHeader.writeUInt16LE(8, 10)           // compression
-  centralHeader.writeUInt16LE(dosTime, 12)
-  centralHeader.writeUInt16LE(dosDate, 14)
-  centralHeader.writeUInt32LE(crc, 16)
-  centralHeader.writeUInt32LE(compressed.length, 20)
-  centralHeader.writeUInt32LE(data.length, 24)
-  centralHeader.writeUInt16LE(nameBytes.length, 28)
-  centralHeader.writeUInt16LE(0, 30)           // extra field length
-  centralHeader.writeUInt16LE(0, 32)           // comment length
-  centralHeader.writeUInt16LE(0, 34)           // disk number start
-  centralHeader.writeUInt16LE(0, 36)           // internal attrs
-  centralHeader.writeUInt32LE(0, 38)           // external attrs
-  centralHeader.writeUInt32LE(0, 42)           // local header offset
-  nameBytes.copy(centralHeader, 46)
+    // Central directory header
+    const centralHeader = Buffer.alloc(46 + nameBytes.length)
+    centralHeader.writeUInt32LE(0x02014b50, 0)  // signature
+    centralHeader.writeUInt16LE(20, 4)           // version made by
+    centralHeader.writeUInt16LE(20, 6)           // version needed
+    centralHeader.writeUInt16LE(0, 8)            // flags
+    centralHeader.writeUInt16LE(8, 10)           // compression
+    centralHeader.writeUInt16LE(dosTime, 12)
+    centralHeader.writeUInt16LE(dosDate, 14)
+    centralHeader.writeUInt32LE(crc, 16)
+    centralHeader.writeUInt32LE(compressed.length, 20)
+    centralHeader.writeUInt32LE(data.length, 24)
+    centralHeader.writeUInt16LE(nameBytes.length, 28)
+    centralHeader.writeUInt16LE(0, 30)           // extra field length
+    centralHeader.writeUInt16LE(0, 32)           // comment length
+    centralHeader.writeUInt16LE(0, 34)           // disk number start
+    centralHeader.writeUInt16LE(0, 36)           // internal attrs
+    centralHeader.writeUInt32LE(0, 38)           // external attrs
+    centralHeader.writeUInt32LE(offset, 42)      // local header offset
+    nameBytes.copy(centralHeader, 46)
 
-  const centralDirOffset = localHeader.length + compressed.length
+    locals.push(localHeader, compressed)
+    centrals.push(centralHeader)
+    offset += localHeader.length + compressed.length
+  }
+
+  const centralSize = centrals.reduce((n, b) => n + b.length, 0)
 
   // End of central directory
   const eocd = Buffer.alloc(22)
   eocd.writeUInt32LE(0x06054b50, 0)
   eocd.writeUInt16LE(0, 4)   // disk number
   eocd.writeUInt16LE(0, 6)   // disk with central dir
-  eocd.writeUInt16LE(1, 8)   // entries on this disk
-  eocd.writeUInt16LE(1, 10)  // total entries
-  eocd.writeUInt32LE(centralHeader.length, 12)
-  eocd.writeUInt32LE(centralDirOffset, 16)
+  eocd.writeUInt16LE(files.length, 8)   // entries on this disk
+  eocd.writeUInt16LE(files.length, 10)  // total entries
+  eocd.writeUInt32LE(centralSize, 12)
+  eocd.writeUInt32LE(offset, 16)        // central dir offset
   eocd.writeUInt16LE(0, 20)  // comment length
 
-  writeFileSync(filePath, Buffer.concat([localHeader, compressed, centralHeader, eocd]))
+  writeFileSync(filePath, Buffer.concat([...locals, ...centrals, eocd]))
 }
 
 // CRC-32 (standard polynomial)

@@ -1886,24 +1886,7 @@ ipcMain.handle('timing:validate-scan', (_event, scanId: number, time1: string, t
       const db = getLocalDb()
       const avgTime = Math.round((timeMs1 + timeMs2) / 2)
 
-      const row = db.prepare(`
-        SELECT sr.swimresultid
-        FROM swimresult sr
-        JOIN heat h ON sr.heatid = h.heatid
-        WHERE h.swimeventid = ? AND h.heatnumber = ? AND sr.lane = ?
-        LIMIT 1
-      `).get(scan.swimEventId, scan.heatNumber, scan.lane) as { swimresultid: number } | undefined
-
-      if (row) {
-        db.prepare(`
-          UPDATE swimresult
-          SET backuptime1 = ?, backuptime2 = ?, swimtime = ?
-          WHERE swimresultid = ?
-        `).run(timeMs1, timeMs2, avgTime, row.swimresultid)
-
-        // Live push notification for single scan validation
-        _notifyLivePushFromScan(db, row.swimresultid, avgTime)
-      }
+      _writeScanTimes(db, scan.swimEventId, scan.heatNumber, scan.lane, timeMs1, timeMs2, avgTime)
     }
 
     return { ok: true }
@@ -1939,25 +1922,7 @@ ipcMain.handle('timing:commit-heat-results', async (_event, swimEventId: number,
         ? Math.round((time1 + time2) / 2)
         : (time1 ?? time2)
 
-      // Find the swimresult row for this event/heat/lane
-      const row = db.prepare(`
-        SELECT sr.swimresultid
-        FROM swimresult sr
-        JOIN heat h ON sr.heatid = h.heatid
-        WHERE h.swimeventid = ? AND h.heatnumber = ? AND sr.lane = ?
-        LIMIT 1
-      `).get(swimEventId, heatNumber, scan.lane) as { swimresultid: number } | undefined
-
-      if (row) {
-        db.prepare(`
-          UPDATE swimresult
-          SET backuptime1 = ?, backuptime2 = ?, swimtime = ?
-          WHERE swimresultid = ?
-        `).run(time1, time2, avgTime, row.swimresultid)
-
-        // Live push notification for timing scan result
-        _notifyLivePushFromScan(db, row.swimresultid, avgTime)
-      }
+      _writeScanTimes(db, swimEventId, heatNumber, scan.lane, time1, time2, avgTime)
     }
 
     return { ok: true }
@@ -2034,34 +1999,37 @@ ipcMain.handle('timing:generate-sheets', async (_event, sessionId: number) => {
     }>
 
     const allPages: ReturnType<typeof buildTimingSheetPages> = []
+    const meetTypeTS = db.prepare(`SELECT data FROM bsglobal WHERE name = 'MEET_TYPE'`).get() as { data: string } | undefined
+    const isBeachTS = (meetTypeTS?.data || 'POOL').toUpperCase() === 'BEACH'
 
     for (const heat of heats) {
-      // Get lanes for this heat (exclude lane 0 = unseeded)
-      const lanes = db.prepare(`
-        SELECT DISTINCT sr.lane FROM swimresult sr WHERE sr.heatid = ? AND sr.lane > 0 ORDER BY sr.lane
-      `).all(heat.heatid) as Array<{ lane: number }>
-
-      const laneNumbers = lanes.map((l) => l.lane)
-      if (laneNumbers.length === 0) continue // skip heats with no seeded lanes
-      const meetTypeTS = db.prepare(`SELECT data FROM bsglobal WHERE name = 'MEET_TYPE'`).get() as { data: string } | undefined
-      const isBeachTS = (meetTypeTS?.data || 'POOL').toUpperCase() === 'BEACH'
-      const eventName = isBeachTS ? heat.stylename : `${heat.distance}m ${heat.stylename}`
-
-      // Get athlete names and club codes for each lane
+      // Seeded lanes (lane 0 = unseeded) — individual entries live in swimresult,
+      // relay teams in relay; a heat holds one or the other.
       const entries = db.prepare(`
-        SELECT sr.lane, a.firstname, a.lastname, c.code as clubcode
+        SELECT sr.lane, a.lastname || COALESCE(', ' || a.firstname, '') AS label, c.code AS clubcode
         FROM swimresult sr
         LEFT JOIN athlete a ON sr.athleteid = a.athleteid
         LEFT JOIN club c ON a.clubid = c.clubid
         WHERE sr.heatid = ? AND sr.lane > 0
-        ORDER BY sr.lane
-      `).all(heat.heatid) as Array<{ lane: number; firstname: string | null; lastname: string | null; clubcode: string | null }>
+        UNION ALL
+        SELECT r.lane, r.name AS label, c.code AS clubcode
+        FROM relay r
+        LEFT JOIN club c ON r.clubid = c.clubid
+        WHERE r.heatid = ? AND r.lane > 0
+        ORDER BY 1
+      `).all(heat.heatid, heat.heatid) as Array<{ lane: number; label: string | null; clubcode: string | null }>
+
+      const laneNumbers = [...new Set(entries.map((e) => e.lane))]
+      if (laneNumbers.length === 0) continue // skip heats with no seeded lanes
+      // Style names usually already carry the distance ("50m Portage…", "4x50m Relais…")
+      const eventName = isBeachTS || /^\d/.test(heat.stylename)
+        ? heat.stylename
+        : `${heat.distance}m ${heat.stylename}`
 
       const athleteNames = new Map<number, string>()
       const clubCodes = new Map<number, string>()
       for (const entry of entries) {
-        const name = [entry.lastname, entry.firstname].filter(Boolean).join(', ')
-        if (name) athleteNames.set(entry.lane, name)
+        if (entry.label) athleteNames.set(entry.lane, entry.label)
         if (entry.clubcode) clubCodes.set(entry.lane, entry.clubcode)
       }
 
@@ -2319,6 +2287,52 @@ function createWindow(): void {
     mainWindow.loadURL(rendererUrl)
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+  }
+}
+
+// ── Timing scan write-back ────────────────────────────────────────────────────
+
+/**
+ * Write a scanned lane's chrono times to the entry seeded at event/heat/lane —
+ * an individual swimresult, or a relay team (relay events have no swimresult rows).
+ */
+function _writeScanTimes(
+  db: ReturnType<typeof getLocalDb>,
+  swimEventId: number, heatNumber: number, lane: number,
+  time1: number | null, time2: number | null, avgTime: number | null,
+): void {
+  const row = db.prepare(`
+    SELECT sr.swimresultid
+    FROM swimresult sr
+    JOIN heat h ON sr.heatid = h.heatid
+    WHERE h.swimeventid = ? AND h.heatnumber = ? AND sr.lane = ?
+    LIMIT 1
+  `).get(swimEventId, heatNumber, lane) as { swimresultid: number } | undefined
+
+  if (row) {
+    db.prepare(`
+      UPDATE swimresult
+      SET backuptime1 = ?, backuptime2 = ?, swimtime = ?
+      WHERE swimresultid = ?
+    `).run(time1, time2, avgTime, row.swimresultid)
+    _notifyLivePushFromScan(db, row.swimresultid, avgTime)
+    return
+  }
+
+  const relay = db.prepare(`
+    SELECT r.relayid
+    FROM relay r
+    JOIN heat h ON r.heatid = h.heatid
+    WHERE h.swimeventid = ? AND h.heatnumber = ? AND r.lane = ?
+    LIMIT 1
+  `).get(swimEventId, heatNumber, lane) as { relayid: number } | undefined
+
+  if (relay) {
+    db.prepare(`
+      UPDATE relay
+      SET backuptime1 = ?, backuptime2 = ?, swimtime = ?
+      WHERE relayid = ?
+    `).run(time1, time2, avgTime, relay.relayid)
   }
 }
 
