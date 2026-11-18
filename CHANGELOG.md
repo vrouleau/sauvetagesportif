@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.5.23] - 2026-11-18
+
+### 🐛 Bug Fixes
+
+- keep relay members listed under another club in results imports (`4662aec`)
+- results import duplicated athletes without a license; add audit/merge scripts (`f790abf`)
+- deleting an athlete on a relay team returned 500 (`5454d9b`)
+- historical re-import duplicated meets stored without microseconds (`db055bf`)
+
+### Other
+
+- Merge pull request #103 from vrouleau/fix/historical-import-date-dedup (`bdfc343`)
+
 ## [0.5.22] - 2026-11-17
 
 ### ✨ Features
