@@ -206,9 +206,6 @@ function RelayTeamRow({
   onDeleteTeam: (team: RelayTeam) => void
 }) {
   const { t } = useLang()
-  // A legacy lock (team-app virtual team) has no relay row yet to hold a time or status;
-  // assigning a member materializes it.
-  const fieldsDisabled = isDisabled || !!team.isVirtual
 
   // Generate default display name:
   // - If no custom name + at least one member assigned: hyphenated last names
@@ -290,7 +287,7 @@ function RelayTeamRow({
             <TimeInput
               key={`${team.id}-${team.entryTimeMs ?? ''}`}
               defaultValue={formatEntryTime(team.entryTimeMs)}
-              disabled={fieldsDisabled}
+              disabled={isDisabled}
               title={t.relay.entryTimeTitle}
               onSave={v => {
                 const ms = parseEntryTime(v)
@@ -307,7 +304,7 @@ function RelayTeamRow({
             <input
               type="checkbox"
               checked={!!team.hc}
-              disabled={fieldsDisabled}
+              disabled={isDisabled}
               className="w-3.5 h-3.5"
               onChange={(e) => onSetHC(team.id, e.target.checked)}
             />

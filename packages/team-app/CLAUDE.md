@@ -223,7 +223,7 @@ Coach best times are written only at meet close, never on registration:
 | `DELETE /api/relay-teams/{id}` | Delete relay team | Authenticated |
 | `PUT /api/relay-teams/{id}/members/{pos}` | Assign/remove member at position | Authenticated |
 | `PUT /api/relay-teams/{id}/name` | Set custom team name | Authenticated |
-| `PUT /api/relay-teams/{id}/entry-time` | Set/clear pool relay entry time `{entryTimeMs}` — 400 on beach/SERC, 400 on a virtual (legacy-lock) team | Authenticated (own club) |
+| `PUT /api/relay-teams/{id}/entry-time` | Set/clear pool relay entry time `{entryTimeMs}` — 400 on beach/SERC | Authenticated (own club) |
 | `PUT /api/relay-teams/{id}/hc` | Set/clear HC `{isHC}` (`relays.resultstatus=4`) | Authenticated (own club) |
 | `GET/POST /api/serc/config` | SERC configuration (victims, factors, bystander) | Organizer/Admin |
 | `GET /api/serc/teams` | SERC relay teams (swimstyle 530) | Organizer/Admin |

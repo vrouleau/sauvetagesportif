@@ -704,56 +704,31 @@ class TestValidation:
                           headers=admin_headers, timeout=5)
         assert r.status_code == 422
 
-    # --- relay lock ---
+    # --- relay events are entered as teams, not as athlete registrations ---
 
-    def test_relay_lock(self, athletes, clubs, admin_headers):
-        """Second athlete from same club cannot register for same relay event."""
-        # Find a relay event
+    def test_registration_rejects_relay_event(self, athletes, clubs, admin_headers):
+        """POST /registrations refuses a relay event (relays go through /relay-teams)."""
         r = requests.get(f"{BASE_URL}/api/events", headers=admin_headers, timeout=5)
         r.raise_for_status()
-        events = r.json()
-        relay_events = [e for e in events if e.get("relay_count", 0) > 1]
+        relay_events = [e for e in r.json() if e.get("relay_count", 0) > 1]
         if not relay_events:
             pytest.skip("No relay events in test meet")
         relay_ev = relay_events[0]
 
-        # Find two athletes from the same club
-        club_id = clubs[0]["id"]
-        club_athletes = [a for a in athletes if a["club_id"] == club_id]
-        assert len(club_athletes) >= 2
-
-        # Get valid age_code for this relay event
+        club_athletes = [a for a in athletes if a["club_id"] == clubs[0]["id"]]
         reg = get_registration(club_athletes[0]["id"], admin_headers)
-        relay_styles = reg["relay_events"]
-        relay_style = next((s for s in relay_styles
-                            for c in s["categories"]
-                            if c["event_id"] == relay_ev["id"]), None)
-        if not relay_style:
+        cat = next((c for s in reg["relay_events"] for c in s["categories"]
+                    if c["event_id"] == relay_ev["id"]), None)
+        if not cat:
             pytest.skip("Relay event not visible to athlete")
-        cat = next(c for c in relay_style["categories"] if c["event_id"] == relay_ev["id"])
 
-        # Register first athlete
-        r1 = requests.post(f"{BASE_URL}/api/registrations",
-                           json={"athlete_id": club_athletes[0]["id"],
-                                 "event_id": relay_ev["id"],
-                                 "age_code": cat["age_code"],
-                                 "entry_time_ms": None},
-                           headers=admin_headers, timeout=5)
-        assert r1.status_code == 200
-        reg1_id = r1.json()["id"]
-
-        # Second athlete from same club → 409
-        r2 = requests.post(f"{BASE_URL}/api/registrations",
-                           json={"athlete_id": club_athletes[1]["id"],
-                                 "event_id": relay_ev["id"],
-                                 "age_code": cat["age_code"],
-                                 "entry_time_ms": None},
-                           headers=admin_headers, timeout=5)
-        assert r2.status_code == 409
-
-        # Cleanup
-        requests.delete(f"{BASE_URL}/api/registrations/{reg1_id}",
-                        headers=admin_headers, timeout=5)
+        r = requests.post(f"{BASE_URL}/api/registrations",
+                          json={"athlete_id": club_athletes[0]["id"],
+                                "event_id": relay_ev["id"],
+                                "age_code": cat["age_code"],
+                                "entry_time_ms": None},
+                          headers=admin_headers, timeout=5)
+        assert r.status_code == 422
 
     # --- closure date on athlete CRUD ---
 

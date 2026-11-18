@@ -214,23 +214,9 @@ export const registrationApiElectron: RegistrationAPI = {
     }
 
     for (const [, style] of styleMap) {
-      if ((style.relay_count ?? 1) > 1) {
-        // Load relay members for this event
-        const reg = style.categories.find(c => c.registered)
-        if (reg) {
-          const members = (await ipc()?.getRelayMembersByEvent(reg.event_id, athleteId)) as Array<{ position: number; athleteId: number }> ?? []
-          style.relay_members = members.map(m => ({ position: m.position, athleteId: m.athleteId }))
-        }
-        relayEvents.push(style)
-      } else {
-        individualEvents.push(style)
-      }
+      if ((style.relay_count ?? 1) > 1) relayEvents.push(style)
+      else individualEvents.push(style)
     }
-
-    // Club athletes for relay teammate selection
-    const clubAthletes = athletes
-      .filter(a => a.clubCode === athlete.clubCode && a.id !== athleteId)
-      .map(a => ({ id: a.id, name: `${a.lastName}, ${a.firstName}` }))
 
     return {
       athlete: {
@@ -245,7 +231,6 @@ export const registrationApiElectron: RegistrationAPI = {
       },
       individual_events: individualEvents,
       relay_events: relayEvents,
-      club_athletes: clubAthletes,
       suggested_age_code: suggestedAgeCode,
       meet_course: course,
       meet_type: ((await ipc()?.getMeetType()) as string) || 'POOL',
@@ -280,10 +265,6 @@ export const registrationApiElectron: RegistrationAPI = {
 
   async unregister(registrationId) {
     await ipc()?.unregister(_lastAthleteId, registrationId)
-  },
-
-  async setRelayMember(eventId, position, athleteId) {
-    await ipc()?.setRelayMember(eventId, _lastAthleteId, position, athleteId)
   },
 
   // Relay team management (new team-centric API)

@@ -144,10 +144,6 @@ const api = {
       ipcRenderer.invoke('db:unregister', athleteId, eventId),
     getRelayMembers: (relayId: number) =>
       ipcRenderer.invoke('db:get-relay-members', relayId),
-    getRelayMembersByEvent: (eventId: number, athleteId: number) =>
-      ipcRenderer.invoke('db:get-relay-members-by-event', eventId, athleteId),
-    setRelayMember: (eventId: number, athleteId: number, position: number, memberAthleteId: number | null) =>
-      ipcRenderer.invoke('db:set-relay-member', eventId, athleteId, position, memberAthleteId),
     // Relay team management (new team-centric API)
     getClubsReal: () =>
       ipcRenderer.invoke('db:get-clubs'),

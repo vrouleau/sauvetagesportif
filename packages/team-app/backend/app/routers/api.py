@@ -2318,35 +2318,6 @@ def get_registration(athlete_id: int, request: Request, db: Session = Depends(ge
             s[f"best_time_{course_key}_source"] = bt.get("source")
         s["course_free"] = s["style_uid"] in course_free
 
-    # Relay locks
-    relay_uids = [s["style_uid"] for s in relay_events]
-    locked_by: dict[int, str] = {}
-    if relay_uids:
-        other_relay_regs = (
-            db.query(Member, SwimEvent)
-            .join(SwimResult, SwimResult.athleteid == Member.membersid)
-            .join(SwimEvent, (SwimResult.swimeventid == SwimEvent.swimeventid) & (SwimResult.meetsid == SwimEvent.meetsid))
-            .join(SwimStyle, SwimEvent.swimstyleid == SwimStyle.swimstyleid)
-            .filter(
-                SwimResult.meetsid == meetsid,
-                Member.clubsid == member.clubsid,
-                Member.membersid != athlete_id,
-                SwimEvent.swimstyleid.in_(relay_uids),
-                SwimStyle.relaycount > 1,
-            )
-            .all()
-        )
-        for ath, ev in other_relay_regs:
-            locked_by.setdefault(ev.swimstyleid, f"{ath.firstname} {ath.lastname}")
-    for s in relay_events:
-        s["locked_by_name"] = locked_by.get(s["style_uid"])
-
-    # Club athletes for relay teammate selection
-    club_athletes = db.query(Member).filter(
-        Member.clubsid == member.clubsid,
-        Member.membersid != athlete_id,
-    ).order_by(Member.lastname).all()
-
     # Suggested age_code
     suggested_age_code = "Open"
     if member.birthdate:
@@ -2388,8 +2359,6 @@ def get_registration(athlete_id: int, request: Request, db: Session = Depends(ge
         },
         "individual_events": individual_events,
         "relay_events": relay_events,
-        "club_athletes": [{"id": a.membersid, "name": f"{a.lastname}, {a.firstname}"}
-                          for a in club_athletes],
     }
 
 
@@ -2537,18 +2506,10 @@ def create_registration(data: RegistrationCreate, request: Request, db: Session 
         if age_code not in valid_codes:
             raise HTTPException(422, f"age_code '{age_code}' not valid for this event")
 
-    # Relay lock
+    # Relay events are entered as teams (/relay-teams), never as an athlete's swimresult.
     style = db.get(SwimStyle, event.swimstyleid)
     if style and style.relaycount and style.relaycount > 1:
-        club_member_ids = [m.membersid for m in db.query(Member).filter(Member.clubsid == member.clubsid).all()]
-        existing_relay = db.query(SwimResult).filter(
-            SwimResult.meetsid == meetsid,
-            SwimResult.swimeventid == event_id,
-            SwimResult.athleteid.in_(club_member_ids),
-            SwimResult.athleteid != athlete_id,
-        ).first()
-        if existing_relay:
-            raise HTTPException(409, "Relay already has a registration from this club")
+        raise HTTPException(422, "Relay events are entered as relay teams")
 
     existing = db.query(SwimResult).filter(
         SwimResult.meetsid == meetsid,
@@ -4527,125 +4488,6 @@ def get_relay_teams(request: Request, club_id: int | None = None, db: Session = 
     for key in teams_by_event:
         teams_by_event[key].sort(key=lambda t: t["teamNumber"])
 
-    # ─── Backward compatibility: swimresult relay locks (Requirement 10) ───────
-    # For relay events where a club has a swimresult registration but no relays
-    # record, create a "virtual" team with the registering athlete in position 1.
-    # These virtual teams use negative IDs (negated swimresultid).
-    # Req 10.1: Display athlete in position 1 when no relays record exists.
-    # Req 10.2: Prefer relays/relayspos data when both exist.
-    # Req 10.5: Fall back to swimresult lock only when no relays record exists.
-
-    relay_event_ids = [ev.swimeventid for ev in relay_events]
-
-    if relay_event_ids:
-        # Batch query: find all swimresult rows for relay events
-        if target_club_id:
-            club_member_ids_list = [
-                m.membersid for m in db.query(Member).filter(Member.clubsid == target_club_id).all()
-            ]
-            sr_relay_locks = (
-                db.query(SwimResult)
-                .filter(
-                    SwimResult.meetsid == meet_id,
-                    SwimResult.swimeventid.in_(relay_event_ids),
-                    SwimResult.athleteid.in_(club_member_ids_list),
-                )
-                .all()
-            ) if club_member_ids_list else []
-        else:
-            # Admin viewing all clubs — batch query all swimresults for relay events
-            sr_relay_locks = (
-                db.query(SwimResult)
-                .filter(SwimResult.meetsid == meet_id, SwimResult.swimeventid.in_(relay_event_ids))
-                .all()
-            )
-
-        if sr_relay_locks:
-            # Build a lookup of member → club and member → name
-            sr_athlete_ids = {sr.athleteid for sr in sr_relay_locks}
-            sr_members = db.query(Member).filter(Member.membersid.in_(list(sr_athlete_ids))).all()
-            athlete_club_map: dict[int, int] = {m.membersid: m.clubsid for m in sr_members}
-            athlete_name_map: dict[int, str] = {
-                m.membersid: f"{m.lastname}, {m.firstname}" for m in sr_members
-            }
-
-            # Determine which (event_id, age_code, club_id) combos already have relays records
-            existing_relay_keys: set[tuple[int, str, int]] = set()
-            for relay in existing_relays:
-                age_code_r = _relay_age_code(relay.minage, relay.maxage)
-                if relay.eventnumb:
-                    for ev in relay_events:
-                        if ev.swimstyleid == relay.stylesid and ev.eventnumber == relay.eventnumb:
-                            existing_relay_keys.add((ev.swimeventid, age_code_r, relay.clubsid))
-                else:
-                    # Legacy rows without eventnumb — fall back to the old ambiguous match
-                    for ev in relay_events:
-                        if ev.swimstyleid == relay.stylesid:
-                            existing_relay_keys.add((ev.swimeventid, age_code_r, relay.clubsid))
-
-            # Track which (event_key, club_id) combos we've already handled
-            handled_virtual_keys: set[tuple[str, int]] = set()
-
-            # Build virtual teams for swimresult locks without relays entries
-            for sr in sr_relay_locks:
-                sr_age_code = sr.age_code or "Open"
-                sr_event_id = sr.swimeventid
-                sr_club_id = athlete_club_map.get(sr.athleteid)
-
-                if not sr_club_id:
-                    continue
-
-                # Filter by target club when in coach mode
-                if target_club_id and sr_club_id != target_club_id:
-                    continue
-
-                # Skip if a relays record already exists for this club/event/age_code
-                if (sr_event_id, sr_age_code, sr_club_id) in existing_relay_keys:
-                    continue
-
-                # Find the matching event_key
-                event_key = f"{sr_event_id}-{sr_age_code}"
-                if event_key not in event_groups_by_key:
-                    continue
-
-                # Skip if we already added a virtual team for this club+event_key
-                # (only one swimresult lock per club/event is expected)
-                if (event_key, sr_club_id) in handled_virtual_keys:
-                    continue
-                handled_virtual_keys.add((event_key, sr_club_id))
-
-                relaycount = event_groups_by_key[event_key]["relaycount"]
-
-                # Get athlete name from pre-loaded map
-                athlete_name = athlete_name_map.get(sr.athleteid)
-
-                # Build members array: athlete in position 1, rest empty
-                members_arr = []
-                for i in range(1, relaycount + 1):
-                    if i == 1:
-                        members_arr.append({
-                            "position": 1,
-                            "athleteId": sr.athleteid,
-                            "athleteName": athlete_name,
-                        })
-                    else:
-                        members_arr.append({
-                            "position": i,
-                            "athleteId": None,
-                            "athleteName": None,
-                        })
-
-                virtual_team = {
-                    "id": -sr.swimresultid,  # Negative ID signals virtual team
-                    "teamNumber": "A",
-                    "teamName": None,
-                    "members": members_arr,
-                    "isVirtual": True,  # Flag for frontend awareness
-                    "clubId": sr_club_id,  # Needed for admin view grouping
-                    "clubName": club_names.get(sr_club_id),
-                }
-                teams_by_event.setdefault(event_key, []).append(virtual_team)
-
     # Build eligible athletes per event/category
     eligible_athletes: dict[str, list] = {}
 
@@ -4848,60 +4690,6 @@ def create_relay_team(data: RelayTeamCreate, request: Request, db: Session = Dep
         existing_teams = existing_teams.filter(Relay.meetsid == meet_id)
     existing_teams = existing_teams.all()
 
-    # ─── Backward compatibility: materialize swimresult relay lock (Req 10) ────
-    # If no relays record exists but a swimresult lock does, materialize it first
-    # so that the lock athlete is preserved as Team A and the new team gets B.
-    if not existing_teams:
-        # Check for swimresult relay locks for this club/event/age
-        sr_age_code = data.age_code
-        club_member_ids = [
-            m.membersid for m in db.query(Member).filter(Member.clubsid == target_club_id).all()
-        ]
-        if club_member_ids:
-            sr_lock = (
-                db.query(SwimResult)
-                .filter(
-                    SwimResult.meetsid == meet_id,
-                    SwimResult.swimeventid == data.event_id,
-                    SwimResult.athleteid.in_(club_member_ids),
-                    SwimResult.age_code == sr_age_code,
-                )
-                .first()
-            )
-            if sr_lock:
-                # Materialize the swimresult lock as Team A (teamnumb=1)
-                gender_int = event.gender or 0
-                materialized_relay = Relay(
-                    meetsid=meet_id,
-                    clubsid=target_club_id,
-                    stylesid=style.swimstyleid,
-                    teamnumb=1,
-                    gender=gender_int,
-                    minage=age_min if age_min else 0,
-                    maxage=age_max if age_max else 0,
-                    eventnumb=event.eventnumber,
-                    eventtyp=0,
-                    resulttyp=0,
-                )
-                db.add(materialized_relay)
-                db.flush()
-
-                # Create position records: lock athlete in position 1, rest empty
-                for pos_num in range(1, style.relaycount + 1):
-                    db.add(RelayPos(
-                        relaysid=materialized_relay.relaysid,
-                        numb=pos_num,
-                        membersid=sr_lock.athleteid if pos_num == 1 else None,
-                        entrytime=None,
-                    ))
-
-                # Remove the legacy swimresult lock row
-                db.delete(sr_lock)
-                db.flush()
-
-                # Update existing_teams list to include the materialized team
-                existing_teams = [materialized_relay]
-
     if len(existing_teams) >= 26:
         raise HTTPException(400, "Maximum 26 teams per event/category/club")
 
@@ -4954,26 +4742,6 @@ def delete_relay_team(team_id: int, request: Request, db: Session = Depends(get_
 
     role, caller_club = _resolve_role(pin, db)
 
-    # ─── Handle virtual teams from swimresult relay locks (Requirement 10) ─────
-    if team_id < 0:
-        swimresult_id = -team_id
-        sr = db.get(SwimResult, swimresult_id)
-        if not sr:
-            raise HTTPException(404, "Relay team not found (legacy lock missing)")
-
-        # Determine club from the swimresult athlete for authorization
-        sr_member = db.get(Member, sr.athleteid)
-        if not sr_member:
-            raise HTTPException(404, "Athlete from legacy relay lock not found")
-
-        if role == "coach" and sr_member.clubsid != caller_club:
-            raise HTTPException(403, "Cannot modify another club's relay teams")
-
-        # Delete the swimresult lock row
-        db.delete(sr)
-        db.commit()
-        return {"deleted": True}
-
     relay = db.get(Relay, team_id)
     if not relay:
         raise HTTPException(404, "Relay team not found")
@@ -5004,143 +4772,6 @@ def set_relay_team_member(
 
     role, caller_club = _resolve_role(pin, db)
 
-    # ─── Handle virtual teams from swimresult relay locks (Requirement 10) ─────
-    # Negative team_id means this is a virtual team backed by a swimresult lock.
-    # We need to "materialize" it into relays/relayspos and remove the swimresult.
-    if team_id < 0:
-        swimresult_id = -team_id
-        sr = db.get(SwimResult, swimresult_id)
-        if not sr:
-            raise HTTPException(404, "Relay team not found (legacy lock missing)")
-
-        # Resolve event and style
-        event = db.query(SwimEvent).options(joinedload(SwimEvent.swimstyle)).get((sr.meetsid, sr.swimeventid))
-        if not event or not event.swimstyle:
-            raise HTTPException(404, "Event not found for legacy relay lock")
-        style = event.swimstyle
-        if not style or not style.relaycount or style.relaycount <= 1:
-            raise HTTPException(400, "Event is not a relay event")
-
-        # Determine club from the swimresult athlete
-        sr_member = db.get(Member, sr.athleteid)
-        if not sr_member:
-            raise HTTPException(404, "Athlete from legacy relay lock not found")
-        target_club_id = sr_member.clubsid
-
-        # Authorization
-        if role == "coach" and target_club_id != caller_club:
-            raise HTTPException(403, "Cannot modify another club's relay teams")
-
-        # Validate position
-        relaycount = style.relaycount
-        if position < 1 or position > relaycount:
-            raise HTTPException(400, f"Invalid position {position}. Must be between 1 and {relaycount}")
-
-        # Resolve age range from swimresult age_code
-        sr_age_code = sr.age_code or "Open"
-        age_min, age_max = _age_code_to_range(sr_age_code)
-        meet_id = _get_current_meet_id(request, db)
-
-        # Determine gender int
-        gender_int = event.gender or 0
-
-        # Create real relay record
-        relay = Relay(
-            meetsid=meet_id,
-            clubsid=target_club_id,
-            stylesid=style.swimstyleid,
-            teamnumb=1,
-            gender=gender_int,
-            minage=age_min if age_min else 0,
-            maxage=age_max if age_max else 0,
-            eventnumb=event.eventnumber,
-            eventtyp=0,
-            resulttyp=0,
-        )
-        db.add(relay)
-        db.flush()  # Get the relay ID
-
-        # Create position records: original athlete stays in position 1
-        for pos_num in range(1, relaycount + 1):
-            if pos_num == 1:
-                db.add(RelayPos(
-                    relaysid=relay.relaysid,
-                    numb=pos_num,
-                    membersid=sr.athleteid,
-                    entrytime=None,
-                ))
-            else:
-                db.add(RelayPos(
-                    relaysid=relay.relaysid,
-                    numb=pos_num,
-                    membersid=None,
-                    entrytime=None,
-                ))
-
-        # Now apply the actual member assignment for the requested position
-        athlete_id = data.athleteId
-        if athlete_id is not None:
-            # Check athlete exists and belongs to club
-            member = db.get(Member, athlete_id)
-            if not member:
-                raise HTTPException(404, "Athlete not found")
-            if member.clubsid != target_club_id:
-                raise HTTPException(400, "Athlete does not belong to the relay team's club")
-
-            # Intra-team uniqueness: can't assign same athlete as position 1 to another position
-            if athlete_id == sr.athleteid and position != 1:
-                raise HTTPException(409, f"Athlete is already assigned to position 1 on this team")
-
-            # Cross-team uniqueness: athlete not on another team for same event/age/club
-            other_relays_query = (
-                db.query(Relay)
-                .filter(
-                    Relay.clubsid == target_club_id,
-                    Relay.stylesid == style.swimstyleid,
-                    Relay.minage == (age_min if age_min else 0),
-                    Relay.maxage == (age_max if age_max else 0),
-                    Relay.relaysid != relay.relaysid,
-                )
-            )
-            if meet_id:
-                other_relays_query = other_relays_query.filter(Relay.meetsid == meet_id)
-            other_relay_ids = [r.relaysid for r in other_relays_query.all()]
-
-            if other_relay_ids:
-                conflict = (
-                    db.query(RelayPos)
-                    .filter(
-                        RelayPos.relaysid.in_(other_relay_ids),
-                        RelayPos.membersid == athlete_id,
-                    )
-                    .first()
-                )
-                if conflict:
-                    conflict_relay = db.get(Relay, conflict.relaysid)
-                    team_letter = _team_number_to_letter(conflict_relay.teamnumb) if conflict_relay else "?"
-                    athlete_name = f"{member.lastname}, {member.firstname}"
-                    raise HTTPException(
-                        409,
-                        f"Athlete '{athlete_name}' is already assigned to Team {team_letter} for this event"
-                    )
-
-        # Update the requested position (overwrite what we just set)
-        # Need to flush first to ensure the RelayPos rows are in DB
-        db.flush()
-        pos_record = db.query(RelayPos).filter(
-            RelayPos.relaysid == relay.relaysid,
-            RelayPos.numb == position,
-        ).first()
-        if pos_record:
-            pos_record.membersid = athlete_id
-
-        # Remove the legacy swimresult lock row
-        db.delete(sr)
-        db.commit()
-
-        return {"ok": True, "migratedTeamId": relay.relaysid}
-
-    # ─── Normal flow: existing relays record ───────────────────────────────────
     relay = db.get(Relay, team_id)
     if not relay:
         raise HTTPException(404, "Relay team not found")
@@ -5215,28 +4846,6 @@ def set_relay_team_member(
                     409,
                     f"Athlete '{athlete_name}' is already assigned to Team {team_letter} for this event"
                 )
-
-        # Cross-team uniqueness: also check swimresult relay locks (virtual teams)
-        # If this athlete has a swimresult lock for the same relay event, they are
-        # already shown as position 1 on a virtual team — block the assignment.
-        sr_conflict = (
-            db.query(SwimResult)
-            .join(SwimEvent, (SwimResult.swimeventid == SwimEvent.swimeventid) & (SwimResult.meetsid == SwimEvent.meetsid))
-            .filter(
-                SwimResult.meetsid == meet_id,
-                SwimEvent.swimstyleid == relay.stylesid,
-                SwimResult.athleteid == athlete_id,
-                SwimResult.age_code == _relay_age_code(relay.minage, relay.maxage),
-            )
-            .first()
-        )
-        if sr_conflict:
-            athlete_name = f"{member.lastname}, {member.firstname}"
-            raise HTTPException(
-                409,
-                f"Athlete '{athlete_name}' already has a relay registration (legacy lock) for this event. "
-                f"Modify the existing team instead."
-            )
 
         # Gender balance validation for mixed (X) events:
         # Exactly N/2 men and N/2 women required (e.g., 2M+2F for 4-person relay)
@@ -5350,83 +4959,6 @@ def set_relay_team_name(
 
     role, caller_club = _resolve_role(pin, db)
 
-    # ─── Handle virtual teams from swimresult relay locks (Requirement 10) ─────
-    # Virtual teams (negative IDs) must be materialized before naming.
-    if team_id < 0:
-        swimresult_id = -team_id
-        sr = db.get(SwimResult, swimresult_id)
-        if not sr:
-            raise HTTPException(404, "Relay team not found (legacy lock missing)")
-
-        # Resolve event and style
-        event = db.query(SwimEvent).options(joinedload(SwimEvent.swimstyle)).get((sr.meetsid, sr.swimeventid))
-        if not event or not event.swimstyle:
-            raise HTTPException(404, "Event not found for legacy relay lock")
-        style = event.swimstyle
-        if not style or not style.relaycount or style.relaycount <= 1:
-            raise HTTPException(400, "Event is not a relay event")
-
-        # Determine club from the swimresult athlete
-        sr_member = db.get(Member, sr.athleteid)
-        if not sr_member:
-            raise HTTPException(404, "Athlete from legacy relay lock not found")
-        target_club_id = sr_member.clubsid
-
-        # Authorization
-        if role == "coach" and target_club_id != caller_club:
-            raise HTTPException(403, "Cannot modify another club's relay teams")
-
-        # Resolve age range from swimresult age_code
-        sr_age_code = sr.age_code or "Open"
-        age_min, age_max = _age_code_to_range(sr_age_code)
-        meet_id = _get_current_meet_id(request, db)
-        gender_int = event.gender or 0
-        relaycount = style.relaycount
-
-        # Create real relay record (materialize virtual team)
-        from ..models_team import RelayPos
-        relay = Relay(
-            meetsid=meet_id,
-            clubsid=target_club_id,
-            stylesid=style.swimstyleid,
-            teamnumb=1,
-            gender=gender_int,
-            minage=age_min if age_min else 0,
-            maxage=age_max if age_max else 0,
-            eventnumb=event.eventnumber,
-            eventtyp=0,
-            resulttyp=0,
-        )
-        db.add(relay)
-        db.flush()
-
-        # Create position records: original athlete stays in position 1
-        for pos_num in range(1, relaycount + 1):
-            if pos_num == 1:
-                db.add(RelayPos(
-                    relaysid=relay.relaysid,
-                    numb=pos_num,
-                    membersid=sr.athleteid,
-                    entrytime=None,
-                ))
-            else:
-                db.add(RelayPos(
-                    relaysid=relay.relaysid,
-                    numb=pos_num,
-                    membersid=None,
-                    entrytime=None,
-                ))
-
-        # Remove the legacy swimresult lock row
-        db.delete(sr)
-        db.flush()
-
-        # Store the custom name on the relay row
-        relay.name = data.name or None
-
-        db.commit()
-        return {"ok": True, "migratedTeamId": relay.relaysid}
-
     relay = db.get(Relay, team_id)
     if not relay:
         raise HTTPException(404, "Relay team not found")
@@ -5442,19 +4974,13 @@ def set_relay_team_name(
     return {"ok": True}
 
 
-def _owned_real_relay(team_id: int, request: Request, db: Session):
-    """The relay row a coach/organizer/admin may edit (closure + ownership checks).
-
-    Virtual teams (negative ids, legacy swimresult locks) have no relay row to hold
-    a time or status yet — assigning a member materializes them first.
-    """
+def _owned_relay(team_id: int, request: Request, db: Session):
+    """The relay row a coach/organizer/admin may edit (closure + ownership checks)."""
     from ..models_team import Relay
 
     pin = request.headers.get("X-Club-Pin", "")
     _check_closure(db, pin)
     role, caller_club = _resolve_role(pin, db)
-    if team_id < 0:
-        raise HTTPException(400, "Assign a member to this team first")
     relay = db.get(Relay, team_id)
     if not relay:
         raise HTTPException(404, "Relay team not found")
@@ -5474,7 +5000,7 @@ def set_relay_team_entry_time(
     Exported as the relay ENTRY's entrytime; meet-app seeds relay heats by it.
     Beach relays are ranked (no times) and SERC is judged — both refuse a time.
     """
-    relay = _owned_real_relay(team_id, request, db)
+    relay = _owned_relay(team_id, request, db)
     ms = data.entryTimeMs or None
     if ms is not None:
         if _get_meet_type(db) == "BEACH":
@@ -5498,7 +5024,7 @@ def set_relay_team_hc(
     skips the age/gender composition rules and is left out of rankings and of relay
     best times.
     """
-    relay = _owned_real_relay(team_id, request, db)
+    relay = _owned_relay(team_id, request, db)
     relay.resultstatus = 4 if data.isHC else None
     db.commit()
     return {"ok": True, "hc": data.isHC}

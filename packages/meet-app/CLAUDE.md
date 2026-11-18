@@ -306,8 +306,6 @@ time, `.smb` export carries them through correctly too.
 | `db:register` | Register athlete for event (create swimresult) |
 | `db:unregister` | Unregister athlete from event (delete unseeded swimresult) |
 | `db:get-relay-members` | Get relay position members by relay ID |
-| `db:get-relay-members-by-event` | Get relay members for event+club |
-| `db:set-relay-member` | Set/clear a relay position member |
 
 ## Relay Entry
 

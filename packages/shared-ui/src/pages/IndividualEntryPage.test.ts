@@ -82,7 +82,6 @@ function makeRegistrationData(overrides: Partial<RegistrationData> = {}): Regist
     },
     individual_events: [],
     relay_events: [],
-    club_athletes: [],
     suggested_age_code: '15-18',
     meet_course: 'LCM',
     ...overrides,

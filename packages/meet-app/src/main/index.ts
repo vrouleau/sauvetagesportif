@@ -495,67 +495,6 @@ ipcMain.handle('db:get-relay-members', (_event, relayId: number) => {
   return rows.map(r => ({ position: r.relaynumber, athleteId: r.athleteid, name: `${r.lastname}, ${r.firstname}`, beachNumber: r.nameprefix || undefined }))
 })
 
-ipcMain.handle('db:get-relay-members-by-event', (_event, eventId: number, athleteId: number) => {
-  const db = getLocalDb()
-  const athRow = db.prepare(`SELECT clubid FROM athlete WHERE athleteid = ?`).get(athleteId) as { clubid: number | null } | undefined
-  const clubId = athRow?.clubid ?? 0
-  const relay = db.prepare(
-    `SELECT relayid FROM relay WHERE swimeventid = ? AND clubid = ?`
-  ).get(eventId, clubId) as { relayid: number } | undefined
-  if (!relay) return []
-  const rows = db.prepare(
-    `SELECT rp.relaynumber, rp.athleteid
-     FROM relayposition rp
-     WHERE rp.relayid = ?
-     ORDER BY rp.relaynumber`
-  ).all(relay.relayid) as Array<{ relaynumber: number; athleteid: number }>
-  return rows.map(r => ({ position: r.relaynumber, athleteId: r.athleteid }))
-})
-
-ipcMain.handle('db:set-relay-member', (_event, eventId: number, athleteId: number, position: number, memberAthleteId: number | null) => {
-  const db = getLocalDb()
-
-  // Get the club from the athlete
-  const athRow = db.prepare(`SELECT clubid FROM athlete WHERE athleteid = ?`).get(athleteId) as { clubid: number | null } | undefined
-  const clubId = athRow?.clubid ?? 0
-
-  // Find or create the relay entry for this club+event
-  let relay = db.prepare(
-    `SELECT relayid FROM relay WHERE swimeventid = ? AND clubid = ?`
-  ).get(eventId, clubId) as { relayid: number } | undefined
-
-  if (!relay) {
-    const relayId = nextId('relay', 'relayid')
-    const agRow = db.prepare(
-      `SELECT agegroupid FROM agegroup WHERE swimeventid = ? ORDER BY sortcode LIMIT 1`
-    ).get(eventId) as { agegroupid: number } | undefined
-    db.prepare(
-      `INSERT INTO relay (relayid, clubid, swimeventid, agegroupid, teamnumber) VALUES (?, ?, ?, ?, 1)`
-    ).run(relayId, clubId, eventId, agRow?.agegroupid ?? null)
-    relay = { relayid: relayId }
-  }
-
-  // Remove existing position entry
-  db.prepare(
-    `DELETE FROM relayposition WHERE relayid = ? AND relaynumber = ?`
-  ).run(relay.relayid, position)
-
-  // Insert new member if provided
-  if (memberAthleteId) {
-    db.prepare(
-      `INSERT INTO relayposition (relayid, relaynumber, athleteid) VALUES (?, ?, ?)`
-    ).run(relay.relayid, position, memberAthleteId)
-
-    // Assign a beach number immediately for beach meets, instead of waiting on the next heat generation
-    const meetTypeRow = db.prepare(`SELECT data FROM bsglobal WHERE name = 'MEET_TYPE'`).get() as { data: string } | undefined
-    if ((meetTypeRow?.data || 'POOL').toUpperCase() === 'BEACH') {
-      assignLateBeachNumber(db, memberAthleteId)
-    }
-  }
-
-  return { ok: true, relayId: relay.relayid }
-})
-
 // ── Relay Team Management (new team-centric handlers) ─────────────────────────
 
 /**
