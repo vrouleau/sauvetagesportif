@@ -19,16 +19,14 @@
 """Parse a Lenex entries .lxf and seed clubs + athletes + entries into the DB."""
 from __future__ import annotations
 
-import zipfile
 from datetime import date
-from io import BytesIO
 from xml.etree import ElementTree as ET  # noqa: F401 — kept for type hints
-from defusedxml.ElementTree import fromstring as _ET_fromstring
 
 from sqlalchemy.orm import Session
 from .models import gender_from_str, SwimEvent, AgeGroup, SwimResult, SwimStyle
 from .meet_config import get_active_meetsid
 from .models_team import TeamClub, Member
+from .lxf_io import read_lef_xml
 from .lxf_to_team import _lenex_time_to_ms
 
 
@@ -53,11 +51,7 @@ def parse_lxf(file_bytes: bytes) -> list[dict]:
     Each athlete dict includes an 'entries' list of
     {event_id, agegroup_id, entrytime, entrycourse} dicts.
     """
-    with zipfile.ZipFile(BytesIO(file_bytes)) as z:
-        lef_name = [n for n in z.namelist() if n.endswith(".lef")][0]
-        xml_bytes = z.read(lef_name)
-
-    root = _ET_fromstring(xml_bytes)
+    root = read_lef_xml(file_bytes)
     clubs_data = []
 
     for meet in root.iter("MEET"):

@@ -23,12 +23,11 @@ agegroups, and swimstyles from the authoritative SPLASH export.
 """
 from __future__ import annotations
 
-import zipfile
 from dataclasses import dataclass, field
-from io import BytesIO
 from pathlib import Path
 from xml.etree import ElementTree as ET  # noqa: F401
-from defusedxml.ElementTree import fromstring as _ET_fromstring
+
+from .lxf_io import read_lef_xml, read_lxf_entry
 
 
 def _safe_int(value, default: int) -> int:
@@ -128,13 +127,8 @@ def parse_meet_lxf(source) -> ParsedMeet:
     else:
         raw = source.read()
 
-    # Unzip
-    with zipfile.ZipFile(BytesIO(raw)) as z:
-        lef_name = [n for n in z.namelist() if n.endswith(".lef")][0]
-        xml_bytes = z.read(lef_name)
-        dotfile = z.read(".meetvalues") if ".meetvalues" in z.namelist() else None
-
-    root = _ET_fromstring(xml_bytes)
+    root = read_lef_xml(raw)
+    dotfile = read_lxf_entry(raw, ".meetvalues")
     meet = ParsedMeet()
 
     meet_el = root.find(".//MEET")

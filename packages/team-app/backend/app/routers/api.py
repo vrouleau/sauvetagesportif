@@ -2680,9 +2680,10 @@ async def import_historical(file: UploadFile = File(...), force: bool = False, d
         raise HTTPException(413, "File too large (max 10MB)")
     # Same "is it a results file?" guard as import-results-lxf (no meet-match
     # check here: this path is for archiving *other* meets, closes nothing).
-    from ..lxf_to_team import _read_lef_xml, count_results_in_lxf, is_beach_results, BEACH_RESULTS_DETAIL
+    from ..lxf_io import read_lef_xml
+    from ..lxf_to_team import count_results_in_lxf, is_beach_results, BEACH_RESULTS_DETAIL
     try:
-        lxf_root = _read_lef_xml(content)
+        lxf_root = read_lef_xml(content)
     except Exception as e:
         raise HTTPException(400, f"Invalid Lenex .lxf: {e}")
     if count_results_in_lxf(lxf_root) == 0:
@@ -3681,12 +3682,13 @@ async def import_results_lxf(request: Request, file: UploadFile = File(...), for
     if len(content) > 50 * 1024 * 1024:
         raise HTTPException(413, "File too large (max 50MB)")
 
+    from ..lxf_io import read_lef_xml
     from ..lxf_to_team import (
-        _read_lef_xml, count_results_in_lxf, meet_mismatch,
+        count_results_in_lxf, meet_mismatch,
         is_beach_results, BEACH_RESULTS_DETAIL,
     )
     try:
-        lxf_root = _read_lef_xml(content)
+        lxf_root = read_lef_xml(content)
     except Exception as e:
         raise HTTPException(400, f"Invalid Lenex .lxf: {e}")
     if count_results_in_lxf(lxf_root) == 0:
@@ -3837,19 +3839,10 @@ def _team_number_to_letter(n: int) -> str:
 
 def _import_relays_from_lxf(db: "Session", file_bytes: bytes, meetsid: int | None = None) -> int:
     """Parse RELAY elements from LXF and import them into the relays/relayspos tables."""
-    import zipfile
-    import io
-    from xml.etree import ElementTree as ET
+    from ..lxf_io import read_lef_xml
     from ..models_team import Relay, RelayPos, TeamClub, Member
 
-    # Extract XML from zip
-    try:
-        z = zipfile.ZipFile(io.BytesIO(file_bytes))
-        xml_data = z.read(z.namelist()[0])
-    except Exception:
-        xml_data = file_bytes
-
-    root = ET.fromstring(xml_data)
+    root = read_lef_xml(file_bytes)
 
     # Build club code → clubsid lookup
     club_by_code: dict[str, int] = {}

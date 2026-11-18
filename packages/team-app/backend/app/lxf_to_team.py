@@ -42,15 +42,13 @@ from __future__ import annotations
 
 import secrets
 import string
-import zipfile
 from datetime import datetime, date
-from io import BytesIO
 from xml.etree.ElementTree import Element
 
-from defusedxml.ElementTree import fromstring as _safe_fromstring
 from sqlalchemy import func
 from sqlalchemy.orm import Session as DbSession
 
+from .lxf_io import read_lef_xml
 from .models import SwimStyle
 from .models_team import (
     Meet, Session as MeetSession, Event, TeamClub, Member,
@@ -101,15 +99,6 @@ def _course_to_int(course: str) -> int:
 def _next_id(db: DbSession, model, pk_col) -> int:
     max_id = db.query(func.max(pk_col)).scalar()
     return (max_id or 0) + 1
-
-
-def _read_lef_xml(content: bytes) -> Element:
-    """The .lef XML inside an .lxf zip, parsed with defusedxml (uploaded file:
-    no entity expansion / external entities)."""
-    with zipfile.ZipFile(BytesIO(content)) as z:
-        lef_name = next(n for n in z.namelist() if n.endswith(".lef"))
-        xml_bytes = z.read(lef_name)
-    return _safe_fromstring(xml_bytes)
 
 
 # ── Pre-import guards ─────────────────────────────────────────────────────────
@@ -379,7 +368,7 @@ def archive_results_lxf(db: DbSession, content: bytes, *, force: bool = False,
     best times. Stored coach best times are lowered to this meet's faster
     results (refresh_best_times_from_meet).
     """
-    root = _read_lef_xml(content)
+    root = read_lef_xml(content)
     meta = _parse_meet(root)
     if is_beach_results(root):
         raise BeachResultsNotArchived(BEACH_RESULTS_DETAIL["message"])
