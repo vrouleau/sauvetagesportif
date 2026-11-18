@@ -64,6 +64,7 @@ packages/
     pages/EventsPage.tsx    — THE shared component (sessions tree + meet editor)
     pages/IndividualEntryPage.tsx — Individual event entry (relaycount=1), toolbar with Add/Delete buttons
     pages/RelayEntryPage.tsx — Relay team management (team CRUD, member dropdowns, age groups in headers)
+    components/HelpTip.tsx  — "?" help bubble (hover or tap, styled, i18n text) — use it instead of a bare `title` for anything a user must understand
     context/ApiContext.tsx   — MeetAPI provider (DI for data layer)
     context/LangContext.tsx  — FR/EN language context
     data/api.ts             — MeetAPI interface + shared types
@@ -203,7 +204,7 @@ Both apps show two entry tabs:
 
 ### Relay entry time + HC (exhibition)
 - **Entry time** (pool relays only — beach relays are ranked, SERC is judged): typed by the coach on each team card (`RelayEntryPage`), exported as the relay `ENTRY@entrytime`; meet-app seeds relay heats by `relay.entrytime` like individual entries (NT last).
-- **Suggested time**: each member's *relay best time* = the fastest total of any archived team they swam on, per style/course (`best_times.get_relay_best_times`, team-app; 18-month expiry, HC/DSQ/DNS excluded; Lancer de la corde is course-free). The suggestion is the **average of the members who have one** (`shared-ui/src/logic/relayEntryTime.ts`), filled in and kept in step as members change — until the coach types a time, which is then kept.
+- **Suggested time**: each member's *relay best time* = the fastest total of any archived team they swam on, per style/course (`best_times.get_relay_best_times`, team-app; 18-month expiry, HC/DSQ/DNS excluded; Lancer de la corde is course-free). The suggestion is the **average of the members who have one** (`shared-ui/src/logic/relayEntryTime.ts`), filled in and kept in step as members change — until the coach types a time, which is then kept. A "?" bubble next to the time (`RelayEntryTimeHelp`) explains the rule and shows the team's breakdown: each member's relay best time, the average, and whether the time follows the suggestion or was typed (team-app only — meet-app has no relay history, so it shows the rule alone).
 - **Relay history**: meet-app's results export writes `RELAY > RESULTS > RESULT` (team total, status, the swimmers) and relay-only swimmers as `ATHLETE`s; both team-app results imports archive them into `relays`/`relayspos` under the historical meet (`relay_archive.py`).
 - **HC**: set by the club's coach in either app; stored in Splash's own encoding (`resultstatus=4`) on `relay`/`relays` and `swimresult`; travels as LXF `ENTRY status="EXH"` (individual and relay). An HC team skips the composition rules; heat seeding puts HC entries in the exhibition group (`SEEDEXHLAST`).
 

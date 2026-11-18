@@ -39,6 +39,7 @@ export { default as AthleteDetailPanel } from './components/AthleteDetailPanel'
 export { default as RegistrationPanel } from './components/RegistrationPanel'
 export { default as AddAthleteDialog } from './components/AddAthleteDialog'
 export { default as TimeInput } from './components/TimeInput'
+export { default as HelpTip } from './components/HelpTip'
 
 // Utilities
 export { filterAthletes, computeVisibleExpansion } from './utils/filterAthletes'

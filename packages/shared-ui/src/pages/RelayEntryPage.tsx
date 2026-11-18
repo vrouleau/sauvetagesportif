@@ -21,9 +21,10 @@ import { useLang } from '../context/LangContext'
 import { useRegistrationApi } from '../context/RegistrationApiContext'
 import type { RelayPageData, RelayEventGroup, RelayTeam, EligibleAthlete, Club } from '../data/api'
 import { isAgeCodeAllowedOnTeam, wouldMissNativeAnchor } from '../logic/relayRules'
-import { entryTimeAfterMemberChange } from '../logic/relayEntryTime'
+import { entryTimeAfterMemberChange, relayEntryTimeStatus, suggestRelayEntryTime } from '../logic/relayEntryTime'
 import { formatEntryTime, parseEntryTime } from '../logic/timeFormat'
 import TimeInput from '../components/TimeInput'
+import HelpTip from '../components/HelpTip'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -298,6 +299,7 @@ function RelayTeamRow({
                 onEntryTimeChange(team.id, ms)
               }}
             />
+            <RelayEntryTimeHelp team={team} />
           </label>
         )}
         {onSetHC && (
@@ -922,5 +924,58 @@ export default function RelayEntryPage({ role, clubId, refreshKey, onPrint }: Re
         </div>
       )}
     </div>
+  )
+}
+
+/**
+ * "?" bubble next to a team's entry time: how the suggestion is computed, this
+ * team's members with their relay best times and the average, and whether the
+ * stored time still follows the suggestion or was typed by the coach (and is
+ * therefore kept — see entryTimeAfterMemberChange).
+ */
+function RelayEntryTimeHelp({ team }: { team: RelayTeam }) {
+  const { t } = useLang()
+  const h = t.relay.entryTimeHelp
+  const assigned = team.members
+    .filter(m => m.athleteId != null)
+    .sort((a, b) => a.position - b.position)
+  // Only team-app knows relay history; meet-app leaves relayBestTimeMs undefined
+  // (null = known to have none), so it gets the rule without a breakdown.
+  const hasHistory = assigned.some(m => m.relayBestTimeMs !== undefined)
+  const suggested = suggestRelayEntryTime(team.members)
+  const contributing = assigned.filter(m => (m.relayBestTimeMs ?? 0) > 0).length
+  const status = relayEntryTimeStatus(team.members, team.entryTimeMs)
+
+  return (
+    <HelpTip ariaLabel={h.ariaLabel}>
+      <p className="font-semibold text-gray-800">{h.title}</p>
+      <p>{h.bestTime}</p>
+      <p>{h.rule}</p>
+      {hasHistory && (
+        <>
+          <table className="w-full">
+            <tbody>
+              {assigned.map(m => (
+                <tr key={m.position}>
+                  <td className="pr-2 truncate max-w-[11rem]">{m.athleteName}</td>
+                  <td className={`text-right font-mono ${(m.relayBestTimeMs ?? 0) > 0 ? '' : 'text-gray-400 italic'}`}>
+                    {(m.relayBestTimeMs ?? 0) > 0 ? formatEntryTime(m.relayBestTimeMs) : h.noTime}
+                  </td>
+                </tr>
+              ))}
+              {suggested != null && (
+                <tr className="border-t border-gray-200 font-semibold">
+                  <td className="pr-2 pt-1">{h.average(contributing)}</td>
+                  <td className="text-right font-mono pt-1">{formatEntryTime(suggested)}</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+          {status === 'none' && <p className="text-gray-600">{h.noneHaveTime}</p>}
+          {status === 'following' && <p className="text-gray-600">{h.following}</p>}
+          {status === 'typed' && <p className="text-amber-700">{h.typed(formatEntryTime(suggested))}</p>}
+        </>
+      )}
+    </HelpTip>
   )
 }
