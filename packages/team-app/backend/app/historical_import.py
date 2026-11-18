@@ -278,6 +278,11 @@ def import_historical_meet(db: Session, file_bytes: bytes, force: bool = False) 
                  if meta["startdate"] else meet.mindate)
     # Get next result ID to avoid PK conflicts
     next_result_id = (db.query(_func.max(Result.resultsid)).scalar() or 0) + 1
+    # File athleteid -> membersid across ALL clubs: a relay can include an
+    # athlete listed under another club (athlete switched clubs, composite
+    # team), so relays are archived once every club's athletes are known.
+    athlete_members: dict[str, int] = {}
+    relay_clubs: list[tuple] = []  # (club_el, clubsid)
 
     for club_el in root.iter("CLUB"):
         club_code = club_el.get("code", "")
@@ -298,7 +303,6 @@ def import_historical_meet(db: Session, file_bytes: bytes, force: bool = False) 
             clubs_created += 1
         clubs_matched += 1
 
-        athlete_members: dict[str, int] = {}  # file athleteid -> membersid (relay positions)
         for ath_el in club_el.iter("ATHLETE"):
             first = ath_el.get("firstname", "").strip().rstrip(",")
             last = ath_el.get("lastname", "").strip().rstrip(",")
@@ -387,11 +391,14 @@ def import_historical_meet(db: Session, file_bytes: bytes, force: bool = False) 
                 next_result_id += 1
                 results_imported += 1
 
-        # Relay results: team total + members (relay history, see relay_archive.py)
-        from .relay_archive import archive_club_relays
+        relay_clubs.append((club_el, club.clubsid))
+
+    # Relay results: team total + members (relay history, see relay_archive.py)
+    from .relay_archive import archive_club_relays
+    for club_el, club_id in relay_clubs:
         n_relays, _members = archive_club_relays(
             db, club_el,
-            club_id=club.clubsid, meet_id=meet.meetsid, meet_date=meet_date, course=course_int,
+            club_id=club_id, meet_id=meet.meetsid, meet_date=meet_date, course=course_int,
             event_style=event_style, event_number=event_number,
             athlete_members=athlete_members,
         )
