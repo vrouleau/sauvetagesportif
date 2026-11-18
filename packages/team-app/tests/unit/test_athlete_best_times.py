@@ -198,6 +198,48 @@ def test_capture_ignores_unchanged_prefilled_entry_time(db):
     assert db.query(AthleteBestTime).count() == 0
 
 
+def test_capture_ignores_prefilled_time_that_expired_before_close(db):
+    # Pre-filled at registration while still valid, expired by the time the
+    # meet closed: must not be re-dated to this meet (another 18 months).
+    _live_meet(db)
+    _result(db, 1, 60000, _ago(30 * 19))   # now expired
+    _result(db, 2, 63000, _ago(100))       # current (slower) best time
+    _register(db, 1, 1, 60000)
+
+    assert capture_coach_best_times(db, LIVE) == 0
+    assert db.query(AthleteBestTime).count() == 0
+    assert get_best_times_for_member(db, 1)[str(FREE)]["LCM"]["time_ms"] == 63000
+
+
+def test_capture_ignores_prefilled_coach_time_that_expired_before_close(db):
+    _live_meet(db)
+    _coach(db, 59000, _ago(30 * 19))       # expired coach value, no other time
+    _register(db, 1, 1, 59000)
+
+    assert capture_coach_best_times(db, LIVE) == 0
+    row = db.get(AthleteBestTime, (1, FREE, LCM))
+    assert row.entered_date == _ago(30 * 19)  # not re-dated
+
+
+def test_capture_expired_time_on_other_course_does_not_count(db):
+    start = _live_meet(db, course="LCM")
+    _result(db, 1, 60000, _ago(30 * 19), course=SCM)  # expired, but SCM
+    _register(db, 1, 1, 60000)
+
+    assert capture_coach_best_times(db, LIVE) == 1
+    assert db.get(AthleteBestTime, (1, FREE, LCM)).entered_date == start
+
+
+def test_capture_still_stores_typed_time_when_best_time_expired(db):
+    start = _live_meet(db)
+    _result(db, 1, 60000, _ago(30 * 19))   # expired
+    _register(db, 1, 1, 61500)             # coach typed a new time
+
+    assert capture_coach_best_times(db, LIVE) == 1
+    row = db.get(AthleteBestTime, (1, FREE, LCM))
+    assert row.time_ms == 61500 and row.entered_date == start
+
+
 def test_capture_overwrites_previous_coach_value_with_new_entry(db):
     start = _live_meet(db)
     _coach(db, 62000, _ago(200))

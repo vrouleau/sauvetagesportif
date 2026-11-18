@@ -321,6 +321,11 @@ def capture_coach_best_times(db: Session, meetsid: int | None, max_age_months: i
     with an entry time on the meet's course:
     - entry time equal to the currently resolved best time → nothing to do
       (it's the pre-filled default; don't re-date a historical value);
+    - entry time equal to one of the athlete's *expired* times for that
+      style/course → nothing to do either: it was the pre-filled best time
+      when the coach registered, and it expired before the meet was closed
+      (registration often opens weeks earlier). Capturing it would re-date it
+      to this meet and keep an old performance alive for another window;
     - otherwise → upsert it as the coach best time, dated the meet's start
       date (today if the meet has none).
     Beach meets are skipped (no times). Returns the number of rows written.
@@ -362,6 +367,7 @@ def capture_coach_best_times(db: Session, meetsid: int | None, max_age_months: i
             entries[key] = entry_ms
 
     course_free = course_free_style_ids(db)
+    cutoff = _cutoff_date(max_age_months)
     resolved_cache: dict[int, dict] = {}
     written = 0
     for (athlete_id, style_id), entry_ms in entries.items():
@@ -370,6 +376,9 @@ def capture_coach_best_times(db: Session, meetsid: int | None, max_age_months: i
         current = pick_course(resolved_cache[athlete_id].get(str(style_id), {}),
                               course_str, style_id in course_free)
         if current and current["time_ms"] == entry_ms:
+            continue
+        if entry_ms in _expired_times(db, athlete_id, style_id, course_int,
+                                      style_id in course_free, cutoff):
             continue
         row = db.get(AthleteBestTime, (athlete_id, style_id, course_int))
         if row is None:
@@ -381,6 +390,34 @@ def capture_coach_best_times(db: Session, meetsid: int | None, max_age_months: i
         written += 1
     db.flush()
     return written
+
+
+def _expired_times(db: Session, member_id: int, style_id: int, course_int: int,
+                   course_free: bool, cutoff: date) -> set[int]:
+    """Times of one athlete/style/course that have aged out of the window:
+    official non-HC results and coach rows dated before `cutoff` (any course
+    for a course-free style). Undated results never expire, so never appear.
+    """
+    cut = datetime.combine(cutoff, datetime.min.time())
+    eff = _result_date()
+    results = db.query(Result.totaltime).outerjoin(Meet, Meet.meetsid == Result.meetsid).filter(
+        Result.membersid == member_id,
+        Result.stylesid == style_id,
+        Result.totaltime > 0,
+        Result.resulttyp == 0,
+        or_(Result.resultstatus.is_(None), Result.resultstatus != 4),
+        eff < cut,
+    )
+    coach = db.query(AthleteBestTime.time_ms).filter(
+        AthleteBestTime.membersid == member_id,
+        AthleteBestTime.stylesid == style_id,
+        AthleteBestTime.time_ms > 0,
+        AthleteBestTime.entered_date < cut,
+    )
+    if not course_free:
+        results = results.filter(Result.course == course_int)
+        coach = coach.filter(AthleteBestTime.course == course_int)
+    return {t for (t,) in results.all()} | {t for (t,) in coach.all()}
 
 
 def _meet_start(db: Session, meetsid: int, meet) -> datetime:
