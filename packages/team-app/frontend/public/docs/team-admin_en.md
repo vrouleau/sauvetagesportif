@@ -100,6 +100,8 @@ The **Historical Meets** section lets you import past competition results. These
 1. Click **Import results .lxf** and select a Lenex results file
 2. If a duplicate meet is detected, you can force the import
 
+Beach results files are refused: finishing positions are not times and never count toward best times.
+
 ### Manage Historical Meets
 
 - The historical meets table shows all imported meets with their date, location, and result count

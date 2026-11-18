@@ -2780,7 +2780,7 @@ async def import_historical(file: UploadFile = File(...), force: bool = False, d
         raise HTTPException(413, "File too large (max 10MB)")
     # Same "is it a results file?" guard as import-results-lxf (no meet-match
     # check here: this path is for archiving *other* meets, closes nothing).
-    from ..lxf_to_team import _read_lef_xml, count_results_in_lxf
+    from ..lxf_to_team import _read_lef_xml, count_results_in_lxf, is_beach_results, BEACH_RESULTS_DETAIL
     try:
         lxf_root = _read_lef_xml(content)
     except Exception as e:
@@ -2791,6 +2791,8 @@ async def import_historical(file: UploadFile = File(...), force: bool = False, d
             "message": "This file contains no results (times or DSQ/DNS/DNF) — "
                        "is it an entries or meet-structure file?",
         })
+    if is_beach_results(lxf_root):
+        raise HTTPException(400, BEACH_RESULTS_DETAIL)
     from ..historical_import import import_historical_meet
     result = import_historical_meet(db, content, force=force)
     if result.get("needs_force"):
@@ -3851,11 +3853,10 @@ async def import_results_lxf(request: Request, file: UploadFile = File(...), for
                               force_meet: bool = False, db: Session = Depends(get_db)):
     """Import a meet-app results .lxf as a historical meet.
 
-    - Organizer: archives meet as historical, then resets current meet,
-      regenerates all club PINs, and clears the organizer role so an admin
-      can invite the next organizer.  Returns reset=true.
-    - Admin: creates or updates a historical meet record only.  No reset.
-      Returns reset=false.
+    Organizer or admin: archives the meet as historical, then resets the
+    meet being closed (see _reset_for_next_meet: PINs are regenerated only
+    when no other meet stays open). The organizer role is cleared on the
+    organizer path. Returns reset=true.
 
     meet-app exports via File → "Exporter les résultats LENEX…".
     Clubs are merged by code; athletes by license, else exact name + birthdate
@@ -3867,6 +3868,8 @@ async def import_results_lxf(request: Request, file: UploadFile = File(...), for
     Guards, checked before anything is written (closing is destructive):
     - 400 not_results_file: no RESULT carries a time or status (an entries or
       meet-structure LXF picked by mistake). Not overridable.
+    - 400 beach_results_not_archived: beach results (positions, never best
+      times) aren't archived — close the meet without results. Not overridable.
     - 409 meet_mismatch: only when this import closes a meet — the file's meet
       name or event ids don't match the open meet. ?force_meet=true overrides
       (separate from ?force so confirming new swimstyles can't skip it).
@@ -3875,7 +3878,10 @@ async def import_results_lxf(request: Request, file: UploadFile = File(...), for
     if len(content) > 50 * 1024 * 1024:
         raise HTTPException(413, "File too large (max 50MB)")
 
-    from ..lxf_to_team import _read_lef_xml, count_results_in_lxf, meet_mismatch
+    from ..lxf_to_team import (
+        _read_lef_xml, count_results_in_lxf, meet_mismatch,
+        is_beach_results, BEACH_RESULTS_DETAIL,
+    )
     try:
         lxf_root = _read_lef_xml(content)
     except Exception as e:
@@ -3887,6 +3893,8 @@ async def import_results_lxf(request: Request, file: UploadFile = File(...), for
                        "is it an entries or meet-structure file? Export the results from "
                        "meet-app with File → Export LENEX results.",
         })
+    if is_beach_results(lxf_root):
+        raise HTTPException(400, BEACH_RESULTS_DETAIL)
 
     # Which *live* meet is being closed by this results file — resolved up
     # front (X-Meet-Id, or today's single-open-meet fallback) so the reset

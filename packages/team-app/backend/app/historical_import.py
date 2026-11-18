@@ -103,6 +103,9 @@ def import_historical_meet(db: Session, file_bytes: bytes, force: bool = False) 
         xml_bytes = z.read(lef_name)
 
     root = _ET_fromstring(xml_bytes)
+    from .lxf_to_team import is_beach_results, BeachResultsNotArchived, BEACH_RESULTS_DETAIL
+    if is_beach_results(root):
+        raise BeachResultsNotArchived(BEACH_RESULTS_DETAIL["message"])
     meta = _parse_meet_metadata(root)
 
     # ── Cross-validation: warn if this looks like the current meet ──

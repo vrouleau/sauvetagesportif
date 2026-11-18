@@ -158,6 +158,8 @@ Une fois la compétition terminée et les résultats exportés depuis SauvetageM
    - Effacer le rôle d'organisateur et **vous déconnecter**
 4. Après la déconnexion, l'administrateur peut inviter l'organisateur du prochain meet
 
+> **Meets de plage** : les résultats ne sont pas importés — ce sont des positions d'arrivée, pas des temps, donc ils ne servent jamais aux meilleurs temps. Le bouton **Importer résultats** est masqué pour un meet de plage; utiliser **Fermer sans résultats** à la place (même réinitialisation, rien n'est archivé).
+
 > **Note pour l'admin** : Après l'import des résultats, le système est de retour à l'étape ①. Le meet est réinitialisé pour l'admin et l'organisateur. Désigner le prochain organisateur dans la page Admin.
 
 ---

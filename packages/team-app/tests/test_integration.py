@@ -3197,10 +3197,12 @@ class TestUploadMeetPreservesHistory:
 
     def test_upload_meet_beach_detection_ignores_historical_styles(self, results_lxf_bytes, admin_headers):
         """A pool meet upload must not be misclassified as BEACH just because
-        a historical meet in the (now-persistent) SwimStyle catalog used a
-        beach style id (>= 600)."""
-        # Archive a beach-style historical meet first (test fixtures use pool
-        # ids only, so fabricate a minimal beach SWIMSTYLE reference).
+        an earlier beach meet left beach style ids (>= 600) in the (persistent)
+        SwimStyle catalog. Beach results are never archived (400
+        beach_results_not_archived), so the beach styles come from creating a
+        beach meet instead."""
+        # Beach results file (fabricated: test fixtures use pool ids only) —
+        # refused by both historical-results imports, nothing written.
         import zipfile as _zipfile
         from io import BytesIO as _BytesIO
         lef_content = (
@@ -3216,12 +3218,23 @@ class TestUploadMeetPreservesHistory:
         with _zipfile.ZipFile(buf, "w") as z:
             z.writestr("meet.lef", lef_content)
         beach_lxf = buf.getvalue()
-        r = requests.post(
-            f"{BASE_URL}/api/admin/import-historical?force=true",
-            files={"file": ("beach.lxf", beach_lxf, "application/octet-stream")},
-            headers=admin_headers, timeout=30,
-        )
-        assert r.status_code == 200, f"Beach historical import failed: {r.text}"
+        for url in (f"{BASE_URL}/api/admin/import-historical?force=true",
+                    f"{BASE_URL}/api/import-results-lxf?force=true&force_meet=true"):
+            r = requests.post(
+                url,
+                files={"file": ("beach.lxf", beach_lxf, "application/octet-stream")},
+                headers=admin_headers, timeout=30,
+            )
+            assert r.status_code == 400, f"{url}: beach results must be refused, got {r.status_code} {r.text}"
+            assert r.json()["detail"]["code"] == "beach_results_not_archived"
+        r = requests.get(f"{BASE_URL}/api/admin/historical-meets", headers=admin_headers, timeout=10)
+        r.raise_for_status()
+        assert not any(m["name"] == "Beach Historical Meet" for m in r.json())
+
+        # Put beach styles in the catalog the supported way: a beach meet.
+        r = requests.post(f"{BASE_URL}/api/admin/new-meet", json={"meet_type": "beach"},
+                          headers=admin_headers, timeout=60)
+        assert r.status_code == 200, f"new-meet (beach) failed: {r.text}"
 
         # Now upload the (pool) meet template — must classify as POOL, not BEACH.
         with open(MEET_TEMPLATE, "rb") as f:

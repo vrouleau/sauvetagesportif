@@ -168,7 +168,7 @@ One resolver in `best_times.py` (`get_best_times_for_member` / `get_public_best_
 2. Otherwise the **fastest official, non-HC result** from `results`, with that result's own date — or its meet's `mindate` when the result has none (most historical rows). Rows with neither date never expire.
 
 Coach best times are written only at meet close, never on registration:
-- `capture_coach_best_times` — `import-results-lxf` (before the import) and `close-meet-without-results` store each individual registration's entry time for the meet's course, dated to the meet start (`mindate`, else first session date). Entry times equal to the current best time (the pre-filled default) are skipped so a historical value isn't re-dated. Relays and beach meets skipped.
+- `capture_coach_best_times` — `import-results-lxf` (before the import) and `close-meet-without-results` store each individual registration's entry time for the meet's course, dated to the meet start (`mindate`, else first session date). Entry times equal to the current best time (the pre-filled default) are skipped so a historical value isn't re-dated — and so are entry times equal to one of the athlete's *expired* times for that style/course (`_expired_times`): a best time pre-filled at registration that aged out before the meet was closed, which would otherwise be re-dated to this meet and kept for another 18 months. Relays and beach meets skipped.
 - `refresh_best_times_from_meet` — end of every results import (`lxf_to_team.py`, `historical_import.py`): a faster result replaces the stored time/date, unless the meet is older than the stored value.
 
 **Team events never have individual best times:** styles with `relaycount > 1` (relays, SERC, Lancer de la corde 10/12.5 m 523/524 — a pair, entered in the relay tab) are excluded from the resolver, even if a file recorded them per athlete.
@@ -177,7 +177,7 @@ Coach best times are written only at meet close, never on registration:
 
 **Throws are course-free:** individual pool styles with `0 < distance < 25` (`COURSE_FREE_MAX_DISTANCE`) — Lancer de précision 4/7 m (521/522) — don't depend on the pool's length: one best time across 50 m and 25 m (latest coach value, else fastest result), kept under the course it was actually done in (`pick_course()` reads it for any course). Registration and the public page get a `course_free` flag and show a single box. This relies on `swimstyle.distance`: meet uploads (`events.py`) now correct distance and upgrade relaycount of existing styles from the meet file (historical imports used to create them with no distance and relaycount=1); migration `m0007` applied the bundled pool/beach templates once to existing catalogs (an open meet can't be re-uploaded without losing its registrations).
 
-**Beach meets never count** (results are finishing positions stored as ms, not times): the resolver, refresh, capture and the athlete-history best times all exclude styles `>= BEACH_STYLE_MIN` (600). Pool styles use 5xx IDs, beach styles use 6xx — no collisions. Beach results are still archived and shown per meet.
+**Beach meets never count** (results are finishing positions stored as ms, not times): the resolver, refresh, capture and the athlete-history best times all exclude styles `>= BEACH_STYLE_MIN` (600). Pool styles use 5xx IDs, beach styles use 6xx — no collisions. Beach results are no longer archived at all (both results importers refuse them — see "Beach meets are never archived"); the exclusions above still guard beach rows archived before that.
 
 ## API endpoints
 
@@ -207,7 +207,7 @@ Coach best times are written only at meet close, never on registration:
 | `DELETE /api/admin/backups/{filename}` | Delete a specific backup | Admin |
 | `GET /api/admin/historical-meets` | List historical meets (Team Manager schema) | Admin |
 | `DELETE /api/admin/historical-meets/{id}` | Delete a historical meet | Admin |
-| `POST /api/import-results-lxf` | Import results .lxf as historical meet; organizer path also resets current meet + PINs + clears organizer. Guards (before any write): 400 `not_results_file` if no RESULT has a time/status; 409 `meet_mismatch` (override `?force_meet=true`, separate from `?force`) if the file's meet name or event ids don't match the open meet being closed — see `lxf_to_team.py` | Organizer/Admin |
+| `POST /api/import-results-lxf` | Import results .lxf as historical meet; organizer path also resets current meet + PINs + clears organizer. Guards (before any write): 400 `not_results_file` if no RESULT has a time/status; 400 `beach_results_not_archived` if the file uses any beach style (also on `admin/import-historical`; close a beach meet with `admin/close-meet-without-results`); 409 `meet_mismatch` (override `?force_meet=true`, separate from `?force`) if the file's meet name or event ids don't match the open meet being closed — see `lxf_to_team.py` | Organizer/Admin |
 | `GET /api/athletes` | Athlete list | Any authenticated |
 | `GET /api/clubs/{id}/invoice-pdf` | One club's invoice PDF | Organizer/Admin |
 | `POST /api/invoices/pdf-zip` | ZIP of invoice PDFs (`{club_ids}`) | Organizer/Admin |
@@ -302,6 +302,10 @@ Full data flow between meet-app and team-app:
 - Admin then sets a new organizer for the next meet via Admin page
 
 **Admin import** (`POST /api/import-results-lxf` with admin PIN): same historical archival + reset. Both paths refuse a file with no results (an entries/meet-structure LXF picked by mistake) and ask for confirmation before closing the open meet with a file whose meet name or event ids don't match it. If a completed meet with the same name already exists, its results are replaced rather than duplicated.
+
+**Beach meets are never archived:** both historical-results importers (`lxf_to_team.import_lxf_as_meet`, `historical_import.import_historical_meet`) refuse a file with any style `>= BEACH_STYLE_MIN` (`is_beach_results`, decided from the file, not the per-install `meet_type` flag). The Organizer page hides "Importer résultats" for a beach meet; it's closed with "Fermer sans résultats".
+
+**Both importers write `results.eventnumb`** (the event number): `results.py` groups a historical meet's results by it and the athlete history sorts by it. `lxf_to_team` used to leave it NULL (all events lumped under "event 0").
 
 **Empty meet state:** After reset (or fresh install), the meet has no events. Self-invite page shows "no meet planned" when empty. Admin or organizer uploads a new meet .lxf to start the next cycle.
 

@@ -32,6 +32,16 @@ export function notResultsFileMessage(err, lang) {
     : 'This file contains no results (times or DSQ/DNS/DNF). Is it the entries or meet-structure file? Export the results from SauvetageMeet: File → Export LENEX results…'
 }
 
+/** 400 beach_results_not_archived → localized message, else null. Not overridable:
+ *  beach results are positions (no best times), so a beach meet is closed
+ *  without results instead of archived. */
+export function beachResultsMessage(err, lang) {
+  if (!detailWithCode(err, 'beach_results_not_archived')) return null
+  return lang === 'fr'
+    ? "Les résultats d'un meet de plage ne sont pas archivés (des positions, pas des temps — aucune meilleure performance). Fermez le meet avec « Fermer sans résultats »."
+    : 'Beach meet results are not archived (positions, not times — no best times). Close the meet with "Close without results".'
+}
+
 /** 409 meet_mismatch detail, else null. */
 export function meetMismatchDetail(err) {
   return detailWithCode(err, 'meet_mismatch')
