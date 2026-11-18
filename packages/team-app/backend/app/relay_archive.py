@@ -26,7 +26,8 @@ archived meet plus one `relayspos` row per member — Splash Team Manager's own
 shape. best_times.get_relay_best_times credits every member with the team's
 total; it suggests future relay entry times.
 
-Used by both results importers (lxf_to_team.py, historical_import.py).
+Used by the results importer (lxf_to_team.archive_results_lxf), behind both
+import-results-lxf and admin/import-historical.
 """
 from __future__ import annotations
 

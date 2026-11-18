@@ -16,11 +16,15 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with Sauvetage Sportif. If not, see <https://www.gnu.org/licenses/>.
 
-"""import_lxf_as_meet member matching for athletes without a license.
+"""Results-import member matching for athletes without a license — both
+entry points (Organizer "Import results" and Admin "Import historical") share
+one importer, so every rule is checked through each.
 
 Regression: members were merged by license only, so every results import
 created a new member for each athlete with no license — re-importing a meet
-duplicated them. They are now matched by exact name within the club.
+duplicated them. They are now matched by exact name + birthdate in any club,
+else exact name within the club. (The admin import used to match by name
+alone across clubs, merging different people.)
 """
 from __future__ import annotations
 
@@ -29,13 +33,22 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "backend"))
 
-from app.lxf_to_team import import_lxf_as_meet  # noqa: E402
+import pytest  # noqa: E402
+
+from app.lxf_to_team import import_lxf_as_meet as _results_import  # noqa: E402
+from app.historical_import import import_historical_meet as _historical_import  # noqa: E402
 from app.models_team import Member, TeamClub  # noqa: E402
+
+
+@pytest.fixture(params=["results-import", "historical-import"])
+def import_lxf_as_meet(request):
+    """The importer under test, called (db, lxf, force=True) like before."""
+    return _results_import if request.param == "results-import" else _historical_import
 
 from .test_historical_meet_date_city import _build_lxf, db_session  # noqa: E402,F401
 
 
-def test_reimport_does_not_duplicate_unlicensed_athlete(db_session):
+def test_reimport_does_not_duplicate_unlicensed_athlete(db_session, import_lxf_as_meet):
     lxf = _build_lxf(name="CQS", session_dates=["2026-08-15"])  # Jean Tremblay, no license
     import_lxf_as_meet(db_session, lxf, force=True)
     import_lxf_as_meet(db_session, lxf, force=True)
@@ -43,7 +56,7 @@ def test_reimport_does_not_duplicate_unlicensed_athlete(db_session):
     assert len(members) == 1
 
 
-def test_unlicensed_athlete_matches_existing_member_in_same_club_only(db_session):
+def test_unlicensed_athlete_matches_existing_member_in_same_club_only(db_session, import_lxf_as_meet):
     db_session.add(TeamClub(clubsid=1, name="Test Club", code="TST", pin="111111"))
     db_session.add(TeamClub(clubsid=2, name="Other Club", code="OTH", pin="222222"))
     db_session.add(Member(membersid=50, firstname="Jean", lastname="Tremblay", clubsid=2))
@@ -69,7 +82,7 @@ def _lxf_with_birthdate(birthdate: str) -> bytes:
     return buf.getvalue()
 
 
-def test_unlicensed_athlete_who_changed_club_matches_by_birthdate(db_session):
+def test_unlicensed_athlete_who_changed_club_matches_by_birthdate(db_session, import_lxf_as_meet):
     from datetime import datetime
     db_session.add(TeamClub(clubsid=2, name="Other Club", code="OTH", pin="222222"))
     db_session.add(Member(membersid=50, firstname="Jean", lastname="Tremblay", clubsid=2,
@@ -82,7 +95,7 @@ def test_unlicensed_athlete_who_changed_club_matches_by_birthdate(db_session):
     assert ids == [50]
 
 
-def test_same_name_same_club_different_birthdate_is_a_different_athlete(db_session):
+def test_same_name_same_club_different_birthdate_is_a_different_athlete(db_session, import_lxf_as_meet):
     from datetime import datetime
     db_session.add(TeamClub(clubsid=1, name="Test Club", code="TST", pin="111111"))
     db_session.add(Member(membersid=60, firstname="Jean", lastname="Tremblay", clubsid=1,

@@ -158,7 +158,7 @@ class TestRelayArchive:
         _seed_open_meet(db)
         out = import_lxf_as_meet(db, _results_lxf("Fall Meet", _relay(1, [1, 2, 3, 4], "00:02:01.50")), force=True)
 
-        assert out["relays"] == 1
+        assert out["relays_imported"] == 1
         relay = db.query(Relay).filter(Relay.meetsid == out["meet_id"]).one()
         assert relay.totaltime == 121500
         assert relay.stylesid == 506

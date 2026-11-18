@@ -16,415 +16,43 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with Sauvetage Sportif. If not, see <https://www.gnu.org/licenses/>.
 
-"""Historical meet import — parse a results LXF and store as a distinct meet record.
 
-Creates a Meet, Events, Results, and MemberMeet entries for the imported competition.
-Also updates best times from all historical results.
+"""Admin "Import historical" — archive an older meet's results .lxf.
+
+Thin entry point over lxf_to_team.archive_results_lxf (the one results
+importer, shared with the Organizer "Import results" that closes a meet).
+Admin-specific policy only:
+- warns (needs_force) when the file looks like the open meet — that one is
+  closed with "Import results" instead;
+- asks for confirmation (needs_force) before replacing a meet that is
+  already archived.
+`force=True` skips every warning.
 """
 from __future__ import annotations
 
-import re
-import zipfile
-from datetime import date as _date, datetime as _dt
-from io import BytesIO
-
-from defusedxml.ElementTree import fromstring as _ET_fromstring
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from .models import BsGlobal, SwimStyle
+from .lxf_to_team import archive_results_lxf, _read_lef_xml, _parse_meet
 from .meet_config import get_active_meetsid, _get_meet_config
-from .models_team import Meet, Event, Result, MemberMeet, TeamClub, Member, gender_from_str
-from .best_times import _lenex_time_to_ms, _find_or_create_athlete
-
-
-def _parse_meet_metadata(root) -> dict:
-    """Extract meet-level metadata from the LXF XML root."""
-    meet_el = root.find(".//MEET")
-    if meet_el is None:
-        return {"name": "Unknown Meet", "course": "LCM", "startdate": None, "city": ""}
-
-    name = meet_el.get("name", "Unknown Meet")
-    course = meet_el.get("course", "LCM")
-    if course not in ("LCM", "SCM", "SCY"):
-        course = "LCM"
-    city = meet_el.get("city", "")
-
-    def _iso(raw: str) -> _date | None:
-        if not raw:
-            return None
-        try:
-            return _date.fromisoformat(raw[:10])
-        except ValueError:
-            return None
-
-    startdate: _date | None = None
-    for attr in ("startdate", "date"):
-        startdate = _iso(meet_el.get(attr, ""))
-        if startdate:
-            break
-
-    # Fall back to the earliest SESSION date when the meet carries no meet-level
-    # date, so meets.mindate is never left NULL on import (mindate = meet start).
-    if not startdate:
-        session_dates = [d for d in (_iso(s.get("date", "")) for s in root.iter("SESSION")) if d]
-        if session_dates:
-            startdate = min(session_dates)
-
-    stopdate: _date | None = _iso(meet_el.get("stopdate", ""))
-
-    return {
-        "name": name,
-        "course": course,
-        "startdate": startdate,
-        "stopdate": stopdate,
-        "city": city,
-    }
-
-
-def _course_str_to_int(course: str) -> int:
-    return {"LCM": 1, "SCY": 2, "SCM": 3}.get(course, 1)
 
 
 def import_historical_meet(db: Session, file_bytes: bytes, force: bool = False) -> dict:
-    """Import a results LXF as a historical meet.
+    """Import a results LXF as a historical meet (see archive_results_lxf).
 
-    Args:
-        db: Database session.
-        file_bytes: Raw bytes of the .lxf zip file.
-        force: If True, skip the "looks like current meet" warning.
-
-    Returns:
-        Dict with import results: meet_id, meet_name, warning, results_imported, etc.
+    Returns the import counts, or {"needs_force": True, "warning": ...} when a
+    warning needs confirming (retry with force=True).
     """
-    # Parse the LXF zip
-    with zipfile.ZipFile(BytesIO(file_bytes)) as z:
-        lef_name = next(n for n in z.namelist() if n.endswith(".lef"))
-        xml_bytes = z.read(lef_name)
-
-    root = _ET_fromstring(xml_bytes)
-    from .lxf_to_team import is_beach_results, BeachResultsNotArchived, BEACH_RESULTS_DETAIL
-    if is_beach_results(root):
-        raise BeachResultsNotArchived(BEACH_RESULTS_DETAIL["message"])
-    meta = _parse_meet_metadata(root)
-
-    # ── Cross-validation: warn if this looks like the current meet ──
-    current_meet_name = _get_meet_config(db, get_active_meetsid(db), "meet_name")
-
-    warning = None
-    if current_meet_name and meta["name"] and not force:
-        # Fuzzy match: case-insensitive, ignore leading/trailing whitespace
-        if meta["name"].strip().lower() == current_meet_name.strip().lower():
-            warning = (
-                f"This LXF appears to be your current meet ('{meta['name']}'). "
-                f"Use the results import on the Invitation page instead. "
-                f"Pass force=true to override."
-            )
-            return {
-                "warning": warning,
-                "meet_name": meta["name"],
-                "needs_force": True,
-            }
-
-    # ── Build event→style_uid map ──
-    event_style: dict[str, int] = {}
-    event_number: dict[str, int] = {}
-    event_gender: dict[str, int] = {}
-    style_names: dict[int, str] = {}
-    style_distances: dict[int, int] = {}
-    style_relaycounts: dict[int, int] = {}
-
-    for event_el in root.iter("EVENT"):
-        eid = event_el.get("eventid", "")
-        enumber = int(event_el.get("number", "0") or "0")
-        # LENEX's GENDER enum is ALL|M|F|MIXED ("X" also accepted — our own exporter
-        # used to write it for Mixed). Unrecognized/absent defaults to 0 (ALL).
-        egender = {"M": 1, "F": 2, "MIXED": 3, "X": 3}.get((event_el.get("gender") or "").upper(), 0)
-        event_number[eid] = enumber
-        event_gender[eid] = egender
-
-        for ss in event_el.iter("SWIMSTYLE"):
-            uid_raw = ss.get("swimstyleid") or ""
-            try:
-                uid_int = int(uid_raw)
-            except (ValueError, TypeError):
-                continue
-            event_style[eid] = uid_int
-            name = ss.get("name", "")
-            if name:
-                style_names[uid_int] = name
-            distance_raw = ss.get("distance") or ""
-            try:
-                style_distances[uid_int] = int(distance_raw)
-            except (ValueError, TypeError):
-                pass
-            try:
-                style_relaycounts[uid_int] = int(ss.get("relaycount") or "")
-            except (ValueError, TypeError):
-                pass
-
-    # ── Warn about swimstyle ids not already in the local catalog ──
     if not force:
-        from .swimstyle_check import find_new_swimstyles, describe_new_swimstyles
-        new_styles = find_new_swimstyles(db, (
-            (uid, style_names.get(uid), style_distances.get(uid))
-            for uid in set(event_style.values())
-        ))
-        if new_styles:
+        meet_name = _parse_meet(_read_lef_xml(file_bytes))["name"]
+        current_meet_name = _get_meet_config(db, get_active_meetsid(db), "meet_name")
+        if current_meet_name and meet_name.strip().lower() == current_meet_name.strip().lower():
             return {
-                "warning": describe_new_swimstyles(new_styles),
-                "meet_name": meta["name"],
+                "warning": (
+                    f"This LXF appears to be your current meet ('{meet_name}'). "
+                    f"Use the results import on the Invitation page instead. "
+                    f"Pass force=true to override."
+                ),
+                "meet_name": meet_name,
                 "needs_force": True,
-                "new_swimstyles": new_styles,
             }
-
-    # ── Deduplication: check if this meet was already imported ──
-    existing_meet = None
-    if meta["startdate"]:
-        # Compare the calendar day only: SQLite stores DateTime as text, and
-        # older rows hold '2025-05-24 00:00:00' while SQLAlchemy binds
-        # '2025-05-24 00:00:00.000000' — a plain == never matched those,
-        # so re-importing created a duplicate meet instead of replacing it.
-        existing_meet = db.query(Meet).filter(
-            Meet.name == meta["name"],
-            func.date(Meet.mindate) == meta["startdate"].isoformat(),
-        ).first()
-    else:
-        # A file with no date at all (no MEET or SESSION date — e.g. some normalized
-        # Splash exports) can't be matched by name + date. Match the one completed
-        # meet with that name instead, and keep that meet's own date: re-importing
-        # such a file used to create a second, undated copy of the meet (whose
-        # results never expire).
-        same_name = db.query(Meet).filter(
-            func.lower(Meet.name) == meta["name"].lower(),
-            Meet.meetstate == 3,
-        ).all()
-        if len(same_name) == 1:
-            existing_meet = same_name[0]
-
-    if existing_meet and not force:
-        return {
-            "warning": f"Meet '{meta['name']}' ({meta['startdate']}) already imported (id={existing_meet.meetsid}). Pass force=true to re-import.",
-            "meet_name": meta["name"],
-            "meet_id": existing_meet.meetsid,
-            "needs_force": True,
-        }
-
-    # If re-importing, wipe old results for this meet
-    if existing_meet:
-        from .relay_archive import delete_archived_relays
-        delete_archived_relays(db, existing_meet.meetsid)
-        db.query(Result).filter(Result.meetsid == existing_meet.meetsid).delete()
-        db.query(MemberMeet).filter(MemberMeet.meetsid == existing_meet.meetsid).delete()
-        db.query(Event).filter(Event.meetsid == existing_meet.meetsid).delete()
-        db.flush()
-        meet = existing_meet
-    else:
-        # Create new Meet record
-        next_id = (db.query(func.max(Meet.meetsid)).scalar() or 0) + 1
-        meet = Meet(
-            meetsid=next_id,
-            name=meta["name"],
-            place=meta["city"],
-            mindate=_dt(meta["startdate"].year, meta["startdate"].month, meta["startdate"].day) if meta["startdate"] else None,
-            maxdate=_dt(meta["stopdate"].year, meta["stopdate"].month, meta["stopdate"].day) if meta.get("stopdate") else None,
-            course=_course_str_to_int(meta["course"]),
-            meetstate=3,  # completed
-        )
-        db.add(meet)
-        db.flush()
-
-    course_int = _course_str_to_int(meta["course"])
-
-    # ── Create Event records for this meet ──
-    events_created = 0
-    # Get next event ID to avoid PK conflicts
-    from sqlalchemy import func as _func
-    next_event_id = (db.query(_func.max(Event.eventsid)).scalar() or 0) + 1
-    for eid_str, style_uid in event_style.items():
-        # Ensure the SwimStyle exists
-        if not db.get(SwimStyle, style_uid):
-            # Use the file's own distance/relaycount (used to hard-code
-            # relaycount=1 and drop the distance, so relays and throws were
-            # misclassified until a meet upload corrected them).
-            dist = style_distances.get(style_uid)
-            db.add(SwimStyle(
-                swimstyleid=style_uid,
-                name=style_names.get(style_uid, f"Style {style_uid}"),
-                distance=dist if dist and dist > 0 else None,
-                relaycount=style_relaycounts.get(style_uid) or 1,
-            ))
-            db.flush()
-
-        ev = Event(
-            eventsid=next_event_id,
-            meetsid=meet.meetsid,
-            numb=event_number.get(eid_str, 0),
-            stylesid=style_uid,
-            gender=event_gender.get(eid_str, 0),
-        )
-        db.add(ev)
-        next_event_id += 1
-        events_created += 1
-    db.flush()
-
-    # ── Parse clubs/athletes and results ──
-    results_imported = 0
-    athletes_matched = 0
-    athletes_created = 0
-    clubs_matched = 0
-    clubs_created = 0
-    member_meet_ids: set[int] = set()
-    relays_imported = 0
-    # The file's date, else (re-import of a dateless file) the existing meet's own date
-    meet_date = (_dt(meta["startdate"].year, meta["startdate"].month, meta["startdate"].day)
-                 if meta["startdate"] else meet.mindate)
-    # Get next result ID to avoid PK conflicts
-    next_result_id = (db.query(_func.max(Result.resultsid)).scalar() or 0) + 1
-    # File athleteid -> membersid across ALL clubs: a relay can include an
-    # athlete listed under another club (athlete switched clubs, composite
-    # team), so relays are archived once every club's athletes are known.
-    athlete_members: dict[str, int] = {}
-    relay_clubs: list[tuple] = []  # (club_el, clubsid)
-
-    for club_el in root.iter("CLUB"):
-        club_code = club_el.get("code", "")
-        club_name = club_el.get("name", "")
-
-        # Find or create club
-        if club_code:
-            club = db.query(TeamClub).filter(TeamClub.code == club_code).first()
-        else:
-            club = db.query(TeamClub).filter(TeamClub.name == club_name).first()
-
-        if not club:
-            import secrets, string
-            pin = ''.join(secrets.choice(string.digits) for _ in range(6))
-            club = TeamClub(name=club_name, code=club_code, nation=club_el.get("nation", ""), pin=pin)
-            db.add(club)
-            db.flush()
-            clubs_created += 1
-        clubs_matched += 1
-
-        for ath_el in club_el.iter("ATHLETE"):
-            first = ath_el.get("firstname", "").strip().rstrip(",")
-            last = ath_el.get("lastname", "").strip().rstrip(",")
-            license_val = ath_el.get("license", "")
-            gender_str = ath_el.get("gender", "M")
-            bd_str = ath_el.get("birthdate", "")
-            handicap_el = ath_el.find("HANDICAP")
-            exception_code = (
-                handicap_el.get("exception") if handicap_el is not None else None
-            ) or ath_el.get("exception") or None
-
-            # Check if athlete exists before find_or_create
-            existing_member = None
-            if license_val:
-                existing_member = db.query(Member).filter(Member.license == license_val).first()
-            if not existing_member:
-                existing_member = db.query(Member).filter(
-                    Member.firstname == first, Member.lastname == last
-                ).first()
-
-            member = _find_or_create_athlete(db, first, last, license_val, club, gender=gender_from_str(gender_str))
-            if not member:
-                continue
-
-            if not existing_member:
-                athletes_created += 1
-
-            # Update birthdate/gender/handicapex if missing
-            if bd_str and not member.birthdate:
-                try:
-                    member.birthdate = _date.fromisoformat(bd_str)
-                except ValueError:
-                    pass
-            if not member.gender or member.gender == 0:
-                member.gender = gender_from_str(gender_str)
-            if exception_code and not member.handicapex:
-                member.handicapex = exception_code
-
-            athletes_matched += 1
-            if ath_el.get("athleteid"):
-                athlete_members[ath_el.get("athleteid")] = member.membersid
-
-            # Track MemberMeet link
-            if member.membersid not in member_meet_ids:
-                member_meet_ids.add(member.membersid)
-                existing_mm = db.query(MemberMeet).filter(
-                    MemberMeet.membersid == member.membersid,
-                    MemberMeet.meetsid == meet.meetsid,
-                ).first()
-                if not existing_mm:
-                    db.add(MemberMeet(
-                        membersid=member.membersid,
-                        meetsid=meet.meetsid,
-                        clubsid=club.clubsid,
-                    ))
-
-            # Parse RESULT elements for this athlete
-            for result_el in ath_el.iter("RESULT"):
-                eid = result_el.get("eventid", "")
-                style_uid = event_style.get(eid)
-                if not style_uid:
-                    continue
-
-                swimtime_ms = _lenex_time_to_ms(result_el.get("swimtime", ""))
-                status = result_el.get("status", "")
-
-                # Skip DSQ/DNS/DNF — no time to store
-                if status in ("DSQ", "DNS", "DNF") and not swimtime_ms:
-                    continue
-
-                # HC (hors concours / exhibition) keeps its time but is excluded from best-times.
-                is_hc = status.upper() == "EXH"
-
-                db.add(Result(
-                    resultsid=next_result_id,
-                    membersid=member.membersid,
-                    meetsid=meet.meetsid,
-                    stylesid=style_uid,
-                    totaltime=swimtime_ms,
-                    course=course_int,
-                    eventnumb=event_number.get(eid, 0),
-                    resulttyp=0,  # official
-                    eventdate=meet_date,
-                    resultstatus=4 if is_hc else None,
-                ))
-                next_result_id += 1
-                results_imported += 1
-
-        relay_clubs.append((club_el, club.clubsid))
-
-    # Relay results: team total + members (relay history, see relay_archive.py)
-    from .relay_archive import archive_club_relays
-    for club_el, club_id in relay_clubs:
-        n_relays, _members = archive_club_relays(
-            db, club_el,
-            club_id=club_id, meet_id=meet.meetsid, meet_date=meet_date, course=course_int,
-            event_style=event_style, event_number=event_number,
-            athlete_members=athlete_members,
-        )
-        relays_imported += n_relays
-
-    # A faster result from this meet replaces a stored coach best time
-    # (only when the meet isn't older than the stored value).
-    from .best_times import refresh_best_times_from_meet
-    refresh_best_times_from_meet(db, meet.meetsid)
-
-    db.commit()
-
-    return {
-        "meet_id": meet.meetsid,
-        "meet_name": meta["name"],
-        "meet_date": str(meet_date.date()) if meet_date else None,
-        "course": meta["course"],
-        "results_imported": results_imported,
-        "relays_imported": relays_imported,
-        "events_created": events_created,
-        "athletes_matched": athletes_matched,
-        "athletes_created": athletes_created,
-        "clubs_matched": clubs_matched,
-        "clubs_created": clubs_created,
-        "reimported": existing_meet is not None,
-    }
+    return archive_results_lxf(db, file_bytes, force=force, confirm_replace=True)

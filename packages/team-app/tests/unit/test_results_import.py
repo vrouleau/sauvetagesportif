@@ -214,7 +214,7 @@ class TestResultsImportCompleteness:
             result = import_lxf_as_meet(db, lxf_bytes)
 
             # Verify results were imported
-            assert result["results"] > 0, "Expected at least one result to be imported"
+            assert result["results_imported"] > 0, "Expected at least one result to be imported"
 
             # Query all results rows created
             all_results = db.query(Result).all()

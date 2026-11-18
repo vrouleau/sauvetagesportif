@@ -169,7 +169,7 @@ One resolver in `best_times.py` (`get_best_times_for_member` / `get_public_best_
 
 Coach best times are written only at meet close, never on registration:
 - `capture_coach_best_times` — `import-results-lxf` (before the import) and `close-meet-without-results` store each individual registration's entry time for the meet's course, dated to the meet start (`mindate`, else first session date). Entry times equal to the current best time (the pre-filled default) are skipped so a historical value isn't re-dated — and so are entry times equal to one of the athlete's *expired* times for that style/course (`_expired_times`): a best time pre-filled at registration that aged out before the meet was closed, which would otherwise be re-dated to this meet and kept for another 18 months. Relays and beach meets skipped.
-- `refresh_best_times_from_meet` — end of every results import (`lxf_to_team.py`, `historical_import.py`): a faster result replaces the stored time/date, unless the meet is older than the stored value.
+- `refresh_best_times_from_meet` — end of every results import (`lxf_to_team.archive_results_lxf`, both entry points): a faster result replaces the stored time/date, unless the meet is older than the stored value.
 
 **Team events never have individual best times:** styles with `relaycount > 1` (relays, SERC, Lancer de la corde 10/12.5 m 523/524 — a pair, entered in the relay tab) are excluded from the resolver, even if a file recorded them per athlete.
 
@@ -273,8 +273,8 @@ backend/app/
   invoices.py           — Invoice line items, deterministic invoice numbers (YEAR-MEET-CLUB[-Rn]), PDF renderer
   emailing.py           — Resend transport, shared email footer, invoice + organizer-summary email templates
   seed.py               — Entries .lxf parser (clubs/athletes/HANDICAP into members table)
-  lxf_to_team.py        — Import results .lxf as historical meet (merges clubs/members/HANDICAP, upserts if same name)
-  historical_import.py  — Import older results .lxf as historical meet (merges clubs/members/HANDICAP)
+  lxf_to_team.py        — THE results importer (archive_results_lxf: results .lxf → historical meet, merges clubs/members/HANDICAP, replaces a same name + date archive) + pre-import guards; import_lxf_as_meet = Organizer/Admin "Import results" entry point
+  historical_import.py  — Admin "Import historical" entry point: thin wrapper over archive_results_lxf (open-meet warning, confirm before replacing)
 frontend/src/
   main.jsx              — React app, routing, EventsPage wrapper
   meetApi.js            — MeetAPI adapter (HTTP → FastAPI)
@@ -301,11 +301,13 @@ Full data flow between meet-app and team-app:
 - Clears `organizer_club_id` (organizer path) — organizer is logged out
 - Admin then sets a new organizer for the next meet via Admin page
 
-**Admin import** (`POST /api/import-results-lxf` with admin PIN): same historical archival + reset. Both paths refuse a file with no results (an entries/meet-structure LXF picked by mistake) and ask for confirmation before closing the open meet with a file whose meet name or event ids don't match it. If a completed meet with the same name already exists, its results are replaced rather than duplicated.
+**Admin import** (`POST /api/import-results-lxf` with admin PIN): same historical archival + reset. Both paths refuse a file with no results (an entries/meet-structure LXF picked by mistake) and ask for confirmation before closing the open meet with a file whose meet name or event ids don't match it. If a completed meet with the same name and start date already exists, its results are replaced rather than duplicated (a dateless file matches by name only when exactly one completed meet has it).
 
-**Beach meets are never archived:** both historical-results importers (`lxf_to_team.import_lxf_as_meet`, `historical_import.import_historical_meet`) refuse a file with any style `>= BEACH_STYLE_MIN` (`is_beach_results`, decided from the file, not the per-install `meet_type` flag). The Organizer page hides "Importer résultats" for a beach meet; it's closed with "Fermer sans résultats".
+**One results importer:** `import-results-lxf` (`lxf_to_team.import_lxf_as_meet`) and `admin/import-historical` (`historical_import.import_historical_meet`) are thin entry points over `lxf_to_team.archive_results_lxf`; they differ only in policy — the admin one warns when the file looks like the open meet and asks (`needs_force`) before replacing an archived meet, the closing one replaces it silently. Same athlete matching, sessions/events, defusedxml parsing and response keys (`results_imported`, `relays_imported`, `athletes_matched`…) for both. They used to be two copies that drifted (one never wrote `results.eventnumb`); keep any new import rule in `archive_results_lxf`.
 
-**Both importers write `results.eventnumb`** (the event number): `results.py` groups a historical meet's results by it and the athlete history sorts by it. `lxf_to_team` used to leave it NULL (all events lumped under "event 0").
+**Beach meets are never archived:** the results importer refuses (both entry points) a file with any style `>= BEACH_STYLE_MIN` (`is_beach_results`, decided from the file, not the per-install `meet_type` flag). The Organizer page hides "Importer résultats" for a beach meet; it's closed with "Fermer sans résultats".
+
+**Archived results carry `results.eventnumb`** (the event number): `results.py` groups a historical meet's results by it and the athlete history sorts by it. The Organizer import used to leave it NULL (all events lumped under "event 0").
 
 **Empty meet state:** After reset (or fresh install), the meet has no events. Self-invite page shows "no meet planned" when empty. Admin or organizer uploads a new meet .lxf to start the next cycle.
 
@@ -364,10 +366,9 @@ python scripts/normalize_lxf.py TEMPLATE.lxf ENTRIES.lxf HISTORIC.lxf
 
 Athletes with a Para/disability classification carry `<HANDICAP exception="X" />` as a child element of `<ATHLETE>` in LXF (not a direct attribute).
 
-All three LXF import paths read this element and set `members.handicapex`:
+Both LXF importers read this element and set `members.handicapex`:
 - `seed.py` — Upload Lenex (Admin page)
-- `lxf_to_team.py` — Import results .lxf (Invitation / Admin page)
-- `historical_import.py` — Import historical .lxf (Admin page)
+- `lxf_to_team.py` — results importer behind Import results .lxf (Invitation page) and Import historical .lxf (Admin page)
 
 Existing members missing `handicapex` are backfilled on re-import; existing non-null values are never overwritten.
 
