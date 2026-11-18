@@ -109,3 +109,16 @@ def test_coach_with_no_entries_still_gets_their_club_page(db):
     html = build_entries_html(db, 1, "fr", club_id=2, section="relays")
     assert "Bravo Club" in html and "Aucune inscription relais." in html
     assert "Alpha Club" not in html
+
+
+def test_individual_entry_counts_skip_team_events(db):
+    """`entry_count` on /api/athletes marks athletes on the Individual entries
+    page — team-event rows (relaycount > 1) must not count."""
+    from app.routers.api import _individual_entry_counts
+    db.add(SwimResult(meetsid=1, athleteid=2, swimeventid=20))  # team style
+    db.add(Member(membersid=3, firstname="Cy", lastname="Nobody", gender=GENDER_M,
+                  birthdate=datetime(2008, 1, 1), clubsid=1))
+    db.commit()
+    counts = _individual_entry_counts(db, 1)
+    assert counts == {1: 1, 2: 1}
+    assert _individual_entry_counts(db, None) == {}

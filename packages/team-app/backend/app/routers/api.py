@@ -1449,6 +1449,26 @@ def reveal_secret(token: str, db: Session = Depends(get_db)):
 # Athletes
 # ---------------------------------------------------------------------------
 
+def _individual_entry_counts(db: Session, meetsid: int | None) -> dict[int, int]:
+    """membersid -> number of individual entries (styles with relaycount <= 1)
+    in the given meet. Lets the Individual entries page mark athletes that
+    already have entries."""
+    if not meetsid:
+        return {}
+    from sqlalchemy import func, or_
+    rows = (
+        db.query(SwimResult.athleteid, func.count(SwimResult.swimresultid))
+        .join(SwimEvent, (SwimEvent.swimeventid == SwimResult.swimeventid)
+              & (SwimEvent.meetsid == SwimResult.meetsid))
+        .outerjoin(SwimStyle, SwimStyle.swimstyleid == SwimEvent.swimstyleid)
+        .filter(SwimResult.meetsid == meetsid,
+                or_(SwimStyle.relaycount.is_(None), SwimStyle.relaycount <= 1))
+        .group_by(SwimResult.athleteid)
+        .all()
+    )
+    return {aid: n for aid, n in rows if aid is not None}
+
+
 @router.get("/athletes/all-grouped")
 def list_athletes_grouped(request: Request, db: Session = Depends(get_db)):
     """Return all athletes grouped by club in a single response (avoids N+1 requests)."""
@@ -1462,6 +1482,7 @@ def list_athletes_grouped(request: Request, db: Session = Depends(get_db)):
         q = q.filter(Member.clubsid == caller_club)
 
     athletes = q.all()
+    entry_counts = _individual_entry_counts(db, resolve_meetsid(request, db))
     grouped: dict[int, list] = defaultdict(list)
     for a in athletes:
         grouped[a.clubsid].append({
@@ -1470,6 +1491,7 @@ def list_athletes_grouped(request: Request, db: Session = Depends(get_db)):
             "birthdate": str(a.birthdate.date()) if a.birthdate else None,
             "license": a.license, "club": a.club.name if a.club else "",
             "club_id": a.clubsid,
+            "entry_count": entry_counts.get(a.membersid, 0),
         })
     return grouped
 
@@ -1486,12 +1508,14 @@ def list_athletes(request: Request, club_id: int = None, db: Session = Depends(g
     if club_id:
         q = q.filter(Member.clubsid == club_id)
     athletes = q.order_by(Member.lastname, Member.firstname).all()
+    entry_counts = _individual_entry_counts(db, resolve_meetsid(request, db))
     return [{
         "id": a.membersid, "first_name": a.firstname, "last_name": a.lastname,
         "gender": gender_to_str(a.gender),
         "birthdate": str(a.birthdate.date()) if a.birthdate else None,
         "license": a.license, "club": a.club.name if a.club else "",
         "club_id": a.clubsid,
+        "entry_count": entry_counts.get(a.membersid, 0),
     } for a in athletes]
 
 

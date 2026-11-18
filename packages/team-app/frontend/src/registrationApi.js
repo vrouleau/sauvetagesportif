@@ -135,10 +135,12 @@ export const registrationApiHttp = {
 
   async register(data) {
     await api.post('/registrations', data)
+    invalidateCache() // athlete entry_count / club registered counts changed
   },
 
   async unregister(registrationId) {
     await api.delete(`/registrations/${registrationId}`)
+    invalidateCache()
   },
 
   async resetClubPin(clubId) {
