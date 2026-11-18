@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.5.25] - 2026-11-18
+
+### ✨ Features
+
+- "?" help on individual entry times (best time origin, date, expiry) (`8079be1`)
+- help bubble explaining the suggested relay entry time (`72bccc8`)
+- ship the full swimstyle catalog with team-app LXF exports (`ed07ff6`)
+
+### 🐛 Bug Fixes
+
+- don't re-date a best time that expired before meet close (`b994e89`)
+- event numbers on imported results; never archive beach results (`0792502`)
+- include relay teams in chrono timing sheets (`b4ce3c1`)
+
+### ♻️ Refactoring
+
+- one results importer behind both LXF import paths (`22deeb2`)
+
+### 🔧 Chores
+
+- ignore Python bytecode caches repo-wide (`6c8f79d`)
+
+### Other
+
+- Merge pull request #108 from vrouleau/feat/individual-entry-time-help (`22bf797`)
+- Merge pull request #107 from vrouleau/refactor/unify-results-import (`797555e`)
+- Merge branch 'main' into refactor/unify-results-import (`e5c87ad`)
+- Merge pull request #106 from vrouleau/fix/results-import-eventnumb-beach-close (`b688f10`)
+- Merge branch 'main' into fix/results-import-eventnumb-beach-close (`b910733`)
+- Merge pull request #105 from vrouleau/fix/relay-event-chrono-pdf (`f4440ec`)
+
 ## [0.5.24] - 2026-11-18
 
 ### ✨ Features
