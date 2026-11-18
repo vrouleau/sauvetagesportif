@@ -419,6 +419,15 @@ def _expired_times(db: Session, member_id: int, style_id: int, course_int: int,
     return {t for (t,) in results.all()} | {t for (t,) in coach.all()}
 
 
+def coach_best_time_date(db: Session, meetsid: int | None) -> date:
+    """The date a coach's typed entry time for this meet would be stored with
+    when the meet is closed (capture_coach_best_times): the meet's start date,
+    today if it has none. Shown in the registration help bubble."""
+    if not meetsid:
+        return date.today()
+    return _meet_start(db, meetsid, db.get(Meet, meetsid)).date()
+
+
 def _meet_start(db: Session, meetsid: int, meet) -> datetime:
     """Live meet start: meets.mindate, else earliest session date, else today.
 

@@ -92,3 +92,19 @@ export function normalizeDuration(raw: string | null | undefined): string {
   }
   return s
 }
+
+/**
+ * Add `months` to a `YYYY-MM-DD` date, clamping the day to the target month's
+ * length ("2026-01-31" + 1 → "2026-02-28"). Used to show when a best time
+ * expires (its date + the expiry window). Returns '' for unrecognized input.
+ */
+export function addMonthsIso(iso: string | null | undefined, months: number): string {
+  const m = (iso ?? '').match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (!m) return ''
+  const total = parseInt(m[1], 10) * 12 + (parseInt(m[2], 10) - 1) + months
+  const year = Math.floor(total / 12)
+  const month = total - year * 12 // 0-based
+  const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate()
+  const day = Math.min(parseInt(m[3], 10), lastDay)
+  return `${String(year).padStart(4, '0')}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+}

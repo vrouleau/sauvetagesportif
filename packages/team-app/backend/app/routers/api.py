@@ -54,7 +54,7 @@ from ..meet_config import (
 from ..seed import seed_from_lxf
 from ..best_times import (
     get_best_times_for_member, get_best_time_date, capture_coach_best_times,
-    get_relay_best_times,
+    get_relay_best_times, coach_best_time_date,
 )
 from ..export import generate_lxf
 from ..export_entries import generate_entries_lxf
@@ -2216,8 +2216,10 @@ def get_registration(athlete_id: int, request: Request, db: Session = Depends(ge
     reg_map = {(r.swimeventid, r.age_code): r for r in regs}
 
     # Get best times — try new system (historical results) first, fall back to JSON blobs
-    best_map_lcm: dict[int, int] = {}
-    best_map_scm: dict[int, int] = {}
+    # {style uid: {"time_ms", "date", "source"}} per course — the date/source
+    # feed the entry-time help bubble ("result of …" / "entered by a coach").
+    best_map_lcm: dict[int, dict] = {}
+    best_map_scm: dict[int, dict] = {}
 
     # Throws (pool style < 25 m) have one best time whatever the course: the
     # panel shows a single box, and both values carry it so the pre-filled
@@ -2229,13 +2231,12 @@ def get_registration(athlete_id: int, request: Request, db: Session = Depends(ge
         for uid_key, style_data in bt_data.items():
             uid = int(uid_key)
             if uid in course_free:
-                one = next(iter(style_data.values()))["time_ms"]
-                best_map_lcm[uid] = best_map_scm[uid] = one
+                best_map_lcm[uid] = best_map_scm[uid] = next(iter(style_data.values()))
                 continue
             if "LCM" in style_data:
-                best_map_lcm[uid] = style_data["LCM"]["time_ms"]
+                best_map_lcm[uid] = style_data["LCM"]
             if "SCM" in style_data:
-                best_map_scm[uid] = style_data["SCM"]["time_ms"]
+                best_map_scm[uid] = style_data["SCM"]
 
     events = db.query(SwimEvent).options(
         joinedload(SwimEvent.agegroups),
@@ -2303,8 +2304,11 @@ def get_registration(athlete_id: int, request: Request, db: Session = Depends(ge
 
     # Add best times
     for s in individual_events + relay_events:
-        s["best_time_lcm_ms"] = best_map_lcm.get(s["style_uid"])
-        s["best_time_scm_ms"] = best_map_scm.get(s["style_uid"])
+        for course_key, best_map in (("lcm", best_map_lcm), ("scm", best_map_scm)):
+            bt = best_map.get(s["style_uid"]) or {}
+            s[f"best_time_{course_key}_ms"] = bt.get("time_ms")
+            s[f"best_time_{course_key}_date"] = bt.get("date")
+            s[f"best_time_{course_key}_source"] = bt.get("source")
         s["course_free"] = s["style_uid"] in course_free
 
     # Relay locks
@@ -2368,6 +2372,13 @@ def get_registration(athlete_id: int, request: Request, db: Session = Depends(ge
         "meet_course": meet_course,
         "meet_type": meet_type,
         "closure_date": closure,
+        # Entry-time help bubble: how long a best time stays valid, and the
+        # date a typed entry time is stored with as the new best time when the
+        # meet is closed (capture_coach_best_times).
+        "best_time_policy": {
+            "max_age_months": _BEST_TIME_MAX_AGE_MONTHS,
+            "typed_time_date": coach_best_time_date(db, meetsid).isoformat(),
+        },
         "individual_events": individual_events,
         "relay_events": relay_events,
         "club_athletes": [{"id": a.membersid, "name": f"{a.lastname}, {a.firstname}"}

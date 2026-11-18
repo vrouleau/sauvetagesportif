@@ -20,8 +20,10 @@ import { useState, useEffect, useRef } from 'react'
 import { useLang } from '../context/LangContext'
 import type { RegistrationData, RegistrationStyle } from '../data/api'
 import { formatEntryTime as msToTime, parseEntryTime as parseTime } from '../logic/timeFormat'
+import { addMonthsIso } from '../logic/dateFormat'
 import { filterCategoriesAroundSuggestion, computeAvailableCategories } from '../logic/ageGroupCode'
 import TimeInput from './TimeInput'
+import HelpTip from './HelpTip'
 
 // ─── RegistrationPanel ────────────────────────────────────────────────────────
 
@@ -50,6 +52,53 @@ function BestTimeCells({ style }: { style: RegistrationStyle }) {
   )
 }
 
+/**
+ * "?" bubble next to an individual entry time (team-app only — meet-app keeps
+ * no best times, so it has no `best_time_policy`): where the pre-filled time
+ * comes from (this athlete's best time, its date and origin, when it expires),
+ * and what a typed time becomes — the athlete's new best time once the meet is
+ * closed, dated to the meet start (see capture_coach_best_times, team-app).
+ */
+function EntryTimeHelp({ style, course, entryTimeMs, policy }: {
+  style: RegistrationStyle
+  course: 'lcm' | 'scm'
+  entryTimeMs: number | null | undefined
+  policy: NonNullable<RegistrationData['best_time_policy']>
+}) {
+  const { t } = useLang()
+  const h = t.registration.entryTimeHelp
+  const months = policy.max_age_months
+  const bestMs = style[`best_time_${course}_ms`]
+  const bestDate = style[`best_time_${course}_date`]
+  const source = style[`best_time_${course}_source`]
+  // The field shows the best time while no entry time is stored (see below).
+  const shownMs = entryTimeMs || bestMs || null
+  const following = bestMs != null && shownMs === bestMs
+  const typedDate = policy.typed_time_date
+  const typedUntil = addMonthsIso(typedDate, months)
+
+  return (
+    <HelpTip ariaLabel={h.ariaLabel}>
+      <p className="font-semibold text-gray-800">{h.title}</p>
+      <p>{h.rule(months)}</p>
+      {bestMs != null ? (
+        <p className="text-gray-800">
+          {source === 'coach'
+            ? h.fromCoach(msToTime(bestMs), bestDate || '?')
+            : h.fromResult(msToTime(bestMs), bestDate || '?')}
+          {bestDate && <> {h.expires(addMonthsIso(bestDate, months))}</>}
+        </p>
+      ) : (
+        <p className="text-gray-600">{h.noBestTime(months)}</p>
+      )}
+      {following && <p className="text-gray-600">{h.following}</p>}
+      {shownMs != null && !following
+        ? <p className="text-amber-700">{h.typed(typedDate, months, typedUntil)} {h.fasterResult}</p>
+        : <p className="text-gray-600">{h.ifTyped(typedDate, months, typedUntil)} {h.fasterResult}</p>}
+    </HelpTip>
+  )
+}
+
 export default function RegistrationPanel({
   data,
   athleteId,
@@ -65,6 +114,8 @@ export default function RegistrationPanel({
   const { individual_events, relay_events, club_athletes, suggested_age_code, meet_course, meet_type } = data
   const isBeach = (meet_type || 'POOL').toUpperCase() === 'BEACH'
   const bestKey: 'best_time_scm_ms' | 'best_time_lcm_ms' = meet_course === 'SCM' ? 'best_time_scm_ms' : 'best_time_lcm_ms'
+  const bestCourse: 'lcm' | 'scm' = meet_course === 'SCM' ? 'scm' : 'lcm'
+  const policy = data.best_time_policy
 
   // Category state
   const [category, setCategory] = useState<string | null>(null)
@@ -192,7 +243,7 @@ export default function RegistrationPanel({
                 <th className="border border-gray-300 px-2 py-1 text-left">{tr.event}</th>
                 {!isBeach && <th className="border border-gray-300 px-2 py-1 text-right w-20">{tr.bt50}</th>}
                 {!isBeach && <th className="border border-gray-300 px-2 py-1 text-right w-20">{tr.bt25}</th>}
-                {!isBeach && <th className="border border-gray-300 px-2 py-1 text-left w-24">{tr.entryTime}</th>}
+                {!isBeach && <th className={`border border-gray-300 px-2 py-1 text-left ${policy ? 'w-28' : 'w-24'}`}>{tr.entryTime}</th>}
                 <th className="border border-gray-300 px-2 py-1 text-center w-10" title={tr.hcTitle}>{tr.hc}</th>
               </tr>
             </thead>
@@ -224,15 +275,20 @@ export default function RegistrationPanel({
                     {!isBeach && (
                       <td className="border border-gray-300 px-2 py-0.5">
                         {reg && (
-                          <TimeInput
-                            defaultValue={msToTime(reg.entry_time_ms || bestMs)}
-                            key={`${reg.registration_id}-${reg.entry_time_ms}`}
-                            onSave={v => {
-                              const ms = parseTime(v)
-                              if (ms === undefined) return
-                              onUpdateEntryTime(reg.event_id, reg.age_code, ms)
-                            }}
-                          />
+                          <div className="flex items-center gap-1">
+                            <TimeInput
+                              defaultValue={msToTime(reg.entry_time_ms || bestMs)}
+                              key={`${reg.registration_id}-${reg.entry_time_ms}`}
+                              onSave={v => {
+                                const ms = parseTime(v)
+                                if (ms === undefined) return
+                                onUpdateEntryTime(reg.event_id, reg.age_code, ms)
+                              }}
+                            />
+                            {policy && (
+                              <EntryTimeHelp style={style} course={bestCourse} entryTimeMs={reg.entry_time_ms} policy={policy} />
+                            )}
+                          </div>
                         )}
                       </td>
                     )}
