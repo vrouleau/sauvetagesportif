@@ -2679,79 +2679,13 @@ async def upload_entries(request: Request, file: UploadFile = File(...), force: 
     return {**seed_result, "events_loaded": events_loaded, "relays_imported": relays_imported}
 
 
-@router.post("/upload/results", dependencies=[Depends(require_admin)])
-async def upload_results(request: Request, file: UploadFile = File(...), force: bool = False, db: Session = Depends(get_db)):
-    """Upload results .lxf to populate best times for the current meet.
-
-    Warns if the LXF meet name doesn't match the current meet
-    (suggesting to use the historical import endpoint instead).
-    """
-    meetsid = resolve_meetsid(request, db)
-    content = await file.read()
-    if len(content) > 10 * 1024 * 1024:
-        raise HTTPException(413, "File too large (max 10MB)")
-
-    # Cross-validation: warn if this looks like a different (historical) meet
-    if not force:
-        import zipfile
-        from io import BytesIO
-        from defusedxml.ElementTree import fromstring as _safe_parse
-        try:
-            with zipfile.ZipFile(BytesIO(content)) as z:
-                lef_name = next(n for n in z.namelist() if n.endswith(".lef"))
-                xml_root = _safe_parse(z.read(lef_name))
-            meet_el = xml_root.find(".//MEET")
-            if meet_el is not None:
-                lxf_meet_name = meet_el.get("name", "").strip()
-                current_meet_name = ((_get_meet_config(db, meetsid, "meet_name") if meetsid else None) or "").strip()
-                if lxf_meet_name and current_meet_name and lxf_meet_name.lower() != current_meet_name.lower():
-                    raise HTTPException(409, (
-                        f"This LXF is from '{lxf_meet_name}' but your current meet is "
-                        f"'{current_meet_name}'. Use Admin → Import Historical instead. "
-                        f"Pass ?force=true to override."
-                    ))
-
-            def _to_int(s):
-                try:
-                    return int(s)
-                except (TypeError, ValueError):
-                    return None
-
-            from ..swimstyle_check import find_new_swimstyles, describe_new_swimstyles
-            new_styles = find_new_swimstyles(db, (
-                (_to_int(ss.get("swimstyleid")), ss.get("name"), _to_int(ss.get("distance")))
-                for ss in xml_root.iter("SWIMSTYLE")
-            ))
-            if new_styles:
-                raise HTTPException(409, {
-                    "code": "new_swimstyles",
-                    "message": describe_new_swimstyles(new_styles),
-                    "styles": new_styles,
-                })
-        except (zipfile.BadZipFile, StopIteration, HTTPException) as e:
-            if isinstance(e, HTTPException):
-                raise
-            # If we can't parse, just continue with the import
-
-    seed_result = seed_from_lxf(db, content, meetsid=meetsid)
-
-    # Store results in the historical Result table so best times can be computed
-    from ..historical_import import import_historical_meet
-    try:
-        import_result = import_historical_meet(db, content, force=True)
-        seed_result["results_imported"] = import_result.get("results_imported", 0)
-    except Exception:
-        seed_result["results_imported"] = 0
-
-    return seed_result
-
-
 @router.post("/admin/import-historical", dependencies=[Depends(require_admin)])
 async def import_historical(file: UploadFile = File(...), force: bool = False, db: Session = Depends(get_db)):
     """Import a results LXF as a historical meet record.
 
     Stores the meet, events, and individual results separately from the current meet.
-    Warns if the LXF meet name matches the current meet (use /upload/results instead).
+    Warns if the LXF meet name matches the current meet (use the organizer's results
+    import, /import-results-lxf, instead).
     Pass ?force=true to override warnings.
     """
     content = await file.read()

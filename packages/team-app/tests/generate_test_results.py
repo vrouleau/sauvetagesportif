@@ -21,7 +21,7 @@
 """Generate a deterministic Lenex results .lxf simulating SPLASH meet output.
 
 Combines the meet template (events) with the synthetic entries (athletes) to
-produce a results file the app can ingest via /api/upload/results. Each
+produce a results file the app can ingest via /api/admin/import-historical. Each
 matched athlete gets RESULT rows on a handful of age/gender-appropriate
 events, with plausible swim times.
 

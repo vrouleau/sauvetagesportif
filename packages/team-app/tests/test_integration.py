@@ -424,7 +424,7 @@ class TestExport:
 
 
 # ---------------------------------------------------------------------------
-# Results upload (best times)
+# Results upload (best times) — archived as a historical meet (Admin → Import Historical)
 # ---------------------------------------------------------------------------
 
 class TestResultsUpload:
@@ -432,7 +432,7 @@ class TestResultsUpload:
     def uploaded_results(self, results_path, admin_headers) -> dict:
         with open(results_path, "rb") as f:
             r = requests.post(
-                f"{BASE_URL}/api/upload/results?force=true",
+                f"{BASE_URL}/api/admin/import-historical?force=true",
                 files={"file": ("results.lxf", f, "application/octet-stream")},
                 headers=admin_headers,
                 timeout=60,
@@ -441,8 +441,7 @@ class TestResultsUpload:
         return r.json()
 
     def test_results_upload_response(self, uploaded_results):
-        # Results are stored via historical import; seed_from_lxf returns club/athlete counts
-        assert "clubs_created" in uploaded_results or "results_imported" in uploaded_results
+        assert uploaded_results["results_imported"] > 0
 
     def test_status_shows_best_times(self, uploaded_results):
         r = requests.get(f"{BASE_URL}/api/status", timeout=10)
@@ -579,7 +578,7 @@ class TestExportEntries:
         """After results are loaded, the entries export includes ENTRY elements."""
         with open(results_path, "rb") as f:
             r = requests.post(
-                f"{BASE_URL}/api/upload/results?force=true",
+                f"{BASE_URL}/api/admin/import-historical?force=true",
                 files={"file": ("results.lxf", f, "application/octet-stream")},
                 headers=admin_headers,
                 timeout=60,
