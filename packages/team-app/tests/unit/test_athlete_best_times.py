@@ -40,7 +40,7 @@ from app.models import Base, SwimStyle, SwimSession, SwimEvent, SwimResult, Meet
 from app.models_team import Meet, Result, TeamClub, Member, AthleteBestTime
 from app.best_times import (
     get_best_times_for_member, get_public_best_times, get_best_time_date,
-    capture_coach_best_times, refresh_best_times_from_meet,
+    capture_coach_best_times, refresh_best_times_from_meet, coach_best_time_date,
 )
 
 LCM, SCM = 1, 3
@@ -187,6 +187,20 @@ def test_capture_stores_changed_entry_time_dated_to_meet_start(db):
     row = db.get(AthleteBestTime, (1, FREE, SCM))
     assert row.time_ms == 58500 and row.entered_date == start
     assert db.get(AthleteBestTime, (1, FREE, LCM)) is None
+
+
+def test_typed_time_date_is_the_capture_date(db):
+    # The registration help bubble announces this date for a typed entry time:
+    # it must be the one capture_coach_best_times actually stores.
+    start = _live_meet(db)
+    _register(db, 1, 1, 58500)
+    assert coach_best_time_date(db, LIVE) == start.date()
+    capture_coach_best_times(db, LIVE)
+    assert db.get(AthleteBestTime, (1, FREE, LCM)).entered_date.date() == start.date()
+
+
+def test_typed_time_date_without_meet_is_today(db):
+    assert coach_best_time_date(db, None) == date.today()
 
 
 def test_capture_ignores_unchanged_prefilled_entry_time(db):

@@ -55,6 +55,7 @@ After login, you see your club's athletes in the **Individual Entries** tab:
 - **Best times** (50m and 25m pool) are displayed read-only next to each event
 - The **entry time** is pre-filled from the best time matching the meet's pool size
 - You can **adjust the entry time** if needed (e.g., expected improvement)
+- An adjusted time becomes the athlete's **new best time** when the meet is closed (even if slower), dated to the meet start and valid 18 months — a faster result at this meet replaces it. The **?** next to the time shows where the best time comes from (result or coach), its date and when it expires
 
 ### Relay Events
 

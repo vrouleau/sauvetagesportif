@@ -273,6 +273,12 @@ export interface RegistrationStyle {
   style_name: string
   best_time_lcm_ms: number | null
   best_time_scm_ms: number | null
+  /** Date (YYYY-MM-DD) and origin of each best time — team-app only, for the
+   *  entry-time help bubble. 'coach' = a time a coach typed at a previous meet. */
+  best_time_lcm_date?: string | null
+  best_time_scm_date?: string | null
+  best_time_lcm_source?: 'result' | 'coach' | null
+  best_time_scm_source?: 'result' | 'coach' | null
   /** Throw from the deck (pool style < 25 m): one best time whatever the
    *  course — shown as a single box instead of BT 50 / BT 25 (team-app). */
   course_free?: boolean
@@ -300,6 +306,10 @@ export interface RegistrationData {
   meet_course: string
   meet_type?: string
   closure_date?: string | null
+  /** Team-app only (meet-app keeps no best times): how long a best time stays
+   *  valid, and the date (YYYY-MM-DD, the meet's start) a typed entry time is
+   *  stored with as the athlete's new best time when the meet is closed. */
+  best_time_policy?: { max_age_months: number; typed_time_date: string }
 }
 
 export interface RegistrationAPI {

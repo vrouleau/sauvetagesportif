@@ -17,7 +17,7 @@
 // along with Sauvetage Sportif. If not, see <https://www.gnu.org/licenses/>.
 
 import { describe, it, expect } from 'vitest'
-import { toDateInput, toSplashDate, normalizeDuration, toTimeInput } from './dateFormat'
+import { toDateInput, toSplashDate, normalizeDuration, toTimeInput, addMonthsIso } from './dateFormat'
 
 describe('toDateInput', () => {
   it('passes through a bare ISO date', () => {
@@ -105,5 +105,21 @@ describe('normalizeDuration', () => {
 
   it('leaves unrecognized input unchanged for user correction', () => {
     expect(normalizeDuration('abc')).toBe('abc')
+  })
+})
+
+describe('addMonthsIso', () => {
+  it('adds months across a year boundary', () => {
+    expect(addMonthsIso('2026-11-14', 18)).toBe('2028-05-14')
+  })
+  it('clamps the day to the target month', () => {
+    expect(addMonthsIso('2026-01-31', 1)).toBe('2026-02-28')
+    expect(addMonthsIso('2027-08-31', 18)).toBe('2029-02-28')
+    expect(addMonthsIso('2026-08-31', 18)).toBe('2028-02-29')
+  })
+  it('accepts a datetime and rejects junk', () => {
+    expect(addMonthsIso('2026-03-01T00:00:00', 12)).toBe('2027-03-01')
+    expect(addMonthsIso('', 18)).toBe('')
+    expect(addMonthsIso(null, 18)).toBe('')
   })
 })

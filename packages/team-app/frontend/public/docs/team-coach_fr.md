@@ -55,6 +55,7 @@ Après la connexion, les athlètes de votre club s'affichent dans l'onglet **Ins
 - Les **meilleurs temps** (bassin 50m et 25m) sont affichés en lecture seule
 - Le **temps d'inscription** est pré-rempli à partir du meilleur temps correspondant au bassin
 - Vous pouvez **ajuster le temps d'inscription** si nécessaire
+- Un temps ajusté devient le **nouveau meilleur temps** de l'athlète à la fermeture de la compétition (même s'il est plus lent), daté du début de la compétition et valide 18 mois — un résultat plus rapide à cette compétition le remplace. Le **?** à côté du temps indique d'où vient le meilleur temps (résultat ou entraîneur), sa date et son expiration
 
 ### Épreuves de relais
 
