@@ -149,6 +149,17 @@ def test_time_formats():
     assert _lenex_time_to_ms("NT") is None
 
 
+def test_time_formats_shared_with_entries_seed():
+    """Entries (seed.py) and results imports parse LENEX times the same way."""
+    from app import seed
+    assert seed._lenex_time_to_ms is _lenex_time_to_ms
+    assert _lenex_time_to_ms("NT") is None
+    assert _lenex_time_to_ms("0") is None             # zero time = no time
+    assert _lenex_time_to_ms("") is None
+    assert _lenex_time_to_ms("1:02.5") == 62500       # one-digit fraction = tenths
+    assert _lenex_time_to_ms("00:01:02.50") == 62500
+
+
 @pytest.mark.parametrize("do_import", IMPORTERS)
 def test_xml_entities_are_refused(db, do_import):
     """Uploaded files are parsed with defusedxml (the Organizer path used the

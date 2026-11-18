@@ -29,26 +29,7 @@ from sqlalchemy.orm import Session
 from .models import gender_from_str, SwimEvent, AgeGroup, SwimResult, SwimStyle
 from .meet_config import get_active_meetsid
 from .models_team import TeamClub, Member
-
-
-def _lenex_to_ms(time_str: str) -> int | None:
-    """Convert LENEX time string (HH:MM:SS.cc or MM:SS.cc or SS.cc) to milliseconds."""
-    if not time_str or time_str in ("NT", "0", ""):
-        return None
-    try:
-        parts = time_str.split(":")
-        if len(parts) == 3:
-            h, m, s_cc = int(parts[0]), int(parts[1]), parts[2]
-        elif len(parts) == 2:
-            h, m, s_cc = 0, int(parts[0]), parts[1]
-        else:
-            h, m, s_cc = 0, 0, parts[0]
-        s_parts = s_cc.split(".")
-        s = int(s_parts[0])
-        cc = int(s_parts[1]) if len(s_parts) > 1 else 0
-        return h * 3600000 + m * 60000 + s * 1000 + cc * 10
-    except (ValueError, IndexError):
-        return None
+from .lxf_to_team import _lenex_time_to_ms
 
 
 def _age_code_from_bounds(agemin: int, agemax: int) -> str:
@@ -110,7 +91,7 @@ def parse_lxf(file_bytes: bytes) -> list[dict]:
                         entries.append({
                             "event_id": int(event_id_str),
                             "agegroup_id": int(entry_el.get("agegroupid")) if entry_el.get("agegroupid") else None,
-                            "entrytime": _lenex_to_ms(entry_el.get("entrytime", "")),
+                            "entrytime": _lenex_time_to_ms(entry_el.get("entrytime", "")),
                             "entrycourse": entry_el.get("entrycourse", ""),
                         })
 
