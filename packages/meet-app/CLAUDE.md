@@ -443,7 +443,8 @@ Athletes in beach meets get a unique jersey/bib identifier stored in `athlete.na
 
 ### Sheet layout
 - Full-width Code128 barcode SVG (format: `E{eventNumber}-H{heatNumber}-L{lane}`)
-- Event name, heat, lane, athlete name + club code
+- Event name, heat, lane, athlete name + club code (relay heats: team name + club code — lanes come from both `swimresult` and `relay`)
+- Scan write-back (`_writeScanTimes` in `index.ts`) targets the `swimresult` seeded at event/heat/lane, falling back to the `relay` team there
 - Two rows of 5 digit boxes (M:SS.HH) labeled "Chrono 1" / "Chrono 2"
 - Corner registration marks for future perspective correction
 
