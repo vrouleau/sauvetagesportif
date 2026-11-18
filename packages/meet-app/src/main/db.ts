@@ -1284,7 +1284,7 @@ export async function createSession(name: string, sessionNumber: number): Promis
   const id = nextId('swimsession', 'swimsessionid')
   // A new session takes the meet's pool length (MeetCourse, else MEETVALUES COURSE, else 50 m).
   const g = db.prepare(`SELECT data FROM bsglobal WHERE name='MeetCourse'`).get() as { data: string | null } | undefined
-  const meetCourse = parseInt(g?.data || readMeetValuesFromDb(db)['COURSE'] || '1', 10)
+  const meetCourse = parseInt(g?.data || readMeetValues(db)['COURSE'] || '1', 10)
   const course = [1, 2, 3].includes(meetCourse) ? meetCourse : 1
   db.prepare(
     `INSERT INTO swimsession (swimsessionid, sessionnumber, name, course, following, poolglobal, roundtotenths)
@@ -1722,22 +1722,6 @@ export { runSchemaInit }
 
 // ── Heat generation ───────────────────────────────────────────────────────────
 
-/** Read MEETVALUES from a given db instance (avoids getLocalDb() dependency for testing). */
-function readMeetValuesFromDb(db: ReturnType<typeof getLocalDb>): Record<string, string> {
-  const row = db.prepare(`SELECT data FROM bsglobal WHERE name='MEETVALUES'`).get() as { data: string | null } | undefined
-  if (!row?.data) return {}
-  const result: Record<string, string> = {}
-  for (const line of row.data.split(/\r?\n/)) {
-    const eq = line.indexOf('=')
-    if (eq < 0) continue
-    const key = line.slice(0, eq)
-    const rest = line.slice(eq + 1)
-    const semi = rest.indexOf(';')
-    result[key] = semi >= 0 ? rest.slice(semi + 1) : rest
-  }
-  return result
-}
-
 export interface GenerateHeatsResult {
   heatsCreated: number
   entriesAssigned: number
@@ -1763,7 +1747,7 @@ export async function generateHeats(eventId?: number, sessionId?: number, inject
   let totalAssigned = 0
 
   // ── Load meet-level seeding config from MEETVALUES ──
-  const meetCfg = readMeetValuesFromDb(db)
+  const meetCfg = readMeetValues(db)
   const globalSeedMethod = parseInt(meetCfg.SEEDMETHOD ?? '0', 10) // 0=circle, 1=pyramid, 2=straight
   const globalFastHeatCount = parseInt(meetCfg.FASTHEATCOUNT ?? '0', 10) // FINA last-N-heats rule
   const globalSeedBonusLast = meetCfg.SEEDBONUSLAST === 'T'
@@ -2372,7 +2356,7 @@ export function getMeetInfo(): { name: string; city: string; nation: string } {
   }
 
   // Backward-compat fallback: MEETVALUES blob (legacy databases without individual keys)
-  const mv = readMeetValuesFromDb(db)
+  const mv = readMeetValues(db)
   return {
     name: mv['NAME'] ?? '',
     city: mv['CITY'] ?? '',
@@ -2386,21 +2370,61 @@ export interface MeetValues {
   [key: string]: string
 }
 
-export function getMeetValues(): MeetValues {
-  const db = getLocalDb()
-  const row = db.prepare(`SELECT data FROM bsglobal WHERE name='MEETVALUES'`).get() as { data: string | null } | undefined
-  if (!row?.data) return {}
+/** Anything with a better-sqlite3-style prepare() (local db, test db, DbBackend). */
+type MeetValuesDb = { prepare(sql: string): any }
+
+/**
+ * Parse a MEETVALUES blob into KEY → value. Values have their `TYPE;` prefix
+ * (I;, S;, B;, D;, F;) stripped unless `keepType` is set, in which case they
+ * are returned raw (`TYPE;VALUE`) — the form to edit and serialize back.
+ */
+export function parseMeetValues(data: string | null | undefined, opts: { keepType?: boolean } = {}): MeetValues {
   const result: MeetValues = {}
-  for (const line of row.data.split(/\r?\n/)) {
+  if (!data) return result
+  for (const line of data.split(/\r?\n/)) {
     const eq = line.indexOf('=')
     if (eq < 0) continue
     const key = line.slice(0, eq)
     const rest = line.slice(eq + 1)
-    // Strip type prefix (I;, S;, B;, D;, F;)
-    const semi = rest.indexOf(';')
-    result[key] = semi >= 0 ? rest.slice(semi + 1) : rest
+    if (opts.keepType) {
+      result[key] = rest
+    } else {
+      const semi = rest.indexOf(';')
+      result[key] = semi >= 0 ? rest.slice(semi + 1) : rest
+    }
   }
   return result
+}
+
+/** Serialize raw (`TYPE;VALUE`) MEETVALUES entries back into the blob format. */
+export function serializeMeetValues(values: MeetValues): string {
+  return Object.entries(values).map(([k, v]) => `${k}=${v}`).join('\r\n')
+}
+
+function readMeetValuesBlob(db: MeetValuesDb): string | null | undefined {
+  const row = db.prepare(`SELECT data FROM bsglobal WHERE name='MEETVALUES'`).get() as { data: string | null } | undefined
+  return row?.data
+}
+
+/** MEETVALUES of `db`, type prefixes stripped. */
+export function readMeetValues(db: MeetValuesDb): MeetValues {
+  return parseMeetValues(readMeetValuesBlob(db))
+}
+
+/** MEETVALUES of `db`, values kept raw (`TYPE;VALUE`). */
+export function readMeetValuesRaw(db: MeetValuesDb): MeetValues {
+  return parseMeetValues(readMeetValuesBlob(db), { keepType: true })
+}
+
+/** Replace the MEETVALUES blob of `db` with raw (`TYPE;VALUE`) entries. */
+export function writeMeetValuesRaw(db: MeetValuesDb, values: MeetValues): void {
+  db.prepare(
+    `INSERT INTO bsglobal (name, data) VALUES ('MEETVALUES', ?) ON CONFLICT(name) DO UPDATE SET data=excluded.data`
+  ).run(serializeMeetValues(values))
+}
+
+export function getMeetValues(): MeetValues {
+  return readMeetValues(getLocalDb())
 }
 
 export function setMeetValues(
@@ -2408,25 +2432,11 @@ export function setMeetValues(
   injectedDb?: ReturnType<typeof getLocalDb>,
 ): void {
   const db = injectedDb ?? getLocalDb()
-  // Read existing
-  const row = db.prepare(`SELECT data FROM bsglobal WHERE name='MEETVALUES'`).get() as { data: string | null } | undefined
-  const existing: Record<string, string> = {}
-  if (row?.data) {
-    for (const line of row.data.split(/\r?\n/)) {
-      const eq = line.indexOf('=')
-      if (eq < 0) continue
-      existing[line.slice(0, eq)] = line.slice(eq + 1)
-    }
-  }
-  // Apply updates
+  const existing = readMeetValuesRaw(db)
   for (const [key, { type, value }] of Object.entries(updates)) {
     existing[key] = `${type};${value}`
   }
-  // Serialize back
-  const data = Object.entries(existing).map(([k, v]) => `${k}=${v}`).join('\r\n')
-  db.prepare(
-    `INSERT INTO bsglobal (name, data) VALUES ('MEETVALUES', ?) ON CONFLICT(name) DO UPDATE SET data=excluded.data`
-  ).run(data)
+  writeMeetValuesRaw(db, existing)
 
   // Sync individual bsglobal keys (canonical source for first-class LENEX attributes)
   const syncStmt = db.prepare(
