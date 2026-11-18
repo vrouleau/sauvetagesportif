@@ -193,13 +193,10 @@ Coach best times are written only at meet close, never on registration:
 | `POST /api/upload/meet` | Upload meet .lxf (event structure) | Organizer/Admin |
 | `POST /api/upload/entries` | Upload entries/results .lxf (clubs + athletes + best times) | Admin |
 | `POST /api/admin/new-meet` | Create new meet from template (pool/beach) | Organizer/Admin |
-| `GET /api/export` | Export registrations as .lxf bundle (.zip) | Admin |
-| `GET /api/export/entries` | Export entries .lxf (clubs + athletes + best times) | Admin |
 | `GET /api/export/registrations-lxf` | Export registrations .lxf (for meet-app import) | Organizer/Admin |
 | `GET /api/print/entries?lang=fr&section=all\|individual\|relays` | Printable HTML of individual and/or relay entries, grouped by club (one page per club) — "Print Entries" button on the Invitation page (all) and the Individual / Relay entries pages (own section). Admin/organizer: every club; coach: own club only | Authenticated |
 | `PUT /api/sessions/{id}` | Update session fields (name, date, times, lanes) | Organizer/Admin |
 | `PUT /api/closure-date` | Set registration deadline (syncs to MEETVALUES DEADLINE) | Organizer/Admin |
-| `GET /api/admin/backup-db` | Download consistent SQLite snapshot (.db) | Admin |
 | `POST /api/admin/restore-db` | Restore database from .db backup | Admin |
 | `GET /api/admin/backup-config` | Get auto-backup config (interval + retention) | Admin |
 | `PUT /api/admin/backup-config` | Update auto-backup config | Admin |
@@ -211,7 +208,6 @@ Coach best times are written only at meet close, never on registration:
 | `DELETE /api/admin/historical-meets/{id}` | Delete a historical meet | Admin |
 | `POST /api/import-results-lxf` | Import results .lxf as historical meet; organizer path also resets current meet + PINs + clears organizer. Guards (before any write): 400 `not_results_file` if no RESULT has a time/status; 400 `beach_results_not_archived` if the file uses any beach style (also on `admin/import-historical`; close a beach meet with `admin/close-meet-without-results`); 409 `meet_mismatch` (override `?force_meet=true`, separate from `?force`) if the file's meet name or event ids don't match the open meet being closed — see `lxf_to_team.py` | Organizer/Admin |
 | `GET /api/athletes` | Athlete list | Any authenticated |
-| `GET /api/clubs/{id}/invoice-pdf` | One club's invoice PDF | Organizer/Admin |
 | `POST /api/invoices/pdf-zip` | ZIP of invoice PDFs (`{club_ids}`) | Organizer/Admin |
 | `POST /api/clubs/{id}/invoice` | Send Stripe invoice | Organizer/Admin |
 | `POST /api/clubs/{id}/send-invoice-email` | Email invoice (HTML + PDF, Interac instructions, Reply-To organizer) | Organizer/Admin |
@@ -271,7 +267,6 @@ backend/app/
   events.py             — LENEX meet structure parser
   best_times_v2.py      — Best times computed from Team Manager results table
   export.py             — LENEX export (registrations + Gemini key transport; session names + pause events included; SERC events/relays excluded — meet-app has no notion of them)
-  export_entries.py     — LENEX export (all clubs + athletes + best times)
   invoices.py           — Invoice line items, deterministic invoice numbers (YEAR-MEET-CLUB[-Rn]), PDF renderer
   emailing.py           — Resend transport, shared email footer, invoice + organizer-summary email templates
   seed.py               — Entries .lxf parser (clubs/athletes/HANDICAP into members table)
@@ -342,7 +337,6 @@ combined-events implementation of its own, and doesn't need one.
 Dedicated backup/restore section in the Admin page (replaces the old Data Management page backup).
 
 **Manual backup/restore:**
-- `GET /api/admin/backup-db` — download consistent SQLite snapshot (.db, WAL-safe backup API)
 - `POST /api/admin/restore-db` — restore from .db backup (wipes all data)
 - `POST /api/admin/backups/create` — create a named backup stored server-side
 

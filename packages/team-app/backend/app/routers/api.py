@@ -58,7 +58,6 @@ from ..best_times import (
     get_relay_best_times, coach_best_time_date,
 )
 from ..export import generate_lxf
-from ..export_entries import generate_entries_lxf
 
 router = APIRouter(prefix="/api")
 _audit = logging.getLogger("audit")
@@ -3006,21 +3005,6 @@ def regenerate_pins(db: Session = Depends(get_db)):
     return {"regenerated": len(clubs)}
 
 
-@router.post("/organizer/clubs/invite-all", dependencies=[Depends(require_organizer_or_admin)])
-def invite_all_clubs(data: dict, request: Request, db: Session = Depends(get_db)):
-    lang = data.get("lang", "fr")
-    clubs = db.query(TeamClub).filter(TeamClub.email != None, TeamClub.email != "").all()
-    sent = 0
-    errors = []
-    for club in clubs:
-        try:
-            send_pin(club.clubsid, {"lang": lang}, request, db)
-            sent += 1
-        except Exception as e:
-            errors.append({"club": club.name, "error": str(e)})
-    return {"sent": sent, "errors": errors}
-
-
 @router.get("/admin/organizer", dependencies=[Depends(require_admin)])
 def get_organizer(meetsid: int | None = None, db: Session = Depends(get_db)):
     cfg = _get_organizer_club_id(db, meetsid=meetsid)
@@ -3251,19 +3235,6 @@ def stripe_disconnect(db: Session = Depends(get_db)):
 # Invoices
 # ---------------------------------------------------------------------------
 
-@router.get("/clubs/{club_id}/invoice-pdf", dependencies=[Depends(require_organizer_or_admin)])
-def club_invoice_pdf(club_id: int, request: Request, db: Session = Depends(get_db)):
-    from ..invoices import generate_invoice_pdf
-    try:
-        pdf = generate_invoice_pdf(db, club_id, meetsid=resolve_meetsid(request, db))
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    club = db.get(TeamClub, club_id)
-    name = club.name.replace(" ", "_") if club else "club"
-    return Response(content=pdf, media_type="application/pdf",
-                    headers={"Content-Disposition": f'attachment; filename="invoice_{name}.pdf"'})
-
-
 @router.post("/invoices/pdf-zip", dependencies=[Depends(require_organizer_or_admin)])
 def invoices_pdf_zip(data: dict, request: Request, db: Session = Depends(get_db)):
     import zipfile
@@ -3294,18 +3265,6 @@ def invoices_pdf_zip(data: dict, request: Request, db: Session = Depends(get_db)
     buf.seek(0)
     return Response(content=buf.getvalue(), media_type="application/zip",
                     headers={"Content-Disposition": 'attachment; filename="invoices.zip"'})
-
-
-@router.get("/clubs/{club_id}/invoice-total", dependencies=[Depends(require_organizer_or_admin)])
-def club_invoice_total(club_id: int, request: Request, db: Session = Depends(get_db)):
-    from ..invoices import _club_line_items, _meet_fees
-    club = db.get(TeamClub, club_id)
-    if not club:
-        raise HTTPException(404)
-    meetsid = resolve_meetsid(request, db)
-    items = _club_line_items(db, club, _meet_fees(db, meetsid), meetsid=meetsid)
-    total = sum(it["unit_cents"] * it["qty"] for it in items)
-    return {"club_id": club_id, "total_cents": total}
 
 
 @router.post("/clubs/{club_id}/invoice", dependencies=[Depends(require_organizer_or_admin)])
@@ -3531,39 +3490,6 @@ def notify_organizer_invoices_sent(data: dict, request: Request, db: Session = D
 # Export
 # ---------------------------------------------------------------------------
 
-@router.get("/export", dependencies=[Depends(require_admin)])
-def export_lenex(request: Request, db: Session = Depends(get_db)):
-    import zipfile
-    from io import BytesIO
-
-    lxf_bytes = generate_lxf(db, meetsid=resolve_meetsid(request, db))
-    scripts_dir = Path(__file__).resolve().parent.parent.parent / "scripts"
-
-    buf = BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr("inscriptions.lxf", lxf_bytes)
-        for name in ("simulate_results.vbs", "simulate_results.bat"):
-            p = scripts_dir / name
-            if p.exists():
-                z.writestr(name, p.read_bytes())
-
-    return Response(
-        content=buf.getvalue(),
-        media_type="application/zip",
-        headers={"Content-Disposition": "attachment; filename=inscriptions_bundle.zip"},
-    )
-
-
-@router.get("/export/entries", dependencies=[Depends(require_admin)])
-def export_entries_lxf(db: Session = Depends(get_db)):
-    data = generate_entries_lxf(db)
-    return Response(
-        content=data,
-        media_type="application/zip",
-        headers={"Content-Disposition": "attachment; filename=entries.lxf"},
-    )
-
-
 @router.get("/export/meet-lxf", dependencies=[Depends(require_organizer_or_admin)])
 def export_meet_lxf(request: Request, db: Session = Depends(get_db)):
     """Download the meet structure as a Lenex .lxf, generated fresh from the DB.
@@ -3599,21 +3525,6 @@ def export_registrations_lxf(request: Request, db: Session = Depends(get_db)):
 # ---------------------------------------------------------------------------
 # Database backup / restore (SQLite backup API)
 # ---------------------------------------------------------------------------
-
-@router.get("/admin/backup-db", dependencies=[Depends(require_admin)])
-def backup_db():
-    """Download a full database backup (consistent SQLite .db snapshot)."""
-    from ..database import sqlite_snapshot_bytes
-    try:
-        content = sqlite_snapshot_bytes()
-    except FileNotFoundError:
-        raise HTTPException(404, "Database file not found")
-    return Response(
-        content=content,
-        media_type="application/octet-stream",
-        headers={"Content-Disposition": "attachment; filename=team_backup.db"},
-    )
-
 
 @router.post("/admin/restore-db", dependencies=[Depends(require_admin)])
 async def restore_db(file: UploadFile = File(...)):
@@ -3748,14 +3659,6 @@ def delete_backup(filename: str):
         raise HTTPException(404, "Backup not found")
     filepath.unlink()
     return {"deleted": safe_name}
-
-
-@router.get("/admin/historical-best-times/{member_id}", dependencies=[Depends(require_admin)])
-def get_historical_best_times(member_id: int, db: Session = Depends(get_db)):
-    """Get best times for a member computed from historical results."""
-    bt = get_best_times_for_member(db, member_id)
-    return {"member_id": member_id, "best_times": bt}
-
 
 
 @router.post("/import-results-lxf", dependencies=[Depends(require_organizer_or_admin)])
