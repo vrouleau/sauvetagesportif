@@ -49,7 +49,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session as DbSession
 
 from .lxf_io import read_lef_xml
-from .models import SwimStyle
+from .models import SwimStyle, LENEX_GENDER, GENDER_ALL
 from .models_team import (
     Meet, Session as MeetSession, Event, TeamClub, Member,
     Result, MemberMeet,
@@ -209,9 +209,6 @@ def import_lxf_as_meet(db: DbSession, content: bytes, force: bool = False) -> di
 
 
 # ── The importer ──────────────────────────────────────────────────────────────
-
-_EVENT_GENDER = {"ALL": 0, "M": 1, "F": 2, "MIXED": 3, "X": 3}
-
 
 def _parse_meet(root: Element) -> dict:
     """MEET name/city/course and start/end dates.
@@ -402,7 +399,7 @@ def archive_results_lxf(db: DbSession, content: bytes, *, force: bool = False,
         # LENEX's GENDER enum is ALL|M|F|MIXED; "X" is also accepted since our
         # own exporter used to write it for Mixed (non-conformant, fixed in
         # export.py). Absent/unknown → ALL.
-        event_gender[eid] = _EVENT_GENDER.get((ev_el.get("gender") or "").upper(), 0)
+        event_gender[eid] = LENEX_GENDER.get((ev_el.get("gender") or "").upper(), GENDER_ALL)
         event_order[eid] = _int(ev_el.get("order")) or event_number[eid]
         style_info[style_id] = (style_el.get("name") or "",
                                 _int(style_el.get("distance")),

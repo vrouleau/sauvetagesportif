@@ -398,6 +398,11 @@ GENDER_M = 1
 GENDER_F = 2
 GENDER_MIXED = 3
 
+# LENEX GENDER attribute -> our encoding. LENEX's enum is ALL|M|F|MIXED; "X" is
+# what our own exporter used to write for Mixed, still accepted on import.
+# Callers pick their own default for an absent/unknown value (.get(g, default)).
+LENEX_GENDER = {"ALL": GENDER_ALL, "M": GENDER_M, "F": GENDER_F, "MIXED": GENDER_MIXED, "X": GENDER_MIXED}
+
 COURSE_LCM = 1
 COURSE_SCY = 2
 COURSE_SCM = 3

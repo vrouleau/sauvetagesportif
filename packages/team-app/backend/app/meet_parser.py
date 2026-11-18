@@ -28,6 +28,7 @@ from pathlib import Path
 from xml.etree import ElementTree as ET  # noqa: F401
 
 from .lxf_io import read_lef_xml, read_lxf_entry
+from .models import LENEX_GENDER, GENDER_ALL
 
 
 def _safe_int(value, default: int) -> int:
@@ -78,9 +79,9 @@ class MeetEvent:
 
     @property
     def gender_int(self) -> int:
-        # "ALL" and any unrecognized/blank value both fall through to 0 (ALL) —
+        # "ALL" and any unrecognized/blank value both give 0 (ALL) —
         # matching our own gender encoding (0=All, 1=M, 2=F, 3=Mixed).
-        return {"M": 1, "F": 2, "MIXED": 3, "X": 3}.get(self.gender.upper(), 0)
+        return LENEX_GENDER.get(self.gender.upper(), GENDER_ALL)
 
 
 @dataclass

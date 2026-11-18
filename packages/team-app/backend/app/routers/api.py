@@ -41,7 +41,7 @@ from ..models import (
     SwimEvent, SwimStyle, SwimSession, AgeGroup, SwimResult, BsGlobal, SecretLink,
     Heat, Split,
     gender_to_str, gender_from_str, fee_dollars_to_cents, fee_cents_to_dollars,
-    GENDER_ALL, GENDER_M, GENDER_F, GENDER_MIXED, ROUND_FIN, ROUND_TIM, ROUND_PRE,
+    GENDER_M, GENDER_F, GENDER_MIXED, LENEX_GENDER, ROUND_FIN, ROUND_TIM, ROUND_PRE,
 )
 from ..models_team import TeamClub, Member, Meet as TeamMeet
 from ..meet_config import (
@@ -1828,7 +1828,7 @@ def create_event(request: Request, data: dict = Body(default={}), db: Session = 
 
     number = data.get("number", 1)
     gender_str = data.get("gender", "X")
-    gender_int = {"ALL": GENDER_ALL, "M": GENDER_M, "F": GENDER_F, "MIXED": GENDER_MIXED, "X": GENDER_MIXED}.get(gender_str, GENDER_MIXED)
+    gender_int = LENEX_GENDER.get(gender_str, GENDER_MIXED)
     phase = data.get("phase", "Finale directe")
     round_int = {"Eliminatoire": 1, "Finale": 4, "Finale directe": 5}.get(phase, 5)
 
@@ -2001,7 +2001,7 @@ def update_event(event_id: int, request: Request, data: dict = Body(default={}),
             val = data[key]
             # Convert gender string to int if needed
             if key == "gender" and isinstance(val, str):
-                val = {"ALL": GENDER_ALL, "M": GENDER_M, "F": GENDER_F, "MIXED": GENDER_MIXED, "X": GENDER_MIXED}.get(val, GENDER_MIXED)
+                val = LENEX_GENDER.get(val, GENDER_MIXED)
             elif key in ("daytime", "duration"):
                 val = _parse_event_time(val)
             setattr(event, col, val)
@@ -2045,7 +2045,7 @@ def create_age_group(request: Request, data: dict = Body(default={}), db: Sessio
     min_age = data.get("minAge", 0)
     max_age = data.get("maxAge")
     gender_str = data.get("gender", "X")
-    gender_int = {"ALL": GENDER_ALL, "M": GENDER_M, "F": GENDER_F, "MIXED": GENDER_MIXED, "X": GENDER_MIXED}.get(gender_str, GENDER_MIXED)
+    gender_int = LENEX_GENDER.get(gender_str, GENDER_MIXED)
 
     max_sort = db.query(func.max(AgeGroup.sortcode)).filter(
         AgeGroup.meetsid == meetsid, AgeGroup.swimeventid == event_id
@@ -3910,7 +3910,8 @@ def _import_relays_from_lxf(db: "Session", file_bytes: bytes, meetsid: int | Non
         for relay_el in club_el.iter(f"{ns}RELAY"):
             team_number = int(relay_el.get("number", "1"))
             gender_str = relay_el.get("gender", "X")
-            gender_int = {"M": 1, "F": 2, "MIXED": 3, "X": 3}.get(gender_str.upper(), 3)
+            # Relays have no "All": anything but M/F (ALL included) is Mixed.
+            gender_int = LENEX_GENDER.get(gender_str.upper(), GENDER_MIXED) or GENDER_MIXED
             agemin = int(relay_el.get("agemin", "0")) if relay_el.get("agemin") else None
             agemax = int(relay_el.get("agemax", "0")) if relay_el.get("agemax") else None
 
