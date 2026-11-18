@@ -21,7 +21,7 @@ import { inflateRawSync, deflateRawSync } from 'node:zlib'
 import Database from 'better-sqlite3'
 import { saveGeminiKeys } from './ocrGemini'
 import { generateBeachNumbers } from './beachNumber'
-import { parseOleDate, nextId, parseMeetValues, readMeetValuesRaw, serializeMeetValues } from './db'
+import { parseOleDate, nextId, formatDaytime, parseMeetValues, readMeetValuesRaw, serializeMeetValues } from './db'
 import { getSeasonYear, loadAgeGroupRules } from './ageGroupRules'
 import { findSwimstyleIssues, type SwimstyleIssues } from './swimstyleRanges'
 import { readMeetHeader, readMeetValuesDotfile, meetHeaderXml, meetValuesDotfile } from './lenexMeetFields'
@@ -1012,32 +1012,6 @@ function attr(name: string, value: string | number | null | undefined): string {
 }
 
 /**
- * Format a stored event daytime/duration into a LENEX time-of-day string
- * "HH:MM". Handles the SQLite "2000-01-01 HH:MM:00" sentinel (and ISO strings)
- * and OLE-double fractional-day values. Returns undefined when there's no
- * value. Self-contained (mirrors db.ts formatDaytime) so lenex.ts has no
- * runtime dependency on a non-exported db.ts helper.
- */
-function formatLenexDaytime(d: string | number | null): string | undefined {
-  if (d == null) return undefined
-  const fromFrac = (n: number): string | undefined => {
-    const frac = Math.abs(n) % 1
-    if (frac === 0) return undefined
-    const totalMinutes = Math.round(frac * 24 * 60)
-    const hours = Math.floor(totalMinutes / 60)
-    const minutes = totalMinutes % 60
-    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
-  }
-  if (typeof d === 'number') return fromFrac(d)
-  const str = String(d)
-  const match = str.match(/(\d{2}):(\d{2})/)
-  if (match) return `${match[1]}:${match[2]}`
-  const num = parseFloat(str)
-  if (!isNaN(num)) return fromFrac(num)
-  return undefined
-}
-
-/**
  * Convert a LENEX time-of-day string ("HH:MM" or "HH:MM:SS") to the SQLite
  * sentinel-date form the swimevent.daytime/duration columns use
  * ("2000-01-01 HH:MM:00"), matching updateEvent() in db.ts. Returns null when
@@ -1405,8 +1379,8 @@ export function exportLenexResults(filePath: string, db: Database.Database): Exp
     for (const ev of sessEvents) {
       const internalAttr = ev.internalevent === 'T' ? ' internalevent="T"' : ''
       const nameAttr = ev.internalevent === 'T' && ev.roundname ? attr('name', ev.roundname) : ''
-      const daytimeAttr = attr('daytime', formatLenexDaytime(ev.daytime))
-      const durationAttr = attr('duration', formatLenexDaytime(ev.duration))
+      const daytimeAttr = attr('daytime', formatDaytime(ev.daytime, { pad: true }))
+      const durationAttr = attr('duration', formatDaytime(ev.duration, { pad: true }))
       lines.push(`            <EVENT${attr('eventid', ev.swimeventid)}${attr('number', ev.eventnumber)}${attr('gender', decodeGender(ev.gender))}${attr('round', decodeRound(ev.round))}${attr('order', ev.sortcode)}${attr('preveventid', ev.preveventid ?? -1)}${daytimeAttr}${durationAttr}${internalAttr}${nameAttr}>`)
 
       // SWIMSTYLE (required by Splash even for pause/break events, hence code="ID0" placeholder)
@@ -1668,8 +1642,8 @@ export function exportMeetLenex(filePath: string, db: Database.Database): MeetEx
         attr('preveventid', ev.preveventid ?? -1),
       ]
       if (ev.roundname) evAttrs.push(attr('name', ev.roundname))
-      evAttrs.push(attr('daytime', formatLenexDaytime(ev.daytime)))
-      evAttrs.push(attr('duration', formatLenexDaytime(ev.duration)))
+      evAttrs.push(attr('daytime', formatDaytime(ev.daytime, { pad: true })))
+      evAttrs.push(attr('duration', formatDaytime(ev.duration, { pad: true })))
       if (ev.internalevent === 'T') evAttrs.push(` internalevent="T"`)
       if (ev.masters === 'T') evAttrs.push(` type="MASTERS"`)
       lines.push(`            <EVENT${evAttrs.join('')}>`)

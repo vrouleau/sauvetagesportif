@@ -103,31 +103,31 @@ function encodeResultStatus(s: 'DNS' | 'DNF' | 'DSQ' | 'EXH' | null | undefined)
   return null
 }
 
-function formatDaytime(d: string | number | null): string | undefined {
+/**
+ * Format a stored event/session daytime or duration as a time of day: "H:MM"
+ * for display, or LENEX's "HH:MM" with `pad`. Handles the SQLite
+ * "2000-01-01 HH:MM:00" sentinel (and ISO strings) and OLE-double
+ * fractional-day values (SMB import), numeric or stringified. Returns
+ * undefined when there's no time.
+ */
+export function formatDaytime(d: string | number | null, opts: { pad?: boolean } = {}): string | undefined {
   if (d == null) return undefined
-  // If it's a number (OLE Automation date from SMB import), convert fractional part to time
-  if (typeof d === 'number') {
-    const frac = Math.abs(d) % 1
+  const hh = (h: number) => opts.pad ? String(h).padStart(2, '0') : String(h)
+  const fromFrac = (n: number): string | undefined => {
+    const frac = Math.abs(n) % 1
     if (frac === 0) return undefined
     const totalMinutes = Math.round(frac * 24 * 60)
     const hours = Math.floor(totalMinutes / 60)
     const minutes = totalMinutes % 60
-    return `${hours}:${String(minutes).padStart(2, '0')}`
+    return `${hh(hours)}:${String(minutes).padStart(2, '0')}`
   }
+  if (typeof d === 'number') return fromFrac(d)
   const str = String(d)
-  // SQLite stores as text "2000-01-01 HH:MM:00" or ISO string
   const match = str.match(/(\d{2}):(\d{2})/)
-  if (match) return `${parseInt(match[1])}:${match[2]}`
+  if (match) return `${hh(parseInt(match[1]))}:${match[2]}`
   // Could be a stringified OLE double (e.g. "-36522.3125")
   const num = parseFloat(str)
-  if (!isNaN(num)) {
-    const frac = Math.abs(num) % 1
-    if (frac === 0) return undefined
-    const totalMinutes = Math.round(frac * 24 * 60)
-    const hours = Math.floor(totalMinutes / 60)
-    const minutes = totalMinutes % 60
-    return `${hours}:${String(minutes).padStart(2, '0')}`
-  }
+  if (!isNaN(num)) return fromFrac(num)
   return undefined
 }
 
