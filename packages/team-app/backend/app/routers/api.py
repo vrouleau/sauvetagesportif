@@ -3859,9 +3859,11 @@ async def import_results_lxf(request: Request, file: UploadFile = File(...), for
     organizer path. Returns reset=true.
 
     meet-app exports via File → "Exporter les résultats LENEX…".
-    Clubs are merged by code; athletes by license, else exact name + birthdate
-    (any club), else exact name in the club; if a completed meet with the
-    same name already exists its results are replaced rather than duplicated.
+    Archived by lxf_to_team.archive_results_lxf, the same importer as
+    Admin → Import historical: clubs merged by code (else name); athletes by
+    license, else exact name + birthdate (any club), else exact name in the
+    club; a completed meet with the same name and start date is replaced
+    rather than duplicated.
     Warns (409, pass ?force=true to override) about swimstyle ids not already
     in the local catalog.
 

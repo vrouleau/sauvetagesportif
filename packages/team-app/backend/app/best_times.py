@@ -33,7 +33,6 @@ Expiry: anything dated more than `max_age_months` ago is ignored.
 """
 from __future__ import annotations
 
-import re
 from datetime import date, datetime
 from sqlalchemy import DateTime, func, or_, true
 from sqlalchemy.orm import Session, joinedload
@@ -488,46 +487,6 @@ def refresh_best_times_from_meet(db: Session, meetsid: int) -> int:
             updated.add((row.membersid, row.stylesid, row.course))
     db.flush()
     return len(updated)
-
-
-# --- Shared utilities (used by historical_import.py) ---
-
-
-def _lenex_time_to_ms(t: str) -> int | None:
-    """Convert Lenex time 'HH:MM:SS.hh' or 'MM:SS.hh' to ms."""
-    if not t or t == "NT":
-        return None
-    m = re.match(r"(\d+):(\d+):(\d+)\.(\d+)", t)
-    if m:
-        return (int(m.group(1)) * 3600000 + int(m.group(2)) * 60000
-                + int(m.group(3)) * 1000 + int(m.group(4)) * 10)
-    m = re.match(r"(\d+):(\d+)\.(\d+)", t)
-    if m:
-        return (int(m.group(1)) * 60000 + int(m.group(2)) * 1000
-                + int(m.group(3)) * 10)
-    m = re.match(r"(\d+)\.(\d+)", t)
-    if m:
-        return int(m.group(1)) * 1000 + int(m.group(2)) * 10
-    return None
-
-
-def _find_or_create_athlete(db: Session, first: str, last: str, license: str, club=None, gender: int = 1) -> Member | None:
-    """Match athlete by license first, then name. Create if not found and club provided."""
-    if license:
-        member = db.query(Member).filter(Member.license == license).first()
-        if member:
-            return member
-    member = db.query(Member).filter(
-        Member.firstname == first, Member.lastname == last
-    ).first()
-    if member:
-        return member
-    if not club:
-        return None
-    member = Member(firstname=first, lastname=last, gender=gender, clubsid=club.clubsid, license=license)
-    db.add(member)
-    db.flush()
-    return member
 
 
 # --- Internal helpers ---

@@ -84,7 +84,7 @@ export default function Organizer() {
   }
 
   function _applyImportResultsResponse(data) {
-    const r = data.results
+    const r = data.results_imported
     if (data.reset) {
       const isOrganizer = localStorage.getItem('role') === 'organizer'
       if (isOrganizer) {
