@@ -1,5 +1,47 @@
 # Changelog
 
+## [0.5.26] - 2026-11-19
+
+### 🐛 Bug Fixes
+
+- stop showing event names twice (`cba7fa5`)
+- meet course and meet editor fields survive the whole meet cycle (#110) (`09da1ce`)
+
+### 📝 Documentation
+
+- drop AthletesPage from README, document lxf_io.read_lxf_entry (`061703a`)
+- fix stale source layouts in CLAUDE.md files (`1e7cbc1`)
+- plan for dead code removal and duplication merge (`b59cf36`)
+
+### ♻️ Refactoring
+
+- one team-app MEETVALUES parser/serializer (meet_config) (`c7bb5ca`)
+- one LENEX gender map (models.LENEX_GENDER) (`0730cbd`)
+- one rank-and-award loop in getPointStandings (`1960e9a`)
+- one event daytime formatter (db.ts formatDaytime, pad option) (`6bf67ec`)
+- one relay XML writer in export.py (`4478a15`)
+- age bounds <-> age code helpers in backend/app/age_codes.py (`ed5834c`)
+- one .lxf reader (new lxf_io.read_lef_xml) (`dbaa404`)
+- one LENEX time -> ms parser (lxf_to_team._lenex_time_to_ms) (`221de26`)
+- import _get_config/_set_config from meet_config (`875ccea`)
+- one MEETVALUES parser/serializer in db.ts (`c361518`)
+- remove unused functions and never-called preload methods (`5bf81a1`)
+- remove API routes with no frontend caller (`a2b6e5d`)
+- remove leftover POST /upload/results importer (`800d349`)
+- remove legacy relay lock / virtual-team chain (`86ea185`)
+- remove unreachable inscription/registration pages (`c287df5`)
+
+### 🔧 Chores
+
+- package-lock — better-sqlite3 hasInstallScript (`716ae43`)
+- remove plan.md (work done) (`88ba14d`)
+- untrack packages/meet-app/.kiro (`96ae948`)
+
+### Other
+
+- Merge pull request #109 from vrouleau/refactor/dead-code-and-dedup (`972a804`)
+- Merge pull request #111 from vrouleau/fix/meet-course-roundtrip (`efaf4c3`)
+
 ## [0.5.25] - 2026-11-18
 
 ### ✨ Features
