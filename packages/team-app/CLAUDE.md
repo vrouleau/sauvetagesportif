@@ -270,7 +270,7 @@ backend/app/
   invoices.py           — Invoice line items, deterministic invoice numbers (YEAR-MEET-CLUB[-Rn]), PDF renderer
   emailing.py           — Resend transport, shared email footer, invoice + organizer-summary email templates
   age_codes.py          — Age-group bounds <-> category codes (age_group_code strict / relay_age_code lenient, age_code_to_range)
-  lxf_io.py             — read_lef_xml: unzip an uploaded .lxf and parse its .lef with defusedxml (used by every LXF import)
+  lxf_io.py             — Reading uploaded .lxf zips: read_lef_xml (the .lef, parsed with defusedxml — used by every LXF import), read_lxf_entry (another entry, e.g. the hidden .meetvalues)
   seed.py               — Entries .lxf parser (clubs/athletes/HANDICAP into members table)
   lxf_to_team.py        — THE results importer (archive_results_lxf: results .lxf → historical meet, merges clubs/members/HANDICAP, replaces a same name + date archive) + pre-import guards; import_lxf_as_meet = Organizer/Admin "Import results" entry point
   historical_import.py  — Admin "Import historical" entry point: thin wrapper over archive_results_lxf (open-meet warning, confirm before replacing)

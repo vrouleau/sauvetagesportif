@@ -410,7 +410,7 @@ In beach competitions, athletes wear numbered jerseys/bibs instead of being iden
 
 **Properties:** Deterministic (same input → same output), unique, idempotent (re-running produces identical results), stable (late arrivals don't change existing numbers).
 
-**Display:** Shown on HeatsPage, AthletesPage (read-only column), and in the "Identifiants plage" PDF report.
+**Display:** Shown on HeatsPage and in the "Identifiants plage" PDF report.
 
 **Implementation:** `packages/meet-app/src/main/beachNumber.ts` (`generateBeachNumbers`, `assignLateBeachNumber`)
 
