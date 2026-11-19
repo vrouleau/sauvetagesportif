@@ -551,13 +551,22 @@ ipcMain.handle('db:get-clubs', () => {
   const db = getLocalDb()
   const rows = db.prepare(
     `SELECT c.clubid, c.name, c.code,
-            (SELECT COUNT(*) FROM athlete a WHERE a.clubid = c.clubid) AS athlete_count
+            (SELECT COUNT(*) FROM athlete a WHERE a.clubid = c.clubid) AS athlete_count,
+            (SELECT COUNT(DISTINCT a.athleteid)
+               FROM athlete a
+               JOIN swimresult r ON r.athleteid = a.athleteid
+               JOIN swimevent e ON e.swimeventid = r.swimeventid
+               LEFT JOIN swimstyle ss ON ss.swimstyleid = e.swimstyleid
+              WHERE a.clubid = c.clubid AND COALESCE(ss.relaycount, 1) <= 1) AS registered_athlete_count
      FROM club c ORDER BY c.name, c.code`
-  ).all() as Array<{ clubid: number; name: string | null; code: string | null; athlete_count: number }>
+  ).all() as Array<{ clubid: number; name: string | null; code: string | null; athlete_count: number; registered_athlete_count: number }>
   return rows.map(r => ({
     id: r.clubid,
     name: r.name || r.code || String(r.clubid),
-    athlete_count: r.athlete_count,
+    athlete_count: Number(r.athlete_count),
+    // Athletes with at least one individual entry — drives the
+    // "N athlètes inscrits" toolbar badge on the individual entry page.
+    registered_athlete_count: Number(r.registered_athlete_count),
   }))
 })
 

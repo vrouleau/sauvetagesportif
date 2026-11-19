@@ -114,6 +114,9 @@ export default function RegistrationPanel({
   const bestKey: 'best_time_scm_ms' | 'best_time_lcm_ms' = meet_course === 'SCM' ? 'best_time_scm_ms' : 'best_time_lcm_ms'
   const bestCourse: 'lcm' | 'scm' = meet_course === 'SCM' ? 'scm' : 'lcm'
   const policy = data.best_time_policy
+  // MT 50m / MT 25m columns: only team-app has best-time history (it's the
+  // one that sends best_time_policy); meet-app never has them, so hide them.
+  const showBestTimes = !isBeach && !!policy
 
   // Category state
   const [category, setCategory] = useState<string | null>(null)
@@ -235,8 +238,8 @@ export default function RegistrationPanel({
                   />
                 </th>
                 <th className="border border-gray-300 px-2 py-1 text-left">{tr.event}</th>
-                {!isBeach && <th className="border border-gray-300 px-2 py-1 text-right w-20">{tr.bt50}</th>}
-                {!isBeach && <th className="border border-gray-300 px-2 py-1 text-right w-20">{tr.bt25}</th>}
+                {showBestTimes && <th className="border border-gray-300 px-2 py-1 text-right w-20">{tr.bt50}</th>}
+                {showBestTimes && <th className="border border-gray-300 px-2 py-1 text-right w-20">{tr.bt25}</th>}
                 {!isBeach && <th className={`border border-gray-300 px-2 py-1 text-left ${policy ? 'w-28' : 'w-24'}`}>{tr.entryTime}</th>}
                 <th className="border border-gray-300 px-2 py-1 text-center w-10" title={tr.hcTitle}>{tr.hc}</th>
               </tr>
@@ -265,7 +268,7 @@ export default function RegistrationPanel({
                       />
                     </td>
                     <td className="border border-gray-300 px-2 py-0.5">{style.style_name}</td>
-                    {!isBeach && <BestTimeCells style={style} />}
+                    {showBestTimes && <BestTimeCells style={style} />}
                     {!isBeach && (
                       <td className="border border-gray-300 px-2 py-0.5">
                         {reg && (
