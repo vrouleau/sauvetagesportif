@@ -90,7 +90,7 @@ Also confirmed clean (same session): a three-stage LENEX import (meet structure,
 **Follow-up audit (2026-07-31): does the birthdate bug affect team-app too, and are there other OLE/ISO gaps?** `exportLenexResults` is the actual production path for step 5 of the meet lifecycle (meet-app → team-app, see "Meet lifecycle" in `packages/team-app/CLAUDE.md`), not just a Splash-testing artifact, so this mattered beyond Splash compatibility:
 - **team-app's import doesn't crash on a malformed birthdate — it silently drops it.** `lxf_to_team.py`'s `_parse_date` (and `historical_import.py`'s equivalent) wrap the parse in `try/except ValueError: return None`. A raw OLE-double string never raises; it just becomes `None` — new members get no birthdate (breaks next season's age category), existing members (matched by license) never get birthdate updated at all, and nothing surfaces an error anywhere. Our fix stops this going forward; any *already-archived* historical meets from before the fix may have null birthdates worth a spot-check if that matters.
 - **Found and fixed a second, identical-class bug**: `exportMeetLenex`'s session date (`lenex.ts` ~line 1248) was `sess.startdate ? sess.startdate.slice(0, 10) : ageDate` — `swimsession.startdate` is the same dual-format (ISO or raw-OLE-double) column as `athlete.birthdate`, and `.slice(0,10)` silently produces garbage whenever the DB came from an `.smb` restore (which never converts it — confirmed in `smb.ts`). Fixed to `parseOleDate(sess.startdate) ?? ageDate`, matching the same pattern already used correctly for the same column in `db.ts:765`. Regression test added (`tests/lenex.test.ts`, "writes an ISO-formatted session date").
-- **team-app's own LENEX export is correct** — `export.py`/`export_entries.py` use proper `.date()`/`.strftime()` calls, no reverse-direction bug.
+- **team-app's own LENEX export is correct** — `export.py` uses proper `.date()`/`.strftime()` calls, no reverse-direction bug.
 - **`importLenex`'s read path and `smb.ts`'s GBIN encode/decode are correct** — the dual-format column is handled consistently by every other reader (`parseOleDate`/`parseBirthYear`/`parseBirthDate` in `db.ts` all branch on `/^\d{4}-/` first, OLE-double fallback second).
 - **Fixed (2026-11-16):** `exportLenexResults` now writes the LENEX-required `SESSION@date` (`parseOleDate(startdate)`, falling back to the export day — not `ageDate`, which is Dec 31 of the season). Before, results files carried no date at all, so team-app archived the meet with `meets.mindate`/`results.eventdate` NULL. team-app's best-times resolver also falls back to `meets.mindate` for undated results (most historical rows), so expiry now actually applies. Tests: `tests/lenex.test.ts`, "exportLenexResults writes SESSION@date…".
 
@@ -170,10 +170,8 @@ src/main/
   timingBarcode.ts      — Barcode encode/decode (E{n}-H{n}-L{n} format)
   timingSheets.ts       — Timing sheet PDF generator (HTML + Code128 SVG)
   timingScanDb.ts       — Local SQLite for scanned images + processing state
-  timingImageProcess.ts — Image crop/preprocessing for OCR
-  ocrEngine.ts          — OCR engine interface + time parsing utilities
+  ocrEngine.ts          — OCR engine interface
   ocrGemini.ts          — Gemini 2.5 Flash Lite vision OCR (primary)
-  ocrOllama.ts          — Ollama local vision model (fallback)
   geminiBackground.ts   — Background Gemini processing loop (main process)
 src/preload/index.ts    — contextBridge API
 src/renderer/src/
@@ -182,7 +180,6 @@ src/renderer/src/
   registrationApiElectron.ts — RegistrationAPI adapter (IPC → SQLite)
   pages/EventsPage.tsx  — Thin wrapper: ApiProvider + shared EventsPage
   pages/HeatsPage.tsx   — Heat runner + Quantum toolbar + Print timing sheets
-  pages/AthletesPage.tsx— Athlete list + editor
   pages/TimingScanPage.tsx — Camera barcode scanner (batch mode)
   pages/TimingProcessPage.tsx — OCR processing queue + manual time entry
 ```
@@ -285,7 +282,7 @@ time, `.smb` export carries them through correctly too.
   fixed to write it too.
 | `timing:save-scan` | Store scanned image + barcode metadata |
 | `timing:get-scans-for-processing` | List scans by status filter |
-| `timing:run-ocr` | Run OCR engine on a scan (Gemini/Ollama/etc) |
+| `timing:run-ocr` | Run OCR engine on a scan (Gemini) |
 | `timing:validate-scan` | Accept times → write to swimresult |
 | `timing:generate-sheets` | Generate timing sheet HTML for a session |
 | `timing:set-gemini-background` | Enable/disable background Gemini processing |
@@ -305,9 +302,6 @@ time, `.smb` export carries them through correctly too.
 | `menu:open-guide` | Open in-app workflow guide (pool/beach) |
 | `db:register` | Register athlete for event (create swimresult) |
 | `db:unregister` | Unregister athlete from event (delete unseeded swimresult) |
-| `db:get-relay-members` | Get relay position members by relay ID |
-| `db:get-relay-members-by-event` | Get relay members for event+club |
-| `db:set-relay-member` | Set/clear a relay position member |
 
 ## Relay Entry
 
@@ -428,7 +422,6 @@ Athletes in beach meets get a unique jersey/bib identifier stored in `athlete.na
 
 ### Display
 - HeatsPage: shown next to athlete name
-- AthletesPage: read-only column
 - "Identifiants plage" PDF report
 
 ### Tests: `tests/beach-number.test.ts`

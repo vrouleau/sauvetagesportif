@@ -36,7 +36,7 @@ from .models import (
     fee_dollars_to_cents, GENDER_M, GENDER_F,
 )
 from .models_team import TeamClub, Member, Relay, RelayPos, ClubMeetInvite, Meet as TeamMeet
-from .meet_config import get_active_meetsid, _get_meet_config
+from .meet_config import get_active_meetsid, _get_meet_config, read_meetvalues
 
 
 MEET_FEE_LABELS = {
@@ -59,8 +59,8 @@ def _meet_fees(db: Session, meetsid: int | None = None) -> dict[str, int]:
     # Primary: read from MEETVALUES (Splash interoperable)
     fees: dict[str, int] = {}
     _meetsid = meetsid if meetsid is not None else get_active_meetsid(db)
-    mv_data = _get_meet_config(db, _meetsid, "MEETVALUES")
-    if mv_data:
+    mv = read_meetvalues(db, _meetsid)
+    if mv:
         key_map = {
             "FEECLUB": "CLUB",
             "FEEPERSON": "ATHLETE",
@@ -68,20 +68,9 @@ def _meet_fees(db: Session, meetsid: int | None = None) -> dict[str, int]:
             "FEELATEINDIVIDUAL": "LATEFEE",
             "FEELATERELAY": "LATERELAYFE",
         }
-        for line in mv_data.split("\r\n"):
-            eq = line.find("=")
-            if eq < 0:
-                continue
-            key = line[:eq]
+        for key, raw_val in mv.items():  # TYPE; prefix already stripped (F;5.00 -> 5.00)
             if key not in key_map:
                 continue
-            val_part = line[eq + 1:]
-            # Format: TYPE;VALUE (e.g., F;5.00 or I;500)
-            semi = val_part.find(";")
-            if semi >= 0:
-                raw_val = val_part[semi + 1:]
-            else:
-                raw_val = val_part
             try:
                 dollars = float(raw_val)
                 if dollars > 0:

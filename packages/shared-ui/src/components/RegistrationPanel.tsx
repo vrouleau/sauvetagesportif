@@ -33,7 +33,6 @@ export interface RegistrationPanelProps {
   onRegister: (eventId: number, timeMs: number | null, ageCode: string) => void
   onUnregister: (regId: number) => void
   onUpdateEntryTime: (eventId: number, ageCode: string, timeMs: number | null) => void
-  onSetRelayMember?: (eventId: number, position: number, athleteId: number | null) => void
   onSetHC?: (eventId: number, ageCode: string, entryTimeMs: number | null, isHC: boolean) => void
 }
 
@@ -105,13 +104,12 @@ export default function RegistrationPanel({
   onRegister,
   onUnregister,
   onUpdateEntryTime,
-  onSetRelayMember,
   onSetHC,
 }: RegistrationPanelProps) {
   const { t } = useLang()
   const tr = t.registration
 
-  const { individual_events, relay_events, club_athletes, suggested_age_code, meet_course, meet_type } = data
+  const { individual_events, suggested_age_code, meet_course, meet_type } = data
   const isBeach = (meet_type || 'POOL').toUpperCase() === 'BEACH'
   const bestKey: 'best_time_scm_ms' | 'best_time_lcm_ms' = meet_course === 'SCM' ? 'best_time_scm_ms' : 'best_time_lcm_ms'
   const bestCourse: 'lcm' | 'scm' = meet_course === 'SCM' ? 'scm' : 'lcm'
@@ -123,14 +121,14 @@ export default function RegistrationPanel({
 
   // Determine initial category from existing registrations
   useEffect(() => {
-    const regs = [...individual_events, ...relay_events]
+    const regs = individual_events
       .map(s => s.categories.find(c => c.registered))
       .filter(Boolean)
     setCategory(regs[0]?.age_code || suggested_age_code)
-  }, [athleteId, individual_events, relay_events, suggested_age_code])
+  }, [athleteId, individual_events, suggested_age_code])
 
   // Compute available and dropdown categories
-  const availableCategories = computeAvailableCategories([...individual_events, ...relay_events])
+  const availableCategories = computeAvailableCategories(individual_events)
 
   const dropdownCategories = filterCategoriesAroundSuggestion(
     availableCategories,
@@ -150,16 +148,12 @@ export default function RegistrationPanel({
   const visibleIndividual = individual_events.filter(s =>
     s.categories.some(c => allowedSet.has(c.age_code))
   )
-  const visibleRelays = relay_events.filter(s =>
-    s.categories.some(c => allowedSet.has(c.age_code))
-  )
 
   // Category change handler — re-registers all events under new category
   async function changeCategory(newCategory: string) {
     if (newCategory === category) return
     setSaving(true)
-    const allStyles: RegistrationStyle[] = [...individual_events, ...relay_events]
-    for (const style of allStyles) {
+    for (const style of individual_events) {
       const reg = style.categories.find(c => c.registered)
       if (!reg) continue
       const newCat = style.categories.find(c => c.age_code === newCategory)
@@ -311,104 +305,6 @@ export default function RegistrationPanel({
           </table>
         </div>
 
-        {/* Relay Events */}
-        {visibleRelays.length > 0 && (
-          <div>
-            <h3 className="text-xs font-semibold text-gray-700 mb-1 uppercase tracking-wide">{tr.relays}</h3>
-            <table className="w-full text-xs border-collapse border border-gray-300">
-              <thead>
-                <tr className="bg-gray-100">
-                  <th className="border border-gray-300 px-2 py-1 w-6 text-center">✓</th>
-                  <th className="border border-gray-300 px-2 py-1 text-left">{tr.event}</th>
-                  {!isBeach && <th className="border border-gray-300 px-2 py-1 text-right w-20">{tr.bt50}</th>}
-                  {!isBeach && <th className="border border-gray-300 px-2 py-1 text-right w-20">{tr.bt25}</th>}
-                  {!isBeach && <th className="border border-gray-300 px-2 py-1 text-left w-24">{tr.entryTime}</th>}
-                  <th className="border border-gray-300 px-2 py-1 text-left">{tr.teammates}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visibleRelays.map(style => {
-                  const reg = style.categories.find(c => c.registered)
-                  const teammateCount = (style.relay_count ?? 1) - 1
-                  const bestMs = style[bestKey]
-                  const catAvailable = style.categories.some(c => c.age_code === activeCategory)
-                  const lockedBy = style.locked_by_name
-                  const rowClass = lockedBy ? 'bg-gray-100 text-gray-400' : (reg ? 'bg-green-50' : 'hover:bg-blue-50')
-                  return (
-                    <tr key={style.style_uid} className={rowClass}>
-                      <td className="border border-gray-300 px-2 py-0.5 text-center">
-                        <input
-                          type="checkbox"
-                          checked={!!reg}
-                          className="w-3.5 h-3.5"
-                          disabled={saving || !!lockedBy || (!reg && !catAvailable)}
-                          onChange={() => {
-                            if (reg) {
-                              onUnregister(reg.registration_id!)
-                            } else {
-                              const cat = style.categories.find(c => c.age_code === activeCategory) || style.categories[0]
-                              onRegister(cat.event_id, isBeach ? null : bestMs, cat.age_code)
-                            }
-                          }}
-                        />
-                      </td>
-                      <td className="border border-gray-300 px-2 py-0.5">
-                        {style.style_name} ({style.relay_count}x)
-                        {lockedBy && (
-                          <span className="ml-2 text-2xs italic">
-                            — {tr.alreadyRegisteredBy} {lockedBy}
-                          </span>
-                        )}
-                      </td>
-                      {!isBeach && <BestTimeCells style={style} />}
-                      {!isBeach && (
-                        <td className="border border-gray-300 px-2 py-0.5">
-                          {!lockedBy && reg && (
-                            <TimeInput
-                              defaultValue={msToTime(reg.entry_time_ms || bestMs)}
-                              key={`r-${reg.registration_id}-${reg.entry_time_ms}`}
-                              onSave={v => {
-                                const ms = parseTime(v)
-                                if (ms === undefined) return
-                                onUpdateEntryTime(reg.event_id, reg.age_code, ms)
-                              }}
-                            />
-                          )}
-                        </td>
-                      )}
-                      <td className="border border-gray-300 px-2 py-0.5">
-                        {!lockedBy && reg && (
-                          <div className="flex flex-wrap gap-1">
-                            {Array.from({ length: teammateCount }, (_, i) => {
-                              const pos = i + 2 // position 2, 3, 4... (position 1 is the registering athlete)
-                              const currentMember = style.relay_members?.find(m => m.position === pos)
-                              return (
-                                <select
-                                  key={i}
-                                  className="border border-gray-300 px-1 py-0.5 rounded text-xs w-36"
-                                  value={currentMember?.athleteId ?? ''}
-                                  onChange={e => {
-                                    const val = e.target.value ? parseInt(e.target.value, 10) : null
-                                    onSetRelayMember?.(reg.event_id, pos, val)
-                                  }}
-                                >
-                                  <option value="">Member {pos}...</option>
-                                  {club_athletes.map(a => (
-                                    <option key={a.id} value={a.id}>{a.name}</option>
-                                  ))}
-                                </select>
-                              )
-                            })}
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
       </div>
     </div>
   )

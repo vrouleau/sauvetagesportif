@@ -37,7 +37,7 @@ import requests
 from conftest import (
     BASE_URL, MEET_TEMPLATE, ENTRIES_FILE, RESULTS_FILE,
     get_registration, post_registration, delete_registration,
-    export_bundle, export_lxf, export_registrations_lxf, export_meet_lxf,
+    export_lxf, export_registrations_lxf, export_meet_lxf,
     exec_in_backend,
 )
 
@@ -362,13 +362,6 @@ class TestExport:
                          headers=admin_headers, timeout=10)
         assert r.status_code == 400
 
-    def test_export_bundle_contains_scripts(self, with_registrations, admin_headers):
-        bundle = export_bundle(admin_headers)
-        names = set(bundle.namelist())
-        assert "inscriptions.lxf" in names
-        assert "simulate_results.vbs" in names
-        assert "simulate_results.bat" in names
-
     def test_export_returns_valid_lxf_zip(self, with_registrations, admin_headers):
         lxf = export_lxf(admin_headers)
         names = lxf.namelist()
@@ -424,7 +417,7 @@ class TestExport:
 
 
 # ---------------------------------------------------------------------------
-# Results upload (best times)
+# Results upload (best times) — archived as a historical meet (Admin → Import Historical)
 # ---------------------------------------------------------------------------
 
 class TestResultsUpload:
@@ -432,7 +425,7 @@ class TestResultsUpload:
     def uploaded_results(self, results_path, admin_headers) -> dict:
         with open(results_path, "rb") as f:
             r = requests.post(
-                f"{BASE_URL}/api/upload/results?force=true",
+                f"{BASE_URL}/api/admin/import-historical?force=true",
                 files={"file": ("results.lxf", f, "application/octet-stream")},
                 headers=admin_headers,
                 timeout=60,
@@ -441,8 +434,7 @@ class TestResultsUpload:
         return r.json()
 
     def test_results_upload_response(self, uploaded_results):
-        # Results are stored via historical import; seed_from_lxf returns club/athlete counts
-        assert "clubs_created" in uploaded_results or "results_imported" in uploaded_results
+        assert uploaded_results["results_imported"] > 0
 
     def test_status_shows_best_times(self, uploaded_results):
         r = requests.get(f"{BASE_URL}/api/status", timeout=10)
@@ -473,12 +465,12 @@ class TestAccessControl:
     """Verify that protected endpoints enforce role requirements."""
 
     def test_admin_endpoint_rejects_no_auth(self):
-        r = requests.get(f"{BASE_URL}/api/export", timeout=5)
+        r = requests.get(f"{BASE_URL}/api/admin/backups", timeout=5)
         assert r.status_code == 403
 
     def test_admin_endpoint_rejects_coach(self, clubs):
         coach_headers = {"X-Club-Pin": clubs[0]["pin"]}
-        r = requests.get(f"{BASE_URL}/api/export", headers=coach_headers, timeout=5)
+        r = requests.get(f"{BASE_URL}/api/admin/backups", headers=coach_headers, timeout=5)
         assert r.status_code == 403
 
     def test_admin_post_endpoint_rejects_coach(self, clubs):
@@ -505,7 +497,7 @@ class TestAccessControl:
     def test_several_admin_endpoints_reject_unauthenticated(self):
         """Spot-check a range of admin-only endpoints without credentials."""
         endpoints = [
-            ("GET",  "/api/export/entries"),
+            ("GET",  "/api/admin/backup-config"),
             ("GET",  "/api/admin/organizer"),
             ("POST", "/api/admin/set-organizer"),
         ]
@@ -538,61 +530,6 @@ class TestAuthRateLimit:
                 got_429 = True
                 break
         assert got_429, "Expected 429 after repeated failed auth attempts"
-
-
-# ---------------------------------------------------------------------------
-# Entries export (/export/entries — new endpoint)
-# ---------------------------------------------------------------------------
-
-class TestExportEntries:
-    @pytest.fixture(scope="class")
-    def entries_zip(self, uploaded, admin_headers) -> zipfile.ZipFile:
-        r = requests.get(f"{BASE_URL}/api/export/entries",
-                         headers=admin_headers, timeout=30)
-        r.raise_for_status()
-        return zipfile.ZipFile(BytesIO(r.content))
-
-    def test_contains_lef(self, entries_zip):
-        names = entries_zip.namelist()
-        assert any(n.endswith(".lef") for n in names), f"No .lef in {names}"
-
-    def test_athlete_count_matches_import(self, entries_zip, uploaded):
-        lef_name = next(n for n in entries_zip.namelist() if n.endswith(".lef"))
-        lef = entries_zip.read(lef_name).decode()
-        # Export should contain at least the athletes from the original import
-        assert lef.count("<ATHLETE ") >= 100
-
-    def test_club_count_matches_import(self, entries_zip, uploaded):
-        lef_name = next(n for n in entries_zip.namelist() if n.endswith(".lef"))
-        lef = entries_zip.read(lef_name).decode()
-        # Export should contain at least the 5 clubs from the original import
-        assert lef.count("<CLUB ") >= 5
-
-    def test_requires_admin(self, clubs):
-        coach_headers = {"X-Club-Pin": clubs[0]["pin"]}
-        r = requests.get(f"{BASE_URL}/api/export/entries",
-                         headers=coach_headers, timeout=5)
-        assert r.status_code == 403
-
-    def test_has_entry_elements_after_results_upload(
-            self, uploaded, admin_headers, results_path):
-        """After results are loaded, the entries export includes ENTRY elements."""
-        with open(results_path, "rb") as f:
-            r = requests.post(
-                f"{BASE_URL}/api/upload/results?force=true",
-                files={"file": ("results.lxf", f, "application/octet-stream")},
-                headers=admin_headers,
-                timeout=60,
-            )
-        r.raise_for_status()
-
-        r = requests.get(f"{BASE_URL}/api/export/entries",
-                         headers=admin_headers, timeout=30)
-        r.raise_for_status()
-        z = zipfile.ZipFile(BytesIO(r.content))
-        lef_name = next(n for n in z.namelist() if n.endswith(".lef"))
-        lef = z.read(lef_name).decode()
-        assert "<ENTRY " in lef, "Expected ENTRY elements after best-time upload"
 
 
 # ---------------------------------------------------------------------------
@@ -704,56 +641,31 @@ class TestValidation:
                           headers=admin_headers, timeout=5)
         assert r.status_code == 422
 
-    # --- relay lock ---
+    # --- relay events are entered as teams, not as athlete registrations ---
 
-    def test_relay_lock(self, athletes, clubs, admin_headers):
-        """Second athlete from same club cannot register for same relay event."""
-        # Find a relay event
+    def test_registration_rejects_relay_event(self, athletes, clubs, admin_headers):
+        """POST /registrations refuses a relay event (relays go through /relay-teams)."""
         r = requests.get(f"{BASE_URL}/api/events", headers=admin_headers, timeout=5)
         r.raise_for_status()
-        events = r.json()
-        relay_events = [e for e in events if e.get("relay_count", 0) > 1]
+        relay_events = [e for e in r.json() if e.get("relay_count", 0) > 1]
         if not relay_events:
             pytest.skip("No relay events in test meet")
         relay_ev = relay_events[0]
 
-        # Find two athletes from the same club
-        club_id = clubs[0]["id"]
-        club_athletes = [a for a in athletes if a["club_id"] == club_id]
-        assert len(club_athletes) >= 2
-
-        # Get valid age_code for this relay event
+        club_athletes = [a for a in athletes if a["club_id"] == clubs[0]["id"]]
         reg = get_registration(club_athletes[0]["id"], admin_headers)
-        relay_styles = reg["relay_events"]
-        relay_style = next((s for s in relay_styles
-                            for c in s["categories"]
-                            if c["event_id"] == relay_ev["id"]), None)
-        if not relay_style:
+        cat = next((c for s in reg["relay_events"] for c in s["categories"]
+                    if c["event_id"] == relay_ev["id"]), None)
+        if not cat:
             pytest.skip("Relay event not visible to athlete")
-        cat = next(c for c in relay_style["categories"] if c["event_id"] == relay_ev["id"])
 
-        # Register first athlete
-        r1 = requests.post(f"{BASE_URL}/api/registrations",
-                           json={"athlete_id": club_athletes[0]["id"],
-                                 "event_id": relay_ev["id"],
-                                 "age_code": cat["age_code"],
-                                 "entry_time_ms": None},
-                           headers=admin_headers, timeout=5)
-        assert r1.status_code == 200
-        reg1_id = r1.json()["id"]
-
-        # Second athlete from same club → 409
-        r2 = requests.post(f"{BASE_URL}/api/registrations",
-                           json={"athlete_id": club_athletes[1]["id"],
-                                 "event_id": relay_ev["id"],
-                                 "age_code": cat["age_code"],
-                                 "entry_time_ms": None},
-                           headers=admin_headers, timeout=5)
-        assert r2.status_code == 409
-
-        # Cleanup
-        requests.delete(f"{BASE_URL}/api/registrations/{reg1_id}",
-                        headers=admin_headers, timeout=5)
+        r = requests.post(f"{BASE_URL}/api/registrations",
+                          json={"athlete_id": club_athletes[0]["id"],
+                                "event_id": relay_ev["id"],
+                                "age_code": cat["age_code"],
+                                "entry_time_ms": None},
+                          headers=admin_headers, timeout=5)
+        assert r.status_code == 422
 
     # --- closure date on athlete CRUD ---
 
@@ -4745,14 +4657,3 @@ class TestInvoiceEmail:
         assert mail["to"] == [self.COACH_EMAIL]
         assert mail["reply_to"] == self.ORG_EMAIL
         assert org["name"] in mail["from"]
-
-    def test_invite_all_sends_to_every_club_with_email(self, parties, admin_headers, fake_resend):
-        self._make_organizer(admin_headers, parties["org"])
-        r = requests.post(f"{BASE_URL}/api/organizer/clubs/invite-all", json={"lang": "fr"},
-                          headers=admin_headers, timeout=60)
-        assert r.status_code == 200, r.text
-        body = r.json()
-        assert body["errors"] == [], body["errors"]
-        recipients = {m["to"][0] for m in fake_resend.emails()}
-        assert {self.COACH_EMAIL, self.ORG_EMAIL} <= recipients
-        assert body["sent"] == len(fake_resend.emails())

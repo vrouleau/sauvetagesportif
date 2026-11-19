@@ -154,23 +154,6 @@ export function getScansByStatus(status: ScanStatus): TimingScan[] {
   return rows.map(mapRow)
 }
 
-/** Get all unprocessed scans */
-export function getUnprocessedScans(): TimingScan[] {
-  return getScansByStatus('unprocessed')
-}
-
-/** Get scans for a specific event/heat (keyed by swimEventId — unique even when
- * a prelim and its final share the same human-facing event number) */
-export function getScansForHeat(swimEventId: number, heatNumber: number): TimingScan[] {
-  const db = getScanDb()
-  const rows = db.prepare(`
-    SELECT * FROM timing_scan
-    WHERE swim_event_id = ? AND heat_number = ?
-    ORDER BY lane
-  `).all(swimEventId, heatNumber) as RawScanRow[]
-  return rows.map(mapRow)
-}
-
 /** Get a single scan by ID */
 export function getScanById(scanId: number): TimingScan | null {
   const db = getScanDb()
@@ -214,16 +197,6 @@ export function validateScan(scanId: number, validatedTime1: string, timeMs1: nu
   `).run(validatedTime1, timeMs1, validatedTime2, timeMs2, new Date().toISOString(), scanId)
 }
 
-/** Mark a scan as having an error */
-export function markScanError(scanId: number, notes: string): void {
-  const db = getScanDb()
-  db.prepare(`
-    UPDATE timing_scan
-    SET status = 'error', notes = ?
-    WHERE scan_id = ?
-  `).run(notes, scanId)
-}
-
 /** Delete a scan (e.g. rescan replaces it) */
 export function deleteScan(scanId: number): void {
   const db = getScanDb()
@@ -256,17 +229,6 @@ export function getScanSummary(): Record<ScanStatus, number> {
     }
   }
   return summary
-}
-
-/** Get all validated scans for a heat (keyed by swimEventId — see getScansForHeat) */
-export function getValidatedScansForHeat(swimEventId: number, heatNumber: number): TimingScan[] {
-  const db = getScanDb()
-  const rows = db.prepare(`
-    SELECT * FROM timing_scan
-    WHERE swim_event_id = ? AND heat_number = ? AND status = 'validated'
-    ORDER BY lane
-  `).all(swimEventId, heatNumber) as RawScanRow[]
-  return rows.map(mapRow)
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────

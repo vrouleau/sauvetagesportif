@@ -39,11 +39,6 @@ export function startGeminiBackground(): void {
   processLoop()
 }
 
-/** Stop the background processing */
-export function stopGeminiBackground(): void {
-  running = false
-}
-
 /** Enable/disable background processing */
 export function setGeminiBackgroundEnabled(value: boolean): void {
   enabled = value

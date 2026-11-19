@@ -36,14 +36,12 @@ from xml.etree.ElementTree import Element
 
 from sqlalchemy.orm import Session
 
+from .models import LENEX_GENDER
 from .models_team import Relay, RelayPos
 
 # LENEX RESULT@status -> Splash resultstatus. Any other non-empty status
 # (WDR, SICK, DNQ…) means no valid time either: stored as DNS.
 RELAY_RESULT_STATUS = {"DNS": 1, "DNF": 2, "DSQ": 3, "EXH": 4}
-
-_GENDER = {"M": 1, "F": 2, "MIXED": 3, "X": 3, "ALL": 0}
-
 
 def delete_archived_relays(db: Session, meet_id: int) -> None:
     """Remove a meet's archived relays (re-import replaces them)."""
@@ -115,7 +113,7 @@ def archive_club_relays(
                 eventtyp=0,
                 resulttyp=0,  # official
                 course=course,
-                gender=_GENDER.get((relay_el.get("gender") or "").upper()),
+                gender=LENEX_GENDER.get((relay_el.get("gender") or "").upper()),
                 resultstatus=status,
             )
             db.add(relay)

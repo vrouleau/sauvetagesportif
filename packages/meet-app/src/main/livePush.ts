@@ -201,47 +201,6 @@ export class LivePushModule {
   }
 
   /**
-   * Push all existing results (catch-up after reconnection).
-   */
-  pushAll(db: DbBackend): void {
-    if (!this.enabled) return
-
-    const rows = db.prepare(`
-      SELECT sr.swimresultid, sr.swimeventid, sr.lane, sr.swimtime, sr.reactiontime,
-             sr.resultstatus, sr.athleteid,
-             a.lastname, a.firstname, c.name AS clubname,
-             h.heatnumber
-      FROM swimresult sr
-      LEFT JOIN athlete a ON sr.athleteid = a.athleteid
-      LEFT JOIN club c ON a.clubid = c.clubid
-      LEFT JOIN heat h ON sr.heatid = h.heatid
-      WHERE sr.swimtime IS NOT NULL AND sr.swimtime > 0
-    `).all() as Array<{
-      swimresultid: number; swimeventid: number; lane: number; swimtime: number
-      reactiontime: number | null; resultstatus: number | null
-      athleteid: number | null; lastname: string; firstname: string
-      clubname: string; heatnumber: number
-    }>
-
-    const results: LiveResultPayload[] = rows.map(r => ({
-      event_id: r.swimeventid,
-      heat_number: r.heatnumber,
-      lane: r.lane,
-      athlete_id: r.athleteid,
-      athlete_name: `${r.lastname}, ${r.firstname}`,
-      club_name: r.clubname || '',
-      swimtime_ms: r.swimtime,
-      reaction_time_ms: r.reactiontime,
-      status: this.decodeStatus(r.resultstatus),
-    }))
-
-    if (results.length > 0) {
-      this.enqueue('results', { results })
-      this.attemptFlush()
-    }
-  }
-
-  /**
    * Get current connection status.
    */
   getStatus(): PushStatus {
@@ -434,16 +393,6 @@ export class LivePushModule {
       writeFileSync(this.queuePath, JSON.stringify(this.queue), 'utf8')
     } catch (e) {
       console.error('[LivePush] Failed to save queue:', e)
-    }
-  }
-
-  private decodeStatus(resultstatus: number | null): string {
-    switch (resultstatus) {
-      case 1: return 'DNS'
-      case 2: return 'DNF'
-      case 3: return 'DSQ'
-      case 4: return 'EXH'
-      default: return ''
     }
   }
 }

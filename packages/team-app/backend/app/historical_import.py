@@ -32,7 +32,8 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
-from .lxf_to_team import archive_results_lxf, _read_lef_xml, _parse_meet
+from .lxf_io import read_lef_xml
+from .lxf_to_team import archive_results_lxf, _parse_meet
 from .meet_config import get_active_meetsid, _get_meet_config
 
 
@@ -43,7 +44,7 @@ def import_historical_meet(db: Session, file_bytes: bytes, force: bool = False) 
     warning needs confirming (retry with force=True).
     """
     if not force:
-        meet_name = _parse_meet(_read_lef_xml(file_bytes))["name"]
+        meet_name = _parse_meet(read_lef_xml(file_bytes))["name"]
         current_meet_name = _get_meet_config(db, get_active_meetsid(db), "meet_name")
         if current_meet_name and meet_name.strip().lower() == current_meet_name.strip().lower():
             return {

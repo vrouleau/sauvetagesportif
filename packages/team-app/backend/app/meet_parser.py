@@ -23,12 +23,12 @@ agegroups, and swimstyles from the authoritative SPLASH export.
 """
 from __future__ import annotations
 
-import zipfile
 from dataclasses import dataclass, field
-from io import BytesIO
 from pathlib import Path
 from xml.etree import ElementTree as ET  # noqa: F401
-from defusedxml.ElementTree import fromstring as _ET_fromstring
+
+from .lxf_io import read_lef_xml, read_lxf_entry
+from .models import LENEX_GENDER, GENDER_ALL
 
 
 def _safe_int(value, default: int) -> int:
@@ -78,14 +78,10 @@ class MeetEvent:
         return self.event_type == "MASTERS"
 
     @property
-    def is_prelim(self) -> bool:
-        return self.round == "PRE"
-
-    @property
     def gender_int(self) -> int:
-        # "ALL" and any unrecognized/blank value both fall through to 0 (ALL) —
+        # "ALL" and any unrecognized/blank value both give 0 (ALL) —
         # matching our own gender encoding (0=All, 1=M, 2=F, 3=Mixed).
-        return {"M": 1, "F": 2, "MIXED": 3, "X": 3}.get(self.gender.upper(), 0)
+        return LENEX_GENDER.get(self.gender.upper(), GENDER_ALL)
 
 
 @dataclass
@@ -132,13 +128,8 @@ def parse_meet_lxf(source) -> ParsedMeet:
     else:
         raw = source.read()
 
-    # Unzip
-    with zipfile.ZipFile(BytesIO(raw)) as z:
-        lef_name = [n for n in z.namelist() if n.endswith(".lef")][0]
-        xml_bytes = z.read(lef_name)
-        dotfile = z.read(".meetvalues") if ".meetvalues" in z.namelist() else None
-
-    root = _ET_fromstring(xml_bytes)
+    root = read_lef_xml(raw)
+    dotfile = read_lxf_entry(raw, ".meetvalues")
     meet = ParsedMeet()
 
     meet_el = root.find(".//MEET")

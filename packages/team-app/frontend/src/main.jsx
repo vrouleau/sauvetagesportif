@@ -18,19 +18,16 @@
 
 import React, { useState, useEffect, useRef } from 'react'
 import ReactDOM from 'react-dom/client'
-import { BrowserRouter, Routes, Route, Link, useLocation, useParams, useNavigate } from 'react-router'
+import { BrowserRouter, Routes, Route, Link, useLocation, useNavigate } from 'react-router'
 import './index.css'
 import { LangProvider, useLang } from './i18n'
 import Login from './pages/Login'
 import EventsPageShared from '@shared/pages/EventsPage'
-import InscriptionPageShared from '@shared/pages/InscriptionPage'
 import IndividualEntryPageShared from '@shared/pages/IndividualEntryPage'
 import RelayEntryPageShared from '@shared/pages/RelayEntryPage'
 import { ApiProvider } from '@shared/context/ApiContext'
 import { LangProvider as SharedLangProvider } from '@shared/context/LangContext'
 import { RegistrationApiProvider } from '@shared/context/RegistrationApiContext'
-import AthletesListPageShared from '@shared/pages/AthletesListPage'
-import RegistrationPageShared from '@shared/pages/RegistrationPage'
 import { meetApiHttp } from './meetApi'
 import { registrationApiHttp } from './registrationApi'
 import api, { headers } from './api'
@@ -55,38 +52,6 @@ function EventsPage() {
       <ApiProvider api={meetApiHttp}>
         <EventsPageShared />
       </ApiProvider>
-    </SharedLangProvider>
-  )
-}
-
-// Wrap the shared AthletesListPage
-function AthletesListPage({ role, clubId }) {
-  const { lang } = useLang()
-  const navigate = useNavigate()
-  return (
-    <SharedLangProvider initialLang={lang}>
-      <RegistrationApiProvider api={registrationApiHttp}>
-        <AthletesListPageShared
-          role={role}
-          clubId={clubId}
-          onNavigateToRegistration={(id) => navigate(`/athletes/${id}/register`)}
-        />
-      </RegistrationApiProvider>
-    </SharedLangProvider>
-  )
-}
-
-// Wrap the shared InscriptionPage (new cascade tree layout)
-function InscriptionPage({ role, clubId }) {
-  const { lang } = useLang()
-  return (
-    <SharedLangProvider initialLang={lang}>
-      <RegistrationApiProvider api={registrationApiHttp}>
-        <InscriptionPageShared
-          role={role}
-          clubId={clubId}
-        />
-      </RegistrationApiProvider>
     </SharedLangProvider>
   )
 }
@@ -182,23 +147,6 @@ function RelayEntryPage({ role, clubId }) {
           role={role}
           clubId={clubId ? parseInt(clubId) : undefined}
           onPrint={handlePrint}
-        />
-      </RegistrationApiProvider>
-    </SharedLangProvider>
-  )
-}
-
-// Wrap the shared RegistrationPage
-function RegisterPage() {
-  const { id } = useParams()
-  const { lang } = useLang()
-  const navigate = useNavigate()
-  return (
-    <SharedLangProvider initialLang={lang}>
-      <RegistrationApiProvider api={registrationApiHttp}>
-        <RegistrationPageShared
-          athleteId={parseInt(id)}
-          onNavigateBack={() => navigate('/')}
         />
       </RegistrationApiProvider>
     </SharedLangProvider>
@@ -393,7 +341,6 @@ function AppInner() {
         <Routes key={auth.meet_id}>
           <Route path="/" element={<IndividualEntryPage role={auth.role} clubId={auth.club_id} />} />
           <Route path="/relay-entries" element={<RelayEntryPage role={auth.role} clubId={auth.club_id} />} />
-          <Route path="/athletes/:id/register" element={<RegisterPage />} />
           {canOrganizer && <Route path="/meet" element={<EventsPage />} />}
           {canOrganizer && <Route path="/invitation" element={<Organizer />} />}
           {canOrganizer && <Route path="/serc" element={<SercPage />} />}

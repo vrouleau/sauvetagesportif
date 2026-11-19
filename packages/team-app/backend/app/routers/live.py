@@ -30,7 +30,10 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import BsGlobal
 from ..models_live import LiveEvent, LiveResult, LiveSplit, LiveStartlist
-from ..meet_config import get_active_meetsid, _get_meet_config, _get_meet_course, _get_meet_type, COURSE_TO_INT
+from ..meet_config import (
+    _get_config, _set_config, get_active_meetsid, _get_meet_config, _get_meet_course, _get_meet_type,
+    COURSE_TO_INT,
+)
 
 
 def _upsert(db: Session, model, conflict_columns: list[str], values: dict, update_values: dict):
@@ -43,19 +46,6 @@ router = APIRouter(prefix="/api/live")
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-
-def _get_config(db: Session, key: str) -> str | None:
-    cfg = db.get(BsGlobal, key)
-    return cfg.data if cfg else None
-
-
-def _set_config(db: Session, key: str, value: str):
-    cfg = db.get(BsGlobal, key)
-    if cfg:
-        cfg.data = value
-    else:
-        db.add(BsGlobal(name=key, data=value))
-
 
 # ── Auth dependencies ─────────────────────────────────────────────────────────
 

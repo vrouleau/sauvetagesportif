@@ -29,7 +29,7 @@ import { QuantumBridge, type ActiveHeat, type ScheduleEvent } from './quantum'
 import { assignLateBeachNumber } from './beachNumber'
 import { resolveMatchingAge, getSeasonYear } from './ageGroupRules'
 import {
-  getHeatListEvents, getHeatListSessions, getSessions, getAthletes,
+  getHeatListSessions, getSessions, getAthletes,
   saveResult,
   removeFromHeat, assignToHeatLane, swapLanes, addLateEntry,
   saveRelayResult, removeRelayFromHeat, assignRelayToHeatLane, swapRelayLanes,
@@ -70,10 +70,10 @@ import { saveSMB, restoreSMB } from './smb'
 import { regenerateCombinedEvents } from './combinedEvents'
 import { regeneratePointScores } from './pointScores'
 import {
-  closeScanDb, insertScan, getUnprocessedScans,
-  getScansForHeat, getScanById, findExistingScan,
+  closeScanDb, insertScan,
+  getScanById, findExistingScan,
   updateScanOcrResult, validateScan,
-  getScanSummary, getValidatedScansForHeat, getScansByStatus,
+  getScanSummary, getScansByStatus,
   clearAllScans, deleteScan,
   type ScanStatus,
 } from './timingScanDb'
@@ -191,7 +191,6 @@ ipcMain.handle('quantum:set-schedule', (_event, events: ScheduleEvent[]) => {
 
 // ── DB IPC ────────────────────────────────────────────────────────────────────
 
-ipcMain.handle('db:heat-list-events', () => getHeatListEvents())
 
 ipcMain.handle('db:heat-list-sessions', () => getHeatListSessions())
 
@@ -355,11 +354,6 @@ ipcMain.handle('live:get-status', () => {
   return { status: livePush.getStatus(), queueSize: livePush.getQueueSize() }
 })
 
-ipcMain.handle('live:push-all', () => {
-  livePush.pushAll(getLocalDb())
-  return { ok: true }
-})
-
 ipcMain.handle('live:announce', (_event, payload: { type: 'call_to_marshall' | 'call_to_scratch'; event_id: number; event_number: number; event_name: string; gender: string }) => {
   livePush.notifyAnnouncement(payload)
   return { ok: true }
@@ -481,79 +475,6 @@ ipcMain.handle('db:unregister', (_event, athleteId: number, eventId: number) => 
     `DELETE FROM swimresult WHERE athleteid = ? AND swimeventid = ? AND heatid IS NULL`
   ).run(athleteId, eventId)
   return { ok: true }
-})
-
-ipcMain.handle('db:get-relay-members', (_event, relayId: number) => {
-  const db = getLocalDb()
-  const rows = db.prepare(
-    `SELECT rp.relaynumber, rp.athleteid, a.firstname, a.lastname, a.nameprefix
-     FROM relayposition rp
-     LEFT JOIN athlete a ON rp.athleteid = a.athleteid
-     WHERE rp.relayid = ?
-     ORDER BY rp.relaynumber`
-  ).all(relayId) as Array<{ relaynumber: number; athleteid: number; firstname: string | null; lastname: string | null; nameprefix: string | null }>
-  return rows.map(r => ({ position: r.relaynumber, athleteId: r.athleteid, name: `${r.lastname}, ${r.firstname}`, beachNumber: r.nameprefix || undefined }))
-})
-
-ipcMain.handle('db:get-relay-members-by-event', (_event, eventId: number, athleteId: number) => {
-  const db = getLocalDb()
-  const athRow = db.prepare(`SELECT clubid FROM athlete WHERE athleteid = ?`).get(athleteId) as { clubid: number | null } | undefined
-  const clubId = athRow?.clubid ?? 0
-  const relay = db.prepare(
-    `SELECT relayid FROM relay WHERE swimeventid = ? AND clubid = ?`
-  ).get(eventId, clubId) as { relayid: number } | undefined
-  if (!relay) return []
-  const rows = db.prepare(
-    `SELECT rp.relaynumber, rp.athleteid
-     FROM relayposition rp
-     WHERE rp.relayid = ?
-     ORDER BY rp.relaynumber`
-  ).all(relay.relayid) as Array<{ relaynumber: number; athleteid: number }>
-  return rows.map(r => ({ position: r.relaynumber, athleteId: r.athleteid }))
-})
-
-ipcMain.handle('db:set-relay-member', (_event, eventId: number, athleteId: number, position: number, memberAthleteId: number | null) => {
-  const db = getLocalDb()
-
-  // Get the club from the athlete
-  const athRow = db.prepare(`SELECT clubid FROM athlete WHERE athleteid = ?`).get(athleteId) as { clubid: number | null } | undefined
-  const clubId = athRow?.clubid ?? 0
-
-  // Find or create the relay entry for this club+event
-  let relay = db.prepare(
-    `SELECT relayid FROM relay WHERE swimeventid = ? AND clubid = ?`
-  ).get(eventId, clubId) as { relayid: number } | undefined
-
-  if (!relay) {
-    const relayId = nextId('relay', 'relayid')
-    const agRow = db.prepare(
-      `SELECT agegroupid FROM agegroup WHERE swimeventid = ? ORDER BY sortcode LIMIT 1`
-    ).get(eventId) as { agegroupid: number } | undefined
-    db.prepare(
-      `INSERT INTO relay (relayid, clubid, swimeventid, agegroupid, teamnumber) VALUES (?, ?, ?, ?, 1)`
-    ).run(relayId, clubId, eventId, agRow?.agegroupid ?? null)
-    relay = { relayid: relayId }
-  }
-
-  // Remove existing position entry
-  db.prepare(
-    `DELETE FROM relayposition WHERE relayid = ? AND relaynumber = ?`
-  ).run(relay.relayid, position)
-
-  // Insert new member if provided
-  if (memberAthleteId) {
-    db.prepare(
-      `INSERT INTO relayposition (relayid, relaynumber, athleteid) VALUES (?, ?, ?)`
-    ).run(relay.relayid, position, memberAthleteId)
-
-    // Assign a beach number immediately for beach meets, instead of waiting on the next heat generation
-    const meetTypeRow = db.prepare(`SELECT data FROM bsglobal WHERE name = 'MEET_TYPE'`).get() as { data: string } | undefined
-    if ((meetTypeRow?.data || 'POOL').toUpperCase() === 'BEACH') {
-      assignLateBeachNumber(db, memberAthleteId)
-    }
-  }
-
-  return { ok: true, relayId: relay.relayid }
 })
 
 // ── Relay Team Management (new team-centric handlers) ─────────────────────────
@@ -1812,14 +1733,6 @@ ipcMain.handle('timing:save-scan', async (_event, data: {
   }
 })
 
-ipcMain.handle('timing:get-unprocessed', () => {
-  return getUnprocessedScans().map(scanToDto)
-})
-
-ipcMain.handle('timing:get-scans-for-heat', (_event, swimEventId: number, heatNumber: number) => {
-  return getScansForHeat(swimEventId, heatNumber).map(scanToDto)
-})
-
 ipcMain.handle('timing:get-scan-summary', () => {
   return getScanSummary()
 })
@@ -1899,44 +1812,6 @@ ipcMain.handle('timing:mark-error', (_event, scanId: number, _notes: string) => 
   try {
     deleteScan(scanId)
     return { ok: true }
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) }
-  }
-})
-
-ipcMain.handle('timing:commit-heat-results', async (_event, swimEventId: number, heatNumber: number) => {
-  try {
-    const scans = getValidatedScansForHeat(swimEventId, heatNumber)
-    if (scans.length === 0) {
-      return { ok: false, error: 'No validated scans for this heat' }
-    }
-
-    // Each scan is one lane with both chrono times
-    const db = getLocalDb()
-    for (const scan of scans) {
-      const time1 = scan.timeMs1
-      const time2 = scan.timeMs2
-
-      // Average if both present
-      const avgTime = (time1 !== null && time2 !== null)
-        ? Math.round((time1 + time2) / 2)
-        : (time1 ?? time2)
-
-      _writeScanTimes(db, swimEventId, heatNumber, scan.lane, time1, time2, avgTime)
-    }
-
-    return { ok: true }
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) }
-  }
-})
-
-ipcMain.handle('timing:save-debug-image', (_event, imageBase64: string) => {
-  try {
-    const filePath = join(app.getPath('userData'), 'debug_capture.png')
-    writeFileSync(filePath, Buffer.from(imageBase64, 'base64'))
-    console.log('[Timing] Debug image saved to:', filePath)
-    return { ok: true, path: filePath }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
   }

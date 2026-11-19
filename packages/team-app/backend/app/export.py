@@ -269,6 +269,67 @@ def _meet_struct_from_db(db: Session, meetsid: int | None = None):
     )
 
 
+def _write_relay_positions(parent: ET.Element, positions: list) -> None:
+    """RELAYPOSITIONS > RELAYPOSITION (number, athleteid, optional entrytime)."""
+    positions_xml = ET.SubElement(parent, "RELAYPOSITIONS")
+    for pos in positions:
+        pos_attrs: dict[str, str] = {
+            "number": str(pos.numb),
+            "athleteid": str(pos.membersid),
+        }
+        if pos.entrytime:
+            pos_attrs["entrytime"] = _ms_to_lenex(pos.entrytime)
+        ET.SubElement(positions_xml, "RELAYPOSITION", pos_attrs)
+
+
+def _write_relay(relays_xml: ET.Element, relay: Relay, positions: list, custom_name: str | None,
+                 meet_struct, db: Session) -> None:
+    """One club RELAY element with its ENTRIES > ENTRY.
+
+    RELAYPOSITIONS is written twice on purpose: under RELAY (Lenex 3.0 spec)
+    and under its ENTRY, which is where meet-app's importer reads it.
+    """
+    # Team name: custom name, else the members' last names joined by "/"
+    team_name = custom_name
+    if not team_name and positions:
+        names = []
+        for p in positions:
+            m = db.get(Member, p.membersid)
+            if m:
+                names.append(m.lastname or "")
+        team_name = "/".join(names) if names else None
+
+    relay_attrs: dict[str, str] = {
+        "number": str(relay.teamnumb or 1),
+    }
+    if team_name:
+        relay_attrs["name"] = team_name
+    if relay.gender:
+        relay_attrs["gender"] = relay_gender_to_str(relay.gender)
+    if relay.minage is not None:
+        relay_attrs["agemin"] = str(relay.minage)
+    if relay.maxage is not None:
+        relay_attrs["agemax"] = str(relay.maxage)
+    relay_xml = ET.SubElement(relays_xml, "RELAY", relay_attrs)
+    if positions:
+        _write_relay_positions(relay_xml, positions)
+    # ENTRIES — always include eventid so importers know which event the relay belongs to
+    relay_entries_xml = ET.SubElement(relay_xml, "ENTRIES")
+    relay_entry_attrs: dict[str, str] = {
+        "entrycourse": meet_struct.course or "LCM",
+    }
+    if relay.entrytime:
+        relay_entry_attrs["entrytime"] = _ms_to_lenex(relay.entrytime)
+    if relay.resultstatus == 4:  # HC — LENEX ENTRY status "EXH" (exhibition)
+        relay_entry_attrs["status"] = "EXH"
+    m_ev = _find_relay_event(meet_struct, relay)
+    if m_ev:
+        relay_entry_attrs["eventid"] = str(m_ev.eventid)
+    entry_xml = ET.SubElement(relay_entries_xml, "ENTRY", relay_entry_attrs)
+    if positions:
+        _write_relay_positions(entry_xml, positions)
+
+
 def generate_lxf(db: Session, meetsid: int | None = None) -> bytes:
     """Generate a Lenex 3.0 .lxf zip from all registrations."""
     meetsid = meetsid if meetsid is not None else get_active_meetsid(db)
@@ -508,65 +569,8 @@ def generate_lxf(db: Session, meetsid: int | None = None) -> bytes:
 
         relays_xml = ET.SubElement(club_xml, "RELAYS")
         for relay in club_relays:
-            # Build team name: custom name or concatenated last names
-            positions = positions_by_relay.get(relay.relaysid, [])
-            team_name = custom_names.get(relay.relaysid)
-            if not team_name and positions:
-                member_ids = [p.membersid for p in positions]
-                names = []
-                for mid in member_ids:
-                    m = db.get(Member, mid)
-                    if m:
-                        names.append(m.lastname or "")
-                team_name = "/".join(names) if names else None
-
-            relay_attrs: dict[str, str] = {
-                "number": str(relay.teamnumb or 1),
-            }
-            if team_name:
-                relay_attrs["name"] = team_name
-            if relay.gender:
-                relay_attrs["gender"] = relay_gender_to_str(relay.gender)
-            if relay.minage is not None:
-                relay_attrs["agemin"] = str(relay.minage)
-            if relay.maxage is not None:
-                relay_attrs["agemax"] = str(relay.maxage)
-            relay_xml = ET.SubElement(relays_xml, "RELAY", relay_attrs)
-            # RELAYPOSITIONS at RELAY level (Lenex 3.0 spec)
-            if positions:
-                positions_xml = ET.SubElement(relay_xml, "RELAYPOSITIONS")
-                for pos in positions:
-                    pos_attrs: dict[str, str] = {
-                        "number": str(pos.numb),
-                        "athleteid": str(pos.membersid),
-                    }
-                    if pos.entrytime:
-                        pos_attrs["entrytime"] = _ms_to_lenex(pos.entrytime)
-                    ET.SubElement(positions_xml, "RELAYPOSITION", pos_attrs)
-            # ENTRIES — always include eventid so importers know which event the relay belongs to
-            relay_entries_xml = ET.SubElement(relay_xml, "ENTRIES")
-            relay_entry_attrs: dict[str, str] = {
-                "entrycourse": meet_struct.course or "LCM",
-            }
-            if relay.entrytime:
-                relay_entry_attrs["entrytime"] = _ms_to_lenex(relay.entrytime)
-            if relay.resultstatus == 4:  # HC — LENEX ENTRY status "EXH" (exhibition)
-                relay_entry_attrs["status"] = "EXH"
-            m_ev = _find_relay_event(meet_struct, relay)
-            if m_ev:
-                relay_entry_attrs["eventid"] = str(m_ev.eventid)
-            entry_xml = ET.SubElement(relay_entries_xml, "ENTRY", relay_entry_attrs)
-            # Also put RELAYPOSITIONS inside ENTRY (meet-app importer expects them here)
-            if positions:
-                positions_xml2 = ET.SubElement(entry_xml, "RELAYPOSITIONS")
-                for pos in positions:
-                    pos_attrs2: dict[str, str] = {
-                        "number": str(pos.numb),
-                        "athleteid": str(pos.membersid),
-                    }
-                    if pos.entrytime:
-                        pos_attrs2["entrytime"] = _ms_to_lenex(pos.entrytime)
-                    ET.SubElement(positions_xml2, "RELAYPOSITION", pos_attrs2)
+            _write_relay(relays_xml, relay, positions_by_relay.get(relay.relaysid, []),
+                         custom_names.get(relay.relaysid), meet_struct, db)
 
     # Also handle clubs that have relay data but no individual registrations
     for club_id, club_relays in relays_by_club.items():
@@ -596,63 +600,8 @@ def generate_lxf(db: Session, meetsid: int | None = None) -> bytes:
             })
         relays_xml = ET.SubElement(club_xml, "RELAYS")
         for relay in club_relays:
-            positions = positions_by_relay.get(relay.relaysid, [])
-            # Build team name
-            team_name = custom_names.get(relay.relaysid)
-            if not team_name and positions:
-                names = []
-                for p in positions:
-                    m = db.get(Member, p.membersid)
-                    if m:
-                        names.append(m.lastname or "")
-                team_name = "/".join(names) if names else None
-
-            relay_attrs: dict[str, str] = {
-                "number": str(relay.teamnumb or 1),
-            }
-            if team_name:
-                relay_attrs["name"] = team_name
-            if relay.gender:
-                relay_attrs["gender"] = relay_gender_to_str(relay.gender)
-            if relay.minage is not None:
-                relay_attrs["agemin"] = str(relay.minage)
-            if relay.maxage is not None:
-                relay_attrs["agemax"] = str(relay.maxage)
-            relay_xml = ET.SubElement(relays_xml, "RELAY", relay_attrs)
-            if positions:
-                positions_xml = ET.SubElement(relay_xml, "RELAYPOSITIONS")
-                for pos in positions:
-                    pos_attrs: dict[str, str] = {
-                        "number": str(pos.numb),
-                        "athleteid": str(pos.membersid),
-                    }
-                    if pos.entrytime:
-                        pos_attrs["entrytime"] = _ms_to_lenex(pos.entrytime)
-                    ET.SubElement(positions_xml, "RELAYPOSITION", pos_attrs)
-            # ENTRIES — always include eventid
-            relay_entries_xml = ET.SubElement(relay_xml, "ENTRIES")
-            relay_entry_attrs: dict[str, str] = {
-                "entrycourse": meet_struct.course or "LCM",
-            }
-            if relay.entrytime:
-                relay_entry_attrs["entrytime"] = _ms_to_lenex(relay.entrytime)
-            if relay.resultstatus == 4:  # HC — LENEX ENTRY status "EXH" (exhibition)
-                relay_entry_attrs["status"] = "EXH"
-            m_ev = _find_relay_event(meet_struct, relay)
-            if m_ev:
-                relay_entry_attrs["eventid"] = str(m_ev.eventid)
-            entry_xml = ET.SubElement(relay_entries_xml, "ENTRY", relay_entry_attrs)
-            # Also put RELAYPOSITIONS inside ENTRY (meet-app importer expects them here)
-            if positions:
-                positions_xml2 = ET.SubElement(entry_xml, "RELAYPOSITIONS")
-                for pos in positions:
-                    pos_attrs2: dict[str, str] = {
-                        "number": str(pos.numb),
-                        "athleteid": str(pos.membersid),
-                    }
-                    if pos.entrytime:
-                        pos_attrs2["entrytime"] = _ms_to_lenex(pos.entrytime)
-                    ET.SubElement(positions_xml2, "RELAYPOSITION", pos_attrs2)
+            _write_relay(relays_xml, relay, positions_by_relay.get(relay.relaysid, []),
+                         custom_names.get(relay.relaysid), meet_struct, db)
 
     xml_bytes = ET.tostring(root, encoding="unicode", xml_declaration=True).encode("utf-8")
 

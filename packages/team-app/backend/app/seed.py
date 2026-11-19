@@ -19,51 +19,16 @@
 """Parse a Lenex entries .lxf and seed clubs + athletes + entries into the DB."""
 from __future__ import annotations
 
-import zipfile
 from datetime import date
-from io import BytesIO
 from xml.etree import ElementTree as ET  # noqa: F401 — kept for type hints
-from defusedxml.ElementTree import fromstring as _ET_fromstring
 
 from sqlalchemy.orm import Session
 from .models import gender_from_str, SwimEvent, AgeGroup, SwimResult, SwimStyle
 from .meet_config import get_active_meetsid
 from .models_team import TeamClub, Member
-
-
-def _lenex_to_ms(time_str: str) -> int | None:
-    """Convert LENEX time string (HH:MM:SS.cc or MM:SS.cc or SS.cc) to milliseconds."""
-    if not time_str or time_str in ("NT", "0", ""):
-        return None
-    try:
-        parts = time_str.split(":")
-        if len(parts) == 3:
-            h, m, s_cc = int(parts[0]), int(parts[1]), parts[2]
-        elif len(parts) == 2:
-            h, m, s_cc = 0, int(parts[0]), parts[1]
-        else:
-            h, m, s_cc = 0, 0, parts[0]
-        s_parts = s_cc.split(".")
-        s = int(s_parts[0])
-        cc = int(s_parts[1]) if len(s_parts) > 1 else 0
-        return h * 3600000 + m * 60000 + s * 1000 + cc * 10
-    except (ValueError, IndexError):
-        return None
-
-
-def _age_code_from_bounds(agemin: int, agemax: int) -> str:
-    """Derive age_code from agegroup bounds (matches _age_group_code in api.py)."""
-    if agemin <= 10 and agemax == 10:
-        return "10-"
-    if agemin == 11 and agemax == 12:
-        return "11-12"
-    if agemin == 13 and agemax == 14:
-        return "13-14"
-    if agemin == 15 and agemax == 18:
-        return "15-18"
-    if agemin == 19 and (agemax == -1 or agemax >= 99):
-        return "Open"
-    return "Open"
+from .age_codes import age_group_code
+from .lxf_io import read_lef_xml
+from .lxf_to_team import _lenex_time_to_ms
 
 
 def parse_lxf(file_bytes: bytes) -> list[dict]:
@@ -72,11 +37,7 @@ def parse_lxf(file_bytes: bytes) -> list[dict]:
     Each athlete dict includes an 'entries' list of
     {event_id, agegroup_id, entrytime, entrycourse} dicts.
     """
-    with zipfile.ZipFile(BytesIO(file_bytes)) as z:
-        lef_name = [n for n in z.namelist() if n.endswith(".lef")][0]
-        xml_bytes = z.read(lef_name)
-
-    root = _ET_fromstring(xml_bytes)
+    root = read_lef_xml(file_bytes)
     clubs_data = []
 
     for meet in root.iter("MEET"):
@@ -110,7 +71,7 @@ def parse_lxf(file_bytes: bytes) -> list[dict]:
                         entries.append({
                             "event_id": int(event_id_str),
                             "agegroup_id": int(entry_el.get("agegroupid")) if entry_el.get("agegroupid") else None,
-                            "entrytime": _lenex_to_ms(entry_el.get("entrytime", "")),
+                            "entrytime": _lenex_time_to_ms(entry_el.get("entrytime", "")),
                             "entrycourse": entry_el.get("entrycourse", ""),
                         })
 
@@ -213,7 +174,7 @@ def seed_from_lxf(db: Session, file_bytes: bytes, meetsid: int | None = None) ->
                 elif entry["agegroup_id"]:
                     ag = db.get(AgeGroup, (meetsid, entry["agegroup_id"]))
                     if ag:
-                        age_code = _age_code_from_bounds(ag.agemin or 0, ag.agemax or 99)
+                        age_code = age_group_code(ag.agemin or 0, ag.agemax or 99) or "Open"
                         agegroup_id = entry["agegroup_id"]
                     else:
                         age_code = "Open"

@@ -34,6 +34,8 @@ from functools import lru_cache
 from pathlib import Path
 from xml.etree.ElementTree import Element, SubElement
 
+from .meet_config import parse_meetvalues
+
 _CONFIG_ENV = "LENEX_MEET_FIELDS_PATH"
 _CONFIG_FILENAME = "lenex-meet-fields.json"
 # Child elements of MEET written in this order (after AGEDATE, before SESSIONS)
@@ -73,15 +75,11 @@ def mapped_keys() -> frozenset[str]:
 def parse_typed_meetvalues(blob: str | None) -> dict[str, str]:
     """MEETVALUES blob -> {KEY: "TYPE;value"}, dropping lines with no value."""
     out: dict[str, str] = {}
-    for line in (blob or "").replace("\r", "").split("\n"):
-        eq = line.find("=")
-        if eq <= 0:
-            continue
-        typed = line[eq + 1:]
+    for key, typed in parse_meetvalues(blob, keep_type=True).items():
         semi = typed.find(";")
         if semi < 0 or not typed[semi + 1:].strip():
             continue
-        out[line[:eq].strip()] = typed
+        out[key.strip()] = typed
     return out
 
 

@@ -41,8 +41,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "backend"))
 from app.models import Base  # noqa: E402
 from app.models_team import Meet, Result  # noqa: E402
 from app.historical_import import import_historical_meet  # noqa: E402
+from app.lxf_io import read_lef_xml  # noqa: E402
 from app.lxf_to_team import (  # noqa: E402
-    import_lxf_as_meet, is_beach_results, BeachResultsNotArchived, _read_lef_xml,
+    import_lxf_as_meet, is_beach_results, BeachResultsNotArchived,
 )
 
 IMPORTERS = [
@@ -100,7 +101,7 @@ def test_beach_results_are_refused(db, do_import):
 
 
 def test_is_beach_results():
-    assert not is_beach_results(_read_lef_xml(_lxf()))
-    assert is_beach_results(_read_lef_xml(_lxf(style_f=601, style_m=601)))
+    assert not is_beach_results(read_lef_xml(_lxf()))
+    assert is_beach_results(read_lef_xml(_lxf(style_f=601, style_m=601)))
     # A single beach style anywhere is enough (mixed files are beach-tainted).
-    assert is_beach_results(_read_lef_xml(_lxf(style_m=624)))
+    assert is_beach_results(read_lef_xml(_lxf(style_m=624)))

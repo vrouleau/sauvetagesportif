@@ -21,7 +21,7 @@ import { inflateRawSync, deflateRawSync } from 'node:zlib'
 import Database from 'better-sqlite3'
 import { saveGeminiKeys } from './ocrGemini'
 import { generateBeachNumbers } from './beachNumber'
-import { parseOleDate, nextId } from './db'
+import { parseOleDate, nextId, formatDaytime, parseMeetValues, readMeetValuesRaw, serializeMeetValues } from './db'
 import { getSeasonYear, loadAgeGroupRules } from './ageGroupRules'
 import { findSwimstyleIssues, type SwimstyleIssues } from './swimstyleRanges'
 import { readMeetHeader, readMeetValuesDotfile, meetHeaderXml, meetValuesDotfile } from './lenexMeetFields'
@@ -183,11 +183,7 @@ function applyMeetLevelFields(
   const g = (name: string): string => ((getG.get(name) as { data: string | null } | undefined)?.data ?? '').trim()
 
   // MEETVALUES as raw KEY → "TYPE;value" (order kept)
-  const mv: Record<string, string> = {}
-  for (const line of g('MEETVALUES').split(/\r?\n/)) {
-    const eq = line.indexOf('=')
-    if (eq > 0) mv[line.slice(0, eq)] = line.slice(eq + 1)
-  }
+  const mv = readMeetValuesRaw(db)
   const valueOf = (typed: string | undefined): string => {
     const raw = typed ?? ''
     const semi = raw.indexOf(';')
@@ -215,7 +211,7 @@ function applyMeetLevelFields(
     mv[key] = typed
     mvChanged = true
   }
-  if (mvChanged) setG.run('MEETVALUES', Object.entries(mv).map(([k, v]) => `${k}=${v}`).join('\r\n'))
+  if (mvChanged) setG.run('MEETVALUES', serializeMeetValues(mv))
 }
 
 function encodeHeatStatus(s: string | undefined): number {
@@ -383,16 +379,9 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
   if (ageDateValue && /^\d{4}-\d{2}-\d{2}$/.test(ageDateValue)) {
     const digits = ageDateValue.replace(/-/g, '')
     bsglobalStmt.run('AGEDATE', `D;${digits}000000000`)
-    const mvRow2 = db.prepare(`SELECT data FROM bsglobal WHERE name='MEETVALUES'`).get() as { data: string | null } | undefined
-    const mv: Record<string, string> = {}
-    if (mvRow2?.data) {
-      for (const line of mvRow2.data.split(/\r?\n/)) {
-        const eq = line.indexOf('=')
-        if (eq >= 0) mv[line.slice(0, eq)] = line.slice(eq + 1)
-      }
-    }
+    const mv = readMeetValuesRaw(db)
     mv['AGEDATE'] = `D;${digits}000000000`
-    bsglobalStmt.run('MEETVALUES', Object.entries(mv).map(([k, v]) => `${k}=${v}`).join('\r\n'))
+    bsglobalStmt.run('MEETVALUES', serializeMeetValues(mv))
   }
 
   // Pool info from POOL element (lanemin/lanemax: see applyMeetLevelFields)
@@ -1023,32 +1012,6 @@ function attr(name: string, value: string | number | null | undefined): string {
 }
 
 /**
- * Format a stored event daytime/duration into a LENEX time-of-day string
- * "HH:MM". Handles the SQLite "2000-01-01 HH:MM:00" sentinel (and ISO strings)
- * and OLE-double fractional-day values. Returns undefined when there's no
- * value. Self-contained (mirrors db.ts formatDaytime) so lenex.ts has no
- * runtime dependency on a non-exported db.ts helper.
- */
-function formatLenexDaytime(d: string | number | null): string | undefined {
-  if (d == null) return undefined
-  const fromFrac = (n: number): string | undefined => {
-    const frac = Math.abs(n) % 1
-    if (frac === 0) return undefined
-    const totalMinutes = Math.round(frac * 24 * 60)
-    const hours = Math.floor(totalMinutes / 60)
-    const minutes = totalMinutes % 60
-    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
-  }
-  if (typeof d === 'number') return fromFrac(d)
-  const str = String(d)
-  const match = str.match(/(\d{2}):(\d{2})/)
-  if (match) return `${match[1]}:${match[2]}`
-  const num = parseFloat(str)
-  if (!isNaN(num)) return fromFrac(num)
-  return undefined
-}
-
-/**
  * Convert a LENEX time-of-day string ("HH:MM" or "HH:MM:SS") to the SQLite
  * sentinel-date form the swimevent.daytime/duration columns use
  * ("2000-01-01 HH:MM:00"), matching updateEvent() in db.ts. Returns null when
@@ -1197,13 +1160,10 @@ function computeAgeDate(db: Database.Database): string {
 function exportMeetValues(
   g: Record<string, string>, meetName: string, meetCity: string, meetNation: string, meetCourse: string,
 ): Record<string, string> {
-  const mv: Record<string, string> = {}
-  for (const line of (g['MEETVALUES'] ?? '').split(/\r?\n/)) {
-    const eq = line.indexOf('=')
-    if (eq <= 0) continue
-    const typed = line.slice(eq + 1)
+  const mv = parseMeetValues(g['MEETVALUES'], { keepType: true })
+  for (const [k, typed] of Object.entries(mv)) {
     const semi = typed.indexOf(';')
-    if (semi >= 0 && typed.slice(semi + 1).trim()) mv[line.slice(0, eq)] = typed
+    if (semi < 0 || !typed.slice(semi + 1).trim()) delete mv[k]
   }
   delete mv['AGEDATE']
   mv['NAME'] = `S;${meetName}`
@@ -1222,17 +1182,7 @@ export function exportLenexResults(filePath: string, db: Database.Database): Exp
   for (const row of globals) g[row.name] = row.data ?? ''
 
   // Parse MEETVALUES (backward-compat fallback for legacy databases)
-  const mv: Record<string, string> = {}
-  if (g['MEETVALUES']) {
-    for (const line of g['MEETVALUES'].split(/\r?\n/)) {
-      const eq = line.indexOf('=')
-      if (eq < 0) continue
-      const key = line.slice(0, eq)
-      const rest = line.slice(eq + 1)
-      const semi = rest.indexOf(';')
-      mv[key] = semi >= 0 ? rest.slice(semi + 1) : rest
-    }
-  }
+  const mv = parseMeetValues(g['MEETVALUES'])
 
   // Canonical source: individual bsglobal keys; fall back to MEETVALUES
   const meetName = g['MeetName'] || mv['NAME'] || 'Meet'
@@ -1429,8 +1379,8 @@ export function exportLenexResults(filePath: string, db: Database.Database): Exp
     for (const ev of sessEvents) {
       const internalAttr = ev.internalevent === 'T' ? ' internalevent="T"' : ''
       const nameAttr = ev.internalevent === 'T' && ev.roundname ? attr('name', ev.roundname) : ''
-      const daytimeAttr = attr('daytime', formatLenexDaytime(ev.daytime))
-      const durationAttr = attr('duration', formatLenexDaytime(ev.duration))
+      const daytimeAttr = attr('daytime', formatDaytime(ev.daytime, { pad: true }))
+      const durationAttr = attr('duration', formatDaytime(ev.duration, { pad: true }))
       lines.push(`            <EVENT${attr('eventid', ev.swimeventid)}${attr('number', ev.eventnumber)}${attr('gender', decodeGender(ev.gender))}${attr('round', decodeRound(ev.round))}${attr('order', ev.sortcode)}${attr('preveventid', ev.preveventid ?? -1)}${daytimeAttr}${durationAttr}${internalAttr}${nameAttr}>`)
 
       // SWIMSTYLE (required by Splash even for pause/break events, hence code="ID0" placeholder)
@@ -1623,17 +1573,7 @@ export function exportMeetLenex(filePath: string, db: Database.Database): MeetEx
   for (const row of globals) g[row.name] = row.data ?? ''
 
   // Parse MEETVALUES (backward-compat fallback for legacy databases)
-  const mv: Record<string, string> = {}
-  if (g['MEETVALUES']) {
-    for (const line of g['MEETVALUES'].split(/\r?\n/)) {
-      const eq = line.indexOf('=')
-      if (eq < 0) continue
-      const key = line.slice(0, eq)
-      const rest = line.slice(eq + 1)
-      const semi = rest.indexOf(';')
-      mv[key] = semi >= 0 ? rest.slice(semi + 1) : rest
-    }
-  }
+  const mv = parseMeetValues(g['MEETVALUES'])
 
   // Canonical source: individual bsglobal keys; fall back to MEETVALUES
   const meetName = g['MeetName'] || mv['NAME'] || 'Meet'
@@ -1702,8 +1642,8 @@ export function exportMeetLenex(filePath: string, db: Database.Database): MeetEx
         attr('preveventid', ev.preveventid ?? -1),
       ]
       if (ev.roundname) evAttrs.push(attr('name', ev.roundname))
-      evAttrs.push(attr('daytime', formatLenexDaytime(ev.daytime)))
-      evAttrs.push(attr('duration', formatLenexDaytime(ev.duration)))
+      evAttrs.push(attr('daytime', formatDaytime(ev.daytime, { pad: true })))
+      evAttrs.push(attr('duration', formatDaytime(ev.duration, { pad: true })))
       if (ev.internalevent === 'T') evAttrs.push(` internalevent="T"`)
       if (ev.masters === 'T') evAttrs.push(` type="MASTERS"`)
       lines.push(`            <EVENT${evAttrs.join('')}>`)

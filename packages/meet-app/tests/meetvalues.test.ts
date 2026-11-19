@@ -16,44 +16,48 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with Sauvetage Sportif. If not, see <https://www.gnu.org/licenses/>.
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createTestDb } from './helpers'
 import type Database from 'better-sqlite3'
 
-// We test the MEETVALUES parser/writer logic directly on SQLite
-// (same logic as db.ts getMeetValues/setMeetValues but without the electron app import)
+// Tests the real MEETVALUES parser/writer from db.ts. connectionManager is
+// mocked (it imports Electron) so getLocalDb() — used by getMeetValues /
+// setMeetValues — hands back the test database.
+const { dbState } = vi.hoisted(() => ({ dbState: { db: null as unknown } }))
+vi.mock('../src/main/connectionManager', () => ({
+  isPgConnected: () => false,
+  getDb: () => dbState.db,
+  closeDb: () => {},
+}))
 
-function getMeetValues(db: Database.Database): Record<string, string> {
-  const row = db.prepare(`SELECT data FROM bsglobal WHERE name='MEETVALUES'`).get() as { data: string | null } | undefined
-  if (!row?.data) return {}
-  const result: Record<string, string> = {}
-  for (const line of row.data.split(/\r?\n/)) {
-    const eq = line.indexOf('=')
-    if (eq < 0) continue
-    const key = line.slice(0, eq)
-    const rest = line.slice(eq + 1)
-    const semi = rest.indexOf(';')
-    result[key] = semi >= 0 ? rest.slice(semi + 1) : rest
-  }
-  return result
-}
+const {
+  parseMeetValues, serializeMeetValues, readMeetValues, readMeetValuesRaw, writeMeetValuesRaw,
+  getMeetValues, setMeetValues,
+} = await import('../src/main/db')
 
-function setMeetValues(db: Database.Database, updates: Record<string, { type: string; value: string }>) {
-  const row = db.prepare(`SELECT data FROM bsglobal WHERE name='MEETVALUES'`).get() as { data: string | null } | undefined
-  const existing: Record<string, string> = {}
-  if (row?.data) {
-    for (const line of row.data.split(/\r?\n/)) {
-      const eq = line.indexOf('=')
-      if (eq < 0) continue
-      existing[line.slice(0, eq)] = line.slice(eq + 1)
-    }
-  }
-  for (const [key, { type, value }] of Object.entries(updates)) {
-    existing[key] = `${type};${value}`
-  }
-  const data = Object.entries(existing).map(([k, v]) => `${k}=${v}`).join('\r\n')
-  db.prepare(`INSERT INTO bsglobal (name, data) VALUES ('MEETVALUES', ?) ON CONFLICT(name) DO UPDATE SET data=excluded.data`).run(data)
-}
+describe('parseMeetValues / serializeMeetValues', () => {
+  it('strips the type prefix by default, keeps it with keepType', () => {
+    const blob = 'NAME=S;Test Meet\r\nCOURSE=I;1\nNOTYPE=plain\r\nbroken line'
+    expect(parseMeetValues(blob)).toEqual({ NAME: 'Test Meet', COURSE: '1', NOTYPE: 'plain' })
+    expect(parseMeetValues(blob, { keepType: true })).toEqual({ NAME: 'S;Test Meet', COURSE: 'I;1', NOTYPE: 'plain' })
+  })
+
+  it('keeps everything after the first ";" and the first "="', () => {
+    expect(parseMeetValues('NOTE=S;a;b=c')).toEqual({ NOTE: 'a;b=c' })
+  })
+
+  it('returns {} for an empty or missing blob', () => {
+    expect(parseMeetValues(null)).toEqual({})
+    expect(parseMeetValues(undefined)).toEqual({})
+    expect(parseMeetValues('')).toEqual({})
+  })
+
+  it('serializes with CRLF and round-trips raw values', () => {
+    const raw = { NAME: 'S;X', COURSE: 'I;3' }
+    expect(serializeMeetValues(raw)).toBe('NAME=S;X\r\nCOURSE=I;3')
+    expect(parseMeetValues(serializeMeetValues(raw), { keepType: true })).toEqual(raw)
+  })
+})
 
 describe('MEETVALUES parser/writer', () => {
   let db: Database.Database
@@ -63,64 +67,82 @@ describe('MEETVALUES parser/writer', () => {
     const t = createTestDb()
     db = t.db
     cleanup = t.cleanup
+    dbState.db = db
   })
 
-  afterEach(() => cleanup())
+  afterEach(() => {
+    dbState.db = null
+    cleanup()
+  })
 
   it('returns empty object when no MEETVALUES exists', () => {
-    expect(getMeetValues(db)).toEqual({})
+    expect(getMeetValues()).toEqual({})
+    expect(readMeetValuesRaw(db)).toEqual({})
   })
 
   it('parses Splash MEETVALUES format correctly', () => {
     db.prepare(`INSERT INTO bsglobal (name, data) VALUES ('MEETVALUES', ?)`).run(
       'NAME=S;Test Meet\r\nCOURSE=I;1\r\nMASTERS=B;T\r\nLANEMIN=I;1\r\nLANEMAX=I;8'
     )
-    const vals = getMeetValues(db)
+    const vals = readMeetValues(db)
     expect(vals.NAME).toBe('Test Meet')
     expect(vals.COURSE).toBe('1')
     expect(vals.MASTERS).toBe('T')
     expect(vals.LANEMIN).toBe('1')
     expect(vals.LANEMAX).toBe('8')
+    expect(getMeetValues()).toEqual(vals)
   })
 
   it('handles empty values', () => {
     db.prepare(`INSERT INTO bsglobal (name, data) VALUES ('MEETVALUES', ?)`).run(
       'NAME=S;\r\nCITY=S;'
     )
-    const vals = getMeetValues(db)
+    const vals = getMeetValues()
     expect(vals.NAME).toBe('')
     expect(vals.CITY).toBe('')
   })
 
   it('writes new values correctly', () => {
-    setMeetValues(db, {
+    setMeetValues({
       NAME: { type: 'S', value: 'New Meet' },
       COURSE: { type: 'I', value: '3' },
     })
-    const vals = getMeetValues(db)
+    const vals = getMeetValues()
     expect(vals.NAME).toBe('New Meet')
     expect(vals.COURSE).toBe('3')
+    // first-class keys are synced too
+    const meetName = db.prepare(`SELECT data FROM bsglobal WHERE name='MeetName'`).get() as { data: string }
+    expect(meetName.data).toBe('New Meet')
   })
 
   it('preserves existing values when updating', () => {
     db.prepare(`INSERT INTO bsglobal (name, data) VALUES ('MEETVALUES', ?)`).run(
       'NAME=S;Original\r\nCITY=S;Montreal'
     )
-    setMeetValues(db, { COURSE: { type: 'I', value: '1' } })
-    const vals = getMeetValues(db)
+    setMeetValues({ COURSE: { type: 'I', value: '1' } })
+    const vals = getMeetValues()
     expect(vals.NAME).toBe('Original')
     expect(vals.CITY).toBe('Montreal')
     expect(vals.COURSE).toBe('1')
+    expect(readMeetValuesRaw(db)).toEqual({ NAME: 'S;Original', CITY: 'S;Montreal', COURSE: 'I;1' })
   })
 
   it('overwrites existing values', () => {
     db.prepare(`INSERT INTO bsglobal (name, data) VALUES ('MEETVALUES', ?)`).run(
       'NAME=S;Old Name'
     )
-    setMeetValues(db, { NAME: { type: 'S', value: 'New Name' } })
-    expect(getMeetValues(db).NAME).toBe('New Name')
+    setMeetValues({ NAME: { type: 'S', value: 'New Name' } })
+    expect(getMeetValues().NAME).toBe('New Name')
+  })
+
+  it('writeMeetValuesRaw replaces the whole blob', () => {
+    db.prepare(`INSERT INTO bsglobal (name, data) VALUES ('MEETVALUES', ?)`).run('NAME=S;Old')
+    writeMeetValuesRaw(db, { CITY: 'S;Gatineau' })
+    const row = db.prepare(`SELECT data FROM bsglobal WHERE name='MEETVALUES'`).get() as { data: string }
+    expect(row.data).toBe('CITY=S;Gatineau')
   })
 })
+
 describe('setMeetValues (real) — pool length', () => {
   let db: Database.Database
   let cleanup: () => void

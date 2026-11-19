@@ -256,7 +256,7 @@ Web app for team registration before the competition.
 Clubs are billed for registrations in one of two ways, chosen per event by cost and scale:
 
 **Tier 1 — PDF invoice + Interac e-Transfer (default for most events).**
-The organizer downloads a PDF invoice per club (`/api/clubs/{id}/invoice-pdf`, or in bulk as a ZIP from `/api/invoices/pdf-zip`), or has the platform email it (**Send PDF** → `/api/clubs/{id}/send-invoice-email`, via Resend): an HTML invoice with the PDF attached and Interac instructions — pay to the organizer club's email, invoice number in the memo, Reply-To the organizer. After a batch, the organizer gets one summary email (`/api/invoices/notify-organizer`); when the admin sends, the contact/Reply-To and the summary use `SUPPORT_EMAIL` instead. Payment goes to the organizer's email — or to `SUPPORT_EMAIL` when the meet has no organizer (the admin acts as organizer). Invoice numbers are deterministic — `YEAR-MEET-CLUB`, with an `-R2`, `-R3`… suffix when a club's total changes after a send — and shared by the PDF, the email and Stripe. Clubs pay by e-Transfer settled outside the app. **No Stripe account, no onboarding, near-zero fees.** This is the right fit for the smaller Québec events, where the ~3% card cost and Stripe's mandatory KYC onboarding (business URL, phone, bank account, identity) aren't worth it.
+The organizer downloads the selected clubs' PDF invoices as a ZIP (`/api/invoices/pdf-zip`), or has the platform email it (**Send PDF** → `/api/clubs/{id}/send-invoice-email`, via Resend): an HTML invoice with the PDF attached and Interac instructions — pay to the organizer club's email, invoice number in the memo, Reply-To the organizer. After a batch, the organizer gets one summary email (`/api/invoices/notify-organizer`); when the admin sends, the contact/Reply-To and the summary use `SUPPORT_EMAIL` instead. Payment goes to the organizer's email — or to `SUPPORT_EMAIL` when the meet has no organizer (the admin acts as organizer). Invoice numbers are deterministic — `YEAR-MEET-CLUB`, with an `-R2`, `-R3`… suffix when a club's total changes after a send — and shared by the PDF, the email and Stripe. Clubs pay by e-Transfer settled outside the app. **No Stripe account, no onboarding, near-zero fees.** This is the right fit for the smaller Québec events, where the ~3% card cost and Stripe's mandatory KYC onboarding (business URL, phone, bank account, identity) aren't worth it.
 
 **Tier 2 — Stripe card payments (reserved for the national event).**
 Used only for the yearly Canadian championship managed by the Société de sauvetage (~350 athletes, ~20 clubs). Invoices are issued and paid by credit card through Stripe.
@@ -410,7 +410,7 @@ In beach competitions, athletes wear numbered jerseys/bibs instead of being iden
 
 **Properties:** Deterministic (same input → same output), unique, idempotent (re-running produces identical results), stable (late arrivals don't change existing numbers).
 
-**Display:** Shown on HeatsPage, AthletesPage (read-only column), and in the "Identifiants plage" PDF report.
+**Display:** Shown on HeatsPage and in the "Identifiants plage" PDF report.
 
 **Implementation:** `packages/meet-app/src/main/beachNumber.ts` (`generateBeachNumbers`, `assignLateBeachNumber`)
 

@@ -1594,7 +1594,7 @@ function AgeGroupPropertiesPanel({ group, event, sessions, onMoveAgeGroup }: { g
   }
 
   const gLabel = t.events.genderLabel(event.gender)
-  const headerTitle = `${t.events.props.general} - ${event.number}. ${gLabel}, ${event.nameFr} / ${event.nameEn}, ${t.events.phaseLabel(event.phase)}`
+  const headerTitle = `${t.events.props.general} - ${event.number}. ${gLabel}, ${event.nameFr}, ${t.events.phaseLabel(event.phase)}`
 
   function SectionHeader({ title }: { title: string }) {
     const isCollapsed = collapsed.has(title)
@@ -1885,7 +1885,7 @@ function EventPropertiesPanel({ event, onUpdate }: { event: CompetitionEvent; on
   const encodeGender = (v: string) => (v === 'ALL' ? 0 : v === 'M' ? 1 : v === 'F' ? 2 : 3)
 
   const gLabel = t.events.genderLabel(event.gender)
-  const headerTitle = `${event.number}. ${gLabel}, ${event.nameFr} / ${event.nameEn}`
+  const headerTitle = `${event.number}. ${gLabel}, ${event.nameFr}`
 
   return (
     <div className="text-xs">

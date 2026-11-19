@@ -32,28 +32,15 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import BsGlobal
 from ..models_live import PushSubscription
 from ..models_team import TeamClub
+from ..meet_config import _get_config, _set_config
 
 router = APIRouter(prefix="/api/live")
 _log = logging.getLogger(__name__)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-
-def _get_config(db: Session, key: str) -> str | None:
-    cfg = db.get(BsGlobal, key)
-    return cfg.data if cfg else None
-
-
-def _set_config(db: Session, key: str, value: str):
-    cfg = db.get(BsGlobal, key)
-    if cfg:
-        cfg.data = value
-    else:
-        db.add(BsGlobal(name=key, data=value))
-
 
 def _get_or_create_vapid_keys(db: Session) -> tuple[str, str]:
     """Return (public_key, private_key) as URL-safe base64. Generate if not yet stored."""

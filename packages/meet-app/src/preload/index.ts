@@ -41,11 +41,6 @@ const api = {
       ipcRenderer.on('menu:restore-smb', cb)
       return () => { ipcRenderer.removeListener('menu:restore-smb', cb) }
     },
-    onNewMeet: (cb: (meetType: string) => void) => {
-      const handler = (_e: unknown, meetType: string) => cb(meetType)
-      ipcRenderer.on('menu:new-meet', handler)
-      return () => { ipcRenderer.removeListener('menu:new-meet', handler) }
-    },
     onConfigureGemini: (cb: () => void) => {
       ipcRenderer.on('menu:configure-gemini', cb)
       return () => { ipcRenderer.removeListener('menu:configure-gemini', cb) }
@@ -67,14 +62,10 @@ const api = {
       ipcRenderer.on('quantum:connected', (_e, v) => cb(v)),
     onResult: (cb: (result: unknown) => void) =>
       ipcRenderer.on('quantum:result', (_e, r) => cb(r)),
-    onHeatStatus: (cb: (status: unknown) => void) =>
-      ipcRenderer.on('quantum:heat-status', (_e, s) => cb(s)),
     removeAllListeners: (channel: string) =>
       ipcRenderer.removeAllListeners(channel),
   },
   db: {
-    getHeatListEvents: () =>
-      ipcRenderer.invoke('db:heat-list-events'),
     getHeatListSessions: () =>
       ipcRenderer.invoke('db:heat-list-sessions'),
     getSessions: () =>
@@ -142,12 +133,6 @@ const api = {
       ipcRenderer.invoke('db:register', data),
     unregister: (athleteId: number, eventId: number) =>
       ipcRenderer.invoke('db:unregister', athleteId, eventId),
-    getRelayMembers: (relayId: number) =>
-      ipcRenderer.invoke('db:get-relay-members', relayId),
-    getRelayMembersByEvent: (eventId: number, athleteId: number) =>
-      ipcRenderer.invoke('db:get-relay-members-by-event', eventId, athleteId),
-    setRelayMember: (eventId: number, athleteId: number, position: number, memberAthleteId: number | null) =>
-      ipcRenderer.invoke('db:set-relay-member', eventId, athleteId, position, memberAthleteId),
     // Relay team management (new team-centric API)
     getClubsReal: () =>
       ipcRenderer.invoke('db:get-clubs'),
@@ -266,10 +251,6 @@ const api = {
       eventNumber: number; swimEventId: number; heatNumber: number; lane: number;
       barcodeRaw: string; imageBase64: string
     }) => ipcRenderer.invoke('timing:save-scan', data),
-    getUnprocessed: () =>
-      ipcRenderer.invoke('timing:get-unprocessed'),
-    getScansForHeat: (swimEventId: number, heatNumber: number) =>
-      ipcRenderer.invoke('timing:get-scans-for-heat', swimEventId, heatNumber),
     getScanSummary: () =>
       ipcRenderer.invoke('timing:get-scan-summary'),
     getScansForProcessing: (filter: string) =>
@@ -280,14 +261,10 @@ const api = {
       ipcRenderer.invoke('timing:validate-scan', scanId, time1, timeMs1, time2, timeMs2),
     markError: (scanId: number, notes: string) =>
       ipcRenderer.invoke('timing:mark-error', scanId, notes),
-    commitHeatResults: (swimEventId: number, heatNumber: number) =>
-      ipcRenderer.invoke('timing:commit-heat-results', swimEventId, heatNumber),
     generateSheets: (sessionId: number) =>
       ipcRenderer.invoke('timing:generate-sheets', sessionId),
     generatePositionSheets: (sessionId: number) =>
       ipcRenderer.invoke('timing:generate-position-sheets', sessionId),
-    saveDebugImage: (imageBase64: string) =>
-      ipcRenderer.invoke('timing:save-debug-image', imageBase64),
     getGeminiKey: () =>
       ipcRenderer.invoke('timing:get-gemini-key'),
     setGeminiKey: (freeKey: string | null, paidKey: string | null) =>
@@ -331,8 +308,6 @@ const api = {
   live: {
     getStatus: () =>
       ipcRenderer.invoke('live:get-status'),
-    pushAll: () =>
-      ipcRenderer.invoke('live:push-all'),
     announce: (payload: { type: 'call_to_marshall' | 'call_to_scratch'; event_id: number; event_number: number; event_name: string; gender: string }) =>
       ipcRenderer.invoke('live:announce', payload),
   },

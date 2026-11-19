@@ -248,11 +248,6 @@ export function saveGeminiKeys(freeKey: string, paidKey: string): void {
   }
 }
 
-/** Legacy: also check the old file-based config */
-export function saveGeminiApiKey(apiKey: string): void {
-  saveGeminiKeys(apiKey, cachedPaidKey)
-}
-
 function refreshKeysFromDb(): void {
   try {
     const db = getLocalDb()

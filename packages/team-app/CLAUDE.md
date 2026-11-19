@@ -193,13 +193,10 @@ Coach best times are written only at meet close, never on registration:
 | `POST /api/upload/meet` | Upload meet .lxf (event structure) | Organizer/Admin |
 | `POST /api/upload/entries` | Upload entries/results .lxf (clubs + athletes + best times) | Admin |
 | `POST /api/admin/new-meet` | Create new meet from template (pool/beach) | Organizer/Admin |
-| `GET /api/export` | Export registrations as .lxf bundle (.zip) | Admin |
-| `GET /api/export/entries` | Export entries .lxf (clubs + athletes + best times) | Admin |
 | `GET /api/export/registrations-lxf` | Export registrations .lxf (for meet-app import) | Organizer/Admin |
 | `GET /api/print/entries?lang=fr&section=all\|individual\|relays` | Printable HTML of individual and/or relay entries, grouped by club (one page per club) — "Print Entries" button on the Invitation page (all) and the Individual / Relay entries pages (own section). Admin/organizer: every club; coach: own club only | Authenticated |
 | `PUT /api/sessions/{id}` | Update session fields (name, date, times, lanes) | Organizer/Admin |
 | `PUT /api/closure-date` | Set registration deadline (syncs to MEETVALUES DEADLINE) | Organizer/Admin |
-| `GET /api/admin/backup-db` | Download consistent SQLite snapshot (.db) | Admin |
 | `POST /api/admin/restore-db` | Restore database from .db backup | Admin |
 | `GET /api/admin/backup-config` | Get auto-backup config (interval + retention) | Admin |
 | `PUT /api/admin/backup-config` | Update auto-backup config | Admin |
@@ -211,7 +208,6 @@ Coach best times are written only at meet close, never on registration:
 | `DELETE /api/admin/historical-meets/{id}` | Delete a historical meet | Admin |
 | `POST /api/import-results-lxf` | Import results .lxf as historical meet; organizer path also resets current meet + PINs + clears organizer. Guards (before any write): 400 `not_results_file` if no RESULT has a time/status; 400 `beach_results_not_archived` if the file uses any beach style (also on `admin/import-historical`; close a beach meet with `admin/close-meet-without-results`); 409 `meet_mismatch` (override `?force_meet=true`, separate from `?force`) if the file's meet name or event ids don't match the open meet being closed — see `lxf_to_team.py` | Organizer/Admin |
 | `GET /api/athletes` | Athlete list | Any authenticated |
-| `GET /api/clubs/{id}/invoice-pdf` | One club's invoice PDF | Organizer/Admin |
 | `POST /api/invoices/pdf-zip` | ZIP of invoice PDFs (`{club_ids}`) | Organizer/Admin |
 | `POST /api/clubs/{id}/invoice` | Send Stripe invoice | Organizer/Admin |
 | `POST /api/clubs/{id}/send-invoice-email` | Email invoice (HTML + PDF, Interac instructions, Reply-To organizer) | Organizer/Admin |
@@ -223,7 +219,7 @@ Coach best times are written only at meet close, never on registration:
 | `DELETE /api/relay-teams/{id}` | Delete relay team | Authenticated |
 | `PUT /api/relay-teams/{id}/members/{pos}` | Assign/remove member at position | Authenticated |
 | `PUT /api/relay-teams/{id}/name` | Set custom team name | Authenticated |
-| `PUT /api/relay-teams/{id}/entry-time` | Set/clear pool relay entry time `{entryTimeMs}` — 400 on beach/SERC, 400 on a virtual (legacy-lock) team | Authenticated (own club) |
+| `PUT /api/relay-teams/{id}/entry-time` | Set/clear pool relay entry time `{entryTimeMs}` — 400 on beach/SERC | Authenticated (own club) |
 | `PUT /api/relay-teams/{id}/hc` | Set/clear HC `{isHC}` (`relays.resultstatus=4`) | Authenticated (own club) |
 | `GET/POST /api/serc/config` | SERC configuration (victims, factors, bystander) | Organizer/Admin |
 | `GET /api/serc/teams` | SERC relay teams (swimstyle 530) | Organizer/Admin |
@@ -269,11 +265,12 @@ backend/app/
   routers/serc.py       — SERC API (config, teams, scores, draw order, results)
   routers/serc_print.py — SERC printable judge sheets (bilingual, one page per team per section)
   events.py             — LENEX meet structure parser
-  best_times_v2.py      — Best times computed from Team Manager results table
+  best_times.py         — Best times: one resolver over archived results + coach-entered times (see "Best times storage")
   export.py             — LENEX export (registrations + Gemini key transport; session names + pause events included; SERC events/relays excluded — meet-app has no notion of them)
-  export_entries.py     — LENEX export (all clubs + athletes + best times)
   invoices.py           — Invoice line items, deterministic invoice numbers (YEAR-MEET-CLUB[-Rn]), PDF renderer
   emailing.py           — Resend transport, shared email footer, invoice + organizer-summary email templates
+  age_codes.py          — Age-group bounds <-> category codes (age_group_code strict / relay_age_code lenient, age_code_to_range)
+  lxf_io.py             — Reading uploaded .lxf zips: read_lef_xml (the .lef, parsed with defusedxml — used by every LXF import), read_lxf_entry (another entry, e.g. the hidden .meetvalues)
   seed.py               — Entries .lxf parser (clubs/athletes/HANDICAP into members table)
   lxf_to_team.py        — THE results importer (archive_results_lxf: results .lxf → historical meet, merges clubs/members/HANDICAP, replaces a same name + date archive) + pre-import guards; import_lxf_as_meet = Organizer/Admin "Import results" entry point
   historical_import.py  — Admin "Import historical" entry point: thin wrapper over archive_results_lxf (open-meet warning, confirm before replacing)
@@ -313,6 +310,8 @@ Full data flow between meet-app and team-app:
 
 **Next-meet stub:** when the closed (or deleted) meet was the last open one, `_reload_pool_template` creates the next meet from the pool template with the same meet config as "New meet" (`_init_meet_from_template`: meet_course, filename, masters, currency, fees, AGEDATE, COMBINEAGEGROUPS). It used to get only AGEDATE — no `meet_course` — which hid every relay entry-time suggestion in the next meet.
 
+**MEETVALUES blob** (meet-scoped `meet_config` row, Splash `KEY=TYPE;VALUE` CRLF lines): read and write it only through `meet_config.parse_meetvalues` / `serialize_meetvalues` / `read_meetvalues` / `write_meetvalues` (`keep_type=True` = raw `TYPE;VALUE`, else the prefix is stripped), or `_update_meetvalue` for one key — never hand-split the blob. Team-app twin of meet-app's `parseMeetValues`/`serializeMeetValues` (`db.ts`).
+
 **Meet course (pool length):** stored in three places that must agree — `meet_config.meet_course` (LENEX string, canonical), `meets.course` and MEETVALUES `COURSE` (Splash ints 1=LCM, 2=SCY, 3=SCM). Write it only with `meet_config._set_meet_course`, read it only with `_get_meet_course` (never None: a meet with no stored course is LCM, what the meet editor shows). New sessions take the meet's course. **Changing the course in the meet editor** (`set_meet_config` COURSE) moves the meet's sessions to it and recomputes every relay entry time still following the suggestion for the new course (`best_times.refresh_relay_entry_times_for_course`; typed times kept) — an organizer who fixes the pool length late rebuilds nothing. `best_times.suggest_relay_entry_time` is the Python copy of shared-ui's `suggestRelayEntryTime` (same half-up rounding) — keep them in step.
 
 **Meet editor fields in LXF:** every field of the meet editor travels in both directions, mapped by `config/lenex-meet-fields.json` (see `config/CLAUDE.md`): standard LENEX the way Splash writes it (MEET attributes, POOL, FACILITY, QUALIFY, CONTACT, FEES) and the hidden `.meetvalues` entry for the seeding/heat settings. Both exports write it (`export._add_meet_element`, closure date → `deadline`, `meet_currency` on FEEs); a structure upload applies the file's fields and takes its deadline as the closure date; a meet created from a template takes the template's fields (not its deadline) as defaults.
@@ -342,7 +341,6 @@ combined-events implementation of its own, and doesn't need one.
 Dedicated backup/restore section in the Admin page (replaces the old Data Management page backup).
 
 **Manual backup/restore:**
-- `GET /api/admin/backup-db` — download consistent SQLite snapshot (.db, WAL-safe backup API)
 - `POST /api/admin/restore-db` — restore from .db backup (wipes all data)
 - `POST /api/admin/backups/create` — create a named backup stored server-side
 

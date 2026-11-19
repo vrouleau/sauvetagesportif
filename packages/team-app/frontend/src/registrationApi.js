@@ -92,14 +92,6 @@ export const registrationApiHttp = {
     return r.data
   },
 
-  async getAllAthletes() {
-    const cached = cacheGet('athletes-all')
-    if (cached) return cached
-    const r = await api.get('/athletes')
-    cacheSet('athletes-all', r.data)
-    return r.data
-  },
-
   async getAllAthletesGrouped() {
     const cached = cacheGet('athletes-grouped')
     if (cached) return cached

@@ -219,7 +219,7 @@ a follow-up. Relay EXH is implemented only in meet-app: at time-entry
 and at registration (`RelayEntryPage`, via an **optional**
 `RegistrationAPI.setRelayTeamHC` method that team-app's adapter simply
 doesn't implement, hiding the checkbox there — same pattern as the existing
-`setRelayMember?`/`resetClubPin?` optional methods).
+`resetClubPin?` optional method).
 
 **Late-entry flow, confirmed to need no extra work.** Individual late
 entries (`HeatsPage`'s "Ajouter inscription tardive" dialog → `addLateEntry`)

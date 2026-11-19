@@ -261,7 +261,7 @@ Athletes in beach meets get a unique jersey/bib number stored in `athlete.namepr
 
 **Properties:** deterministic, unique, idempotent, stable (late arrivals don't change existing numbers).
 
-**Display:** HeatsPage, AthletesPage (read-only), "Identifiants plage" PDF report.
+**Display:** HeatsPage, "Identifiants plage" PDF report.
 
 ### Meet type flag
 - Stored in `bsglobal` as `MEET_TYPE` (`POOL` or `BEACH`, default `POOL` if missing)

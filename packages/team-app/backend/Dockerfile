@@ -3,7 +3,6 @@ WORKDIR /app
 COPY packages/team-app/backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY packages/team-app/backend/app ./app
-COPY packages/team-app/backend/scripts ./scripts
 COPY packages/team-app/backend/docker-entrypoint.sh .
 COPY config/combined-events-config.json .
 COPY config/point-scores-config.json .

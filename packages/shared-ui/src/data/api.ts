@@ -202,8 +202,6 @@ export interface RelayTeam {
   hc?: boolean
   /** Team entry (seed) time in ms, null = NT. Pool relays only — beach relays are ranked. */
   entryTimeMs?: number | null
-  /** Legacy swimresult relay lock not yet materialized into a real team (team-app, negative id). */
-  isVirtual?: boolean
 }
 
 export interface RelayEventGroup {
@@ -239,7 +237,7 @@ export interface EligibleAthlete {
   ageGroup?: string        // Registration age code (e.g., "15-18", "19+") from individual entries
 }
 
-// ─── Registration API (used by AthletesListPage & RegistrationPage) ───────────
+// ─── Registration API (used by IndividualEntryPage and its panels) ────────────
 
 export interface Club {
   id: number
@@ -285,8 +283,6 @@ export interface RegistrationStyle {
    *  course — shown as a single box instead of BT 50 / BT 25 (team-app). */
   course_free?: boolean
   relay_count?: number
-  locked_by_name?: string
-  relay_members?: Array<{ position: number; athleteId: number | null }>
   categories: RegistrationCategory[]
 }
 
@@ -303,7 +299,6 @@ export interface RegistrationData {
   }
   individual_events: RegistrationStyle[]
   relay_events: RegistrationStyle[]
-  club_athletes: Array<{ id: number; name: string }>
   suggested_age_code: string
   meet_course: string
   meet_type?: string
@@ -317,7 +312,6 @@ export interface RegistrationData {
 export interface RegistrationAPI {
   getClubs(): Promise<Club[]>
   getAthletesByClub(clubId: string): Promise<AthleteListItem[]>
-  getAllAthletes(): Promise<AthleteListItem[]>
   /** Bulk fetch: returns all athletes keyed by club ID. Avoids N+1 requests. */
   getAllAthletesGrouped?(): Promise<Record<string, AthleteListItem[]>>
   addAthlete(data: { first_name: string; last_name: string; gender: string; birthdate: string | null; license: string; club_id: number }): Promise<void>
@@ -326,7 +320,6 @@ export interface RegistrationAPI {
   updateAthlete(athleteId: number, data: Record<string, unknown>): Promise<void>
   register(data: { athlete_id: number; event_id: number; entry_time_ms: number | null; age_code: string; is_hc?: boolean }): Promise<void>
   unregister(registrationId: number): Promise<void>
-  setRelayMember?(eventId: number, position: number, athleteId: number | null): Promise<void>
   resetClubPin?(clubId: string): Promise<{ pin: string }>
 
   // Relay team management

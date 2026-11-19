@@ -21,7 +21,7 @@ import { useState } from 'react'
 /**
  * Editable entry-time text field ("m:ss.cc"). Validates and normalizes on
  * blur; accepts either an already-formatted time or raw digits (e.g. "13245"
- * → "1:32.45"). Shared by RegistrationPanel and RegistrationPage — both offer
+ * → "1:32.45"). Used by RegistrationPanel and RelayEntryPage — both offer
  * the same free-text entry-time editing UX.
  */
 export default function TimeInput({ defaultValue, onSave, disabled, title }: { defaultValue: string; onSave: (v: string) => void; disabled?: boolean; title?: string }) {

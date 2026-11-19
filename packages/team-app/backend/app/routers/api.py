@@ -33,6 +33,7 @@ from sqlalchemy.exc import IntegrityError
 from collections import defaultdict
 import time as _time
 
+from ..age_codes import age_group_code, relay_age_code, age_code_to_range
 from ..age_group_rules import resolve_matching_age
 from ..database import get_db
 from pydantic import BaseModel, Field, field_validator
@@ -40,10 +41,11 @@ from ..models import (
     SwimEvent, SwimStyle, SwimSession, AgeGroup, SwimResult, BsGlobal, SecretLink,
     Heat, Split,
     gender_to_str, gender_from_str, fee_dollars_to_cents, fee_cents_to_dollars,
-    GENDER_ALL, GENDER_M, GENDER_F, GENDER_MIXED, ROUND_FIN, ROUND_TIM, ROUND_PRE,
+    GENDER_M, GENDER_F, GENDER_MIXED, LENEX_GENDER, ROUND_FIN, ROUND_TIM, ROUND_PRE,
 )
 from ..models_team import TeamClub, Member, Meet as TeamMeet
 from ..meet_config import (
+    _get_config, _set_config, read_meetvalues, write_meetvalues,
     get_active_meetsid, resolve_meetsid, _get_meet_config, _set_meet_config,
     _get_meet_type, _set_meet_type, _update_meetvalue,
     _get_meet_course, _set_meet_course, COURSE_TO_INT, INT_TO_COURSE,
@@ -58,7 +60,6 @@ from ..best_times import (
     get_relay_best_times, coach_best_time_date,
 )
 from ..export import generate_lxf
-from ..export_entries import generate_entries_lxf
 
 router = APIRouter(prefix="/api")
 _audit = logging.getLogger("audit")
@@ -190,38 +191,11 @@ class PinChange(BaseModel):
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _get_config(db: Session, key: str) -> str | None:
-    cfg = db.get(BsGlobal, key)
-    return cfg.data if cfg else None
-
-
-def _set_config(db: Session, key: str, value: str):
-    cfg = db.get(BsGlobal, key)
-    if cfg:
-        cfg.data = value
-    else:
-        db.add(BsGlobal(name=key, data=value))
-
-
 def _get_admin_pin(db: Session) -> str:
     return _get_config(db, "admin_pin") or _DEFAULT_ADMIN_PIN
 
 
 _AGE_CODE_ORDER = ("10-", "11-12", "13-14", "15-18", "Open", "Masters")
-
-
-def _age_group_code(age_min: int, age_max: int) -> str | None:
-    if age_min <= 10 and age_max == 10:
-        return "10-"
-    if age_min == 11 and age_max == 12:
-        return "11-12"
-    if age_min == 13 and age_max == 14:
-        return "13-14"
-    if age_min == 15 and age_max == 18:
-        return "15-18"
-    if age_min == 19 and (age_max == -1 or age_max >= 99):
-        return "Open"
-    return None
 
 
 def _age_code_allowed_on_team(candidate_code: str, native_code: str) -> bool:
@@ -279,7 +253,7 @@ def _get_event_native_age_code(db: Session, stylesid: int, eventnumb: int | None
     rows = db.query(AgeGroup.agemin, AgeGroup.agemax).filter(
         AgeGroup.meetsid == meetsid, AgeGroup.swimeventid == event.swimeventid
     ).distinct().all()
-    codes = {_age_group_code(r.agemin, r.agemax) for r in rows}
+    codes = {age_group_code(r.agemin, r.agemax) for r in rows}
     codes.discard(None)
     return next(iter(codes)) if len(codes) == 1 else None
 
@@ -341,7 +315,7 @@ def _resolve_athlete_age_codes(db: Session, athlete_ids: list[int], meetsid: int
             .all()
         )
         for row in ag_counts:
-            result.setdefault(row.athleteid, _relay_age_code(row.agemin, row.agemax))
+            result.setdefault(row.athleteid, relay_age_code(row.agemin, row.agemax))
     return result
 
 
@@ -704,10 +678,10 @@ def _init_meet_from_template(db: Session, meetsid: int, meet, filename: str) -> 
 
     # MEETVALUES: replace AGEDATE (other lines a reset meet already had are
     # kept), then name and course — the shared meet editor reads them there.
-    mv_data = _get_meet_config(db, meetsid, "MEETVALUES") or ""
-    lines = [l for l in mv_data.split("\r\n") if l and not l.startswith("AGEDATE=")]
-    lines.append(f"AGEDATE=D;{year}1231000000000")
-    _set_meet_config(db, meetsid, "MEETVALUES", "\r\n".join(lines))
+    mv = read_meetvalues(db, meetsid, keep_type=True)
+    mv.pop("AGEDATE", None)
+    mv["AGEDATE"] = f"D;{year}1231000000000"
+    write_meetvalues(db, meetsid, mv)
     # The template's own meet editor fields (state, nation, timing, touchpads,
     # start method, reserves…) are the new meet's defaults — not its deadline,
     # which is the template's stale one.
@@ -950,20 +924,7 @@ def get_meet_config(request: Request, db: Session = Depends(get_db)):
     any stale values in the MEETVALUES blob.
     """
     meetsid = resolve_meetsid(request, db)
-    data_str = _get_meet_config(db, meetsid, "MEETVALUES") if meetsid else None
-    result: dict[str, str] = {}
-    if data_str:
-        for line in data_str.split("\r\n"):
-            if not line:
-                continue
-            eq = line.find("=")
-            if eq < 0:
-                continue
-            key = line[:eq]
-            rest = line[eq + 1:]
-            # Strip type prefix (I;, S;, B;, D;, F;)
-            semi = rest.find(";")
-            result[key] = rest[semi + 1:] if semi >= 0 else rest
+    result = read_meetvalues(db, meetsid)
     # Individual meet_config keys are canonical — override MEETVALUES
     name = _get_meet_config(db, meetsid, "meet_name") if meetsid else None
     if name:
@@ -977,17 +938,7 @@ def get_meet_config(request: Request, db: Session = Depends(get_db)):
 def set_meet_config(entries: dict, request: Request, db: Session = Depends(get_db)):
     """Update MEETVALUES-style config. Body: {KEY: {type, value}}."""
     meetsid = resolve_meetsid(request, db)
-    # Read existing MEETVALUES
-    data_str = _get_meet_config(db, meetsid, "MEETVALUES") if meetsid else None
-    existing: dict[str, str] = {}
-    if data_str:
-        for line in data_str.split("\r\n"):
-            if not line:
-                continue
-            eq = line.find("=")
-            if eq < 0:
-                continue
-            existing[line[:eq]] = line[eq + 1:]
+    existing = read_meetvalues(db, meetsid, keep_type=True)
     # Apply updates
     for key, entry in entries.items():
         type_code = entry.get("type", "S") if isinstance(entry, dict) else "S"
@@ -1042,10 +993,7 @@ def set_meet_config(entries: dict, request: Request, db: Session = Depends(get_d
                 _set_config(db, "age_base_date", f"{raw[:4]}-{raw[4:6]}-{raw[6:8]}")
         elif key == "AGEDATE" and not value:
             _set_config(db, "age_base_date", "")
-    # Serialize back
-    data = "\r\n".join(f"{k}={v}" for k, v in existing.items())
-    if meetsid:
-        _set_meet_config(db, meetsid, "MEETVALUES", data)
+    write_meetvalues(db, meetsid, existing)
     db.commit()
     return {"ok": True}
 
@@ -1854,7 +1802,7 @@ def create_event(request: Request, data: dict = Body(default={}), db: Session = 
 
     number = data.get("number", 1)
     gender_str = data.get("gender", "X")
-    gender_int = {"ALL": GENDER_ALL, "M": GENDER_M, "F": GENDER_F, "MIXED": GENDER_MIXED, "X": GENDER_MIXED}.get(gender_str, GENDER_MIXED)
+    gender_int = LENEX_GENDER.get(gender_str, GENDER_MIXED)
     phase = data.get("phase", "Finale directe")
     round_int = {"Eliminatoire": 1, "Finale": 4, "Finale directe": 5}.get(phase, 5)
 
@@ -2027,7 +1975,7 @@ def update_event(event_id: int, request: Request, data: dict = Body(default={}),
             val = data[key]
             # Convert gender string to int if needed
             if key == "gender" and isinstance(val, str):
-                val = {"ALL": GENDER_ALL, "M": GENDER_M, "F": GENDER_F, "MIXED": GENDER_MIXED, "X": GENDER_MIXED}.get(val, GENDER_MIXED)
+                val = LENEX_GENDER.get(val, GENDER_MIXED)
             elif key in ("daytime", "duration"):
                 val = _parse_event_time(val)
             setattr(event, col, val)
@@ -2071,7 +2019,7 @@ def create_age_group(request: Request, data: dict = Body(default={}), db: Sessio
     min_age = data.get("minAge", 0)
     max_age = data.get("maxAge")
     gender_str = data.get("gender", "X")
-    gender_int = {"ALL": GENDER_ALL, "M": GENDER_M, "F": GENDER_F, "MIXED": GENDER_MIXED, "X": GENDER_MIXED}.get(gender_str, GENDER_MIXED)
+    gender_int = LENEX_GENDER.get(gender_str, GENDER_MIXED)
 
     max_sort = db.query(func.max(AgeGroup.sortcode)).filter(
         AgeGroup.meetsid == meetsid, AgeGroup.swimeventid == event_id
@@ -2146,10 +2094,10 @@ def move_age_group(agegroup_id: int, request: Request, data: dict = Body(default
     # Registrations in this schema aren't linked via agegroupid (that column is
     # only populated by historical/LXF imports) — the live coach-registration
     # flow stamps swimresult.age_code with an event-independent string code
-    # ("15-18", "Open", etc. — see _age_group_code) instead. Match on that
+    # ("15-18", "Open", etc. — see age_codes.age_group_code) instead. Match on that
     # (plus the athlete's gender, in case one event hosts the same age
     # bracket for two genders) to find the entries that actually belong here.
-    age_code = _age_group_code(ag.agemin, ag.agemax)
+    age_code = age_group_code(ag.agemin, ag.agemax)
     if age_code is None:
         raise HTTPException(400, "Cannot determine the age code for this age group")
 
@@ -2272,7 +2220,7 @@ def get_registration(athlete_id: int, request: Request, db: Session = Depends(ge
         else:
             event_codes = []
             for ag in ev.agegroups:
-                code = _age_group_code(ag.agemin, ag.agemax)
+                code = age_group_code(ag.agemin, ag.agemax)
                 if code and code not in event_codes:
                     event_codes.append(code)
         if not event_codes:
@@ -2318,35 +2266,6 @@ def get_registration(athlete_id: int, request: Request, db: Session = Depends(ge
             s[f"best_time_{course_key}_source"] = bt.get("source")
         s["course_free"] = s["style_uid"] in course_free
 
-    # Relay locks
-    relay_uids = [s["style_uid"] for s in relay_events]
-    locked_by: dict[int, str] = {}
-    if relay_uids:
-        other_relay_regs = (
-            db.query(Member, SwimEvent)
-            .join(SwimResult, SwimResult.athleteid == Member.membersid)
-            .join(SwimEvent, (SwimResult.swimeventid == SwimEvent.swimeventid) & (SwimResult.meetsid == SwimEvent.meetsid))
-            .join(SwimStyle, SwimEvent.swimstyleid == SwimStyle.swimstyleid)
-            .filter(
-                SwimResult.meetsid == meetsid,
-                Member.clubsid == member.clubsid,
-                Member.membersid != athlete_id,
-                SwimEvent.swimstyleid.in_(relay_uids),
-                SwimStyle.relaycount > 1,
-            )
-            .all()
-        )
-        for ath, ev in other_relay_regs:
-            locked_by.setdefault(ev.swimstyleid, f"{ath.firstname} {ath.lastname}")
-    for s in relay_events:
-        s["locked_by_name"] = locked_by.get(s["style_uid"])
-
-    # Club athletes for relay teammate selection
-    club_athletes = db.query(Member).filter(
-        Member.clubsid == member.clubsid,
-        Member.membersid != athlete_id,
-    ).order_by(Member.lastname).all()
-
     # Suggested age_code
     suggested_age_code = "Open"
     if member.birthdate:
@@ -2388,8 +2307,6 @@ def get_registration(athlete_id: int, request: Request, db: Session = Depends(ge
         },
         "individual_events": individual_events,
         "relay_events": relay_events,
-        "club_athletes": [{"id": a.membersid, "name": f"{a.lastname}, {a.firstname}"}
-                          for a in club_athletes],
     }
 
 
@@ -2531,24 +2448,16 @@ def create_registration(data: RegistrationCreate, request: Request, db: Session 
         if event.masters != "T":
             raise HTTPException(422, "Event does not accept Masters category")
     else:
-        valid_codes = [_age_group_code(ag.agemin, ag.agemax)
+        valid_codes = [age_group_code(ag.agemin, ag.agemax)
                        for ag in db.query(AgeGroup).filter(
                            AgeGroup.meetsid == meetsid, AgeGroup.swimeventid == event_id).all()]
         if age_code not in valid_codes:
             raise HTTPException(422, f"age_code '{age_code}' not valid for this event")
 
-    # Relay lock
+    # Relay events are entered as teams (/relay-teams), never as an athlete's swimresult.
     style = db.get(SwimStyle, event.swimstyleid)
     if style and style.relaycount and style.relaycount > 1:
-        club_member_ids = [m.membersid for m in db.query(Member).filter(Member.clubsid == member.clubsid).all()]
-        existing_relay = db.query(SwimResult).filter(
-            SwimResult.meetsid == meetsid,
-            SwimResult.swimeventid == event_id,
-            SwimResult.athleteid.in_(club_member_ids),
-            SwimResult.athleteid != athlete_id,
-        ).first()
-        if existing_relay:
-            raise HTTPException(409, "Relay already has a registration from this club")
+        raise HTTPException(422, "Relay events are entered as relay teams")
 
     existing = db.query(SwimResult).filter(
         SwimResult.meetsid == meetsid,
@@ -2718,79 +2627,13 @@ async def upload_entries(request: Request, file: UploadFile = File(...), force: 
     return {**seed_result, "events_loaded": events_loaded, "relays_imported": relays_imported}
 
 
-@router.post("/upload/results", dependencies=[Depends(require_admin)])
-async def upload_results(request: Request, file: UploadFile = File(...), force: bool = False, db: Session = Depends(get_db)):
-    """Upload results .lxf to populate best times for the current meet.
-
-    Warns if the LXF meet name doesn't match the current meet
-    (suggesting to use the historical import endpoint instead).
-    """
-    meetsid = resolve_meetsid(request, db)
-    content = await file.read()
-    if len(content) > 10 * 1024 * 1024:
-        raise HTTPException(413, "File too large (max 10MB)")
-
-    # Cross-validation: warn if this looks like a different (historical) meet
-    if not force:
-        import zipfile
-        from io import BytesIO
-        from defusedxml.ElementTree import fromstring as _safe_parse
-        try:
-            with zipfile.ZipFile(BytesIO(content)) as z:
-                lef_name = next(n for n in z.namelist() if n.endswith(".lef"))
-                xml_root = _safe_parse(z.read(lef_name))
-            meet_el = xml_root.find(".//MEET")
-            if meet_el is not None:
-                lxf_meet_name = meet_el.get("name", "").strip()
-                current_meet_name = ((_get_meet_config(db, meetsid, "meet_name") if meetsid else None) or "").strip()
-                if lxf_meet_name and current_meet_name and lxf_meet_name.lower() != current_meet_name.lower():
-                    raise HTTPException(409, (
-                        f"This LXF is from '{lxf_meet_name}' but your current meet is "
-                        f"'{current_meet_name}'. Use Admin → Import Historical instead. "
-                        f"Pass ?force=true to override."
-                    ))
-
-            def _to_int(s):
-                try:
-                    return int(s)
-                except (TypeError, ValueError):
-                    return None
-
-            from ..swimstyle_check import find_new_swimstyles, describe_new_swimstyles
-            new_styles = find_new_swimstyles(db, (
-                (_to_int(ss.get("swimstyleid")), ss.get("name"), _to_int(ss.get("distance")))
-                for ss in xml_root.iter("SWIMSTYLE")
-            ))
-            if new_styles:
-                raise HTTPException(409, {
-                    "code": "new_swimstyles",
-                    "message": describe_new_swimstyles(new_styles),
-                    "styles": new_styles,
-                })
-        except (zipfile.BadZipFile, StopIteration, HTTPException) as e:
-            if isinstance(e, HTTPException):
-                raise
-            # If we can't parse, just continue with the import
-
-    seed_result = seed_from_lxf(db, content, meetsid=meetsid)
-
-    # Store results in the historical Result table so best times can be computed
-    from ..historical_import import import_historical_meet
-    try:
-        import_result = import_historical_meet(db, content, force=True)
-        seed_result["results_imported"] = import_result.get("results_imported", 0)
-    except Exception:
-        seed_result["results_imported"] = 0
-
-    return seed_result
-
-
 @router.post("/admin/import-historical", dependencies=[Depends(require_admin)])
 async def import_historical(file: UploadFile = File(...), force: bool = False, db: Session = Depends(get_db)):
     """Import a results LXF as a historical meet record.
 
     Stores the meet, events, and individual results separately from the current meet.
-    Warns if the LXF meet name matches the current meet (use /upload/results instead).
+    Warns if the LXF meet name matches the current meet (use the organizer's results
+    import, /import-results-lxf, instead).
     Pass ?force=true to override warnings.
     """
     content = await file.read()
@@ -2798,9 +2641,10 @@ async def import_historical(file: UploadFile = File(...), force: bool = False, d
         raise HTTPException(413, "File too large (max 10MB)")
     # Same "is it a results file?" guard as import-results-lxf (no meet-match
     # check here: this path is for archiving *other* meets, closes nothing).
-    from ..lxf_to_team import _read_lef_xml, count_results_in_lxf, is_beach_results, BEACH_RESULTS_DETAIL
+    from ..lxf_io import read_lef_xml
+    from ..lxf_to_team import count_results_in_lxf, is_beach_results, BEACH_RESULTS_DETAIL
     try:
-        lxf_root = _read_lef_xml(content)
+        lxf_root = read_lef_xml(content)
     except Exception as e:
         raise HTTPException(400, f"Invalid Lenex .lxf: {e}")
     if count_results_in_lxf(lxf_root) == 0:
@@ -3111,21 +2955,6 @@ def regenerate_pins(db: Session = Depends(get_db)):
     return {"regenerated": len(clubs)}
 
 
-@router.post("/organizer/clubs/invite-all", dependencies=[Depends(require_organizer_or_admin)])
-def invite_all_clubs(data: dict, request: Request, db: Session = Depends(get_db)):
-    lang = data.get("lang", "fr")
-    clubs = db.query(TeamClub).filter(TeamClub.email != None, TeamClub.email != "").all()
-    sent = 0
-    errors = []
-    for club in clubs:
-        try:
-            send_pin(club.clubsid, {"lang": lang}, request, db)
-            sent += 1
-        except Exception as e:
-            errors.append({"club": club.name, "error": str(e)})
-    return {"sent": sent, "errors": errors}
-
-
 @router.get("/admin/organizer", dependencies=[Depends(require_admin)])
 def get_organizer(meetsid: int | None = None, db: Session = Depends(get_db)):
     cfg = _get_organizer_club_id(db, meetsid=meetsid)
@@ -3356,19 +3185,6 @@ def stripe_disconnect(db: Session = Depends(get_db)):
 # Invoices
 # ---------------------------------------------------------------------------
 
-@router.get("/clubs/{club_id}/invoice-pdf", dependencies=[Depends(require_organizer_or_admin)])
-def club_invoice_pdf(club_id: int, request: Request, db: Session = Depends(get_db)):
-    from ..invoices import generate_invoice_pdf
-    try:
-        pdf = generate_invoice_pdf(db, club_id, meetsid=resolve_meetsid(request, db))
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    club = db.get(TeamClub, club_id)
-    name = club.name.replace(" ", "_") if club else "club"
-    return Response(content=pdf, media_type="application/pdf",
-                    headers={"Content-Disposition": f'attachment; filename="invoice_{name}.pdf"'})
-
-
 @router.post("/invoices/pdf-zip", dependencies=[Depends(require_organizer_or_admin)])
 def invoices_pdf_zip(data: dict, request: Request, db: Session = Depends(get_db)):
     import zipfile
@@ -3399,18 +3215,6 @@ def invoices_pdf_zip(data: dict, request: Request, db: Session = Depends(get_db)
     buf.seek(0)
     return Response(content=buf.getvalue(), media_type="application/zip",
                     headers={"Content-Disposition": 'attachment; filename="invoices.zip"'})
-
-
-@router.get("/clubs/{club_id}/invoice-total", dependencies=[Depends(require_organizer_or_admin)])
-def club_invoice_total(club_id: int, request: Request, db: Session = Depends(get_db)):
-    from ..invoices import _club_line_items, _meet_fees
-    club = db.get(TeamClub, club_id)
-    if not club:
-        raise HTTPException(404)
-    meetsid = resolve_meetsid(request, db)
-    items = _club_line_items(db, club, _meet_fees(db, meetsid), meetsid=meetsid)
-    total = sum(it["unit_cents"] * it["qty"] for it in items)
-    return {"club_id": club_id, "total_cents": total}
 
 
 @router.post("/clubs/{club_id}/invoice", dependencies=[Depends(require_organizer_or_admin)])
@@ -3636,39 +3440,6 @@ def notify_organizer_invoices_sent(data: dict, request: Request, db: Session = D
 # Export
 # ---------------------------------------------------------------------------
 
-@router.get("/export", dependencies=[Depends(require_admin)])
-def export_lenex(request: Request, db: Session = Depends(get_db)):
-    import zipfile
-    from io import BytesIO
-
-    lxf_bytes = generate_lxf(db, meetsid=resolve_meetsid(request, db))
-    scripts_dir = Path(__file__).resolve().parent.parent.parent / "scripts"
-
-    buf = BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr("inscriptions.lxf", lxf_bytes)
-        for name in ("simulate_results.vbs", "simulate_results.bat"):
-            p = scripts_dir / name
-            if p.exists():
-                z.writestr(name, p.read_bytes())
-
-    return Response(
-        content=buf.getvalue(),
-        media_type="application/zip",
-        headers={"Content-Disposition": "attachment; filename=inscriptions_bundle.zip"},
-    )
-
-
-@router.get("/export/entries", dependencies=[Depends(require_admin)])
-def export_entries_lxf(db: Session = Depends(get_db)):
-    data = generate_entries_lxf(db)
-    return Response(
-        content=data,
-        media_type="application/zip",
-        headers={"Content-Disposition": "attachment; filename=entries.lxf"},
-    )
-
-
 @router.get("/export/meet-lxf", dependencies=[Depends(require_organizer_or_admin)])
 def export_meet_lxf(request: Request, db: Session = Depends(get_db)):
     """Download the meet structure as a Lenex .lxf, generated fresh from the DB.
@@ -3704,21 +3475,6 @@ def export_registrations_lxf(request: Request, db: Session = Depends(get_db)):
 # ---------------------------------------------------------------------------
 # Database backup / restore (SQLite backup API)
 # ---------------------------------------------------------------------------
-
-@router.get("/admin/backup-db", dependencies=[Depends(require_admin)])
-def backup_db():
-    """Download a full database backup (consistent SQLite .db snapshot)."""
-    from ..database import sqlite_snapshot_bytes
-    try:
-        content = sqlite_snapshot_bytes()
-    except FileNotFoundError:
-        raise HTTPException(404, "Database file not found")
-    return Response(
-        content=content,
-        media_type="application/octet-stream",
-        headers={"Content-Disposition": "attachment; filename=team_backup.db"},
-    )
-
 
 @router.post("/admin/restore-db", dependencies=[Depends(require_admin)])
 async def restore_db(file: UploadFile = File(...)):
@@ -3855,14 +3611,6 @@ def delete_backup(filename: str):
     return {"deleted": safe_name}
 
 
-@router.get("/admin/historical-best-times/{member_id}", dependencies=[Depends(require_admin)])
-def get_historical_best_times(member_id: int, db: Session = Depends(get_db)):
-    """Get best times for a member computed from historical results."""
-    bt = get_best_times_for_member(db, member_id)
-    return {"member_id": member_id, "best_times": bt}
-
-
-
 @router.post("/import-results-lxf", dependencies=[Depends(require_organizer_or_admin)])
 async def import_results_lxf(request: Request, file: UploadFile = File(...), force: bool = False,
                               force_meet: bool = False, db: Session = Depends(get_db)):
@@ -3895,12 +3643,13 @@ async def import_results_lxf(request: Request, file: UploadFile = File(...), for
     if len(content) > 50 * 1024 * 1024:
         raise HTTPException(413, "File too large (max 50MB)")
 
+    from ..lxf_io import read_lef_xml
     from ..lxf_to_team import (
-        _read_lef_xml, count_results_in_lxf, meet_mismatch,
+        count_results_in_lxf, meet_mismatch,
         is_beach_results, BEACH_RESULTS_DETAIL,
     )
     try:
-        lxf_root = _read_lef_xml(content)
+        lxf_root = read_lef_xml(content)
     except Exception as e:
         raise HTTPException(400, f"Invalid Lenex .lxf: {e}")
     if count_results_in_lxf(lxf_root) == 0:
@@ -4049,25 +3798,12 @@ def _team_number_to_letter(n: int) -> str:
     return chr(ord('A') + n - 1)
 
 
-def _get_current_meet_id(request: Request, db: Session) -> int | None:
-    return resolve_meetsid(request, db)
-
-
 def _import_relays_from_lxf(db: "Session", file_bytes: bytes, meetsid: int | None = None) -> int:
     """Parse RELAY elements from LXF and import them into the relays/relayspos tables."""
-    import zipfile
-    import io
-    from xml.etree import ElementTree as ET
+    from ..lxf_io import read_lef_xml
     from ..models_team import Relay, RelayPos, TeamClub, Member
 
-    # Extract XML from zip
-    try:
-        z = zipfile.ZipFile(io.BytesIO(file_bytes))
-        xml_data = z.read(z.namelist()[0])
-    except Exception:
-        xml_data = file_bytes
-
-    root = ET.fromstring(xml_data)
+    root = read_lef_xml(file_bytes)
 
     # Build club code → clubsid lookup
     club_by_code: dict[str, int] = {}
@@ -4148,7 +3884,8 @@ def _import_relays_from_lxf(db: "Session", file_bytes: bytes, meetsid: int | Non
         for relay_el in club_el.iter(f"{ns}RELAY"):
             team_number = int(relay_el.get("number", "1"))
             gender_str = relay_el.get("gender", "X")
-            gender_int = {"M": 1, "F": 2, "MIXED": 3, "X": 3}.get(gender_str.upper(), 3)
+            # Relays have no "All": anything but M/F (ALL included) is Mixed.
+            gender_int = LENEX_GENDER.get(gender_str.upper(), GENDER_MIXED) or GENDER_MIXED
             agemin = int(relay_el.get("agemin", "0")) if relay_el.get("agemin") else None
             agemax = int(relay_el.get("agemax", "0")) if relay_el.get("agemax") else None
 
@@ -4205,51 +3942,6 @@ def _import_relays_from_lxf(db: "Session", file_bytes: bytes, meetsid: int | Non
     return relays_imported
 
 
-def _relay_age_code(minage: int | None, maxage: int | None) -> str:
-    """Convert relay minage/maxage to an age code string."""
-    minage = minage or 0
-    maxage = maxage or 0
-    if minage <= 10 and maxage == 10:
-        return "10-"
-    if minage == 11 and maxage == 12:
-        return "11-12"
-    if minage == 13 and maxage == 14:
-        return "13-14"
-    if minage == 15 and maxage == 18:
-        return "15-18"
-    if minage == 19 and (maxage == 0 or maxage == -1 or maxage >= 99):
-        return "Open"
-    if minage == 0 and (maxage == 0 or maxage == -1 or maxage is None):
-        return "Open"
-    # Fallback: construct from values
-    if maxage and maxage > 0 and maxage < 99:
-        return f"{minage}-{maxage}"
-    return f"{minage}-"
-
-
-def _age_code_to_range(age_code: str) -> tuple[int, int | None]:
-    """Convert an age code string to (minage, maxage). maxage=None means open-ended."""
-    if age_code == "10-":
-        return (0, 10)
-    if age_code == "11-12":
-        return (11, 12)
-    if age_code == "13-14":
-        return (13, 14)
-    if age_code == "15-18":
-        return (15, 18)
-    if age_code == "Open":
-        return (19, None)
-    if age_code == "Masters":
-        return (25, None)
-    # Try to parse "X-Y" or "X-"
-    parts = age_code.split("-")
-    if len(parts) == 2:
-        minage = int(parts[0]) if parts[0] else 0
-        maxage = int(parts[1]) if parts[1] else None
-        return (minage, maxage)
-    return (0, None)
-
-
 @router.get("/relay-teams")
 def get_relay_teams(request: Request, club_id: int | None = None, db: Session = Depends(get_db)):
     """Return RelayPageData: relay events grouped by age category, teams, eligible athletes."""
@@ -4277,7 +3969,7 @@ def get_relay_teams(request: Request, club_id: int | None = None, db: Session = 
         is_closed = d.today() > d.fromisoformat(closure_date_str)
 
     # Get current meet ID
-    meet_id = _get_current_meet_id(request, db)
+    meet_id = resolve_meetsid(request, db)
 
     # Get all relay events (relaycount > 1) with their age groups
     relay_events = (
@@ -4311,7 +4003,7 @@ def get_relay_teams(request: Request, club_id: int | None = None, db: Session = 
             )
         else:
             for ag in ev.agegroups:
-                age_code = _age_group_code(ag.agemin, ag.agemax) or _relay_age_code(ag.agemin, ag.agemax)
+                age_code = age_group_code(ag.agemin, ag.agemax) or relay_age_code(ag.agemin, ag.agemax)
                 age_min = ag.agemin or 0
                 age_max = ag.agemax if (ag.agemax and ag.agemax > 0 and ag.agemax < 99) else None
                 _process_relay_event_age_group(
@@ -4438,7 +4130,7 @@ def get_relay_teams(request: Request, club_id: int | None = None, db: Session = 
                 if row.athleteid in seen_members:
                     continue
                 seen_members.add(row.athleteid)
-                member_age_group_map[row.athleteid] = _relay_age_code(row.agemin, row.agemax)
+                member_age_group_map[row.athleteid] = relay_age_code(row.agemin, row.agemax)
 
     # Relay best time per member, per relay style, for the meet's course (pool only):
     # the fastest total of any archived team the member swam on. Drives the suggested
@@ -4456,7 +4148,7 @@ def get_relay_teams(request: Request, club_id: int | None = None, db: Session = 
             relay_bests_by_style[style_id] = get_relay_best_times(db, mids, style_id, meet_course)
 
     for relay in existing_relays:
-        age_code = _relay_age_code(relay.minage, relay.maxage)
+        age_code = relay_age_code(relay.minage, relay.maxage)
         # Find the event key. Prefer an exact eventnumb match — style+gender alone
         # is ambiguous when two distinct relay events share the same style and
         # gender (e.g. the same relay offered at two age categories), which used
@@ -4526,125 +4218,6 @@ def get_relay_teams(request: Request, club_id: int | None = None, db: Session = 
     # Sort teams within each event by team number letter
     for key in teams_by_event:
         teams_by_event[key].sort(key=lambda t: t["teamNumber"])
-
-    # ─── Backward compatibility: swimresult relay locks (Requirement 10) ───────
-    # For relay events where a club has a swimresult registration but no relays
-    # record, create a "virtual" team with the registering athlete in position 1.
-    # These virtual teams use negative IDs (negated swimresultid).
-    # Req 10.1: Display athlete in position 1 when no relays record exists.
-    # Req 10.2: Prefer relays/relayspos data when both exist.
-    # Req 10.5: Fall back to swimresult lock only when no relays record exists.
-
-    relay_event_ids = [ev.swimeventid for ev in relay_events]
-
-    if relay_event_ids:
-        # Batch query: find all swimresult rows for relay events
-        if target_club_id:
-            club_member_ids_list = [
-                m.membersid for m in db.query(Member).filter(Member.clubsid == target_club_id).all()
-            ]
-            sr_relay_locks = (
-                db.query(SwimResult)
-                .filter(
-                    SwimResult.meetsid == meet_id,
-                    SwimResult.swimeventid.in_(relay_event_ids),
-                    SwimResult.athleteid.in_(club_member_ids_list),
-                )
-                .all()
-            ) if club_member_ids_list else []
-        else:
-            # Admin viewing all clubs — batch query all swimresults for relay events
-            sr_relay_locks = (
-                db.query(SwimResult)
-                .filter(SwimResult.meetsid == meet_id, SwimResult.swimeventid.in_(relay_event_ids))
-                .all()
-            )
-
-        if sr_relay_locks:
-            # Build a lookup of member → club and member → name
-            sr_athlete_ids = {sr.athleteid for sr in sr_relay_locks}
-            sr_members = db.query(Member).filter(Member.membersid.in_(list(sr_athlete_ids))).all()
-            athlete_club_map: dict[int, int] = {m.membersid: m.clubsid for m in sr_members}
-            athlete_name_map: dict[int, str] = {
-                m.membersid: f"{m.lastname}, {m.firstname}" for m in sr_members
-            }
-
-            # Determine which (event_id, age_code, club_id) combos already have relays records
-            existing_relay_keys: set[tuple[int, str, int]] = set()
-            for relay in existing_relays:
-                age_code_r = _relay_age_code(relay.minage, relay.maxage)
-                if relay.eventnumb:
-                    for ev in relay_events:
-                        if ev.swimstyleid == relay.stylesid and ev.eventnumber == relay.eventnumb:
-                            existing_relay_keys.add((ev.swimeventid, age_code_r, relay.clubsid))
-                else:
-                    # Legacy rows without eventnumb — fall back to the old ambiguous match
-                    for ev in relay_events:
-                        if ev.swimstyleid == relay.stylesid:
-                            existing_relay_keys.add((ev.swimeventid, age_code_r, relay.clubsid))
-
-            # Track which (event_key, club_id) combos we've already handled
-            handled_virtual_keys: set[tuple[str, int]] = set()
-
-            # Build virtual teams for swimresult locks without relays entries
-            for sr in sr_relay_locks:
-                sr_age_code = sr.age_code or "Open"
-                sr_event_id = sr.swimeventid
-                sr_club_id = athlete_club_map.get(sr.athleteid)
-
-                if not sr_club_id:
-                    continue
-
-                # Filter by target club when in coach mode
-                if target_club_id and sr_club_id != target_club_id:
-                    continue
-
-                # Skip if a relays record already exists for this club/event/age_code
-                if (sr_event_id, sr_age_code, sr_club_id) in existing_relay_keys:
-                    continue
-
-                # Find the matching event_key
-                event_key = f"{sr_event_id}-{sr_age_code}"
-                if event_key not in event_groups_by_key:
-                    continue
-
-                # Skip if we already added a virtual team for this club+event_key
-                # (only one swimresult lock per club/event is expected)
-                if (event_key, sr_club_id) in handled_virtual_keys:
-                    continue
-                handled_virtual_keys.add((event_key, sr_club_id))
-
-                relaycount = event_groups_by_key[event_key]["relaycount"]
-
-                # Get athlete name from pre-loaded map
-                athlete_name = athlete_name_map.get(sr.athleteid)
-
-                # Build members array: athlete in position 1, rest empty
-                members_arr = []
-                for i in range(1, relaycount + 1):
-                    if i == 1:
-                        members_arr.append({
-                            "position": 1,
-                            "athleteId": sr.athleteid,
-                            "athleteName": athlete_name,
-                        })
-                    else:
-                        members_arr.append({
-                            "position": i,
-                            "athleteId": None,
-                            "athleteName": None,
-                        })
-
-                virtual_team = {
-                    "id": -sr.swimresultid,  # Negative ID signals virtual team
-                    "teamNumber": "A",
-                    "teamName": None,
-                    "members": members_arr,
-                    "isVirtual": True,  # Flag for frontend awareness
-                    "clubId": sr_club_id,  # Needed for admin view grouping
-                    "clubName": club_names.get(sr_club_id),
-                }
-                teams_by_event.setdefault(event_key, []).append(virtual_team)
 
     # Build eligible athletes per event/category
     eligible_athletes: dict[str, list] = {}
@@ -4717,7 +4290,7 @@ def get_relay_teams(request: Request, club_id: int | None = None, db: Session = 
                     if row.athleteid in seen_ag:
                         continue
                     seen_ag.add(row.athleteid)
-                    athlete_age_group_map[row.athleteid] = _relay_age_code(row.agemin, row.agemax)
+                    athlete_age_group_map[row.athleteid] = relay_age_code(row.agemin, row.agemax)
 
         for key, group in event_groups_by_key.items():
             parts = key.split("-", 1)
@@ -4821,7 +4394,7 @@ def create_relay_team(data: RelayTeamCreate, request: Request, db: Session = Dep
         raise HTTPException(400, "Cannot determine club")
 
     # Get current meet ID
-    meet_id = _get_current_meet_id(request, db)
+    meet_id = resolve_meetsid(request, db)
 
     # Resolve event
     event = db.query(SwimEvent).options(joinedload(SwimEvent.swimstyle)).get((meet_id, data.event_id))
@@ -4832,7 +4405,7 @@ def create_relay_team(data: RelayTeamCreate, request: Request, db: Session = Dep
         raise HTTPException(400, "Event is not a relay event")
 
     # Resolve age range
-    age_min, age_max = _age_code_to_range(data.age_code)
+    age_min, age_max = age_code_to_range(data.age_code)
 
     # Determine next team number
     existing_teams = (
@@ -4847,60 +4420,6 @@ def create_relay_team(data: RelayTeamCreate, request: Request, db: Session = Dep
     if meet_id:
         existing_teams = existing_teams.filter(Relay.meetsid == meet_id)
     existing_teams = existing_teams.all()
-
-    # ─── Backward compatibility: materialize swimresult relay lock (Req 10) ────
-    # If no relays record exists but a swimresult lock does, materialize it first
-    # so that the lock athlete is preserved as Team A and the new team gets B.
-    if not existing_teams:
-        # Check for swimresult relay locks for this club/event/age
-        sr_age_code = data.age_code
-        club_member_ids = [
-            m.membersid for m in db.query(Member).filter(Member.clubsid == target_club_id).all()
-        ]
-        if club_member_ids:
-            sr_lock = (
-                db.query(SwimResult)
-                .filter(
-                    SwimResult.meetsid == meet_id,
-                    SwimResult.swimeventid == data.event_id,
-                    SwimResult.athleteid.in_(club_member_ids),
-                    SwimResult.age_code == sr_age_code,
-                )
-                .first()
-            )
-            if sr_lock:
-                # Materialize the swimresult lock as Team A (teamnumb=1)
-                gender_int = event.gender or 0
-                materialized_relay = Relay(
-                    meetsid=meet_id,
-                    clubsid=target_club_id,
-                    stylesid=style.swimstyleid,
-                    teamnumb=1,
-                    gender=gender_int,
-                    minage=age_min if age_min else 0,
-                    maxage=age_max if age_max else 0,
-                    eventnumb=event.eventnumber,
-                    eventtyp=0,
-                    resulttyp=0,
-                )
-                db.add(materialized_relay)
-                db.flush()
-
-                # Create position records: lock athlete in position 1, rest empty
-                for pos_num in range(1, style.relaycount + 1):
-                    db.add(RelayPos(
-                        relaysid=materialized_relay.relaysid,
-                        numb=pos_num,
-                        membersid=sr_lock.athleteid if pos_num == 1 else None,
-                        entrytime=None,
-                    ))
-
-                # Remove the legacy swimresult lock row
-                db.delete(sr_lock)
-                db.flush()
-
-                # Update existing_teams list to include the materialized team
-                existing_teams = [materialized_relay]
 
     if len(existing_teams) >= 26:
         raise HTTPException(400, "Maximum 26 teams per event/category/club")
@@ -4954,26 +4473,6 @@ def delete_relay_team(team_id: int, request: Request, db: Session = Depends(get_
 
     role, caller_club = _resolve_role(pin, db)
 
-    # ─── Handle virtual teams from swimresult relay locks (Requirement 10) ─────
-    if team_id < 0:
-        swimresult_id = -team_id
-        sr = db.get(SwimResult, swimresult_id)
-        if not sr:
-            raise HTTPException(404, "Relay team not found (legacy lock missing)")
-
-        # Determine club from the swimresult athlete for authorization
-        sr_member = db.get(Member, sr.athleteid)
-        if not sr_member:
-            raise HTTPException(404, "Athlete from legacy relay lock not found")
-
-        if role == "coach" and sr_member.clubsid != caller_club:
-            raise HTTPException(403, "Cannot modify another club's relay teams")
-
-        # Delete the swimresult lock row
-        db.delete(sr)
-        db.commit()
-        return {"deleted": True}
-
     relay = db.get(Relay, team_id)
     if not relay:
         raise HTTPException(404, "Relay team not found")
@@ -5004,143 +4503,6 @@ def set_relay_team_member(
 
     role, caller_club = _resolve_role(pin, db)
 
-    # ─── Handle virtual teams from swimresult relay locks (Requirement 10) ─────
-    # Negative team_id means this is a virtual team backed by a swimresult lock.
-    # We need to "materialize" it into relays/relayspos and remove the swimresult.
-    if team_id < 0:
-        swimresult_id = -team_id
-        sr = db.get(SwimResult, swimresult_id)
-        if not sr:
-            raise HTTPException(404, "Relay team not found (legacy lock missing)")
-
-        # Resolve event and style
-        event = db.query(SwimEvent).options(joinedload(SwimEvent.swimstyle)).get((sr.meetsid, sr.swimeventid))
-        if not event or not event.swimstyle:
-            raise HTTPException(404, "Event not found for legacy relay lock")
-        style = event.swimstyle
-        if not style or not style.relaycount or style.relaycount <= 1:
-            raise HTTPException(400, "Event is not a relay event")
-
-        # Determine club from the swimresult athlete
-        sr_member = db.get(Member, sr.athleteid)
-        if not sr_member:
-            raise HTTPException(404, "Athlete from legacy relay lock not found")
-        target_club_id = sr_member.clubsid
-
-        # Authorization
-        if role == "coach" and target_club_id != caller_club:
-            raise HTTPException(403, "Cannot modify another club's relay teams")
-
-        # Validate position
-        relaycount = style.relaycount
-        if position < 1 or position > relaycount:
-            raise HTTPException(400, f"Invalid position {position}. Must be between 1 and {relaycount}")
-
-        # Resolve age range from swimresult age_code
-        sr_age_code = sr.age_code or "Open"
-        age_min, age_max = _age_code_to_range(sr_age_code)
-        meet_id = _get_current_meet_id(request, db)
-
-        # Determine gender int
-        gender_int = event.gender or 0
-
-        # Create real relay record
-        relay = Relay(
-            meetsid=meet_id,
-            clubsid=target_club_id,
-            stylesid=style.swimstyleid,
-            teamnumb=1,
-            gender=gender_int,
-            minage=age_min if age_min else 0,
-            maxage=age_max if age_max else 0,
-            eventnumb=event.eventnumber,
-            eventtyp=0,
-            resulttyp=0,
-        )
-        db.add(relay)
-        db.flush()  # Get the relay ID
-
-        # Create position records: original athlete stays in position 1
-        for pos_num in range(1, relaycount + 1):
-            if pos_num == 1:
-                db.add(RelayPos(
-                    relaysid=relay.relaysid,
-                    numb=pos_num,
-                    membersid=sr.athleteid,
-                    entrytime=None,
-                ))
-            else:
-                db.add(RelayPos(
-                    relaysid=relay.relaysid,
-                    numb=pos_num,
-                    membersid=None,
-                    entrytime=None,
-                ))
-
-        # Now apply the actual member assignment for the requested position
-        athlete_id = data.athleteId
-        if athlete_id is not None:
-            # Check athlete exists and belongs to club
-            member = db.get(Member, athlete_id)
-            if not member:
-                raise HTTPException(404, "Athlete not found")
-            if member.clubsid != target_club_id:
-                raise HTTPException(400, "Athlete does not belong to the relay team's club")
-
-            # Intra-team uniqueness: can't assign same athlete as position 1 to another position
-            if athlete_id == sr.athleteid and position != 1:
-                raise HTTPException(409, f"Athlete is already assigned to position 1 on this team")
-
-            # Cross-team uniqueness: athlete not on another team for same event/age/club
-            other_relays_query = (
-                db.query(Relay)
-                .filter(
-                    Relay.clubsid == target_club_id,
-                    Relay.stylesid == style.swimstyleid,
-                    Relay.minage == (age_min if age_min else 0),
-                    Relay.maxage == (age_max if age_max else 0),
-                    Relay.relaysid != relay.relaysid,
-                )
-            )
-            if meet_id:
-                other_relays_query = other_relays_query.filter(Relay.meetsid == meet_id)
-            other_relay_ids = [r.relaysid for r in other_relays_query.all()]
-
-            if other_relay_ids:
-                conflict = (
-                    db.query(RelayPos)
-                    .filter(
-                        RelayPos.relaysid.in_(other_relay_ids),
-                        RelayPos.membersid == athlete_id,
-                    )
-                    .first()
-                )
-                if conflict:
-                    conflict_relay = db.get(Relay, conflict.relaysid)
-                    team_letter = _team_number_to_letter(conflict_relay.teamnumb) if conflict_relay else "?"
-                    athlete_name = f"{member.lastname}, {member.firstname}"
-                    raise HTTPException(
-                        409,
-                        f"Athlete '{athlete_name}' is already assigned to Team {team_letter} for this event"
-                    )
-
-        # Update the requested position (overwrite what we just set)
-        # Need to flush first to ensure the RelayPos rows are in DB
-        db.flush()
-        pos_record = db.query(RelayPos).filter(
-            RelayPos.relaysid == relay.relaysid,
-            RelayPos.numb == position,
-        ).first()
-        if pos_record:
-            pos_record.membersid = athlete_id
-
-        # Remove the legacy swimresult lock row
-        db.delete(sr)
-        db.commit()
-
-        return {"ok": True, "migratedTeamId": relay.relaysid}
-
-    # ─── Normal flow: existing relays record ───────────────────────────────────
     relay = db.get(Relay, team_id)
     if not relay:
         raise HTTPException(404, "Relay team not found")
@@ -5182,7 +4544,7 @@ def set_relay_team_member(
 
         # Cross-team uniqueness: athlete not on another team for same event/age/club
         # Find all other relay teams for same style/age/club
-        meet_id = _get_current_meet_id(request, db)
+        meet_id = resolve_meetsid(request, db)
         other_relays_query = (
             db.query(Relay)
             .filter(
@@ -5215,28 +4577,6 @@ def set_relay_team_member(
                     409,
                     f"Athlete '{athlete_name}' is already assigned to Team {team_letter} for this event"
                 )
-
-        # Cross-team uniqueness: also check swimresult relay locks (virtual teams)
-        # If this athlete has a swimresult lock for the same relay event, they are
-        # already shown as position 1 on a virtual team — block the assignment.
-        sr_conflict = (
-            db.query(SwimResult)
-            .join(SwimEvent, (SwimResult.swimeventid == SwimEvent.swimeventid) & (SwimResult.meetsid == SwimEvent.meetsid))
-            .filter(
-                SwimResult.meetsid == meet_id,
-                SwimEvent.swimstyleid == relay.stylesid,
-                SwimResult.athleteid == athlete_id,
-                SwimResult.age_code == _relay_age_code(relay.minage, relay.maxage),
-            )
-            .first()
-        )
-        if sr_conflict:
-            athlete_name = f"{member.lastname}, {member.firstname}"
-            raise HTTPException(
-                409,
-                f"Athlete '{athlete_name}' already has a relay registration (legacy lock) for this event. "
-                f"Modify the existing team instead."
-            )
 
         # Gender balance validation for mixed (X) events:
         # Exactly N/2 men and N/2 women required (e.g., 2M+2F for 4-person relay)
@@ -5350,83 +4690,6 @@ def set_relay_team_name(
 
     role, caller_club = _resolve_role(pin, db)
 
-    # ─── Handle virtual teams from swimresult relay locks (Requirement 10) ─────
-    # Virtual teams (negative IDs) must be materialized before naming.
-    if team_id < 0:
-        swimresult_id = -team_id
-        sr = db.get(SwimResult, swimresult_id)
-        if not sr:
-            raise HTTPException(404, "Relay team not found (legacy lock missing)")
-
-        # Resolve event and style
-        event = db.query(SwimEvent).options(joinedload(SwimEvent.swimstyle)).get((sr.meetsid, sr.swimeventid))
-        if not event or not event.swimstyle:
-            raise HTTPException(404, "Event not found for legacy relay lock")
-        style = event.swimstyle
-        if not style or not style.relaycount or style.relaycount <= 1:
-            raise HTTPException(400, "Event is not a relay event")
-
-        # Determine club from the swimresult athlete
-        sr_member = db.get(Member, sr.athleteid)
-        if not sr_member:
-            raise HTTPException(404, "Athlete from legacy relay lock not found")
-        target_club_id = sr_member.clubsid
-
-        # Authorization
-        if role == "coach" and target_club_id != caller_club:
-            raise HTTPException(403, "Cannot modify another club's relay teams")
-
-        # Resolve age range from swimresult age_code
-        sr_age_code = sr.age_code or "Open"
-        age_min, age_max = _age_code_to_range(sr_age_code)
-        meet_id = _get_current_meet_id(request, db)
-        gender_int = event.gender or 0
-        relaycount = style.relaycount
-
-        # Create real relay record (materialize virtual team)
-        from ..models_team import RelayPos
-        relay = Relay(
-            meetsid=meet_id,
-            clubsid=target_club_id,
-            stylesid=style.swimstyleid,
-            teamnumb=1,
-            gender=gender_int,
-            minage=age_min if age_min else 0,
-            maxage=age_max if age_max else 0,
-            eventnumb=event.eventnumber,
-            eventtyp=0,
-            resulttyp=0,
-        )
-        db.add(relay)
-        db.flush()
-
-        # Create position records: original athlete stays in position 1
-        for pos_num in range(1, relaycount + 1):
-            if pos_num == 1:
-                db.add(RelayPos(
-                    relaysid=relay.relaysid,
-                    numb=pos_num,
-                    membersid=sr.athleteid,
-                    entrytime=None,
-                ))
-            else:
-                db.add(RelayPos(
-                    relaysid=relay.relaysid,
-                    numb=pos_num,
-                    membersid=None,
-                    entrytime=None,
-                ))
-
-        # Remove the legacy swimresult lock row
-        db.delete(sr)
-        db.flush()
-
-        # Store the custom name on the relay row
-        relay.name = data.name or None
-
-        db.commit()
-        return {"ok": True, "migratedTeamId": relay.relaysid}
-
     relay = db.get(Relay, team_id)
     if not relay:
         raise HTTPException(404, "Relay team not found")
@@ -5442,19 +4705,13 @@ def set_relay_team_name(
     return {"ok": True}
 
 
-def _owned_real_relay(team_id: int, request: Request, db: Session):
-    """The relay row a coach/organizer/admin may edit (closure + ownership checks).
-
-    Virtual teams (negative ids, legacy swimresult locks) have no relay row to hold
-    a time or status yet — assigning a member materializes them first.
-    """
+def _owned_relay(team_id: int, request: Request, db: Session):
+    """The relay row a coach/organizer/admin may edit (closure + ownership checks)."""
     from ..models_team import Relay
 
     pin = request.headers.get("X-Club-Pin", "")
     _check_closure(db, pin)
     role, caller_club = _resolve_role(pin, db)
-    if team_id < 0:
-        raise HTTPException(400, "Assign a member to this team first")
     relay = db.get(Relay, team_id)
     if not relay:
         raise HTTPException(404, "Relay team not found")
@@ -5474,7 +4731,7 @@ def set_relay_team_entry_time(
     Exported as the relay ENTRY's entrytime; meet-app seeds relay heats by it.
     Beach relays are ranked (no times) and SERC is judged — both refuse a time.
     """
-    relay = _owned_real_relay(team_id, request, db)
+    relay = _owned_relay(team_id, request, db)
     ms = data.entryTimeMs or None
     if ms is not None:
         if _get_meet_type(db) == "BEACH":
@@ -5498,7 +4755,7 @@ def set_relay_team_hc(
     skips the age/gender composition rules and is left out of rankings and of relay
     best times.
     """
-    relay = _owned_real_relay(team_id, request, db)
+    relay = _owned_relay(team_id, request, db)
     relay.resultstatus = 4 if data.isHC else None
     db.commit()
     return {"ok": True, "hc": data.isHC}
