@@ -609,6 +609,211 @@ describe('LENEX importer', () => {
     }
   })
 
+  // #110 + course round trip: every meet-level field team-app exports must land in
+  // the meet editor (MEETVALUES) and the bsglobal keys meet-app's exports read.
+  describe('meet-level fields (city, course, deadline, lanes)', () => {
+    const structureXml = (meetAttrs: string, sessionAttrs = '', poolXml = '') => `<?xml version="1.0" encoding="UTF-8"?>
+<LENEX version="3.0">
+  <MEETS>
+    <MEET name="Structure Meet" ${meetAttrs}>
+      ${poolXml}
+      <SESSIONS>
+        <SESSION number="1" name="Session 1" ${sessionAttrs}>
+          <EVENTS>
+            <EVENT eventid="1" number="1" gender="M" round="TIM">
+              <SWIMSTYLE swimstyleid="500" distance="50" relaycount="1" name="Test Style" />
+            </EVENT>
+          </EVENTS>
+        </SESSION>
+      </SESSIONS>
+    </MEET>
+  </MEETS>
+</LENEX>`
+    const entriesXml = (meetAttrs: string, poolXml = '') => `<?xml version="1.0" encoding="UTF-8"?>
+<LENEX version="3.0">
+  <MEETS>
+    <MEET name="Team Meet" ${meetAttrs}>
+      ${poolXml}
+      <SESSIONS>
+        <SESSION number="1" name="Session 1">
+          <EVENTS>
+            <EVENT eventid="1" number="1" gender="M" round="TIM">
+              <SWIMSTYLE swimstyleid="500" distance="50" relaycount="1" name="Test Style" />
+            </EVENT>
+          </EVENTS>
+        </SESSION>
+      </SESSIONS>
+      <CLUBS>
+        <CLUB clubid="10" code="TST" name="Test Club">
+          <ATHLETES>
+            <ATHLETE athleteid="20" firstname="A" lastname="B" birthdate="2010-01-01" gender="M" />
+          </ATHLETES>
+        </CLUB>
+      </CLUBS>
+    </MEET>
+  </MEETS>
+</LENEX>`
+    const runImport = (xml: string) => {
+      const p = join(tmpdir(), `test-meetfields-${randomBytes(4).toString('hex')}.lxf`)
+      writeZipSingleEntry(p, 'meet.lef', xml)
+      try { importLenex(p, db) } finally { try { unlinkSync(p) } catch {} }
+    }
+    const g = (name: string) =>
+      (db.prepare(`SELECT data FROM bsglobal WHERE name=?`).get(name) as { data: string } | undefined)?.data
+    const mv = () => g('MEETVALUES') ?? ''
+
+    it('a structure import stores city, course, deadline and POOL lanes', () => {
+      runImport(structureXml('city="Laval" nation="CAN" course="SCM" deadline="2027-03-15"', '',
+        '<POOL lanemin="1" lanemax="8" />'))
+      expect(g('MeetCity')).toBe('Laval')
+      expect(g('MeetCourse')).toBe('3')
+      expect(g('PoolLaneMin')).toBe('1')
+      expect(g('PoolLaneMax')).toBe('8')
+      expect(mv()).toContain('CITY=S;Laval')
+      expect(mv()).toContain('COURSE=I;3')
+      expect(mv()).toContain('DEADLINE=D;20270315000000000')
+      expect(mv()).toContain('LANEMIN=I;1')
+      expect(mv()).toContain('LANEMAX=I;8')
+    })
+
+    it('a session takes SESSION@course, else the meet course (was always 50 m)', () => {
+      runImport(structureXml('course="SCM"'))
+      const s1 = db.prepare(`SELECT course FROM swimsession WHERE sessionnumber=1`).get() as { course: number }
+      expect(s1.course).toBe(3)
+      runImport(structureXml('course="SCM"', 'course="LCM"'))
+      const s2 = db.prepare(`SELECT course FROM swimsession WHERE sessionnumber=1`).get() as { course: number }
+      expect(s2.course).toBe(1)
+    })
+
+    it('lanes fall back to the first SESSION lanemin/lanemax when there is no POOL', () => {
+      runImport(structureXml('course="LCM"', 'lanemin="0" lanemax="9"'))
+      expect(mv()).toContain('LANEMIN=I;0')
+      expect(mv()).toContain('LANEMAX=I;9')
+    })
+
+    it('an entries import into an existing meet fills the empty fields (#110)', () => {
+      // Meet created here with nothing but its events (like "Create Pool" + events)
+      runImport(structureXml(''))
+      expect(g('MeetCourse')).toBeUndefined()
+      runImport(entriesXml('city="Laval" course="LCM" deadline="2027-03-15"', '<POOL lanemin="1" lanemax="6" />'))
+      expect(g('MeetCity')).toBe('Laval')
+      expect(g('MeetCourse')).toBe('1')
+      expect(mv()).toContain('COURSE=I;1')
+      expect(mv()).toContain('DEADLINE=D;20270315000000000')
+      expect(mv()).toContain('LANEMAX=I;6')
+    })
+
+    it('an entries import keeps meet-level values edited locally', () => {
+      runImport(structureXml('city="Local City" course="SCM"', '', '<POOL lanemin="1" lanemax="8" />'))
+      runImport(entriesXml('city="Team City" course="LCM" deadline="2027-03-15"', '<POOL lanemin="0" lanemax="9" />'))
+      expect(g('MeetName')).toBe('Structure Meet')
+      expect(mv()).toContain('NAME=S;Structure Meet')
+      expect(g('MeetCity')).toBe('Local City')
+      expect(g('MeetCourse')).toBe('3')
+      expect(mv()).toContain('COURSE=I;3')
+      expect(mv()).toContain('LANEMAX=I;8')
+      // the deadline was still empty, so it is filled
+      expect(mv()).toContain('DEADLINE=D;20270315000000000')
+    })
+
+    it('maps state, host club, organizer.url, name.en, city.en, result.url and FACILITY', () => {
+      runImport(structureXml(
+        'course="LCM" state="QC" hostclub="CSRN" organizer="Org" organizer.url="https://o.example" ' +
+        'name.en="Meet EN" city.en="Montreal" result.url="https://r.example"', '',
+        '<FACILITY name="Centre sportif du Parc Olympique" street="3200 rue Viau" />'))
+      for (const line of ['STATE=S;QC', 'HOSTCLUB=S;CSRN', 'ORGANIZER=S;Org', 'ORGANIZERURL=S;https://o.example',
+        'NAMEEN=S;Meet EN', 'CITYEN=S;Montreal', 'RESULTURL=S;https://r.example',
+        'FACILITYNAME=S;Centre sportif du Parc Olympique', 'FACILITYSTREET=S;3200 rue Viau']) {
+        expect(mv()).toContain(line)
+      }
+      expect(g('MeetOrganizerUrl')).toBe('https://o.example')
+    })
+
+    // Hidden .meetvalues dotfile: only the Meet Manager settings LENEX can't carry
+    const runImportWithMeetValues = (xml: string, meetValues: Record<string, string>) => {
+      const p = join(tmpdir(), `test-meetvalues-${randomBytes(4).toString('hex')}.lxf`)
+      writeZipEntries(p, [['meet.lef', xml], ['.meetvalues', JSON.stringify(meetValues)]])
+      try { importLenex(p, db) } finally { try { unlinkSync(p) } catch {} }
+    }
+    const heatSettings = { SEEDMETHOD: 'I;1', COMBINEAGEGROUPS: 'B;T', MINPERHEAT: 'I;3', FASTHEATCOUNT: 'I;2' }
+
+    it('takes the heat settings from .meetvalues, and nothing else from it', () => {
+      runImportWithMeetValues(structureXml('city="Laval" course="LCM"'),
+        { ...heatSettings, CITY: 'S;Not From Dotfile', FACILITYNAME: 'S;Not From Dotfile', AGEDATE: 'D;19990101000000000' })
+      for (const [k, v] of Object.entries(heatSettings)) expect(mv()).toContain(`${k}=${v}`)
+      expect(mv()).toContain('CITY=S;Laval')
+      expect(mv()).not.toContain('Not From Dotfile')
+      expect(mv()).not.toContain('AGEDATE=D;19990101000000000')
+    })
+
+    it('an entries import fills empty heat settings and keeps local ones', () => {
+      runImportWithMeetValues(structureXml('course="LCM"'), { SEEDMETHOD: 'I;2' })
+      runImportWithMeetValues(entriesXml('course="LCM"'), heatSettings)
+      expect(mv()).toContain('SEEDMETHOD=I;2')
+      expect(mv()).toContain('MINPERHEAT=I;3')
+    })
+
+    it('reads every meet field a real Splash export carries', function () {
+      if (!existsSync(FIXTURE_PATH)) { this.skip?.(); return }
+      importLenex(FIXTURE_PATH, db)
+      for (const line of [
+        'NAMEEN=S;CQS 2026 (pool) - Lifesaving - CSSG', 'CITY=S;Gatineau', 'STATE=S;QC', 'NATION=S;CAN',
+        'COURSE=I;3', 'DEADLINE=D;20260410000000000', 'RESERVECOUNT=I;2', 'STARTMETHOD=S;1',
+        'TIMING=I;2', 'TOUCHPADMODE=I;1', 'MASTERS=B;F',
+        'HOSTCLUB=S;Club de sauvetage sportif de Gatineau', 'ORGANIZERURL=S;https://cssgatineau.ca/accueil',
+        'FACILITYNAME=S;Centre sportif de Gatineau', 'FACILITYSTREET=S;850, boul. de La Gappe',
+        'LANEMIN=I;1', 'LANEMAX=I;8', 'QUALIFROM=S;2024-09-01', 'QUALITO=S;2026-04-01',
+        'CONTACTNAME=S;Nathalie Plante', 'CONTACTEMAIL=S;fp107@ncf.ca',
+      ]) expect(mv()).toContain(line)
+    })
+
+    it('exportMeetLenex writes the meet header the way Splash does, and imports back whole', () => {
+      const fields: Record<string, string> = {
+        NAME: 'S;Invitation', NAMEEN: 'S;Invitation EN', CITY: 'S;Montréal', CITYEN: 'S;Montreal',
+        STATE: 'S;Québec', NATION: 'S;Canada', COURSE: 'I;3', DEADLINE: 'D;20261122000000000',
+        RESERVECOUNT: 'I;2', STARTMETHOD: 'S;1', TIMING: 'I;2', TOUCHPADMODE: 'I;2', MASTERS: 'B;F',
+        MEETNUMBER: 'I;7', MEETTYPE: 'S;PROVINCIAL', ORGANIZER: 'S;CSRN', ORGANIZERURL: 'S;https://o.example',
+        HOSTCLUB: 'S;Club Hôte', RESULTURL: 'S;https://r.example', LANEMIN: 'I;2', LANEMAX: 'I;5',
+        FACILITYNAME: 'S;Centre sportif du Parc Olympique', FACILITYSTREET: 'S;3200 rue Viau',
+        QUALIFROM: 'S;2025-09-01', QUALITO: 'S;2026-04-01', CONTACTNAME: 'S;N', CONTACTEMAIL: 'S;n@x.ca',
+        CONTACTINTERNET: 'S;https://c.example', FEECLUB: 'F;25', FEEPERSON: 'F;12.5', FEERELAY: 'F;20',
+        FEELATEINDIVIDUAL: 'F;5', SEEDMETHOD: 'I;1', MINPERHEAT: 'I;3', COMBINEAGEGROUPS: 'B;T',
+      }
+      runImport(structureXml('course="SCM"'))
+      db.prepare(`UPDATE bsglobal SET data=? WHERE name='MEETVALUES'`)
+        .run(Object.entries(fields).map(([k, v]) => `${k}=${v}`).join('\r\n'))
+      db.prepare(`DELETE FROM bsglobal WHERE name IN ('MeetName','MeetCity','MeetNation','MeetCourse')`).run()
+      const out = join(tmpdir(), `test-meet-export-${randomBytes(4).toString('hex')}.lxf`)
+      try {
+        exportMeetLenex(out, db)
+        const xml = readLefXml(out)
+        expect(xml).toMatch(/<MEET [^>]*name\.en="Invitation EN"[^>]*>/)
+        expect(xml).toMatch(/<MEET [^>]*timing="AUTOMATIC"[^>]*touchpad="BOTHSIDE"/)
+        expect(xml).toMatch(/<FACILITY [^>]*name="Centre sportif du Parc Olympique"[^>]*street="3200 rue Viau"/)
+        expect(xml).toMatch(/<FACILITY [^>]*city="Montréal"[^>]*state="Québec"/)
+        expect(xml).toContain('<POOL lanemin="2" lanemax="5" name="Centre sportif du Parc Olympique" />')
+        expect(xml).toContain('<QUALIFY from="2025-09-01" until="2026-04-01" />')
+        expect(xml).toContain('<FEE type="ATHLETE" value="1250" />')
+        expect(xml).not.toContain('SEEDMETHOD')
+        // …and the same file imported into an empty meet brings every field back
+        cleanup()
+        const fresh = createTestDb(); db = fresh.db; cleanup = fresh.cleanup
+        importLenex(out, db)
+        for (const [k, v] of Object.entries(fields)) expect(mv()).toContain(`${k}=${v}`)
+      } finally { try { unlinkSync(out) } catch {} }
+    })
+
+    it('ignores a malformed .meetvalues dotfile', () => {
+      const p = join(tmpdir(), `test-meetvalues-bad-${randomBytes(4).toString('hex')}.lxf`)
+      writeZipEntries(p, [['meet.lef', structureXml('city="Laval" course="LCM"')], ['.meetvalues', '{not json']])
+      try {
+        const summary = importLenex(p, db)
+        expect(summary.errors.some(e => e.includes('.meetvalues'))).toBe(true)
+        expect(mv()).toContain('CITY=S;Laval')
+      } finally { try { unlinkSync(p) } catch {} }
+    })
+  })
+
   it('re-syncs AGEDATE even on an entries-only reimport (skipEventStructure path)', () => {
     const structureXml = `<?xml version="1.0" encoding="UTF-8"?>
 <LENEX version="3.0">

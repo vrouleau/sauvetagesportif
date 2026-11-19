@@ -108,6 +108,10 @@ class ParsedMeet:
     currency: str = ""
     age_base_date: str = ""  # AGEDATE value from Lenex (YYYY-MM-DD)
     meet_fees: dict[str, int] = field(default_factory=dict)
+    # Meet editor fields the file carries, typed MEETVALUES {KEY: "TYPE;value"}:
+    # the LENEX MEET header (config/lenex-meet-fields.json) plus the hidden
+    # .meetvalues entry's Meet Manager settings (see lenex_meet_fields.py)
+    meetvalues: dict[str, str] = field(default_factory=dict)
     sessions: list[MeetSession] = field(default_factory=list)
 
     @property
@@ -132,11 +136,14 @@ def parse_meet_lxf(source) -> ParsedMeet:
     with zipfile.ZipFile(BytesIO(raw)) as z:
         lef_name = [n for n in z.namelist() if n.endswith(".lef")][0]
         xml_bytes = z.read(lef_name)
+        dotfile = z.read(".meetvalues") if ".meetvalues" in z.namelist() else None
 
     root = _ET_fromstring(xml_bytes)
     meet = ParsedMeet()
 
     meet_el = root.find(".//MEET")
+    from .lenex_meet_fields import read_meet_header, read_dotfile
+    meet.meetvalues = {**read_dotfile(dotfile), **read_meet_header(meet_el)}
     if meet_el is not None:
         meet.meet_name = meet_el.get("name", "")
         meet.course = meet_el.get("course", "")

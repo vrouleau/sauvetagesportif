@@ -268,13 +268,14 @@ time, `.smb` export carries them through correctly too.
 - Loads team-app's `.swimstyles` zip dotfile (full style catalog, incl. styles no event uses) before the events; an event's own SWIMSTYLE still wins
 - Remaps `swimstyleid` via `uniqueid` attribute (Splash uses internal auto-increment IDs in MDB but canonical 5xx UIDs in Lenex)
 - Events with `round=11` (MDB encoding for Break/Pause) are marked `internalevent='T'`
-- Extracts MEETVALUES metadata from meet attributes (name, course, agedate, deadline, etc.)
+- Meet editor fields (`applyMeetLevelFields`): every field mapped by `config/lenex-meet-fields.json` (`lenexMeetFields.ts`, shared with team-app — see `config/CLAUDE.md`), read from Splash's own places (MEET attributes, POOL, FACILITY, QUALIFY, CONTACT, FEES) plus the `.meetvalues` dotfile's heat settings; lanes fall back to the first SESSION's. Mirrored into `MeetName/MeetCity/MeetNation/MeetCourse/MeetOrganizer(Url)/PoolLaneMin/Max`. A structure import takes them all; an entries import into an existing meet fills only the empty ones (locally edited values kept — it used to skip them all, #110). AGEDATE is always synced.
+- Session course = `SESSION@course`, else `MEET@course`, else LCM (was always LCM). New sessions created in the app take the meet's course.
 - Auto-detects `MEET_TYPE` from swim style IDs: if any `swimstyleid >= 600` → `BEACH`, else `POOL` (only when not already set)
 
 **Export (`exportMeetLenex`, `exportLenexResults`):**
 - Includes pause event names in the output
 - Uses correct swimstyleids (canonical UIDs)
-- Writes meet-level attributes (course, agedate, organizer, etc.) from MEETVALUES
+- Writes the whole meet editor from MEETVALUES via `config/lenex-meet-fields.json` (`meetHeaderXml`) — the same header team-app writes; `exportMeetLenex` also ships the `.meetvalues` heat settings
 - Writes `preveventid` on every `<EVENT>` (own row's value, or `-1` if unset) — real Splash
   crashes with an access violation opening a Final whose `preveventid` link was never
   established (see "Prelim/Final event numbering" above). This was missed when the

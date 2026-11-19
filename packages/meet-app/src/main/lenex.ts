@@ -24,6 +24,7 @@ import { generateBeachNumbers } from './beachNumber'
 import { parseOleDate, nextId } from './db'
 import { getSeasonYear, loadAgeGroupRules } from './ageGroupRules'
 import { findSwimstyleIssues, type SwimstyleIssues } from './swimstyleRanges'
+import { readMeetHeader, readMeetValuesDotfile, meetHeaderXml, meetValuesDotfile } from './lenexMeetFields'
 
 // ── ZIP reader ────────────────────────────────────────────────────────────────
 
@@ -144,6 +145,77 @@ function encodeCourse(c: string | undefined): number | null {
     case 'LCM': return 1; case 'SCY': return 2; case 'SCM': return 3
     default: return null
   }
+}
+
+/**
+ * Meet editor fields of an imported MEET → MEETVALUES (+ the bsglobal keys
+ * meet-app also keeps for some of them).
+ *
+ * Which LENEX attribute/element carries each field is config/lenex-meet-fields.json
+ * (shared with team-app, the places Splash itself uses: MEET attributes, POOL,
+ * FACILITY, QUALIFY, CONTACT, FEES); `dotfileMeetValues` is the hidden
+ * `.meetvalues` entry with the Meet Manager settings LENEX can't carry
+ * (seeding, heats…). Lanes fall back to the first SESSION that has them.
+ *
+ * A structure import (or a first import into an empty meet) takes every field
+ * the file carries. An entries import into an existing meet only fills the
+ * fields that are still empty, so a value edited locally after the structure
+ * upload is kept — it used to skip them all, so a meet created here with
+ * "Create Pool/Beach" (MEETVALUES = AGEDATE only) never got them (#110).
+ * AGEDATE is handled by the caller (LENEX <AGEDATE>).
+ */
+// MEETVALUES keys meet-app also keeps in their own bsglobal key (exports and
+// the title bar read those first — see setMeetValues in db.ts)
+const MEETVALUE_BSGLOBAL: Record<string, string> = {
+  NAME: 'MeetName', CITY: 'MeetCity', NATION: 'MeetNation', COURSE: 'MeetCourse',
+  ORGANIZER: 'MeetOrganizer', ORGANIZERURL: 'MeetOrganizerUrl',
+  LANEMIN: 'PoolLaneMin', LANEMAX: 'PoolLaneMax',
+}
+
+function applyMeetLevelFields(
+  db: Database.Database, meet: XmlElem, fillOnlyEmpty: boolean,
+  dotfileMeetValues: Record<string, string> = {},
+): void {
+  const getG = db.prepare(`SELECT data FROM bsglobal WHERE name=?`)
+  const setG = db.prepare(
+    `INSERT INTO bsglobal (name, data) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET data=excluded.data`
+  )
+  const g = (name: string): string => ((getG.get(name) as { data: string | null } | undefined)?.data ?? '').trim()
+
+  // MEETVALUES as raw KEY → "TYPE;value" (order kept)
+  const mv: Record<string, string> = {}
+  for (const line of g('MEETVALUES').split(/\r?\n/)) {
+    const eq = line.indexOf('=')
+    if (eq > 0) mv[line.slice(0, eq)] = line.slice(eq + 1)
+  }
+  const valueOf = (typed: string | undefined): string => {
+    const raw = typed ?? ''
+    const semi = raw.indexOf(';')
+    return (semi >= 0 ? raw.slice(semi + 1) : raw).trim()
+  }
+
+  const incoming: Record<string, string> = { ...dotfileMeetValues, ...readMeetHeader(meet) }
+  delete incoming['AGEDATE']
+  if (!incoming['LANEMIN'] || !incoming['LANEMAX']) {
+    const s = children(child(meet, 'SESSIONS') ?? meet, 'SESSION')
+      .find(x => /^\d+$/.test(x.attrs.lanemin ?? '') && /^\d+$/.test(x.attrs.lanemax ?? ''))
+    if (s) { incoming['LANEMIN'] = `I;${s.attrs.lanemin}`; incoming['LANEMAX'] = `I;${s.attrs.lanemax}` }
+  }
+
+  let mvChanged = false
+  for (const [key, typed] of Object.entries(incoming)) {
+    const value = valueOf(typed)
+    if (!value) continue
+    const gKey = MEETVALUE_BSGLOBAL[key]
+    // "Empty" = neither the bsglobal key nor the MEETVALUES key holds a value
+    // (meet-app's own readers use either, e.g. exports read MeetCourse || COURSE).
+    const current = (gKey ? g(gKey) : '') || valueOf(mv[key])
+    if (fillOnlyEmpty && current) continue
+    if (gKey) setG.run(gKey, value)
+    mv[key] = typed
+    mvChanged = true
+  }
+  if (mvChanged) setG.run('MEETVALUES', Object.entries(mv).map(([k, v]) => `${k}=${v}`).join('\r\n'))
 }
 
 function encodeHeatStatus(s: string | undefined): number {
@@ -283,40 +355,17 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
   const skipEventStructure = existingEventCount > 0 && hasClubs
 
   // Store MEET-level attributes in individual bsglobal keys (canonical source)
-  const meetAttrs = meet.attrs
+  // and in the MEETVALUES blob (what the meet editor reads; Splash SMB round-trip).
   const bsglobalStmt = db.prepare(
     `INSERT INTO bsglobal (name, data) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET data=excluded.data`
   )
-  if (!skipEventStructure) {
-    if (meetAttrs.name) bsglobalStmt.run('MeetName', meetAttrs.name)
-    if (meetAttrs.city) bsglobalStmt.run('MeetCity', meetAttrs.city)
-    if (meetAttrs.nation) bsglobalStmt.run('MeetNation', meetAttrs.nation)
-    if (meetAttrs.course) {
-      const courseMap: Record<string, string> = { LCM: '1', SCY: '2', SCM: '3' }
-      bsglobalStmt.run('MeetCourse', courseMap[meetAttrs.course] ?? '1')
-    }
-    if (meetAttrs.organizer) bsglobalStmt.run('MeetOrganizer', meetAttrs.organizer)
-    if (meetAttrs.organizer_url) bsglobalStmt.run('MeetOrganizerUrl', meetAttrs.organizer_url)
-
-    // Also sync into MEETVALUES blob (Splash compatibility for SMB round-trip)
-    const mvRow = db.prepare(`SELECT data FROM bsglobal WHERE name='MEETVALUES'`).get() as { data: string | null } | undefined
-    const existing: Record<string, string> = {}
-    if (mvRow?.data) {
-      for (const line of mvRow.data.split(/\r?\n/)) {
-        const eq = line.indexOf('=')
-        if (eq >= 0) existing[line.slice(0, eq)] = line.slice(eq + 1)
-      }
-    }
-    if (meetAttrs.name) existing['NAME'] = `S;${meetAttrs.name}`
-    if (meetAttrs.city) existing['CITY'] = `S;${meetAttrs.city}`
-    if (meetAttrs.nation) existing['NATION'] = `S;${meetAttrs.nation}`
-    if (meetAttrs.course) {
-      const courseMap: Record<string, string> = { LCM: '1', SCY: '2', SCM: '3' }
-      existing['COURSE'] = `I;${courseMap[meetAttrs.course] ?? '1'}`
-    }
-    const data = Object.entries(existing).map(([k, v]) => `${k}=${v}`).join('\r\n')
-    bsglobalStmt.run('MEETVALUES', data)
+  // `.meetvalues` dotfile: the Meet Manager settings LENEX can't carry (see applyMeetLevelFields)
+  let dotfileMeetValues = readMeetValuesDotfile(entries.get('.meetvalues')?.toString('utf8'))
+  if (dotfileMeetValues === null) {
+    summary.errors.push('Warning: .meetvalues entry present but could not be parsed')
+    dotfileMeetValues = {}
   }
+  applyMeetLevelFields(db, meet, skipEventStructure, dotfileMeetValues)
 
   // AGEDATE — synced regardless of skipEventStructure: it's a meet-level
   // date, not part of the event/session structure that flag protects, and
@@ -346,13 +395,11 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
     bsglobalStmt.run('MEETVALUES', Object.entries(mv).map(([k, v]) => `${k}=${v}`).join('\r\n'))
   }
 
-  // Pool info from POOL element
+  // Pool info from POOL element (lanemin/lanemax: see applyMeetLevelFields)
   const pool = child(meet, 'POOL')
   if (pool) {
     if (pool.attrs.name) bsglobalStmt.run('PoolName', pool.attrs.name)
     if (pool.attrs.lanes) bsglobalStmt.run('PoolLanes', pool.attrs.lanes)
-    if (pool.attrs.lanemin) bsglobalStmt.run('PoolLaneMin', pool.attrs.lanemin)
-    if (pool.attrs.lanemax) bsglobalStmt.run('PoolLaneMax', pool.attrs.lanemax)
   }
   // Facility/venue from FACILITY
   const facility = child(meet, 'FACILITY')
@@ -382,12 +429,12 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
     findSession: db.prepare(`SELECT swimsessionid FROM swimsession WHERE sessionnumber=?`),
     updateSession: db.prepare(
       `UPDATE swimsession SET name=?,
-         startdate=COALESCE(?, startdate),
+         startdate=COALESCE(?, startdate), course=?,
          lanemin=COALESCE(?, lanemin), lanemax=COALESCE(?, lanemax)
        WHERE swimsessionid=?`),
     insertSession: db.prepare(
       `INSERT INTO swimsession (swimsessionid, sessionnumber, name, startdate, course, following, poolglobal, roundtotenths, lanemin, lanemax)
-       VALUES (?,?,?,?,1,'F','F','F',?,?)`),
+       VALUES (?,?,?,?,?,'F','F','F',?,?)`),
     upsertStyle: db.prepare(
       `INSERT INTO swimstyle (swimstyleid, distance, relaycount, stroke, name, technique, code, uniqueid)
        VALUES (?,?,?,?,?,?,?,?)
@@ -499,15 +546,18 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
       // (see docs/LENEX_EXPORT_MATRIX.md); keep just the date part so it lands as a
       // clean YYYY-MM-DD in swimsession.startdate (what getSessions/parseOleDate expect).
       const startDate = /^\d{4}-\d{2}-\d{2}/.test(a.date ?? '') ? a.date!.slice(0, 10) : null
+      // The session's own pool length, else the meet's, else 50 m (it used to
+      // always be 50 m, so a 25 m meet's sessions came in as 50 m).
+      const sessCourse = encodeCourse(a.course) ?? encodeCourse(meet.attrs.course) ?? 1
       if (existing) {
         swimsessionid = existing.swimsessionid
-        if (!skipEventStructure) stmts.updateSession.run(sessName, startDate, laneMin, laneMax, swimsessionid)
+        if (!skipEventStructure) stmts.updateSession.run(sessName, startDate, sessCourse, laneMin, laneMax, swimsessionid)
       } else {
         if (skipEventStructure) continue  // Don't create new sessions during entries import
         // mintId(), not a table-local MAX+1 — a new session's id must not collide with any
         // other table's id either, same principle as club/athlete/heat/relay/swimresult above.
         swimsessionid = mintId()
-        stmts.insertSession.run(swimsessionid, num, sessName, startDate, laneMin, laneMax)
+        stmts.insertSession.run(swimsessionid, num, sessName, startDate, sessCourse, laneMin, laneMax)
       }
       summary.sessions++
     } catch (e) {
@@ -1138,6 +1188,31 @@ function computeAgeDate(db: Database.Database): string {
   return `${year}-${mm}-${dd}`
 }
 
+/**
+ * The meet editor's MEETVALUES as typed { KEY: 'TYPE;value' } for an export
+ * header (meetHeaderXml) — the blob, with the canonical bsglobal values for
+ * name/city/nation/course winning over a stale copy in it. AGEDATE is written
+ * as its own <AGEDATE> element.
+ */
+function exportMeetValues(
+  g: Record<string, string>, meetName: string, meetCity: string, meetNation: string, meetCourse: string,
+): Record<string, string> {
+  const mv: Record<string, string> = {}
+  for (const line of (g['MEETVALUES'] ?? '').split(/\r?\n/)) {
+    const eq = line.indexOf('=')
+    if (eq <= 0) continue
+    const typed = line.slice(eq + 1)
+    const semi = typed.indexOf(';')
+    if (semi >= 0 && typed.slice(semi + 1).trim()) mv[line.slice(0, eq)] = typed
+  }
+  delete mv['AGEDATE']
+  mv['NAME'] = `S;${meetName}`
+  if (meetCity) mv['CITY'] = `S;${meetCity}`
+  if (meetNation) mv['NATION'] = `S;${meetNation}`
+  mv['COURSE'] = `I;${encodeCourse(meetCourse) ?? 1}`
+  return mv
+}
+
 export function exportLenexResults(filePath: string, db: Database.Database): ExportSummary {
   const summary: ExportSummary = { sessions: 0, events: 0, clubs: 0, athletes: 0, results: 0 }
 
@@ -1334,8 +1409,10 @@ export function exportLenexResults(filePath: string, db: Database.Database): Exp
   lines.push('<?xml version="1.0" encoding="UTF-8"?>')
   lines.push('<LENEX version="3.0">')
   lines.push('  <MEETS>')
-  lines.push(`    <MEET${attr('name', meetName)}${attr('city', meetCity)}${attr('nation', meetNation)}${attr('course', meetCourse)}>`)
+  const meetHeader = meetHeaderXml(exportMeetValues(g, meetName, meetCity, meetNation, meetCourse))
+  lines.push(`    <MEET${meetHeader.attrs}>`)
   lines.push(`      <AGEDATE value="${ageDate}" type="DATE" />`)
+  for (const c of meetHeader.children) lines.push(`      ${c}`)
 
   // Sessions + Events + AgeGroups + Heats
   lines.push('      <SESSIONS>')
@@ -1603,8 +1680,10 @@ export function exportMeetLenex(filePath: string, db: Database.Database): MeetEx
   lines.push('<?xml version="1.0" encoding="UTF-8"?>')
   lines.push('<LENEX version="3.0">')
   lines.push('  <MEETS>')
-  lines.push(`    <MEET${attr('name', meetName)}${attr('city', meetCity)}${attr('nation', meetNation)}${attr('course', meetCourse)}>`)
+  const meetHeader = meetHeaderXml(exportMeetValues(g, meetName, meetCity, meetNation, meetCourse))
+  lines.push(`    <MEET${meetHeader.attrs}>`)
   lines.push(`      <AGEDATE value="${ageDate}" type="DATE" />`)
+  for (const c of meetHeader.children) lines.push(`      ${c}`)
   lines.push('      <SESSIONS>')
 
   for (const sess of sessions) {
@@ -1661,6 +1740,10 @@ export function exportMeetLenex(filePath: string, db: Database.Database): MeetEx
   lines.push('  </MEETS>')
   lines.push('</LENEX>')
 
-  writeZipSingleEntry(filePath, 'meet.lef', lines.join('\n'))
+  // + the Meet Manager settings LENEX can't carry (config/lenex-meet-fields.json dotfileKeys)
+  writeZipEntries(filePath, [
+    ['meet.lef', lines.join('\n')],
+    ['.meetvalues', meetValuesDotfile(exportMeetValues(g, meetName, meetCity, meetNation, meetCourse))],
+  ])
   return summary
 }

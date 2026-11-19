@@ -43,6 +43,15 @@ python scripts/generate_dsq_xml.py [--lang fr|en] [--type pool|beach] [--output 
 
 The `serc` list (4 codes, Règlements Québec Annexe 3 — §5.14.5) is a separate, fixed set never fed into `dsq.xml`: SERC is a team-app-only judged event with no Splash/meet-app path at all. It's read at runtime by team-app's `backend/app/routers/serc.py` (`GET /api/serc/dsq-codes`) the same way `age-group-rules.json` is read by `age_group_rules.py` — see that file's `_config_path()`-style loader — and backs `PUT /api/serc/disqualification`, which lets the organizer/chief-judge flag a team DQ'd for a given SERC draw. A DQ'd (draw, team) contributes 0 to that draw's total and is excluded from that draw's ranking (rank omitted, not just last), per §2.4's "no rank or time" rule; the team's overall total simply doesn't include that draw's contribution.
 
+## Meet editor fields in LXF (`lenex-meet-fields.json`)
+
+Single source of truth for where each meet editor field (MEETVALUES key) travels in LENEX, so a meet set up in either app arrives whole in the other (team-app → create meet → entries → export → meet-app → heats). Every field LENEX has a place for uses Splash's own place and format (checked against a real Splash export, `packages/team-app/tests/fixtures/meet_template.lxf`): MEET attributes (`name.en`, `city`, `state`, `nation`, `course`, `deadline`, `reservecount`, `startmethod`, `timing="AUTOMATIC"`, `touchpad="ONESIDE"`, `masters`, `organizer(.url)`, `hostclub`, `result.url`, `number`, `type`), `POOL` (lanes, name), `FACILITY` (name, street, city, state, nation), `QUALIFY` (from/until), `CONTACT`, `FEES/FEE` (cents). `dotfileKeys` are the Meet Manager settings LENEX has no place for (seeding, combine age groups, min per heat, fast heats, seed-last options, lane order…): they travel in the hidden `.meetvalues` zip entry (`{KEY: "TYPE;value"}`, Splash ignores dotfiles). AGEDATE is not in the map — both apps keep their own `<AGEDATE>` logic.
+
+Read by both apps for every LXF they write and read — add a field here, not in code:
+- **team-app**: `backend/app/lenex_meet_fields.py` — `export._add_meet_element` (both exports), `meet_parser.parse_meet_lxf` → `ParsedMeet.meetvalues`, applied by `_replace_current_meet_structure` (upload) and `_init_meet_from_template`. Docker: `COPY config/lenex-meet-fields.json .`
+- **meet-app**: `src/main/lenexMeetFields.ts` — `importLenex` (`applyMeetLevelFields`: structure import takes all, entries import fills only empty fields), `exportMeetLenex` (+ `.meetvalues`), `exportLenexResults`. Packaged via `extraResources`.
+- Tests: `packages/team-app/tests/unit/test_meet_course_roundtrip.py` (`TestExportMeetHeader`, `TestSplashFile`), `packages/meet-app/tests/lenex.test.ts` ("meet-level fields").
+
 ## Meet templates
 
 | File | Type | swimstyleid range |

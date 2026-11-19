@@ -33,7 +33,11 @@ from .models import (
 from .models_team import TeamClub, Member, Relay, RelayPos
 from .models_team import gender_to_str as relay_gender_to_str
 from .best_times import get_best_time_date
-from .meet_config import get_active_meetsid, _get_meet_config, _get_meet_type
+from .meet_config import (
+    get_active_meetsid, _get_meet_config, _get_meet_course, _get_meet_type, _get_closure_date,
+    COURSE_TO_INT,
+)
+from .lenex_meet_fields import write_meet_header, parse_typed_meetvalues, dotfile_payload
 
 
 def _ms_to_lenex(ms: int | None) -> str:
@@ -63,6 +67,40 @@ def current_meet_swimstyles(db: Session) -> list[SwimStyle]:
     styles = db.query(SwimStyle).order_by(SwimStyle.distance, SwimStyle.stroke).all()
     beach = _get_meet_type(db) == "BEACH"
     return [s for s in styles if s.swimstyleid and (s.swimstyleid >= 600) == beach]
+
+
+def meetvalues_for_export(db: Session, meetsid: int | None) -> dict[str, str]:
+    """The meet editor's MEETVALUES as typed {KEY: "TYPE;value"}, ready to export.
+
+    The canonical keys win over any stale copy in the blob: NAME (meet_name),
+    COURSE (meet_course), DEADLINE (closure date), MASTERS (meet_masters).
+    AGEDATE travels as the LENEX <AGEDATE> element instead.
+    """
+    out = parse_typed_meetvalues(_get_meet_config(db, meetsid, "MEETVALUES"))
+    out.pop("AGEDATE", None)
+    name = _get_meet_config(db, meetsid, "meet_name")
+    if name:
+        out["NAME"] = f"S;{name}"
+    out["COURSE"] = f"I;{COURSE_TO_INT[_get_meet_course(db, meetsid)]}"
+    deadline = _get_closure_date(db, meetsid=meetsid) if meetsid else None
+    if deadline:
+        out["DEADLINE"] = f"D;{deadline.replace('-', '')}000000000"
+    else:
+        out.pop("DEADLINE", None)
+    masters = _get_meet_config(db, meetsid, "meet_masters")
+    if masters and "MASTERS" not in out:
+        out["MASTERS"] = f"B;{masters}"
+    # Legacy keys some older meets still hold (nothing writes them any more)
+    for key, legacy in (("CITY", "meet_city"), ("NATION", "meet_nation")):
+        if key not in out and _get_meet_config(db, meetsid, legacy):
+            out[key] = f"S;{_get_meet_config(db, meetsid, legacy)}"
+    return out
+
+
+def _write_meetvalues_entry(z: zipfile.ZipFile, db: Session, meetsid: int | None) -> None:
+    """Hidden ``.meetvalues`` dotfile: the Meet Manager settings LENEX can't
+    carry (seeding, heats…, config/lenex-meet-fields.json dotfileKeys)."""
+    z.writestr(".meetvalues", dotfile_payload(meetvalues_for_export(db, meetsid)))
 
 
 def _write_swimstyles_entry(z: zipfile.ZipFile, db: Session) -> None:
@@ -148,13 +186,32 @@ def _agegroup_for_code(age_groups, age_code: str, masters: bool):
     return None
 
 
+def _add_meet_element(parent: ET.Element, db: Session, meetsid: int | None,
+                      name: str, age_base_date: str) -> ET.Element:
+    """MEET element with every meet editor field LENEX has a place for.
+
+    Shared by the entries export (generate_lxf) and the structure export
+    (generate_meet_lxf_from_db). The field map is config/lenex-meet-fields.json
+    (MEET attributes, POOL, FACILITY, QUALIFY, CONTACT, FEES), the same one
+    meet-app reads and writes, so a meet set up in either app arrives whole.
+    """
+    mv = meetvalues_for_export(db, meetsid)
+    meet = ET.SubElement(parent, "MEET", {"name": name})
+    ET.SubElement(meet, "AGEDATE", value=age_base_date, type="DATE")
+    currency = _get_meet_config(db, meetsid, "meet_currency") or "CAD"
+    write_meet_header(meet, mv, currency=currency)
+    if not meet.get("name"):
+        meet.set("name", name)
+    return meet
+
+
 def _meet_struct_from_db(db: Session, meetsid: int | None = None):
     """Build ParsedMeet from DB instead of requiring meet.lxf on disk."""
     from .meet_parser import ParsedMeet, MeetSession, MeetEvent, MeetAgeGroup
 
     meetsid = meetsid if meetsid is not None else get_active_meetsid(db)
     meet_name = _get_meet_config(db, meetsid, "meet_name")
-    course = _get_meet_config(db, meetsid, "meet_course") or "LCM"
+    course = _get_meet_course(db, meetsid)
 
     gender_map = {0: "ALL", 1: "M", 2: "F", 3: "MIXED"}
     round_map = {1: "PRE", 2: "SEM", 4: "FIN", 5: "TIM"}
@@ -252,39 +309,8 @@ def generate_lxf(db: Session, meetsid: int | None = None) -> bytes:
     # Build XML
     root = ET.Element("LENEX", version="3.0")
     meets = ET.SubElement(root, "MEETS")
-    meet_attrs = {
-        "name": meet_struct.meet_name or "Inscription Export",
-        "course": meet_struct.course or "LCM",
-    }
-    # Add optional meet attributes from meet_config
-    export_meetsid = meetsid
-    for key, attr_name in [("meet_city", "city"), ("meet_nation", "nation"),
-                           ("meet_masters", "masters")]:
-        val = _get_meet_config(db, export_meetsid, key)
-        if val:
-            meet_attrs[attr_name] = val
-    # Read organizer/hostclub from MEETVALUES
-    mv_data = _get_meet_config(db, export_meetsid, "MEETVALUES")
-    if mv_data:
-        for line in mv_data.replace("\\r", "").split("\n"):
-            line = line.strip("\r\n ")
-            eq = line.find("=")
-            if eq >= 0:
-                key = line[:eq]
-                val_part = line[eq + 1:]
-                semi = val_part.find(";")
-                val = val_part[semi + 1:] if semi >= 0 else val_part
-                if val:
-                    if key == "ORGANIZER":
-                        meet_attrs["organizer"] = val
-                    elif key == "HOSTCLUB":
-                        meet_attrs["hostclub"] = val
-                    elif key == "STATE":
-                        meet_attrs["state"] = val
-                    elif key == "CITY" and "city" not in meet_attrs:
-                        meet_attrs["city"] = val
-    meet = ET.SubElement(meets, "MEET", meet_attrs)
-    ET.SubElement(meet, "AGEDATE", value=age_base_date, type="DATE")
+    meet = _add_meet_element(meets, db, meetsid, meet_struct.meet_name or "Inscription Export",
+                             age_base_date)
 
     # Sessions + Events from meet structure
     sessions_xml = ET.SubElement(meet, "SESSIONS")
@@ -402,7 +428,7 @@ def generate_lxf(db: Session, meetsid: int | None = None) -> bytes:
         db.query(Relay)
         .filter(
             Relay.clubsid.isnot(None),
-            Relay.meetsid == export_meetsid,
+            Relay.meetsid == meetsid,
             Relay.stylesid != SERC_STYLE_ID,
         )
         .order_by(Relay.clubsid, Relay.stylesid, Relay.teamnumb)
@@ -656,6 +682,7 @@ def generate_lxf(db: Session, meetsid: int | None = None) -> bytes:
             keys["live_url"] = live_url
         z.writestr(".keys", _json.dumps(keys))
         _write_swimstyles_entry(z, db)
+        _write_meetvalues_entry(z, db, meetsid)
     return buf.getvalue()
 
 
@@ -683,12 +710,8 @@ def generate_meet_lxf_from_db(db: Session, meetsid: int | None = None) -> bytes:
 
     root = ET.Element("LENEX", version="3.0")
     meets_xml = ET.SubElement(root, "MEETS")
-    meet_xml = ET.SubElement(meets_xml, "MEET", {
-        "name": meet_struct.meet_name or "Meet Export",
-        "course": meet_struct.course or "LCM",
-        "city": "",
-    })
-    ET.SubElement(meet_xml, "AGEDATE", value=age_base_date, type="DATE")
+    meet_xml = _add_meet_element(meets_xml, db, meetsid, meet_struct.meet_name or "Meet Export",
+                                 age_base_date)
 
     sessions_xml = ET.SubElement(meet_xml, "SESSIONS")
     for ses in db_sessions:
@@ -771,4 +794,5 @@ def generate_meet_lxf_from_db(db: Session, meetsid: int | None = None) -> bytes:
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("meet.lef", xml_bytes)
         _write_swimstyles_entry(z, db)
+        _write_meetvalues_entry(z, db, meetsid)
     return buf.getvalue()

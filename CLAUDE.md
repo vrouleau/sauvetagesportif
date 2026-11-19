@@ -18,6 +18,8 @@ Per-package context:
 | Entries | team-app (Organizer → Télécharger LXF) | meet-app (File → Importer LENEX) | Clubs, athletes, registrations, entry times |
 | Results | meet-app (File → Exporter résultats) | team-app (Organizer → Importer résultats) | Athletes + final times → archived as historical meet |
 
+Every meet editor field travels in both directions, so the meet can be set up in either app (team-app → create meet → entries → export → meet-app → heats → run): standard LENEX where Splash puts it, plus a hidden `.meetvalues` entry for the seeding/heat settings — one shared map, `config/lenex-meet-fields.json` (see `config/CLAUDE.md`).
+
 Organizer import of results also closes the meet cycle: resets current meet (both admin and organizer paths), regenerates club PINs, clears organizer role. Empty meet state is supported — self-invite shows "no meet planned". See `packages/team-app/CLAUDE.md` for details.
 
 ## Branding

@@ -311,6 +311,12 @@ Full data flow between meet-app and team-app:
 
 **Archived results carry `results.eventnumb`** (the event number): `results.py` groups a historical meet's results by it and the athlete history sorts by it. The Organizer import used to leave it NULL (all events lumped under "event 0").
 
+**Next-meet stub:** when the closed (or deleted) meet was the last open one, `_reload_pool_template` creates the next meet from the pool template with the same meet config as "New meet" (`_init_meet_from_template`: meet_course, filename, masters, currency, fees, AGEDATE, COMBINEAGEGROUPS). It used to get only AGEDATE — no `meet_course` — which hid every relay entry-time suggestion in the next meet.
+
+**Meet course (pool length):** stored in three places that must agree — `meet_config.meet_course` (LENEX string, canonical), `meets.course` and MEETVALUES `COURSE` (Splash ints 1=LCM, 2=SCY, 3=SCM). Write it only with `meet_config._set_meet_course`, read it only with `_get_meet_course` (never None: a meet with no stored course is LCM, what the meet editor shows). New sessions take the meet's course. **Changing the course in the meet editor** (`set_meet_config` COURSE) moves the meet's sessions to it and recomputes every relay entry time still following the suggestion for the new course (`best_times.refresh_relay_entry_times_for_course`; typed times kept) — an organizer who fixes the pool length late rebuilds nothing. `best_times.suggest_relay_entry_time` is the Python copy of shared-ui's `suggestRelayEntryTime` (same half-up rounding) — keep them in step.
+
+**Meet editor fields in LXF:** every field of the meet editor travels in both directions, mapped by `config/lenex-meet-fields.json` (see `config/CLAUDE.md`): standard LENEX the way Splash writes it (MEET attributes, POOL, FACILITY, QUALIFY, CONTACT, FEES) and the hidden `.meetvalues` entry for the seeding/heat settings. Both exports write it (`export._add_meet_element`, closure date → `deadline`, `meet_currency` on FEEs); a structure upload applies the file's fields and takes its deadline as the closure date; a meet created from a template takes the template's fields (not its deadline) as defaults.
+
 **Empty meet state:** After reset (or fresh install), the meet has no events. Self-invite page shows "no meet planned" when empty. Admin or organizer uploads a new meet .lxf to start the next cycle.
 
 ## In-App Documentation

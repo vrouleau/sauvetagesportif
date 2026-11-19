@@ -829,7 +829,8 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
         else if (key === 'sessionnumber') localUpdate.number = val as number
         else if (key === 'startdate') localUpdate.date = val as string | undefined
         else if (key === 'course') {
-          const c = val as number
+          const c = Number(val)
+          localUpdate.course = c
           localUpdate.poolSize = c === 3 ? 25 : c === 2 ? 25 : 50
         }
         else if (key === 'lanemin') localUpdate.laneMin = val as number | undefined
@@ -2613,10 +2614,12 @@ function SessionPropertiesPanel({
     )
   }
 
+  // LENEX course codes, same as the meet-level COURSE: 1=LCM, 2=SCY, 3=SCM
+  // (these labels used to be swapped, so "25m (SCM)" saved yards).
   const poolOptions = [
     { value: 1, label: 'Bassin 50m' },
-    { value: 2, label: 'Bassin 25m (SCM)' },
-    { value: 3, label: 'Bassin 25m (SCY)' },
+    { value: 3, label: 'Bassin 25m (SCM)' },
+    { value: 2, label: 'Bassin 25y (SCY)' },
   ]
   const timingOptions = [
     { value: '', label: '—' },
@@ -2631,7 +2634,7 @@ function SessionPropertiesPanel({
     { value: 2, label: 'Les deux côtés' },
   ]
 
-  const courseValue = session.poolSize === 50 ? 1 : 2
+  const courseValue = session.course ?? (session.poolSize === 50 ? 1 : 3)
 
   return (
     <SessionUpdateContext.Provider value={onUpdate}>

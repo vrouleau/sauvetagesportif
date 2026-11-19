@@ -58,6 +58,10 @@
       {
         "from": "../../config/swimstyle-ranges.json",
         "to": "swimstyle-ranges.json"
+      },
+      {
+        "from": "../../config/lenex-meet-fields.json",
+        "to": "lenex-meet-fields.json"
       }
     ],
     "win": {

@@ -149,6 +149,48 @@ def _update_meetvalue(db: Session, key: str, typed_value: str, meetsid: int | No
         _set_meet_config(db, meetsid, "MEETVALUES", data)
 
 
+# ── Meet course (pool length) ────────────────────────────────────────────────
+# One meet's course lives in three places: meet_config `meet_course` (LENEX
+# string, the canonical value every reader uses), `meets.course` (Splash int,
+# what archived results/relays copy) and MEETVALUES `COURSE` (Splash int, what
+# the shared meet editor shows). _set_meet_course writes all three together;
+# _get_meet_course is the one reader. A meet whose course was never set reads
+# as LCM — what the meet editor shows for it.
+COURSE_TO_INT = {"LCM": 1, "SCY": 2, "SCM": 3}
+INT_TO_COURSE = {v: k for k, v in COURSE_TO_INT.items()}
+DEFAULT_COURSE = "LCM"
+
+
+def normalize_course(course: str | None) -> str:
+    """LENEX course string ("LCM"/"SCY"/"SCM", any case) or DEFAULT_COURSE."""
+    c = (course or "").strip().upper()
+    return c if c in COURSE_TO_INT else DEFAULT_COURSE
+
+
+def _get_meet_course(db: Session, meetsid: int | None) -> str:
+    """The meet's course as a LENEX string — never None."""
+    return normalize_course(_get_meet_config(db, meetsid, "meet_course"))
+
+
+def _set_meet_course(db: Session, meetsid: int | None, course: str | None,
+                     *, sync_meetvalues: bool = True) -> str:
+    """Set the meet's course everywhere it is stored. Returns the stored value.
+
+    sync_meetvalues=False when the caller rewrites the MEETVALUES blob itself
+    (PUT /meet-config), which would otherwise overwrite this write.
+    """
+    value = normalize_course(course)
+    if meetsid is None:
+        return value
+    _set_meet_config(db, meetsid, "meet_course", value)
+    team_meet = db.get(TeamMeet, meetsid)
+    if team_meet is not None:
+        team_meet.course = COURSE_TO_INT[value]
+    if sync_meetvalues:
+        _update_meetvalue(db, "COURSE", f"I;{COURSE_TO_INT[value]}", meetsid=meetsid)
+    return value
+
+
 def _get_closure_date(db: Session, meetsid: int | None = None) -> str | None:
     """Get closure/deadline date — reads from closure_date key first, falls back to MEETVALUES DEADLINE."""
     meetsid = meetsid if meetsid is not None else get_active_meetsid(db)

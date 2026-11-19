@@ -33,13 +33,15 @@ Expiry: anything dated more than `max_age_months` ago is ignored.
 """
 from __future__ import annotations
 
+import math
+
 from datetime import date, datetime
 from sqlalchemy import DateTime, func, or_, true
 from sqlalchemy.orm import Session, joinedload
 
 from .models import SwimStyle
 from .models_team import Result, Member, AthleteBestTime, Meet
-from .meet_config import get_active_meetsid, _get_meet_config, _get_meet_type
+from .meet_config import get_active_meetsid, _get_meet_config, _get_meet_course, _get_meet_type
 
 
 # Beach styles (601-624) are ranked, not timed: their "results" are finishing
@@ -275,7 +277,7 @@ def get_public_best_times(db: Session, max_age_months: int = 18) -> dict:
         club["athletes"].sort(key=lambda a: a["name"])
 
     # Determine course (current meet's course, used to pick LCM vs SCM when both exist)
-    course = _get_meet_config(db, get_active_meetsid(db), "meet_course") or "LCM"
+    course = _get_meet_course(db, get_active_meetsid(db))
 
     return {"styles": styles, "clubs": clubs, "course": course}
 
@@ -337,7 +339,7 @@ def capture_coach_best_times(db: Session, meetsid: int | None, max_age_months: i
     meet_type = ((meet.meet_type if meet else None) or _get_meet_type(db)).upper()
     if meet_type == "BEACH":
         return 0
-    course_str = _get_meet_config(db, meetsid, "meet_course") or "LCM"
+    course_str = _get_meet_course(db, meetsid)
     course_int = _course_int(course_str)
     if course_int is None:
         return 0
@@ -587,3 +589,63 @@ def get_relay_best_times(
         .all()
     )
     return {mid: t for mid, t in rows if t}
+
+
+def suggest_relay_entry_time(times: list[int | None]) -> int | None:
+    """Suggested team entry time: the average of the members' relay best times
+    (members without one are left out), rounded to the hundredth.
+
+    Same rule as shared-ui's suggestRelayEntryTime (logic/relayEntryTime.ts),
+    including JS Math.round's half-up rounding — keep the two in step.
+    """
+    valid = [t for t in times if t and t > 0]
+    if not valid:
+        return None
+    return int(math.floor(sum(valid) / len(valid) / 10 + 0.5)) * 10
+
+
+def refresh_relay_entry_times_for_course(db: Session, meetsid: int | None, old_course: str, new_course: str) -> int:
+    """After the meet's pool length changed, move every relay entry time that
+    still follows the suggestion to the new course's suggestion.
+
+    A team's entry time was filled from the members' relay best times for the
+    meet's course at the time. One still equal to that suggestion (or empty)
+    was never typed by the coach, so it follows the course like it follows
+    member changes (entryTimeAfterMemberChange in shared-ui); a typed time is
+    kept. Returns the number of teams changed.
+    """
+    from .models_team import Relay, RelayPos
+
+    if meetsid is None or old_course == new_course:
+        return 0
+    relays = (
+        db.query(Relay)
+        .filter(Relay.meetsid == meetsid, Relay.stylesid.isnot(None),
+                Relay.stylesid < BEACH_STYLE_MIN, Relay.stylesid != SERC_STYLE_ID)
+        .all()
+    )
+    if not relays:
+        return 0
+    members: dict[int, list[int]] = {}
+    for pos in db.query(RelayPos).filter(RelayPos.relaysid.in_([r.relaysid for r in relays])):
+        if pos.membersid:
+            members.setdefault(pos.relaysid, []).append(pos.membersid)
+    bests: dict[tuple[int, str], dict[int, int]] = {}
+
+    def suggestion(relay, course: str) -> int | None:
+        key = (relay.stylesid, course)
+        if key not in bests:
+            style_members = {m for r in relays if r.stylesid == relay.stylesid for m in members.get(r.relaysid, [])}
+            bests[key] = get_relay_best_times(db, style_members, relay.stylesid, course)
+        return suggest_relay_entry_time([bests[key].get(m) for m in members.get(relay.relaysid, [])])
+
+    changed = 0
+    for relay in relays:
+        current = relay.entrytime or None
+        if current is not None and current != suggestion(relay, old_course):
+            continue  # typed by the coach
+        new = suggestion(relay, new_course)
+        if new != current:
+            relay.entrytime = new
+            changed += 1
+    return changed
