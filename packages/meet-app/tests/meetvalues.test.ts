@@ -121,3 +121,19 @@ describe('MEETVALUES parser/writer', () => {
     expect(getMeetValues(db).NAME).toBe('New Name')
   })
 })
+describe('setMeetValues (real) — pool length', () => {
+  let db: Database.Database
+  let cleanup: () => void
+  beforeEach(() => { const t = createTestDb(); db = t.db; cleanup = t.cleanup })
+  afterEach(() => cleanup())
+
+  it("changing the meet's COURSE moves every session to it (fixing it late needs no rebuild)", async () => {
+    const { setMeetValues: realSetMeetValues } = await import('../src/main/db')
+    db.prepare(`INSERT INTO swimsession (swimsessionid, sessionnumber, name, course) VALUES (1, 1, 'S1', 3), (2, 2, 'S2', 3)`).run()
+    realSetMeetValues({ COURSE: { type: 'I', value: '1' } }, db)
+    const courses = (db.prepare(`SELECT course FROM swimsession ORDER BY swimsessionid`).all() as Array<{ course: number }>)
+      .map(r => r.course)
+    expect(courses).toEqual([1, 1])
+    expect((db.prepare(`SELECT data FROM bsglobal WHERE name='MeetCourse'`).get() as { data: string }).data).toBe('1')
+  })
+})

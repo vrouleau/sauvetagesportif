@@ -370,6 +370,8 @@ export interface SessionRow {
   time?: string
   endTime?: string
   poolSize: number
+  /** LENEX course code: 1=LCM (50 m), 2=SCY (25 yd), 3=SCM (25 m) */
+  course?: number
   laneMin?: number
   laneMax?: number
   warmupFrom?: string
@@ -772,6 +774,7 @@ export async function getSessions(injectedDb?: ReturnType<typeof getLocalDb>): P
     time: formatDaytime(s.daytime),
     endTime: formatDaytime(s.endtime),
     poolSize: s.course === 3 ? 25 : s.course === 2 ? 25 : 50,
+    course: s.course ?? 1,
     laneMin: s.lanemin ?? undefined,
     laneMax: s.lanemax ?? undefined,
     warmupFrom: formatDaytime(s.warmupfrom),
@@ -1284,10 +1287,14 @@ export function nextId(table: string, pkCol: string, injectedDb?: ReturnType<typ
 export async function createSession(name: string, sessionNumber: number): Promise<number> {
   const db = getLocalDb()
   const id = nextId('swimsession', 'swimsessionid')
+  // A new session takes the meet's pool length (MeetCourse, else MEETVALUES COURSE, else 50 m).
+  const g = db.prepare(`SELECT data FROM bsglobal WHERE name='MeetCourse'`).get() as { data: string | null } | undefined
+  const meetCourse = parseInt(g?.data || readMeetValuesFromDb(db)['COURSE'] || '1', 10)
+  const course = [1, 2, 3].includes(meetCourse) ? meetCourse : 1
   db.prepare(
     `INSERT INTO swimsession (swimsessionid, sessionnumber, name, course, following, poolglobal, roundtotenths)
-     VALUES (?, ?, ?, 1, 'F', 'F', 'F')`
-  ).run(id, sessionNumber, name)
+     VALUES (?, ?, ?, ?, 'F', 'F', 'F')`
+  ).run(id, sessionNumber, name, course)
   return id
 }
 
@@ -2401,8 +2408,11 @@ export function getMeetValues(): MeetValues {
   return result
 }
 
-export function setMeetValues(updates: Record<string, { type: string; value: string }>): void {
-  const db = getLocalDb()
+export function setMeetValues(
+  updates: Record<string, { type: string; value: string }>,
+  injectedDb?: ReturnType<typeof getLocalDb>,
+): void {
+  const db = injectedDb ?? getLocalDb()
   // Read existing
   const row = db.prepare(`SELECT data FROM bsglobal WHERE name='MEETVALUES'`).get() as { data: string | null } | undefined
   const existing: Record<string, string> = {}
@@ -2433,6 +2443,10 @@ export function setMeetValues(updates: Record<string, { type: string; value: str
   if (updates.COURSE) {
     const courseMap: Record<string, string> = { '1': '1', '2': '2', '3': '3' }
     syncStmt.run('MeetCourse', courseMap[updates.COURSE.value] ?? updates.COURSE.value)
+    // The pool length is one setting: the meet's sessions take it, so fixing it
+    // late doesn't mean rebuilding sessions (same as team-app's set_meet_config).
+    const course = parseInt(updates.COURSE.value, 10)
+    if ([1, 2, 3].includes(course)) db.prepare(`UPDATE swimsession SET course=?`).run(course)
   }
 }
 

@@ -46,6 +46,7 @@ from ..models_team import TeamClub, Member, Meet as TeamMeet
 from ..meet_config import (
     get_active_meetsid, resolve_meetsid, _get_meet_config, _set_meet_config,
     _get_meet_type, _set_meet_type, _update_meetvalue,
+    _get_meet_course, _set_meet_course, COURSE_TO_INT, INT_TO_COURSE,
     _get_closure_date, _set_closure_date,
     _get_organizer_club_id, _set_organizer_club_id,
     session_date_conflict,
@@ -579,7 +580,6 @@ def _replace_current_meet_structure(db: Session, meet, content: bytes, filename:
     for key, val in [("meet_filename", filename or "meet.lxf"),
                      ("meet_uploaded_at", datetime.utcnow().isoformat()),
                      ("meet_name", meet.meet_name),
-                     ("meet_course", meet.course),
                      ("meet_masters", "T" if meet.masters else "F"),
                      ("meet_currency", meet.currency or "CAD"),
                      ("meet_fees_json", _json.dumps(meet.meet_fees))]:
@@ -596,18 +596,15 @@ def _replace_current_meet_structure(db: Session, meet, content: bytes, filename:
     )
     _set_meet_type(db, "BEACH" if has_beach else "POOL", meetsid=replace_meetsid)
 
-    # Sync meet identity into MEETVALUES blob for Splash-format compatibility.
-    # Individual bsglobal keys (meet_name, meet_course) are the canonical source;
-    # MEETVALUES is kept in sync for interop with the meet-app EventsPage.
+    # Every meet editor field the file carries (LENEX MEET header + the
+    # .meetvalues Meet Manager settings, config/lenex-meet-fields.json) — a meet
+    # set up in meet-app arrives whole. Then the canonical keys: meet_name,
+    # meet_course, closure date (from the file's deadline, else cleared).
+    _apply_meetvalues(db, replace_meetsid, meet.meetvalues, skip={"DEADLINE"})
     if meet.meet_name:
         _update_meetvalue(db, "NAME", f"S;{meet.meet_name}", meetsid=replace_meetsid)
-    if meet.course:
-        course_map = {"LCM": "1", "SCM": "3", "SCY": "2"}
-        _update_meetvalue(db, "COURSE", f"I;{course_map.get(meet.course, '1')}", meetsid=replace_meetsid)
-
-    # Reset closure date (clear both the key and MEETVALUES DEADLINE fallback)
-    _set_closure_date(db, "", meetsid=replace_meetsid)
-    _update_meetvalue(db, "DEADLINE", "D;", meetsid=replace_meetsid)
+    _set_meet_course(db, replace_meetsid, meet.course)
+    _set_closure_from_deadline(db, replace_meetsid, meet.meetvalues.get("DEADLINE"))
 
     # Regenerate club PINs
     for club in db.query(TeamClub).all():
@@ -660,6 +657,73 @@ async def upload_meet(request: Request, file: UploadFile = File(...), force: boo
                                             target_meetsid=resolve_meetsid(request, db))
     db.commit()
     return {"events_loaded": count, "filename": file.filename}
+
+
+def _apply_meetvalues(db: Session, meetsid: int | None, typed: dict[str, str], skip=frozenset()) -> None:
+    """Write typed MEETVALUES ({KEY: "TYPE;value"}) into the meet's blob."""
+    if meetsid is None:
+        return
+    for key, val in typed.items():
+        if key not in skip:
+            _update_meetvalue(db, key, val, meetsid=meetsid)
+    masters = typed.get("MASTERS", "")
+    if masters and "MASTERS" not in skip:
+        _set_meet_config(db, meetsid, "meet_masters", "T" if masters.endswith(";T") else "F")
+
+
+def _set_closure_from_deadline(db: Session, meetsid: int | None, deadline_typed: str | None) -> None:
+    """Closure date + MEETVALUES DEADLINE from a typed DEADLINE ("D;YYYYMMDD…"), or clear both."""
+    raw = (deadline_typed or "").split(";", 1)[-1]
+    if len(raw) >= 8 and raw[:8].isdigit():
+        _set_closure_date(db, f"{raw[:4]}-{raw[4:6]}-{raw[6:8]}", meetsid=meetsid)
+        _update_meetvalue(db, "DEADLINE", f"D;{raw[:8]}000000000", meetsid=meetsid)
+    else:
+        _set_closure_date(db, "", meetsid=meetsid)
+        _update_meetvalue(db, "DEADLINE", "D;", meetsid=meetsid)
+
+
+def _init_meet_from_template(db: Session, meetsid: int, meet, filename: str) -> None:
+    """Meet-scoped config of a meet just created (or reset) from a template.
+
+    Shared by every path that starts a meet from a template — /admin/new-meet,
+    /meet/reset and the next-meet stub a results import leaves behind
+    (_reload_pool_template) — so they can't drift: the stub used to get only
+    AGEDATE, no meet_course, which hid every relay entry-time suggestion.
+    """
+    import json as _json
+    from datetime import date as _date
+    year = _date.today().year
+    for key, val in [("meet_filename", filename),
+                     ("meet_uploaded_at", datetime.utcnow().isoformat()),
+                     ("meet_name", meet.meet_name),
+                     ("meet_masters", "T" if meet.masters else "F"),
+                     ("meet_currency", meet.currency or "CAD"),
+                     ("meet_fees_json", _json.dumps(meet.meet_fees))]:
+        _set_meet_config(db, meetsid, key, val)
+    _set_config(db, "age_base_date", f"{year}-12-31")
+
+    # MEETVALUES: replace AGEDATE (other lines a reset meet already had are
+    # kept), then name and course — the shared meet editor reads them there.
+    mv_data = _get_meet_config(db, meetsid, "MEETVALUES") or ""
+    lines = [l for l in mv_data.split("\r\n") if l and not l.startswith("AGEDATE=")]
+    lines.append(f"AGEDATE=D;{year}1231000000000")
+    _set_meet_config(db, meetsid, "MEETVALUES", "\r\n".join(lines))
+    # The template's own meet editor fields (state, nation, timing, touchpads,
+    # start method, reserves…) are the new meet's defaults — not its deadline,
+    # which is the template's stale one.
+    _apply_meetvalues(db, meetsid, meet.meetvalues, skip={"DEADLINE"})
+    if meet.meet_name:
+        _update_meetvalue(db, "NAME", f"S;{meet.meet_name}", meetsid=meetsid)
+    _set_meet_course(db, meetsid, meet.course)
+
+    # Default new meets to combining age groups within a heat (small-meet-friendly;
+    # still overridable per meet in meet config → Répartition des séries) —
+    # matches meet-app's own default (packages/meet-app/src/main/index.ts)
+    _update_meetvalue(db, "COMBINEAGEGROUPS", "B;T", meetsid=meetsid)
+
+    # No closure date yet (key and MEETVALUES DEADLINE fallback)
+    _set_closure_date(db, "", meetsid=meetsid)
+    _update_meetvalue(db, "DEADLINE", "D;", meetsid=meetsid)
 
 
 @router.post("/admin/new-meet", dependencies=[Depends(require_organizer_or_admin)])
@@ -734,42 +798,7 @@ def create_new_meet(data: dict = Body(default={}), db: Session = Depends(get_db)
 
     # Set meet type (dual-write: bsglobal + meets.meet_type)
     _set_meet_type(db, meet_type.upper(), meetsid=new_meetsid)
-
-    # Track metadata (meet-scoped keys) plus age_base_date (stays app-level)
-    import json as _json
-    from datetime import date as _date
-    year = _date.today().year
-    for key, val in [("meet_filename", template_path.name),
-                     ("meet_uploaded_at", datetime.utcnow().isoformat()),
-                     ("meet_name", meet.meet_name),
-                     ("meet_course", meet.course),
-                     ("meet_masters", "T" if meet.masters else "F"),
-                     ("meet_currency", meet.currency or "CAD"),
-                     ("meet_fees_json", _json.dumps(meet.meet_fees))]:
-        _set_meet_config(db, new_meetsid, key, val)
-    _set_config(db, "age_base_date", f"{year}-12-31")
-
-    # Set AGEDATE in MEETVALUES so the UI picks it up
-    mv_data = _get_meet_config(db, new_meetsid, "MEETVALUES") or ""
-    # Append or replace AGEDATE line
-    lines = [l for l in mv_data.split("\r\n") if l and not l.startswith("AGEDATE=")]
-    lines.append(f"AGEDATE=D;{year}1231000000000")
-    _set_meet_config(db, new_meetsid, "MEETVALUES", "\r\n".join(lines))
-
-    # Sync meet name and course into MEETVALUES so EventsPage tree picks it up
-    if meet.meet_name:
-        _update_meetvalue(db, "NAME", f"S;{meet.meet_name}", meetsid=new_meetsid)
-    if meet.course:
-        course_map = {"LCM": "1", "SCM": "3", "SCY": "2"}
-        _update_meetvalue(db, "COURSE", f"I;{course_map.get(meet.course, '1')}", meetsid=new_meetsid)
-
-    # Default new meets to combining age groups within a heat (small-meet-friendly;
-    # still overridable per meet in meet config → Répartition des séries) —
-    # matches meet-app's own default (packages/meet-app/src/main/index.ts)
-    _update_meetvalue(db, "COMBINEAGEGROUPS", "B;T", meetsid=new_meetsid)
-
-    # Reset closure date
-    _set_closure_date(db, "", meetsid=new_meetsid)
+    _init_meet_from_template(db, new_meetsid, meet, template_path.name)
 
     styles_loaded = db.query(SwimStyle).count()
 
@@ -863,42 +892,7 @@ def reset_meet(request: Request, data: dict = Body(default={}), db: Session = De
 
     # Set meet type (dual-write: bsglobal + meets.meet_type)
     _set_meet_type(db, meet_type.upper(), meetsid=target_meetsid)
-
-    # Track metadata (meet-scoped keys) plus age_base_date (stays app-level)
-    import json as _json
-    from datetime import date as _date
-    year = _date.today().year
-    for key, val in [("meet_filename", template_path.name),
-                     ("meet_uploaded_at", datetime.utcnow().isoformat()),
-                     ("meet_name", meet.meet_name),
-                     ("meet_course", meet.course),
-                     ("meet_masters", "T" if meet.masters else "F"),
-                     ("meet_currency", meet.currency or "CAD"),
-                     ("meet_fees_json", _json.dumps(meet.meet_fees))]:
-        _set_meet_config(db, target_meetsid, key, val)
-    _set_config(db, "age_base_date", f"{year}-12-31")
-
-    # Set AGEDATE in MEETVALUES so the UI picks it up
-    mv_data = _get_meet_config(db, target_meetsid, "MEETVALUES") or ""
-    lines = [l for l in mv_data.split("\r\n") if l and not l.startswith("AGEDATE=")]
-    lines.append(f"AGEDATE=D;{year}1231000000000")
-    _set_meet_config(db, target_meetsid, "MEETVALUES", "\r\n".join(lines))
-
-    # Sync meet name and course into MEETVALUES so EventsPage tree picks it up
-    if meet.meet_name:
-        _update_meetvalue(db, "NAME", f"S;{meet.meet_name}", meetsid=target_meetsid)
-    if meet.course:
-        course_map = {"LCM": "1", "SCM": "3", "SCY": "2"}
-        _update_meetvalue(db, "COURSE", f"I;{course_map.get(meet.course, '1')}", meetsid=target_meetsid)
-
-    # Default new meets to combining age groups within a heat (small-meet-friendly;
-    # still overridable per meet in meet config → Répartition des séries) —
-    # matches meet-app's own default (packages/meet-app/src/main/index.ts)
-    _update_meetvalue(db, "COMBINEAGEGROUPS", "B;T", meetsid=target_meetsid)
-
-    # Reset closure date
-    _set_closure_date(db, "", meetsid=target_meetsid)
-    _update_meetvalue(db, "DEADLINE", "D;", meetsid=target_meetsid)
+    _init_meet_from_template(db, target_meetsid, meet, template_path.name)
 
     db.commit()
     return {"events_loaded": 0, "meet_type": meet_type, "meet_id": target_meetsid}
@@ -912,7 +906,7 @@ def meet_info(request: Request, db: Session = Depends(get_db)):
     filename = _get_meet_config(db, meetsid, "meet_filename") if meetsid else None
     uploaded = _get_meet_config(db, meetsid, "meet_uploaded_at") if meetsid else None
     name = _get_meet_config(db, meetsid, "meet_name") if meetsid else None
-    course = _get_meet_config(db, meetsid, "meet_course") if meetsid else None
+    course = _get_meet_course(db, meetsid) if meetsid else None
     masters = _get_meet_config(db, meetsid, "meet_masters") if meetsid else None
     closure = _get_closure_date(db, meetsid=meetsid)
     currency = _get_meet_config(db, meetsid, "meet_currency") if meetsid else None
@@ -974,10 +968,8 @@ def get_meet_config(request: Request, db: Session = Depends(get_db)):
     name = _get_meet_config(db, meetsid, "meet_name") if meetsid else None
     if name:
         result["NAME"] = name
-    course = _get_meet_config(db, meetsid, "meet_course") if meetsid else None
-    if course:
-        course_map = {"LCM": "1", "SCM": "3", "SCY": "2"}
-        result["COURSE"] = course_map.get(course, "1")
+    if meetsid:
+        result["COURSE"] = str(COURSE_TO_INT[_get_meet_course(db, meetsid)])
     return result
 
 
@@ -1015,8 +1007,19 @@ def set_meet_config(entries: dict, request: Request, db: Session = Depends(get_d
                 if team_meet is not None:
                     team_meet.name = value or "Current Meet"
         elif key == "COURSE":
-            course_map = {"1": "LCM", "2": "SCY", "3": "SCM"}
-            _set_meet_config(db, meetsid, "meet_course", course_map.get(value, "LCM"))
+            # meets.course + meet_course; MEETVALUES is rewritten below.
+            old_course = _get_meet_course(db, meetsid)
+            course = INT_TO_COURSE.get(int(value) if str(value).isdigit() else 0)
+            new_course = _set_meet_course(db, meetsid, course, sync_meetvalues=False)
+            if meetsid is not None and new_course != old_course:
+                # The pool length is one setting: an organizer who fixes it late
+                # shouldn't have to rebuild sessions or relay teams. The meet's
+                # sessions take it, and relay entry times still following the
+                # suggestion move to the new course's (typed times are kept).
+                db.query(SwimSession).filter(SwimSession.meetsid == meetsid).update(
+                    {SwimSession.course: COURSE_TO_INT[new_course]}, synchronize_session=False)
+                from ..best_times import refresh_relay_entry_times_for_course
+                refresh_relay_entry_times_for_course(db, meetsid, old_course, new_course)
         # Sync DEADLINE → closure_date
         elif key == "DEADLINE" and value:
             # Convert YYYYMMDDHHMMSSMMM → YYYY-MM-DD
@@ -1664,7 +1667,8 @@ def list_sessions(request: Request, db: Session = Depends(get_db)):
             "date": getattr(s.startdate, "date", lambda: s.startdate)().isoformat() if s.startdate else None,
             "time": s.daytime.strftime("%H:%M") if s.daytime else None,
             "endTime": s.endtime.strftime("%H:%M") if s.endtime else None,
-            "poolSize": 50 if s.course == 1 else 25,
+            "poolSize": 25 if s.course in (2, 3) else 50,
+            "course": s.course or 1,
             "laneMin": s.lanemin,
             "laneMax": s.lanemax,
             "warmupFrom": s.warmupfrom.strftime("%H:%M") if s.warmupfrom else None,
@@ -1802,9 +1806,12 @@ def create_session(request: Request, data: dict = Body(default={}), db: Session 
     next_id = (db.query(func.max(SwimSession.swimsessionid)).scalar() or 0) + 1
     name = data.get("name", "New Session")
     number = data.get("number", 1)
-    session = SwimSession(swimsessionid=next_id, meetsid=resolve_meetsid(request, db), name=name,
+    meetsid = resolve_meetsid(request, db)
+    session = SwimSession(swimsessionid=next_id, meetsid=meetsid, name=name,
                           sessionnumber=number,
-                          course=1, following='F', poolglobal='F', roundtotenths='F')
+                          # A new session takes the meet's pool length
+                          course=COURSE_TO_INT[_get_meet_course(db, meetsid)],
+                          following='F', poolglobal='F', roundtotenths='F')
     db.add(session)
     db.commit()
     return {"id": next_id}
@@ -2355,7 +2362,7 @@ def get_registration(athlete_id: int, request: Request, db: Session = Depends(ge
         elif 15 <= age <= 18:
             suggested_age_code = "15-18"
 
-    meet_course = (_get_meet_config(db, meetsid, "meet_course") if meetsid else None) or "LCM"
+    meet_course = _get_meet_course(db, meetsid)
     meet_type = _get_meet_type(db)
     closure = _get_closure_date(db)
 
@@ -2961,9 +2968,6 @@ def _flush_meet_data(db: Session, meetsid: int) -> int:
     # open-meets dashboard with a spurious empty entry.
     if get_active_meetsid(db) is None:
         _reload_pool_template(db)
-        new_meetsid = get_active_meetsid(db)
-        if new_meetsid:
-            _set_meet_config(db, new_meetsid, "MEETVALUES", f"AGEDATE=D;{year}1231000000000")
     return reg_count
 
 
@@ -3016,6 +3020,9 @@ def _reload_pool_template(db: Session) -> None:
     db.query(SwimSession).filter(SwimSession.meetsid == stub_meetsid).delete(synchronize_session=False)
     db.query(TeamEvent).filter(TeamEvent.meetsid == stub_meetsid).delete(synchronize_session=False)
     db.query(TeamSession).filter(TeamSession.meetsid == stub_meetsid).delete(synchronize_session=False)
+    if stub_meetsid is not None:
+        _set_meet_type(db, "POOL", meetsid=stub_meetsid)
+        _init_meet_from_template(db, stub_meetsid, meet, template_path.name)
     styles_loaded = db.query(SwimStyle).count()
     print(f"Reloaded {styles_loaded} swimstyles from pool template (no events)")
 
@@ -3093,9 +3100,6 @@ def _reset_for_next_meet(db: Session, meetsid: int | None) -> None:
         for club in db.query(TeamClub).all():
             club.pin = ''.join(secrets.choice(string.digits) for _ in range(6))
         _reload_pool_template(db)
-        new_meetsid = get_active_meetsid(db)
-        if new_meetsid:
-            _set_meet_config(db, new_meetsid, "MEETVALUES", f"AGEDATE=D;{year}1231000000000")
 
 
 @router.post("/clubs/regenerate-pins", dependencies=[Depends(require_admin)])
@@ -4440,7 +4444,7 @@ def get_relay_teams(request: Request, club_id: int | None = None, db: Session = 
     # the fastest total of any archived team the member swam on. Drives the suggested
     # entry time (average of the members who have one) in the shared relay page.
     meet_type = _get_meet_type(db)
-    meet_course = _get_meet_config(db, meet_id, "meet_course") if meet_id else None
+    meet_course = _get_meet_course(db, meet_id)
     relay_bests_by_style: dict[int, dict[int, int]] = {}
     if meet_type != "BEACH":
         members_by_style: dict[int, set[int]] = {}

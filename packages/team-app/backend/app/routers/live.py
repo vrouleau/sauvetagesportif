@@ -30,7 +30,7 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import BsGlobal
 from ..models_live import LiveEvent, LiveResult, LiveSplit, LiveStartlist
-from ..meet_config import get_active_meetsid, _get_meet_config, _get_meet_type
+from ..meet_config import get_active_meetsid, _get_meet_config, _get_meet_course, _get_meet_type, COURSE_TO_INT
 
 
 def _upsert(db: Session, model, conflict_columns: list[str], values: dict, update_values: dict):
@@ -611,8 +611,7 @@ async def finalize_meet(db: Session = Depends(get_db)):
     old_meetsid = get_active_meetsid(db)
     meet_name = _get_meet_config(db, old_meetsid, "meet_name") or "Competition"
     meet_city = _get_meet_config(db, old_meetsid, "meet_city") or ""
-    course_str = _get_meet_config(db, old_meetsid, "meet_course") or "LCM"
-    course_int = {"LCM": 1, "SCY": 2, "SCM": 3}.get(course_str, 1)
+    course_int = COURSE_TO_INT[_get_meet_course(db, old_meetsid)]
 
     next_meet_id = (db.query(func.max(TeamMeet.meetsid)).scalar() or 0) + 1
     new_meet = TeamMeet(
@@ -670,9 +669,11 @@ async def finalize_meet(db: Session = Depends(get_db)):
 
     db.flush()
 
-    # 4. Call _reset_for_next_meet
+    # 4. Reset the meet being closed (same as a results import closing it).
+    # The meet id is required: it used to be omitted, so finalizing always
+    # crashed here with a TypeError and nothing was archived.
     from .api import _reset_for_next_meet
-    _reset_for_next_meet(db)
+    _reset_for_next_meet(db, old_meetsid)
 
     # 5. Clear live-specific bsglobal keys
     for key in ("LIVE_PUSH_SECRET", "LIVE_ENABLED", "LIVE_LAST_PUSH", "LIVE_ACTIVE_MEETSID"):
