@@ -26,6 +26,8 @@ invoices.py at module load time. See docs/CONCURRENT_MEETS_PLAN.md.
 """
 from __future__ import annotations
 
+import re
+
 from fastapi import HTTPException, Request
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -115,6 +117,49 @@ def _set_meet_config(db: Session, meetsid: int, key: str, value: str):
         db.add(MeetConfig(meetsid=meetsid, name=key, data=value))
 
 
+# ── MEETVALUES blob (Splash format: KEY=TYPE;VALUE, CRLF-separated) ──────────
+# One parser/serializer for every reader and writer (team-app's twin of
+# meet-app's parseMeetValues/serializeMeetValues in db.ts).
+
+def parse_meetvalues(blob: str | None, *, keep_type: bool = False) -> dict[str, str]:
+    """MEETVALUES blob -> {KEY: value}, in blob order.
+
+    Values have their `TYPE;` prefix (I;, S;, B;, D;, F;) stripped, or with
+    keep_type=True are returned raw (`TYPE;VALUE`) — the form to edit and write
+    back. Lines without "=" or with an empty key are skipped; a repeated key
+    keeps its last value.
+    """
+    out: dict[str, str] = {}
+    for line in re.split(r"\r?\n", blob or ""):
+        eq = line.find("=")
+        if eq <= 0:
+            continue
+        rest = line[eq + 1:]
+        if not keep_type:
+            semi = rest.find(";")
+            rest = rest[semi + 1:] if semi >= 0 else rest
+        out[line[:eq]] = rest
+    return out
+
+
+def serialize_meetvalues(values: dict[str, str], *, drop_empty: bool = False) -> str:
+    """Raw {KEY: "TYPE;VALUE"} -> MEETVALUES blob. drop_empty leaves out keys
+    whose raw value is "" (a typed-but-empty "D;" is kept)."""
+    return "\r\n".join(f"{k}={v}" for k, v in values.items() if v or not drop_empty)
+
+
+def read_meetvalues(db: Session, meetsid: int | None, *, keep_type: bool = False) -> dict[str, str]:
+    """The meet's MEETVALUES, parsed (see parse_meetvalues). {} without a meet."""
+    return parse_meetvalues(_get_meet_config(db, meetsid, "MEETVALUES"), keep_type=keep_type)
+
+
+def write_meetvalues(db: Session, meetsid: int | None, values: dict[str, str], *,
+                     drop_empty: bool = False) -> None:
+    """Replace the meet's MEETVALUES blob with raw {KEY: "TYPE;VALUE"} entries."""
+    if meetsid:
+        _set_meet_config(db, meetsid, "MEETVALUES", serialize_meetvalues(values, drop_empty=drop_empty))
+
+
 def _get_meet_type(db: Session) -> str:
     """Get the meet type, checking both team-app key (meet_type) and meet-app key (MEET_TYPE)."""
     return (_get_config(db, "meet_type") or _get_config(db, "MEET_TYPE") or "POOL").upper()
@@ -136,17 +181,9 @@ def _set_meet_type(db: Session, value: str, meetsid: int | None = None):
 def _update_meetvalue(db: Session, key: str, typed_value: str, meetsid: int | None = None):
     """Update a single key in the MEETVALUES blob (Splash format KEY=TYPE;VALUE)."""
     meetsid = meetsid if meetsid is not None else get_active_meetsid(db)
-    existing: dict[str, str] = {}
-    data_str = _get_meet_config(db, meetsid, "MEETVALUES")
-    if data_str:
-        for line in data_str.split("\r\n"):
-            eq = line.find("=")
-            if eq >= 0:
-                existing[line[:eq]] = line[eq + 1:]
+    existing = read_meetvalues(db, meetsid, keep_type=True)
     existing[key] = typed_value
-    data = "\r\n".join(f"{k}={v}" for k, v in existing.items() if v)
-    if meetsid:
-        _set_meet_config(db, meetsid, "MEETVALUES", data)
+    write_meetvalues(db, meetsid, existing, drop_empty=True)
 
 
 # ── Meet course (pool length) ────────────────────────────────────────────────
@@ -200,13 +237,11 @@ def _get_closure_date(db: Session, meetsid: int | None = None) -> str | None:
     if val:
         return val
     # Fall back to MEETVALUES DEADLINE
-    data_str = _get_meet_config(db, meetsid, "MEETVALUES")
-    if data_str:
-        for line in data_str.split("\r\n"):
-            if line.startswith("DEADLINE=D;"):
-                raw = line[11:]  # after "DEADLINE=D;"
-                if raw and len(raw) >= 8:
-                    return f"{raw[:4]}-{raw[4:6]}-{raw[6:8]}"
+    deadline = read_meetvalues(db, meetsid, keep_type=True).get("DEADLINE", "")
+    if deadline.startswith("D;"):
+        raw = deadline[2:]
+        if len(raw) >= 8:
+            return f"{raw[:4]}-{raw[4:6]}-{raw[6:8]}"
     return None
 
 

@@ -45,7 +45,7 @@ from ..models import (
 )
 from ..models_team import TeamClub, Member, Meet as TeamMeet
 from ..meet_config import (
-    _get_config, _set_config,
+    _get_config, _set_config, read_meetvalues, write_meetvalues,
     get_active_meetsid, resolve_meetsid, _get_meet_config, _set_meet_config,
     _get_meet_type, _set_meet_type, _update_meetvalue,
     _get_meet_course, _set_meet_course, COURSE_TO_INT, INT_TO_COURSE,
@@ -678,10 +678,10 @@ def _init_meet_from_template(db: Session, meetsid: int, meet, filename: str) -> 
 
     # MEETVALUES: replace AGEDATE (other lines a reset meet already had are
     # kept), then name and course — the shared meet editor reads them there.
-    mv_data = _get_meet_config(db, meetsid, "MEETVALUES") or ""
-    lines = [l for l in mv_data.split("\r\n") if l and not l.startswith("AGEDATE=")]
-    lines.append(f"AGEDATE=D;{year}1231000000000")
-    _set_meet_config(db, meetsid, "MEETVALUES", "\r\n".join(lines))
+    mv = read_meetvalues(db, meetsid, keep_type=True)
+    mv.pop("AGEDATE", None)
+    mv["AGEDATE"] = f"D;{year}1231000000000"
+    write_meetvalues(db, meetsid, mv)
     # The template's own meet editor fields (state, nation, timing, touchpads,
     # start method, reserves…) are the new meet's defaults — not its deadline,
     # which is the template's stale one.
@@ -924,20 +924,7 @@ def get_meet_config(request: Request, db: Session = Depends(get_db)):
     any stale values in the MEETVALUES blob.
     """
     meetsid = resolve_meetsid(request, db)
-    data_str = _get_meet_config(db, meetsid, "MEETVALUES") if meetsid else None
-    result: dict[str, str] = {}
-    if data_str:
-        for line in data_str.split("\r\n"):
-            if not line:
-                continue
-            eq = line.find("=")
-            if eq < 0:
-                continue
-            key = line[:eq]
-            rest = line[eq + 1:]
-            # Strip type prefix (I;, S;, B;, D;, F;)
-            semi = rest.find(";")
-            result[key] = rest[semi + 1:] if semi >= 0 else rest
+    result = read_meetvalues(db, meetsid)
     # Individual meet_config keys are canonical — override MEETVALUES
     name = _get_meet_config(db, meetsid, "meet_name") if meetsid else None
     if name:
@@ -951,17 +938,7 @@ def get_meet_config(request: Request, db: Session = Depends(get_db)):
 def set_meet_config(entries: dict, request: Request, db: Session = Depends(get_db)):
     """Update MEETVALUES-style config. Body: {KEY: {type, value}}."""
     meetsid = resolve_meetsid(request, db)
-    # Read existing MEETVALUES
-    data_str = _get_meet_config(db, meetsid, "MEETVALUES") if meetsid else None
-    existing: dict[str, str] = {}
-    if data_str:
-        for line in data_str.split("\r\n"):
-            if not line:
-                continue
-            eq = line.find("=")
-            if eq < 0:
-                continue
-            existing[line[:eq]] = line[eq + 1:]
+    existing = read_meetvalues(db, meetsid, keep_type=True)
     # Apply updates
     for key, entry in entries.items():
         type_code = entry.get("type", "S") if isinstance(entry, dict) else "S"
@@ -1016,10 +993,7 @@ def set_meet_config(entries: dict, request: Request, db: Session = Depends(get_d
                 _set_config(db, "age_base_date", f"{raw[:4]}-{raw[4:6]}-{raw[6:8]}")
         elif key == "AGEDATE" and not value:
             _set_config(db, "age_base_date", "")
-    # Serialize back
-    data = "\r\n".join(f"{k}={v}" for k, v in existing.items())
-    if meetsid:
-        _set_meet_config(db, meetsid, "MEETVALUES", data)
+    write_meetvalues(db, meetsid, existing)
     db.commit()
     return {"ok": True}
 
