@@ -454,7 +454,10 @@ describe('SMB save/restore', () => {
     expect(ag.agemax).toBe(-1)
   })
 
-  it('generates a unique per-row sync GUID for SWIMSTYLE/SWIMSESSION/SWIMEVENT/AGEGROUP on export, and restores without error', () => {
+  it('generates a unique per-row sync GUID (type G) for SWIMSTYLE/SWIMSESSION/SWIMEVENT/AGEGROUP/CLUB/ATHLETE on export, and restores without error', () => {
+    // 2026-11: Splash 11.85709 writes these as G;36 (16 raw bytes) and blanks an S;36 GUID
+    // on restore; it also added CLUBGUID/ATHLETEGUID. SWIMRESULTGUID is left out on purpose:
+    // Splash itself writes an all-zero GUID there.
     // Real Splash always fills SWIMSTYLEGUID/SWIMSESSIONGUID/SWIMEVENTGUID/AGEGROUPGUID with a
     // real unique value (Microsoft.ACE.OLEDB.12.0 GetSchema: S;36, matches randomUUID()'s dashed
     // format) — we have no such column in our own schema, so every prior export left it blank
@@ -469,6 +472,8 @@ describe('SMB save/restore', () => {
     db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode) VALUES (100, 1, 1, 1, 2, 5, 1)`)
     db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode) VALUES (101, 1, 2, 2, 2, 5, 2)`)
     db.exec(`INSERT INTO agegroup (agegroupid, swimeventid, agemin, agemax, gender, sortcode) VALUES (500, 100, 13, 14, 2, 1)`)
+    db.exec(`INSERT INTO club (clubid, name, code) VALUES (600, 'Club A', 'CA')`)
+    db.exec(`INSERT INTO athlete (athleteid, clubid, firstname, lastname, gender) VALUES (700, 600, 'Ann', 'Lee', 2)`)
 
     saveSMB(smbPath, backend)
 
@@ -478,8 +483,11 @@ describe('SMB save/restore', () => {
     for (const [table, col] of [
       ['SWIMSTYLE', 'swimstyleguid'], ['SWIMSESSION', 'swimsessionguid'],
       ['SWIMEVENT', 'swimeventguid'], ['AGEGROUP', 'agegroupguid'],
+      ['CLUB', 'clubguid'], ['ATHLETE', 'athleteguid'],
     ] as const) {
-      const { rows } = decodeGbin(zipEntries.get(`${table}-0001.gbin`)!)
+      const { cols, rows } = decodeGbin(zipEntries.get(`${table}-0001.gbin`)!)
+      expect(cols.find(c => c.name.toLowerCase() === col)?.type).toBe('G')
+      expect(rows.length).toBeGreaterThan(0)
       for (const row of rows) {
         const guid = row[col] as string
         expect(guid).toMatch(guidPattern)

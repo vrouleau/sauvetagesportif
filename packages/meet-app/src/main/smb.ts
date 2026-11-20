@@ -40,6 +40,7 @@
  * 1-byte flag follows: 0x00 = value is real, 0x01 = value is null.
  * Sentinels: I → 0, F → 0.0, D → -36522.0 (OLE date for 1800-01-01 00:00:00).
  * S/M fields use len=0 for null (no flag needed).
+ * G fields (Splash 11.85709+) are 16 raw GUID bytes, no flag; all-zero = null.
  */
 
 import { readFileSync, writeFileSync } from 'node:fs'
@@ -51,7 +52,7 @@ import type { DbBackend } from './dbBackend'
 
 export interface ColDef {
   name: string
-  type: 'I' | 'S' | 'D' | 'F' | 'M'
+  type: 'I' | 'S' | 'D' | 'F' | 'M' | 'G'
   size: number
   // No backing column in our own schema — export-only, generated per row at save time
   // (e.g. Splash's own per-row sync GUID columns). Never read from or written to our DB.
@@ -104,7 +105,9 @@ const SMB_TABLES: { name: string; cols: ColDef[]; stub?: boolean }[] = [
       // typecast" crash surfacing deeper in Splash's own delete-final routine, in its generic
       // items/notification dispatch layer, once the earlier crash was fixed) makes an object-
       // identity mismatch from blank/duplicate GUIDs a live hypothesis again for THIS crash.
-      { name: 'SWIMSTYLEGUID', type: 'S', size: 36, synthetic: true },
+      // Type 'G' (16 raw bytes), not 'S': Splash 11.85709 (2026-11) writes every *GUID column
+      // as G;36 in its own .smb, and silently blanks a GUID it receives as S;36 on restore.
+      { name: 'SWIMSTYLEGUID', type: 'G', size: 36, synthetic: true },
     ]
   },
   {
@@ -134,7 +137,7 @@ const SMB_TABLES: { name: string; cols: ColDef[]; stub?: boolean }[] = [
       { name: 'TOUCHPADMODE', type: 'I', size: 16 },
       { name: 'WARMUPFROM', type: 'D', size: 32 },
       { name: 'WARMUPUNTIL', type: 'D', size: 32 },
-      { name: 'SWIMSESSIONGUID', type: 'S', size: 36, synthetic: true },  // see SWIMSTYLEGUID comment above
+      { name: 'SWIMSESSIONGUID', type: 'G', size: 36, synthetic: true },  // see SWIMSTYLEGUID comment above
     ]
   },
   {
@@ -166,6 +169,7 @@ const SMB_TABLES: { name: string; cols: ColDef[]; stub?: boolean }[] = [
       { name: 'SHORTNAMEEN', type: 'S', size: 30 },
       { name: 'SWRID', type: 'I', size: 32 },
       { name: 'TEAMNUMBER', type: 'I', size: 16 },
+      { name: 'CLUBGUID', type: 'G', size: 36, synthetic: true },  // see SWIMSTYLEGUID comment above
     ]
   },
   {
@@ -199,6 +203,7 @@ const SMB_TABLES: { name: string; cols: ColDef[]; stub?: boolean }[] = [
       { name: 'SCHOOLYEAR', type: 'S', size: 10 },
       { name: 'MIDDLENAME', type: 'S', size: 50 },
       { name: 'MIDDLENAMEEN', type: 'S', size: 50 },
+      { name: 'ATHLETEGUID', type: 'G', size: 36, synthetic: true },  // see SWIMSTYLEGUID comment above
     ]
   },
   {
@@ -243,7 +248,7 @@ const SMB_TABLES: { name: string; cols: ColDef[]; stub?: boolean }[] = [
       { name: 'COMBINEAGEGROUPS', type: 'S', size: 1 },
       { name: 'ROUNDONE', type: 'S', size: 20 },
       { name: 'INTERNALEVENT', type: 'S', size: 1 },
-      { name: 'SWIMEVENTGUID', type: 'S', size: 36, synthetic: true },  // see SWIMSTYLEGUID comment above
+      { name: 'SWIMEVENTGUID', type: 'G', size: 36, synthetic: true },  // see SWIMSTYLEGUID comment above
     ]
   },
   {
@@ -282,7 +287,7 @@ const SMB_TABLES: { name: string; cols: ColDef[]; stub?: boolean }[] = [
       { name: 'FOREIGNCOUNT', type: 'I', size: 16 },
       { name: 'FINALSEEDTYPE', type: 'I', size: 16 },
       { name: 'AFINAL8LANES', type: 'S', size: 1 }, // real Splash column, found missing via full schema diff against a genuine Splash-native .smb export
-      { name: 'AGEGROUPGUID', type: 'S', size: 36, synthetic: true },  // see SWIMSTYLEGUID comment above
+      { name: 'AGEGROUPGUID', type: 'G', size: 36, synthetic: true },  // see SWIMSTYLEGUID comment above
     ]
   },
   // Real column defs captured from a populated Splash mdb via GetSchema("Columns") —
@@ -614,6 +619,8 @@ export function encodeGbin(tableDef: { name: string; cols: ColDef[] }, rows: Rec
         lenBuf.writeUInt32LE(strBuf.length)
         chunks.push(lenBuf)
         if (strBuf.length > 0) chunks.push(strBuf)
+      } else if (col.type === 'G') {
+        chunks.push(guidToBytes(val))
       }
     }
   }
@@ -627,6 +634,34 @@ export const D_NULL_SENTINEL = -36522.0 // OLE date for 1800-01-01 00:00:00
 
 /** OLE Automation epoch: 1899-12-30 in milliseconds since Unix epoch */
 const OLE_EPOCH_MS = Date.UTC(1899, 11, 30)
+
+// ── GUID (type G) ─────────────────────────────────────────────────────────────
+// 16 raw bytes in Windows GUID layout: the first three groups little-endian, the
+// last two as-is (.NET Guid.ToByteArray / Python uuid bytes_le). No null flag —
+// Splash writes an all-zero GUID for "none" (e.g. every SWIMRESULTGUID).
+
+const GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+export function guidToBytes(val: unknown): Buffer {
+  const b = Buffer.alloc(16)
+  const s = val == null ? '' : String(val).trim()
+  if (!GUID_RE.test(s)) return b
+  const hex = Buffer.from(s.replace(/-/g, ''), 'hex')
+  hex.subarray(0, 4).reverse().copy(b, 0)
+  hex.subarray(4, 6).reverse().copy(b, 4)
+  hex.subarray(6, 8).reverse().copy(b, 6)
+  hex.copy(b, 8, 8, 16)
+  return b
+}
+
+export function bytesToGuid(b: Buffer): string | null {
+  if (b.every(x => x === 0)) return null
+  const h = (start: number, end: number, le: boolean): string => {
+    const part = Buffer.from(b.subarray(start, end))
+    return (le ? part.reverse() : part).toString('hex')
+  }
+  return `${h(0, 4, true)}-${h(4, 6, true)}-${h(6, 8, true)}-${h(8, 10, false)}-${h(10, 16, false)}`
+}
 
 // ── GBIN decoding ─────────────────────────────────────────────────────────────
 
@@ -712,6 +747,12 @@ export function decodeGbin(data: Buffer): { cols: ColDef[]; rows: Record<string,
         offset += 4
         row[key] = mlen > 0 ? data.subarray(offset, offset + mlen).toString('utf8') : null
         offset += mlen
+      } else if (col.type === 'G') {
+        row[key] = bytesToGuid(data.subarray(offset, offset + 16))
+        offset += 16
+      } else {
+        // An unknown type has an unknown width: every later field would be misread
+        throw new Error(`Unsupported gbin column type '${col.type}' (${col.name})`)
       }
     }
     if (!valid) break

@@ -52,6 +52,7 @@ Records are packed **contiguously** — there are no separator bytes between rec
 | `D;32` | 32 | IEEE 754 double, little-endian (OLE Automation date) | 8 bytes + optional null flag |
 | `F;0` | 0 | IEEE 754 double, little-endian (float/currency) | 8 bytes + optional null flag |
 | `M;0` | 0 | uint32 LE length + UTF-8 content (memo/large text) | 4 + len bytes |
+| `G;36` | 36 | Raw GUID, Windows byte order (see below) — Splash 11.85709+ | 16 bytes, no flag |
 
 ### Integer Fields (`I;16`, `I;32`)
 
@@ -105,6 +106,22 @@ Variable-length UTF-8 string with a 4-byte length prefix (for large text content
 
 - Length of 0 means **null**
 - No null disambiguation flag is needed
+
+### GUID Fields (`G;36`)
+
+Added in Splash Meet Manager 11.85709 (2026-11) for the per-row sync GUIDs
+(`SWIMSTYLEGUID`, `SWIMSESSIONGUID`, `SWIMEVENTGUID`, `AGEGROUPGUID`, `CLUBGUID`,
+`ATHLETEGUID`, `SWIMRESULTGUID`, …). 16 raw bytes in Windows GUID layout — the first
+three groups little-endian, the last two as written (.NET `Guid.ToByteArray()`,
+Python `uuid.UUID(bytes_le=...)`):
+
+```
+5d9026de-31c1-47b5-bc98-71047c5bb17f  →  de 26 90 5d  c1 31  b5 47  bc 98 71 04 7c 5b b1 7f
+```
+
+- No null flag. An all-zero GUID means none (Splash writes one on every `SWIMRESULT` row).
+- Splash blanks a GUID column it receives declared as `S;36` on restore — it must be `G;36`.
+- Verified against the same rows in the source `.mdb` (`Microsoft.ACE.OLEDB.12.0`).
 
 ---
 
@@ -208,6 +225,11 @@ for each column in header:
     elif type == 'M':
         len = read_uint32()
         value = len > 0 ? read_utf8(len) : NULL
+    elif type == 'G':
+        bytes = read(16)
+        value = all_zero(bytes) ? NULL : guid_from_bytes_le(bytes)
+    else:
+        error  # unknown width — every later field would be misread
 ```
 
 ---
@@ -293,3 +315,4 @@ Common values:
 ## Version History
 
 - **2026-05-20**: Initial reverse-engineering from Splash Meet Manager 11.84272 backups. Discovered null disambiguation flag mechanism for I, D, F types.
+- **2026-11-20**: Splash Meet Manager 11.85709 — new `G;36` GUID type; new `SYNCMODIFIED;I;32`/`ISDIRTY;S;1` on the sync-tracked tables, `STARTTIMEEFF`/`OFFICIALAT`/`REVISED` (`D;32`) on `SWIMEVENT`. Header `Version=11.85709`, `BSDB_DDL_VERSION_APPLICATION=20260901`.
