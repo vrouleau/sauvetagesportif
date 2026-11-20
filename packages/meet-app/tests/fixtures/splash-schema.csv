@@ -33,6 +33,9 @@ agegroup,winnertitle,character varying,100,YES
 agegroup,foreigncount,smallint,,YES
 agegroup,finalseedtype,smallint,,YES
 agegroup,afinal8lanes,character,1,YES
+agegroup,agegroupguid,uuid,,YES
+agegroup,syncmodified,integer,,YES
+agegroup,isdirty,character,1,YES
 athlete,athleteid,integer,,NO
 athlete,clubid,integer,,YES
 athlete,firstname,character varying,30,YES
@@ -62,6 +65,9 @@ athlete,coachname,character varying,80,YES
 athlete,schoolyear,character varying,10,YES
 athlete,middlename,character varying,50,YES
 athlete,middlenameen,character varying,50,YES
+athlete,athleteguid,uuid,,YES
+athlete,syncmodified,integer,,YES
+athlete,isdirty,character,1,YES
 biography,biographyid,integer,,NO
 biography,xmldata,text,,YES
 biography,imageformat,smallint,,YES
@@ -112,6 +118,9 @@ club,shortname,character varying,30,YES
 club,shortnameen,character varying,30,YES
 club,swrid,integer,,YES
 club,teamnumber,smallint,,YES
+club,clubguid,uuid,,YES
+club,syncmodified,integer,,YES
+club,isdirty,character,1,YES
 coach,coachid,integer,,NO
 coach,clubid,integer,,YES
 coach,firstname,character varying,30,YES
@@ -132,6 +141,9 @@ coach,contactzip,character varying,10,YES
 coach,coachtype,smallint,,YES
 coach,license,character varying,20,YES
 coach,nation,character varying,3,YES
+coach,coachguid,uuid,,YES
+coach,syncmodified,integer,,YES
+coach,isdirty,character,1,YES
 dsqitem,dsqitemid,integer,,NO
 dsqitem,code,character varying,10,YES
 dsqitem,lenexcode,character varying,10,YES
@@ -188,6 +200,9 @@ official,contactstreet2,character varying,50,YES
 official,contactzip,character varying,10,YES
 official,grade,character varying,20,YES
 official,license,character varying,20,YES
+official,officialguid,uuid,,YES
+official,syncmodified,integer,,YES
+official,isdirty,character,1,YES
 record,recordid,integer,,NO
 record,recordlistid,integer,,YES
 record,recordagegroupid,integer,,YES
@@ -284,6 +299,9 @@ relay,reservecode,character varying,20,YES
 relay,noadvance,character,1,YES
 relay,officialsplits,character varying,100,YES
 relay,qttiming,smallint,,YES
+relay,relayguid,uuid,,YES
+relay,syncmodified,integer,,YES
+relay,isdirty,character,1,YES
 relayposition,athleteid,integer,,YES
 relayposition,qtcity,character varying,30,YES
 relayposition,qtcourse,smallint,,YES
@@ -358,6 +376,12 @@ swimevent,roundname,character varying,50,YES
 swimevent,combineagegroups,character,1,YES
 swimevent,roundone,character varying,20,YES
 swimevent,internalevent,character,1,YES
+swimevent,swimeventguid,uuid,,YES
+swimevent,syncmodified,integer,,YES
+swimevent,isdirty,character,1,YES
+swimevent,starttimeeff,timestamp without time zone,,YES
+swimevent,officialat,timestamp without time zone,,YES
+swimevent,revised,timestamp without time zone,,YES
 swimresult,swimresultid,integer,,NO
 swimresult,athleteid,integer,,YES
 swimresult,swrabestid,integer,,YES
@@ -401,6 +425,9 @@ swimresult,reservecode,character varying,20,YES
 swimresult,noadvance,character,1,YES
 swimresult,officialsplits,character varying,100,YES
 swimresult,qttiming,smallint,,YES
+swimresult,swimresultguid,uuid,,YES
+swimresult,syncmodified,integer,,YES
+swimresult,isdirty,character,1,YES
 swimsession,swimsessionid,integer,,NO
 swimsession,course,smallint,,YES
 swimsession,daytime,timestamp without time zone,,YES
@@ -426,6 +453,9 @@ swimsession,tlmeeting,timestamp without time zone,,YES
 swimsession,touchpadmode,smallint,,YES
 swimsession,warmupfrom,timestamp without time zone,,YES
 swimsession,warmupuntil,timestamp without time zone,,YES
+swimsession,swimsessionguid,uuid,,YES
+swimsession,syncmodified,integer,,YES
+swimsession,isdirty,character,1,YES
 swimstyle,swimstyleid,integer,,NO
 swimstyle,code,character varying,10,YES
 swimstyle,distance,smallint,,YES
@@ -435,6 +465,12 @@ swimstyle,stroke,smallint,,YES
 swimstyle,sortcode,integer,,YES
 swimstyle,technique,smallint,,YES
 swimstyle,uniqueid,smallint,,YES
+swimstyle,swimstyleguid,uuid,,YES
+swimstyle,syncmodified,integer,,YES
+swimstyle,isdirty,character,1,YES
+syncdelete,syncdeleteid,integer,,NO
+syncdelete,tablename,character varying,50,YES
+syncdelete,itemguid,uuid,,YES
 timestandard,timestandardlistid,integer,,NO
 timestandard,swimstyleid,integer,,NO
 timestandard,swimtime,integer,,YES
@@ -464,4 +500,4 @@ timingdata,modified,timestamp without time zone,,YES
 timingdata,place,smallint,,YES
 timingdata,swimsessionid,integer,,YES
 timingdata,swimtime,integer,,YES
-(465 rows)
+(501 rows)

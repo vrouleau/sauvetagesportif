@@ -54,9 +54,12 @@ export interface ColDef {
   name: string
   type: 'I' | 'S' | 'D' | 'F' | 'M' | 'G'
   size: number
-  // No backing column in our own schema — export-only, generated per row at save time
-  // (e.g. Splash's own per-row sync GUID columns). Never read from or written to our DB.
+  // No backing column in our own schema — export-only, generated per row at save time.
+  // Never read from or written to our DB. (Unused since the sync GUIDs got real columns.)
   synthetic?: boolean
+  // Sync GUID column: export writes the stored value, or a fresh GUID when the row has none
+  // (rows meet-app created itself). Splash fills every *GUID except SWIMRESULTGUID.
+  newGuid?: boolean
 }
 
 // Tables to include in SMB backup (order matters for FK dependencies).
@@ -107,7 +110,9 @@ const SMB_TABLES: { name: string; cols: ColDef[]; stub?: boolean }[] = [
       // identity mismatch from blank/duplicate GUIDs a live hypothesis again for THIS crash.
       // Type 'G' (16 raw bytes), not 'S': Splash 11.85709 (2026-11) writes every *GUID column
       // as G;36 in its own .smb, and silently blanks a GUID it receives as S;36 on restore.
-      { name: 'SWIMSTYLEGUID', type: 'G', size: 36, synthetic: true },
+      { name: 'SWIMSTYLEGUID', type: 'G', size: 36, newGuid: true },
+      { name: 'SYNCMODIFIED', type: 'I', size: 32 },
+      { name: 'ISDIRTY', type: 'S', size: 1 },
     ]
   },
   {
@@ -137,7 +142,9 @@ const SMB_TABLES: { name: string; cols: ColDef[]; stub?: boolean }[] = [
       { name: 'TOUCHPADMODE', type: 'I', size: 16 },
       { name: 'WARMUPFROM', type: 'D', size: 32 },
       { name: 'WARMUPUNTIL', type: 'D', size: 32 },
-      { name: 'SWIMSESSIONGUID', type: 'G', size: 36, synthetic: true },  // see SWIMSTYLEGUID comment above
+      { name: 'SWIMSESSIONGUID', type: 'G', size: 36, newGuid: true },
+      { name: 'SYNCMODIFIED', type: 'I', size: 32 },
+      { name: 'ISDIRTY', type: 'S', size: 1 },
     ]
   },
   {
@@ -169,7 +176,9 @@ const SMB_TABLES: { name: string; cols: ColDef[]; stub?: boolean }[] = [
       { name: 'SHORTNAMEEN', type: 'S', size: 30 },
       { name: 'SWRID', type: 'I', size: 32 },
       { name: 'TEAMNUMBER', type: 'I', size: 16 },
-      { name: 'CLUBGUID', type: 'G', size: 36, synthetic: true },  // see SWIMSTYLEGUID comment above
+      { name: 'CLUBGUID', type: 'G', size: 36, newGuid: true },
+      { name: 'SYNCMODIFIED', type: 'I', size: 32 },
+      { name: 'ISDIRTY', type: 'S', size: 1 },
     ]
   },
   {
@@ -203,7 +212,9 @@ const SMB_TABLES: { name: string; cols: ColDef[]; stub?: boolean }[] = [
       { name: 'SCHOOLYEAR', type: 'S', size: 10 },
       { name: 'MIDDLENAME', type: 'S', size: 50 },
       { name: 'MIDDLENAMEEN', type: 'S', size: 50 },
-      { name: 'ATHLETEGUID', type: 'G', size: 36, synthetic: true },  // see SWIMSTYLEGUID comment above
+      { name: 'ATHLETEGUID', type: 'G', size: 36, newGuid: true },
+      { name: 'SYNCMODIFIED', type: 'I', size: 32 },
+      { name: 'ISDIRTY', type: 'S', size: 1 },
     ]
   },
   {
@@ -248,7 +259,12 @@ const SMB_TABLES: { name: string; cols: ColDef[]; stub?: boolean }[] = [
       { name: 'COMBINEAGEGROUPS', type: 'S', size: 1 },
       { name: 'ROUNDONE', type: 'S', size: 20 },
       { name: 'INTERNALEVENT', type: 'S', size: 1 },
-      { name: 'SWIMEVENTGUID', type: 'G', size: 36, synthetic: true },  // see SWIMSTYLEGUID comment above
+      { name: 'SWIMEVENTGUID', type: 'G', size: 36, newGuid: true },
+      { name: 'SYNCMODIFIED', type: 'I', size: 32 },
+      { name: 'ISDIRTY', type: 'S', size: 1 },
+      { name: 'STARTTIMEEFF', type: 'D', size: 32 },
+      { name: 'OFFICIALAT', type: 'D', size: 32 },
+      { name: 'REVISED', type: 'D', size: 32 },
     ]
   },
   {
@@ -287,7 +303,9 @@ const SMB_TABLES: { name: string; cols: ColDef[]; stub?: boolean }[] = [
       { name: 'FOREIGNCOUNT', type: 'I', size: 16 },
       { name: 'FINALSEEDTYPE', type: 'I', size: 16 },
       { name: 'AFINAL8LANES', type: 'S', size: 1 }, // real Splash column, found missing via full schema diff against a genuine Splash-native .smb export
-      { name: 'AGEGROUPGUID', type: 'G', size: 36, synthetic: true },  // see SWIMSTYLEGUID comment above
+      { name: 'AGEGROUPGUID', type: 'G', size: 36, newGuid: true },
+      { name: 'SYNCMODIFIED', type: 'I', size: 32 },
+      { name: 'ISDIRTY', type: 'S', size: 1 },
     ]
   },
   // Real column defs captured from a populated Splash mdb via GetSchema("Columns") —
@@ -429,6 +447,9 @@ const SMB_TABLES: { name: string; cols: ColDef[]; stub?: boolean }[] = [
       { name: 'NOADVANCE', type: 'S', size: 1 },
       { name: 'OFFICIALSPLITS', type: 'S', size: 100 },
       { name: 'QTTIMING', type: 'I', size: 16 },
+      { name: 'SWIMRESULTGUID', type: 'G', size: 36 },  // Splash leaves it all-zero
+      { name: 'SYNCMODIFIED', type: 'I', size: 32 },
+      { name: 'ISDIRTY', type: 'S', size: 1 },
     ]
   },
   {
@@ -487,6 +508,9 @@ const SMB_TABLES: { name: string; cols: ColDef[]; stub?: boolean }[] = [
       { name: 'SWIMTIME', type: 'I', size: 32 },
       { name: 'TEAMNUMBER', type: 'I', size: 16 },
       { name: 'USETIMETYPE', type: 'I', size: 16 },
+      { name: 'RELAYGUID', type: 'G', size: 36, newGuid: true },
+      { name: 'SYNCMODIFIED', type: 'I', size: 32 },
+      { name: 'ISDIRTY', type: 'S', size: 1 },
     ]
   },
   {
@@ -916,8 +940,18 @@ export function saveSMB(filePath: string, db: DbBackend): { tables: number; rows
     // stub tables have no backing table in our schema — always export empty (see comment above SMB_TABLES)
     let rows = tableDef.stub ? [] : db.prepare(`SELECT ${colNames} FROM ${tableName}`).all() as Record<string, unknown>[]
 
-    // Synthetic columns (e.g. Splash's own per-row sync GUIDs) have no backing DB column —
-    // generate a fresh value per row at export time.
+    // Sync GUIDs: keep the stored one (Splash's own, from a restore or a shared Postgres
+    // database), mint one for rows meet-app created itself. Not written back — export is read-only.
+    const guidCols = tableDef.cols.filter(c => c.newGuid).map(c => c.name.toLowerCase())
+    if (guidCols.length > 0) {
+      rows = rows.map(row => {
+        const extra: Record<string, unknown> = {}
+        for (const c of guidCols) if (!row[c]) extra[c] = randomUUID()
+        return { ...row, ...extra }
+      })
+    }
+
+    // Synthetic columns have no backing DB column — generate a fresh value per row at export time.
     if (syntheticCols.length > 0) {
       rows = rows.map(row => {
         const extra: Record<string, unknown> = {}

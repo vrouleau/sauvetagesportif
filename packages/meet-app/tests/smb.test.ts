@@ -523,10 +523,31 @@ describe('SMB save/restore', () => {
       }
     }
 
-    // Restore must not error — our schema has no backing column for these, must be dropped silently
-    expect(() => restoreSMB(smbPath, backend)).not.toThrow()
-    const styleCols = db.prepare("PRAGMA table_info(swimstyle)").all() as { name: string }[]
-    expect(styleCols.some(c => c.name === 'swimstyleguid')).toBe(false)
+    // Restore stores them, and the next export keeps the same values (no re-minting)
+    restoreSMB(smbPath, backend)
+    const stored = db.prepare(`SELECT athleteguid FROM athlete WHERE athleteid = 700`).get() as { athleteguid: string }
+    const exported = decodeGbin(zipEntries.get('ATHLETE-0001.gbin')!).rows[0].athleteguid
+    expect(stored.athleteguid).toBe(exported)
+    saveSMB(smbPath, backend)
+    expect(decodeGbin(readZipEntries(smbPath).get('ATHLETE-0001.gbin')!).rows[0].athleteguid).toBe(exported)
+  })
+
+  it('leaves SWIMRESULTGUID empty like Splash, and carries ISDIRTY/SYNCMODIFIED and the new SWIMEVENT dates', () => {
+    db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount, stroke) VALUES (1, 100, 'Freestyle', 1, 1)`)
+    db.exec(`INSERT INTO swimsession (swimsessionid, sessionnumber, name, course) VALUES (1, 1, 'Session 1', 1)`)
+    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode, starttimeeff) VALUES (100, 1, 1, 1, 2, 5, 1, '46345.5')`)
+    db.exec(`INSERT INTO club (clubid, name, code) VALUES (600, 'Club A', 'CA')`)
+    db.exec(`INSERT INTO athlete (athleteid, clubid, firstname, lastname, gender, isdirty, syncmodified) VALUES (700, 600, 'Ann', 'Lee', 2, 'T', 42)`)
+    db.exec(`INSERT INTO swimresult (swimresultid, athleteid, swimeventid) VALUES (800, 700, 100)`)
+    saveSMB(smbPath, backend)
+    const z = readZipEntries(smbPath)
+    expect(decodeGbin(z.get('SWIMRESULT-0001.gbin')!).rows[0].swimresultguid).toBeNull()
+    const a = decodeGbin(z.get('ATHLETE-0001.gbin')!).rows[0]
+    expect([a.isdirty, a.syncmodified]).toEqual(['T', 42])
+    const ev = decodeGbin(z.get('SWIMEVENT-0001.gbin')!)
+    expect(ev.cols.slice(-6).map(c => c.name)).toEqual(['SWIMEVENTGUID', 'SYNCMODIFIED', 'ISDIRTY', 'STARTTIMEEFF', 'OFFICIALAT', 'REVISED'])
+    expect(ev.rows[0].starttimeeff).toBe(46345.5)
+    expect(ev.rows[0].isdirty).toBe('F')  // column default
   })
 })
 

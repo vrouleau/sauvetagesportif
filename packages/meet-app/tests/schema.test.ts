@@ -184,6 +184,20 @@ describe.each(BACKENDS)('Schema integrity [%s]', (kind) => {
     })
   })
 
+  it('backfills the Splash 11.85709 sync columns onto a database that predates them', async () => {
+    await withDb((db) => {
+      db.exec(`DROP TABLE agegroup`)
+      db.exec(`CREATE TABLE agegroup (agegroupid INTEGER PRIMARY KEY, swimeventid INTEGER)`)
+      db.prepare(`INSERT INTO agegroup (agegroupid, swimeventid) VALUES (1, 1)`).run()
+
+      runColumnBackfills(db)
+      runColumnBackfills(db)  // idempotent
+
+      const row = db.prepare(`SELECT agegroupguid, isdirty, syncmodified FROM agegroup WHERE agegroupid = 1`).get()
+      expect(row).toEqual({ agegroupguid: null, isdirty: 'F', syncmodified: null })
+    })
+  })
+
   it('nextId() never returns an id already used by a different table', async () => {
     // Real Splash's own id space is a single counter shared across every table (confirmed by
     // directly querying a real Splash .mdb: BSUIDTABLE has a literal row
