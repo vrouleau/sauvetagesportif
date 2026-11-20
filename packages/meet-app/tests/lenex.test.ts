@@ -979,6 +979,74 @@ describe('LENEX importer', () => {
     }
   })
 
+  // ENTRY > MEETINFO (team-app writes one per timed entry: where/when the entry time was
+  // swum) used to be dropped on import — Splash keeps it in QTTIME/QTDATE/…, and our own
+  // seeding's qualification-period filter (QUALIFROM/QUALITO) reads swimresult.qtdate.
+  it('imports ENTRY > MEETINFO into the qt* columns (individual and relay)', () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<LENEX version="3.0">
+  <MEETS>
+    <MEET name="Test Meet" city="Test City" nation="CAN" course="LCM">
+      <SESSIONS>
+        <SESSION number="1" name="Session 1">
+          <EVENTS>
+            <EVENT eventid="100" number="1" gender="F" round="TIM">
+              <SWIMSTYLE swimstyleid="503" distance="200" relaycount="1" name="200 m Nage avec obstacles" />
+              <AGEGROUPS><AGEGROUP agegroupid="1000" agemin="15" agemax="18" gender="F" /></AGEGROUPS>
+            </EVENT>
+            <EVENT eventid="101" number="2" gender="F" round="TIM">
+              <SWIMSTYLE swimstyleid="504" distance="100" relaycount="1" name="100 m Portage" />
+              <AGEGROUPS><AGEGROUP agegroupid="1001" agemin="15" agemax="18" gender="F" /></AGEGROUPS>
+            </EVENT>
+            <EVENT eventid="102" number="3" gender="F" round="TIM">
+              <SWIMSTYLE swimstyleid="521" distance="200" relaycount="4" name="4x50 m Relais" />
+              <AGEGROUPS><AGEGROUP agegroupid="1002" agemin="15" agemax="18" gender="F" /></AGEGROUPS>
+            </EVENT>
+          </EVENTS>
+        </SESSION>
+      </SESSIONS>
+      <CLUBS>
+        <CLUB clubid="1" code="TST" name="Test Club">
+          <ATHLETES>
+            <ATHLETE athleteid="500" firstname="Test" lastname="Athlete" birthdate="2009-06-25" gender="F">
+              <ENTRIES>
+                <ENTRY eventid="100" agegroupid="1000" entrytime="00:02:27.85" entrycourse="LCM">
+                  <MEETINFO qualificationtime="00:02:27.85" course="SCM" date="2026-02-15" city="Laval" name="Invitation Laval" nation="CAN" />
+                </ENTRY>
+                <ENTRY eventid="101" agegroupid="1001" />
+              </ENTRIES>
+            </ATHLETE>
+          </ATHLETES>
+          <RELAYS>
+            <RELAY number="1" gender="F">
+              <ENTRIES>
+                <ENTRY eventid="102" agegroupid="1002" entrytime="00:02:10.00">
+                  <MEETINFO qualificationtime="00:02:10.00" course="LCM" date="2026-05-30" />
+                </ENTRY>
+              </ENTRIES>
+            </RELAY>
+          </RELAYS>
+        </CLUB>
+      </CLUBS>
+    </MEET>
+  </MEETS>
+</LENEX>`
+    const path = join(tmpdir(), `test-meetinfo-${randomBytes(4).toString('hex')}.lxf`)
+    writeZipSingleEntry(path, 'meet.lef', xml)
+    try {
+      importLenex(path, db)
+      const qt = (ev: number): Record<string, unknown> => db.prepare(
+        `SELECT qttime, qtcourse, qtdate, qtcity, qtname, qtnation FROM swimresult WHERE swimeventid = ?`).get(ev) as Record<string, unknown>
+      expect(qt(100)).toEqual({ qttime: 147850, qtcourse: 3, qtdate: '2026-02-15', qtcity: 'Laval', qtname: 'Invitation Laval', qtnation: 'CAN' })
+      // No MEETINFO → nothing invented
+      expect(qt(101)).toEqual({ qttime: null, qtcourse: null, qtdate: null, qtcity: null, qtname: null, qtnation: null })
+      expect(db.prepare(`SELECT qttime, qtcourse, qtdate FROM relay WHERE swimeventid = 102`).get())
+        .toEqual({ qttime: 130000, qtcourse: 1, qtdate: '2026-05-30' })
+    } finally {
+      try { unlinkSync(path) } catch {}
+    }
+  })
+
   it('never deletes a sibling registration that already has a heat/lane assigned', () => {
     const structureXml = `<?xml version="1.0" encoding="UTF-8"?>
 <LENEX version="3.0">

@@ -140,6 +140,25 @@ function encodeRound(r: string | undefined): number {
   }
 }
 
+/**
+ * ENTRY > MEETINFO — where an entry time was achieved (LENEX: qualificationtime, course,
+ * date, city, name, nation). Stored in the qt* columns Splash itself fills from the same
+ * element; seeding's qualification-period filter (QUALIFROM/QUALITO) reads qtdate.
+ * All null when the ENTRY has no MEETINFO.
+ */
+function readMeetInfo(entry: XmlElem): (number | string | null)[] {
+  const mi = child(entry, 'MEETINFO')?.attrs ?? {}
+  const date = /^\d{4}-\d{2}-\d{2}/.test(mi.date ?? '') ? mi.date!.slice(0, 10) : null
+  return [
+    lenexTimeToMs(mi.qualificationtime),
+    mi.course ? encodeCourse(mi.course) : null,
+    date,
+    mi.city || null,
+    mi.name || null,
+    mi.nation || null,
+  ]
+}
+
 function encodeCourse(c: string | undefined): number | null {
   switch ((c ?? '').toUpperCase()) {
     case 'LCM': return 1; case 'SCY': return 2; case 'SCM': return 3
@@ -476,6 +495,10 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
          heatid=excluded.heatid, lane=excluded.lane, entrytime=excluded.entrytime,
          entrycourse=excluded.entrycourse, swimtime=excluded.swimtime,
          resultstatus=excluded.resultstatus, reactiontime=excluded.reactiontime`),
+    setResultQt: db.prepare(
+      `UPDATE swimresult SET qttime=?, qtcourse=?, qtdate=?, qtcity=?, qtname=?, qtnation=? WHERE swimresultid=?`),
+    setRelayQt: db.prepare(
+      `UPDATE relay SET qttime=?, qtcourse=?, qtdate=?, qtcity=?, qtname=?, qtnation=? WHERE relayid=?`),
     // An athlete belongs to at most one age-bracket division of a given event style
     // at a time. If an earlier ENTRIES import registered them under a different
     // division (e.g. before a late age-category correction in team-app), this clears
@@ -793,6 +816,7 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
             resId, athId, eventId, agegroupid, null, null, entrytime, entrycourse,
             null, entryStatus, null
           )
+          stmts.setResultQt.run(...readMeetInfo(entry), resId)
           summary.results++
         } catch (e) {
           summary.errors.push(`Entry athlete=${athId} event=${eventId}: ${e}`)
@@ -868,6 +892,7 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
             `INSERT INTO relay (relayid, clubid, swimeventid, agegroupid, teamnumber, name, gender, entrytime, entrycourse, resultstatus)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
           ).run(relayId, clubId, eventId, agegroupid, teamNumber, teamName, relayGender, entrytime, entrycourse, relayStatus)
+          stmts.setRelayQt.run(...readMeetInfo(entry), relayId)
 
           // Import relay positions — check ENTRY first, then fall back to RELAY level
           const entryPositions = child(entry, 'RELAYPOSITIONS')
