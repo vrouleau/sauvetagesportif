@@ -350,9 +350,19 @@ export default function TimingProcessPage() {
             }`}
           >
             {geminiEnabled
-              ? `🤖 Gemini ${geminiTier === 'paid' ? '(payant)' : '(gratuit)'}${backlogCount > 0 ? ` · ${backlogCount}` : ''}`
+              ? `🤖 Gemini ${geminiTier === 'paid' ? '(payant)' : geminiTier === 'none' ? '(sans clé)' : '(gratuit)'}${backlogCount > 0 ? ` · ${backlogCount}` : ''}`
               : '🤖 Gemini OFF'}
           </button>
+
+          {/* No key: background OCR silently waits — say so */}
+          {geminiEnabled && geminiTier === 'none' && (
+            <span
+              className="text-xs px-2 py-0.5 rounded border bg-orange-50 text-orange-700 border-orange-300"
+              title="Aucune clé API Gemini configurée : les fiches ne seront pas lues automatiquement. Saisie manuelle toujours possible."
+            >
+              ⚠ Aucune clé Gemini — Outils → Clés API Gemini…
+            </span>
+          )}
 
           {/* Processing indicator */}
           {geminiEnabled && geminiTier === 'paid' && (
