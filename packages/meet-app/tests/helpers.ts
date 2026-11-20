@@ -20,10 +20,11 @@ import Database from 'better-sqlite3'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { randomBytes } from 'crypto'
-import { unlinkSync } from 'fs'
+import { unlinkSync, readFileSync } from 'fs'
 import { Pool } from 'pg'
 import { PgBackend, type PgConnectionConfig } from '../src/main/pgBackend'
-import { SCHEMA_DDL, runSchemaInit } from '../src/main/schema'
+import { SCHEMA_DDL, runSchemaInit, runColumnBackfills } from '../src/main/schema'
+import { ensureSplashSchema } from '../src/main/splashPgSchema'
 import type { DbBackend } from '../src/main/dbBackend'
 
 /**
@@ -93,7 +94,11 @@ export async function isPgTestAvailable(): Promise<boolean> {
  * real PgBackend connected to it. Each call gets its own database so parallel
  * vitest workers/files never collide.
  */
-export async function createPgTestDb(): Promise<{ db: PgBackend; cleanup: () => Promise<void>; databaseName: string }> {
+/**
+ * With `splashSchema: true` the database gets real Splash Meet Manager's schema (what meet-app
+ * creates on an empty Postgres database, splashPgSchema.ts) instead of meet-app's own SCHEMA_DDL.
+ */
+export async function createPgTestDb(opts: { splashSchema?: boolean } = { splashSchema: true }): Promise<{ db: PgBackend; cleanup: () => Promise<void>; databaseName: string }> {
   const cfg = getPgTestConnectionConfig()
   const dbName = `meetapp_test_${randomBytes(6).toString('hex')}`
 
@@ -102,7 +107,15 @@ export async function createPgTestDb(): Promise<{ db: PgBackend; cleanup: () => 
   await adminPool.end()
 
   const backend = new PgBackend({ ...cfg, database: dbName })
-  runSchemaInit(backend)
+  if (opts.splashSchema) {
+    const cfgDir = join(__dirname, '..', '..', '..', 'config')
+    ensureSplashSchema(backend,
+      readFileSync(join(cfgDir, 'splash-pg-schema.sql'), 'utf8'),
+      readFileSync(join(cfgDir, 'splash-pg-seed.sql'), 'utf8'))
+    runColumnBackfills(backend)
+  } else {
+    runSchemaInit(backend)
+  }
 
   return {
     db: backend,

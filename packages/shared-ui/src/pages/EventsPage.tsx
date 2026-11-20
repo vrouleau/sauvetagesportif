@@ -311,7 +311,7 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
       setMeetName(cfg?.NAME ?? '')
       // Derive pool size from COURSE config
       const course = cfg?.COURSE
-      if (course === '3' || course === '2') setPoolSize(25)
+      if (course === 'SCM' || course === 'SCY') setPoolSize(25)
       else setPoolSize(50)
     }).catch(() => {})
   }, [refreshKey])
@@ -513,7 +513,8 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
 
     try {
       // 1. Convert original event: TIM → PRE (Eliminatoire)
-      await api.updateEvent(event.id, { round: 1 })  // ROUND_PRE = 1
+      // LENEX name: each backend stores its own code (meet-app: Splash's 2, team-app: 1)
+      await api.updateEvent(event.id, { round: 'PRE' })
 
       // 2. Create the Final event in the same session, keeping the prelim's event
       // number (Splash convention: prelim and final share the same event number,
@@ -725,7 +726,7 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
         // Deleting a Final reverts its paired prelim back to a Timed Final,
         // undoing the split done by handleConvertToFinal.
         if (event.phase === 'Finale' && event.prevEventId != null) {
-          await api.updateEvent(event.prevEventId, { round: 5 })  // ROUND_TIM = 5
+          await api.updateEvent(event.prevEventId, { round: 'TIM' })  // LENEX name, see convert above
         }
         setLocalSessions((prev) =>
           prev.map((s) => ({
@@ -767,7 +768,7 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
       api.getMeetConfig().then((cfg) => {
         setMeetName(cfg?.NAME ?? '')
         const course = cfg?.COURSE
-        if (course === '3' || course === '2') setPoolSize(25)
+        if (course === 'SCM' || course === 'SCY') setPoolSize(25)
         else setPoolSize(50)
       }).catch(() => {})
       setConfigVersion(v => v + 1)
@@ -804,7 +805,7 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
       sessionStorage.removeItem('eventsPage_expandedEvents')
       setMeetName(cfg?.NAME ?? '')
       const course = cfg?.COURSE
-      setPoolSize((course === '3' || course === '2') ? 25 : 50)
+      setPoolSize((course === 'SCM' || course === 'SCY') ? 25 : 50)
       setConfigVersion(v => v + 1)
     } catch {
       window.alert('Erreur lors de la création du meet')
@@ -829,9 +830,9 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
         else if (key === 'sessionnumber') localUpdate.number = val as number
         else if (key === 'startdate') localUpdate.date = val as string | undefined
         else if (key === 'course') {
-          const c = Number(val)
+          const c = val as 'LCM' | 'SCM' | 'SCY'
           localUpdate.course = c
-          localUpdate.poolSize = c === 3 ? 25 : c === 2 ? 25 : 50
+          localUpdate.poolSize = c === 'LCM' ? 50 : 25
         }
         else if (key === 'lanemin') localUpdate.laneMin = val as number | undefined
         else if (key === 'lanemax') localUpdate.laneMax = val as number | undefined
@@ -2265,9 +2266,10 @@ function CompetitionPropertiesPanel({ onMeetNameChange }: { onMeetNameChange: (n
   }
 
   const courseOptions = [
-    { value: '1', label: t.events.meetPanel.pool50m },
-    { value: '2', label: t.events.meetPanel.pool25y },
-    { value: '3', label: t.events.meetPanel.pool25m },
+    // LENEX names — each backend stores its own number (meet-app uses Splash's)
+    { value: 'LCM', label: t.events.meetPanel.pool50m },
+    { value: 'SCY', label: t.events.meetPanel.pool25y },
+    { value: 'SCM', label: t.events.meetPanel.pool25m },
   ]
   const timingOptions = [
     { value: '0', label: t.events.meetPanel.timingManual },
@@ -2614,12 +2616,11 @@ function SessionPropertiesPanel({
     )
   }
 
-  // LENEX course codes, same as the meet-level COURSE: 1=LCM, 2=SCY, 3=SCM
-  // (these labels used to be swapped, so "25m (SCM)" saved yards).
+  // LENEX course names, same as the meet-level COURSE — each backend stores its own number
   const poolOptions = [
-    { value: 1, label: 'Bassin 50m' },
-    { value: 3, label: 'Bassin 25m (SCM)' },
-    { value: 2, label: 'Bassin 25y (SCY)' },
+    { value: 'LCM', label: 'Bassin 50m' },
+    { value: 'SCM', label: 'Bassin 25m (SCM)' },
+    { value: 'SCY', label: 'Bassin 25y (SCY)' },
   ]
   const timingOptions = [
     { value: '', label: '—' },
@@ -2634,7 +2635,7 @@ function SessionPropertiesPanel({
     { value: 2, label: 'Les deux côtés' },
   ]
 
-  const courseValue = session.course ?? (session.poolSize === 50 ? 1 : 3)
+  const courseValue = session.course ?? (session.poolSize === 50 ? 'LCM' : 'SCM')
 
   return (
     <SessionUpdateContext.Provider value={onUpdate}>

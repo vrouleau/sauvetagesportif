@@ -21,7 +21,7 @@
  * whole PG-backend effort was for.
  *
  * `tests/fixtures/splash-schema.csv` is a real `information_schema.columns`
- * dump captured 2026-07-31 from a genuine Splash Meet Manager 11 instance,
+ * dump captured 2026-07-31 from a genuine Splash Meet Manager 11 instance (re-captured 2026-11-20 from build 11.85709),
  * connected via ODBC DSN to a fresh PostgreSQL database — i.e. it's the exact
  * schema Splash itself creates on connect, not our own reverse-engineering of
  * it. This test builds our own schema (schema.ts's SCHEMA_DDL, the same DDL
@@ -62,7 +62,9 @@ if (!pgAvailable) {
 
 /** Columns we intentionally added that real Splash doesn't have. */
 const KNOWN_EXTRA_COLUMNS: Record<string, string[]> = {
-  dsqitem: ['name_en'], // bilingual DSQ codes — backfilled via ALTER TABLE in connectionManager.ts
+  // name_en: bilingual DSQ codes; appliesto: our individual/relay tag (dsqCodes.ts) — both
+  // backfilled via ALTER TABLE in connectionManager.ts / COLUMN_BACKFILLS
+  dsqitem: ['name_en', 'appliesto'],
 }
 
 function parseSplashSchema(): Map<string, Set<string>> {

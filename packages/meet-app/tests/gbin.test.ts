@@ -19,6 +19,8 @@
 import { describe, it, expect } from 'vitest'
 import { encodeGbin, decodeGbin, D_NULL_SENTINEL } from '../src/main/smb'
 import type { ColDef } from '../src/main/smb'
+import { readFileSync } from 'fs'
+import { join } from 'path'
 
 // ── Fixtures: synthetic table data ────────────────────────────────────────────
 
@@ -476,5 +478,77 @@ describe('gbin encode/decode roundtrip', () => {
     const { rows: decoded } = decodeGbin(encoded)
 
     expect(decoded[0].data).toBe(longMemo)
+  })
+})
+// ── Type G (GUID) — new in Splash Meet Manager 11.85709 (2026-11) ─────────────
+// Real gbin files from a genuine Splash 11.85709 .smb export (tables with no
+// personal data only). Expected GUIDs were cross-checked against the same rows
+// in the Splash .mdb they came from (Microsoft.ACE.OLEDB.12.0), which pins the
+// Windows mixed-endian byte order.
+describe('gbin type G (GUID)', () => {
+  const fixture = (t: string): Buffer =>
+    readFileSync(join(__dirname, 'fixtures', 'splash-11.85709', `${t}-0001.gbin`))
+
+  it('decodes a real Splash SWIMSTYLE table with G columns, every row aligned', () => {
+    const { cols, rows } = decodeGbin(fixture('SWIMSTYLE'))
+    expect(cols.find(c => c.name === 'SWIMSTYLEGUID')).toEqual({ name: 'SWIMSTYLEGUID', type: 'G', size: 36 })
+    expect(rows).toHaveLength(61)
+    const byId = new Map(rows.map(r => [r.swimstyleid, r]))
+    expect(byId.get(1001)?.swimstyleguid).toBe('5d9026de-31c1-47b5-bc98-71047c5bb17f')
+    expect(byId.get(1002)?.swimstyleguid).toBe('43730451-8f29-413a-b836-79f39dfaf27c')
+    // Columns after the GUID are still read in place (no drift)
+    for (const r of rows) expect(r.isdirty === 'T' || r.isdirty === 'F').toBe(true)
+  })
+
+  it('decodes a real Splash SWIMEVENT table where D columns follow the G column', () => {
+    const { rows } = decodeGbin(fixture('SWIMEVENT'))
+    expect(rows).toHaveLength(6)
+    const e = rows.find(r => r.swimeventid === 1061)!
+    expect(e.swimeventguid).toBe('6f545357-94e5-45bd-b3ff-1e7da25903fe')
+    expect(e.isdirty).toBe('F')
+    expect(e.starttimeeff).toBeNull()
+    expect(e.revised).toBeNull()
+  })
+
+  it('decodes an all-zero GUID (Splash writes one on every SWIMRESULT) as null', () => {
+    const { rows } = decodeGbin(fixture('SWIMRESULT'))
+    expect(rows).toHaveLength(71)
+    expect(rows.every(r => r.swimresultguid === null)).toBe(true)
+    expect(rows.every(r => typeof r.athleteid === 'number' && r.athleteid > 0)).toBe(true)
+  })
+
+  it('re-encodes real Splash gbin byte-for-byte', () => {
+    for (const t of ['SWIMSTYLE', 'SWIMEVENT']) {
+      const buf = fixture(t)
+      const { cols, rows } = decodeGbin(buf)
+      expect(encodeGbin({ name: t, cols }, rows).equals(buf)).toBe(true)
+    }
+  })
+
+  it('round-trips GUIDs and writes 16 bytes with no null flag', () => {
+    const cols: ColDef[] = [
+      { name: 'ID', type: 'I', size: 32 },
+      { name: 'XGUID', type: 'G', size: 36 },
+      { name: 'TAIL', type: 'S', size: 1 },
+    ]
+    const g = '0366d44d-2420-4f04-85a7-86db41ca9fc0'
+    const rows = [
+      { id: 1, xguid: g, tail: 'A' },
+      { id: 2, xguid: null, tail: 'B' },
+      { id: 3, xguid: 'not-a-guid', tail: 'C' },
+    ]
+    const buf = encodeGbin({ name: 'X', cols }, rows)
+    const decoded = decodeGbin(buf).rows
+    expect(decoded.map(r => r.xguid)).toEqual([g, null, null])
+    expect(decoded.map(r => r.tail)).toEqual(['A', 'B', 'C'])
+    // header + 3 × (4 id + 16 guid + 2+1 str)
+    const headerLen = buf.readUInt16LE(0)
+    expect(buf.length - 2 - headerLen).toBe(3 * (4 + 16 + 3))
+  })
+
+  it('refuses an unknown column type instead of misreading every field after it', () => {
+    const header = Buffer.from('A;Z;8')
+    const buf = Buffer.concat([Buffer.from([header.length, 0]), header, Buffer.alloc(8)])
+    expect(() => decodeGbin(buf)).toThrow(/Unsupported gbin column type 'Z'/)
   })
 })

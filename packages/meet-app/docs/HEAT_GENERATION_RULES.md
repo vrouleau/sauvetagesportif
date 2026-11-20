@@ -205,7 +205,7 @@ Parameters can be set at multiple levels. The effective value is determined by:
 | `lanemin` | First lane number |
 | `lanemax` | Last lane number |
 | `lanesbyplace` | Custom lane order (comma-separated) |
-| `course` | Pool course (1=LCM, 2=SCY, 3=SCM) |
+| `course` | Pool course, Splash's codes (`courses.ts`): 1=LCM, 2=SCM, 3=SCY |
 
 ### Event-level (`swimevent`)
 

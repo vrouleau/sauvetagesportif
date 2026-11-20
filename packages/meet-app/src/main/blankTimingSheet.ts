@@ -155,7 +155,7 @@ export interface BlankSheetCandidate {
   eventNumber: number
   heatNumber: number
   lane: number
-  /** swimevent.round — 1 PRE, 2 SEM, 4 FIN, 5 TIM */
+  /** swimevent.round — Splash codes (rounds.ts): 1 TIM, 2 PRE, 6 SEM, 9 FIN */
   round: number
   eventName: string
   /** Athlete "Last, First" or relay team name */

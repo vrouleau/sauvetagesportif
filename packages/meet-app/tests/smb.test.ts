@@ -30,7 +30,7 @@ import { SqliteBackend } from '../src/main/sqliteBackend'
 import type { DbBackend } from '../src/main/dbBackend'
 
 // Import the SMB functions directly
-import { saveSMB, restoreSMB, readZipEntries, decodeGbin } from '../src/main/smb'
+import { saveSMB, restoreSMB, readZipEntries, decodeGbin, mdbFilenameFor } from '../src/main/smb'
 
 describe('SMB save/restore', () => {
   let db: Database.Database
@@ -145,6 +145,33 @@ describe('SMB save/restore', () => {
     expect(rows[0].data).toBe('Meet Manager - MEET')
   })
 
+  it('writes the Splash 11.85709 header and names the restore target after the meet', () => {
+    db.prepare(`INSERT INTO bsglobal (name, data) VALUES ('MeetName', 'Invitation Provinciale Novembre 2026')`).run()
+    saveSMB(smbPath, backend)
+    const ini = readZipEntries(smbPath).get('geologix.ini')!.toString('utf8')
+    expect(ini).toContain('Version=11.85709')
+    expect(ini).toContain('BSDB_DDL_VERSION_APPLICATION=20260901')
+    expect(ini).toContain('DBFilename=Invitation Provinciale Novembre 2026.mdb')
+  })
+
+  it('never writes an application DDL version older than the G-typed GUID schema, keeps a newer one', () => {
+    db.prepare(`INSERT INTO bsglobal (name, data) VALUES ('BSDB_DDL_VERSION_APPLICATION', '20260401')`).run()
+    saveSMB(smbPath, backend)
+    expect(readZipEntries(smbPath).get('geologix.ini')!.toString('utf8')).toContain('BSDB_DDL_VERSION_APPLICATION=20260901')
+    db.prepare(`UPDATE bsglobal SET data = '20270101' WHERE name = 'BSDB_DDL_VERSION_APPLICATION'`).run()
+    saveSMB(smbPath, backend)
+    expect(readZipEntries(smbPath).get('geologix.ini')!.toString('utf8')).toContain('BSDB_DDL_VERSION_APPLICATION=20270101')
+  })
+
+  it('mdbFilenameFor makes a safe ASCII Windows file name, falling back to meet.mdb', () => {
+    expect(mdbFilenameFor('Championnats Québec — Été 2026')).toBe('Championnats Quebec Ete 2026.mdb')
+    expect(mdbFilenameFor('CQS 2025: A/B "finale"?')).toBe('CQS 2025 A B finale.mdb')
+    expect(mdbFilenameFor('Meet...  ')).toBe('Meet.mdb')
+    expect(mdbFilenameFor('')).toBe('meet.mdb')
+    expect(mdbFilenameFor(null)).toBe('meet.mdb')
+    expect(mdbFilenameFor('x'.repeat(300))).toBe('x'.repeat(100) + '.mdb')
+  })
+
   it('handles empty database gracefully', () => {
     // No data seeded — save should still work. RECORDAGEGROUP's single sentinel row
     // (see saveSMB's `tableName === 'recordagegroup'` case) is always present regardless
@@ -202,9 +229,9 @@ describe('SMB save/restore', () => {
     db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount, stroke) VALUES (1, 100, 'Freestyle', 1, 1)`)
     db.exec(`INSERT INTO swimsession (swimsessionid, sessionnumber, name, course) VALUES (1, 1, 'Session 1', 1)`)
     // TIM event, real gender (M=1), immediately precedes the PRE event (sortcode-1)
-    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode, internalevent) VALUES (100, 1, 1, 10, 1, 5, 1, 'F')`)
+    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode, internalevent) VALUES (100, 1, 1, 10, 1, 1, 1, 'F')`)  // 1 = Splash TIM
     // PRE event, Splash-style placeholder gender=0
-    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode, internalevent, preveventid) VALUES (200, 1, 1, 11, 0, 1, 2, 'F', -1)`)
+    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode, internalevent, preveventid) VALUES (200, 1, 1, 11, 0, 2, 2, 'F', -1)`)  // 2 = Splash PRE
 
     saveSMB(smbPath, backend)
     db.exec('DELETE FROM swimevent')
@@ -220,8 +247,8 @@ describe('SMB save/restore', () => {
     db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount, stroke) VALUES (1, 100, 'Freestyle', 1, 1)`)
     db.exec(`INSERT INTO swimsession (swimsessionid, sessionnumber, name, course) VALUES (1, 1, 'Session 1', 1)`)
     // TIM event is genuinely ALL (gender=0), not a placeholder
-    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode, internalevent) VALUES (100, 1, 1, 10, 0, 5, 1, 'F')`)
-    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode, internalevent, preveventid) VALUES (200, 1, 1, 11, 0, 1, 2, 'F', -1)`)
+    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode, internalevent) VALUES (100, 1, 1, 10, 0, 1, 1, 'F')`)  // 1 = Splash TIM
+    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode, internalevent, preveventid) VALUES (200, 1, 1, 11, 0, 2, 2, 'F', -1)`)  // 2 = Splash PRE
 
     saveSMB(smbPath, backend)
     db.exec('DELETE FROM swimevent')
@@ -231,23 +258,6 @@ describe('SMB save/restore', () => {
 
     const preEvent = db.prepare('SELECT gender FROM swimevent WHERE swimeventid=200').get() as { gender: number }
     expect(preEvent.gender).toBe(0) // still ALL, not corrupted by the backfill-skip
-  })
-
-  it('rewrites dsqitem.options to the safe default instead of overflowing OPTIONS;S;5', () => {
-    // Our own dsqitem.options stores a human-readable tag list (see config/dsq-codes.json),
-    // consumed by scripts/generate_dsq_xml.py — but that overflows Splash's real 5-char
-    // OPTIONS gbin column and breaks restore into real Splash. saveSMB must rewrite it.
-    db.prepare(
-      `INSERT INTO dsqitem (dsqitemid, code, lenexcode, name, options, sortcode) VALUES (?, ?, ?, ?, ?, ?)`
-    ).run(4001, '1', '1', 'Test DSQ', 'INDIVIDUAL,RELAY', 1)
-
-    saveSMB(smbPath, backend)
-
-    db.exec('DELETE FROM dsqitem')
-    restoreSMB(smbPath, backend)
-
-    const row = db.prepare('SELECT options FROM dsqitem WHERE dsqitemid=4001').get() as { options: string }
-    expect(row.options).toBe('00000')
   })
 
   it('round-trips RELAY.athletes/relaycode values that overflow a 16-bit field', () => {
@@ -326,30 +336,6 @@ describe('SMB save/restore', () => {
     expect(row?.swimtime).toBe(15230)
   })
 
-  it('backfills a NULL heat.agegroupid from its members before export (beach cross-age-group heats)', () => {
-    // Beach heat generation pools entries across every age group in an event, so
-    // heat.agegroupid is legitimately NULL in our own DB (see generateHeatsBeach, db.ts).
-    // Real Splash crashes viewing a heat whose AGEGROUPID FK is null — saveSMB must
-    // backfill a real value drawn from the heat's own members for export only.
-    db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount, stroke) VALUES (1, 100, 'Beach Flags', 1, 1)`)
-    db.exec(`INSERT INTO swimsession (swimsessionid, sessionnumber, name, course) VALUES (1, 1, 'Session 1', 1)`)
-    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode) VALUES (100, 1, 1, 10, 3, 5, 1)`)
-    db.exec(`INSERT INTO agegroup (agegroupid, swimeventid, agemin, agemax, gender, sortcode) VALUES (500, 100, 10, 12, 3, 1)`)
-    db.exec(`INSERT INTO club (clubid, code, name) VALUES (1, 'CLB', 'Club')`)
-    db.exec(`INSERT INTO athlete (athleteid, clubid, firstname, lastname) VALUES (1, 1, 'A', 'B')`)
-    // Heat with no agegroupid (beach's cross-age-group pooling)
-    db.exec(`INSERT INTO heat (heatid, swimeventid, heatnumber, racestatus, sortcode) VALUES (1, 100, 1, 4, 100)`)
-    db.exec(`INSERT INTO swimresult (swimresultid, athleteid, swimeventid, heatid, agegroupid) VALUES (1, 1, 100, 1, 500)`)
-
-    saveSMB(smbPath, backend)
-
-    db.exec('DELETE FROM heat')
-    restoreSMB(smbPath, backend)
-
-    const row = db.prepare('SELECT agegroupid FROM heat WHERE heatid=1').get() as { agegroupid: number | null }
-    expect(row.agegroupid).toBe(500)
-  })
-
   it('exports RECORDLIST/RECORDAGEGROUP etc as present-but-empty gbin files, not omitted entirely', () => {
     // Real Splash apparently requires these record-checking tables to at least exist (even with
     // 0 rows) in a restored file — omitting them entirely crashed Splash's Results module with an
@@ -367,94 +353,59 @@ describe('SMB save/restore', () => {
     expect(() => restoreSMB(smbPath, backend)).not.toThrow()
   })
 
-  it('remaps racestatus 4 (our "seeded, not validated") to Splash\'s own 2 on export, and back on restore', () => {
-    // Confirmed by directly sampling three real, populated Splash competition databases via
-    // Microsoft.ACE.OLEDB.12.0: real Splash never writes racestatus=4 for this state — it uses 2.
-    // Writing 4 (our own internal encoding, see decodeHeatStatus()/validateHeat() in db.ts) into a
-    // real Splash-format .smb was the actual cause of an access violation opening any heat in
-    // Splash's Results module (THeat.VerifyStatus/UpdateStatus — the code that interprets this
-    // field). 5 (validated) already matches Splash's own encoding and is untouched.
+  it('carries Splash-encoded event, age group and DSQ values through export/restore unchanged', () => {
+    // meet-app stores these the way Splash does (rounds.ts, NO_PREV_EVENT / NO_AGE_LIMIT in db.ts,
+    // dsqCodes.ts) — Splash reads the same rows directly on a shared Postgres database, so the
+    // .smb must not translate anything.
+    db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount, stroke) VALUES (1, 100, 'Freestyle', 1, 1)`)
+    db.exec(`INSERT INTO swimsession (swimsessionid, sessionnumber, name, course) VALUES (1, 1, 'Session 1', 1)`)
+    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode, internalevent, preveventid) VALUES (100, 1, 1, 1, 2, 2, 1, 'F', -1)`)  // PRE
+    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode, internalevent, preveventid) VALUES (101, 1, 1, 1, 2, 9, 2, 'F', 100)`) // FIN
+    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode, internalevent, preveventid) VALUES (102, 1, 1, 2, 2, 1, 3, 'F', -1)`)  // TIM
+    db.exec(`INSERT INTO agegroup (agegroupid, swimeventid, agemin, agemax, gender, sortcode) VALUES (500, 102, 19, -1, 2, 1)`)
+    db.exec(`INSERT INTO dsqitem (dsqitemid, code, name, options, appliesto, sortcode) VALUES (4001, 'A1', 'Faux départ', '00000', 'I', 1)`)
+
+    saveSMB(smbPath, backend)
+    const z = readZipEntries(smbPath)
+    const ev = decodeGbin(z.get('SWIMEVENT-0001.gbin')!).rows
+    expect(ev.map(r => [r.swimeventid, r.round, r.preveventid])).toEqual([[100, 2, -1], [101, 9, 100], [102, 1, -1]])
+    const ag = decodeGbin(z.get('AGEGROUP-0001.gbin')!).rows[0]
+    expect([ag.agemin, ag.agemax]).toEqual([19, -1])
+    expect(decodeGbin(z.get('DSQITEM-0001.gbin')!).rows[0].options).toBe('00000')
+
+    restoreSMB(smbPath, backend)
+    expect(db.prepare('SELECT swimeventid, round, preveventid FROM swimevent ORDER BY swimeventid').all()).toEqual([
+      { swimeventid: 100, round: 2, preveventid: -1 },
+      { swimeventid: 101, round: 9, preveventid: 100 },
+      { swimeventid: 102, round: 1, preveventid: -1 },
+    ])
+    expect(db.prepare('SELECT agemin, agemax FROM agegroup').get()).toEqual({ agemin: 19, agemax: -1 })
+  })
+
+  it('round-trips heat racestatus in Splash encoding (2 seeded, 5 validated) unchanged', () => {
+    // Splash only uses 2 (seeded, not yet official) and 5 (validated) — sampled from three real,
+    // populated Splash databases. A 4 crashed its Results module (THeat.VerifyStatus). meet-app
+    // stores the same codes (HEAT_SEEDED, db.ts), so the .smb carries them as they are.
     db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount, stroke) VALUES (1, 100, 'Freestyle', 1, 1)`)
     db.exec(`INSERT INTO swimsession (swimsessionid, sessionnumber, name, course) VALUES (1, 1, 'Session 1', 1)`)
     db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode) VALUES (100, 1, 1, 10, 2, 5, 1)`)
-    db.exec(`INSERT INTO heat (heatid, swimeventid, heatnumber, racestatus, sortcode) VALUES (1, 100, 1, 4, 100)`)
+    db.exec(`INSERT INTO heat (heatid, swimeventid, heatnumber, racestatus, sortcode) VALUES (1, 100, 1, 2, 100)`)
     db.exec(`INSERT INTO heat (heatid, swimeventid, heatnumber, racestatus, sortcode) VALUES (2, 100, 2, 5, 200)`)
 
     saveSMB(smbPath, backend)
-
-    const zipEntries = readZipEntries(smbPath)
-    const gbin = zipEntries.get('HEAT-0001.gbin')!
-    const { rows: exportedRows } = decodeGbin(gbin)
-    const exported1 = exportedRows.find((r) => r.heatid === 1) as { racestatus: number }
-    const exported2 = exportedRows.find((r) => r.heatid === 2) as { racestatus: number }
-    expect(exported1.racestatus).toBe(2)  // 4 → Splash's 2
-    expect(exported2.racestatus).toBe(5)  // 5 unchanged
+    const exported = decodeGbin(readZipEntries(smbPath).get('HEAT-0001.gbin')!).rows
+    expect(exported.map(r => [r.heatid, r.racestatus])).toEqual([[1, 2], [2, 5]])
 
     db.exec('DELETE FROM heat')
     restoreSMB(smbPath, backend)
-
-    const restored1 = db.prepare('SELECT racestatus FROM heat WHERE heatid=1').get() as { racestatus: number }
-    const restored2 = db.prepare('SELECT racestatus FROM heat WHERE heatid=2').get() as { racestatus: number }
-    expect(restored1.racestatus).toBe(4)  // round-trips back to our canonical 4
-    expect(restored2.racestatus).toBe(5)
+    expect(db.prepare('SELECT heatid, racestatus FROM heat ORDER BY heatid').all())
+      .toEqual([{ heatid: 1, racestatus: 2 }, { heatid: 2, racestatus: 5 }])
   })
 
-  it('writes swimevent.preveventid=-1 (not NULL) for events with no linked final, and back to NULL on restore', () => {
-    // Sampled directly via Microsoft.ACE.OLEDB.12.0 across a real, populated Splash-native .mdb
-    // (84 SWIMEVENT rows): PREVEVENTID is NEVER NULL there — always -1 ("no parent") or a real
-    // linked event id. Our own schema leaves it NULL by default for every non-Final event, which
-    // is what every prior .smb export wrote verbatim. Reproduced live (2026-08-14): deleting a
-    // Final in Splash after restoring one of our own .smb exports left the target .mdb mid-
-    // operation (prelim's round already reverted PRE→TIM, Final row not yet removed) — consistent
-    // with Splash's delete-final routine walking every SWIMEVENT row's PREVEVENTID and choking on
-    // a NULL Access field read into a non-nullable Integer.
-    db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount, stroke) VALUES (1, 100, 'Freestyle', 1, 1)`)
-    db.exec(`INSERT INTO swimsession (swimsessionid, sessionnumber, name, course) VALUES (1, 1, 'Session 1', 1)`)
-    // Prelim (no preveventid) + its Final (preveventid points back at the prelim)
-    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode) VALUES (100, 1, 1, 1, 2, 1, 1)`)
-    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode, preveventid) VALUES (101, 1, 1, 1, 2, 4, 2, 100)`)
-
-    saveSMB(smbPath, backend)
-
-    const zipEntries = readZipEntries(smbPath)
-    const gbin = zipEntries.get('SWIMEVENT-0001.gbin')!
-    const { rows: exportedRows } = decodeGbin(gbin)
-    const prelim = exportedRows.find((r) => r.swimeventid === 100) as { preveventid: number }
-    const final = exportedRows.find((r) => r.swimeventid === 101) as { preveventid: number }
-    expect(prelim.preveventid).toBe(-1)   // NULL → Splash's -1 sentinel
-    expect(final.preveventid).toBe(100)   // real link unchanged
-
-    db.exec('DELETE FROM agegroup')
-    db.exec('DELETE FROM swimevent')
-    restoreSMB(smbPath, backend)
-
-    const restoredPrelim = db.prepare('SELECT preveventid FROM swimevent WHERE swimeventid=100').get() as { preveventid: number | null }
-    const restoredFinal = db.prepare('SELECT preveventid FROM swimevent WHERE swimeventid=101').get() as { preveventid: number | null }
-    expect(restoredPrelim.preveventid).toBeNull()  // -1 round-trips back to our canonical NULL
-    expect(restoredFinal.preveventid).toBe(100)
-  })
-
-  it('writes agegroup.agemax/agemin=-1 (not NULL) for "Open" age groups', () => {
-    // Our own app normalizes Splash's -1/>=99 "Open" sentinel to NULL internally (db.ts's
-    // `normalizedMaxAge` comment), but never converted back on export. Real Splash never stores
-    // NULL in AGEGROUP.AGEMAX/AGEMIN (confirmed: 0/90 NULL rows in a real populated .mdb) —
-    // same NULL-vs-sentinel bug class as preveventid above.
-    db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount, stroke) VALUES (1, 100, 'Freestyle', 1, 1)`)
-    db.exec(`INSERT INTO swimsession (swimsessionid, sessionnumber, name, course) VALUES (1, 1, 'Session 1', 1)`)
-    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode) VALUES (100, 1, 1, 1, 2, 5, 1)`)
-    db.exec(`INSERT INTO agegroup (agegroupid, swimeventid, agemin, agemax, gender, sortcode) VALUES (500, 100, NULL, NULL, 2, 1)`)
-
-    saveSMB(smbPath, backend)
-
-    const zipEntries = readZipEntries(smbPath)
-    const gbin = zipEntries.get('AGEGROUP-0001.gbin')!
-    const { rows: exportedRows } = decodeGbin(gbin)
-    const ag = exportedRows.find((r) => r.agegroupid === 500) as { agemin: number; agemax: number }
-    expect(ag.agemin).toBe(-1)
-    expect(ag.agemax).toBe(-1)
-  })
-
-  it('generates a unique per-row sync GUID for SWIMSTYLE/SWIMSESSION/SWIMEVENT/AGEGROUP on export, and restores without error', () => {
+  it('generates a unique per-row sync GUID (type G) for SWIMSTYLE/SWIMSESSION/SWIMEVENT/AGEGROUP/CLUB/ATHLETE on export, and restores without error', () => {
+    // 2026-11: Splash 11.85709 writes these as G;36 (16 raw bytes) and blanks an S;36 GUID
+    // on restore; it also added CLUBGUID/ATHLETEGUID. SWIMRESULTGUID is left out on purpose:
+    // Splash itself writes an all-zero GUID there.
     // Real Splash always fills SWIMSTYLEGUID/SWIMSESSIONGUID/SWIMEVENTGUID/AGEGROUPGUID with a
     // real unique value (Microsoft.ACE.OLEDB.12.0 GetSchema: S;36, matches randomUUID()'s dashed
     // format) — we have no such column in our own schema, so every prior export left it blank
@@ -469,6 +420,8 @@ describe('SMB save/restore', () => {
     db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode) VALUES (100, 1, 1, 1, 2, 5, 1)`)
     db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode) VALUES (101, 1, 2, 2, 2, 5, 2)`)
     db.exec(`INSERT INTO agegroup (agegroupid, swimeventid, agemin, agemax, gender, sortcode) VALUES (500, 100, 13, 14, 2, 1)`)
+    db.exec(`INSERT INTO club (clubid, name, code) VALUES (600, 'Club A', 'CA')`)
+    db.exec(`INSERT INTO athlete (athleteid, clubid, firstname, lastname, gender) VALUES (700, 600, 'Ann', 'Lee', 2)`)
 
     saveSMB(smbPath, backend)
 
@@ -478,8 +431,11 @@ describe('SMB save/restore', () => {
     for (const [table, col] of [
       ['SWIMSTYLE', 'swimstyleguid'], ['SWIMSESSION', 'swimsessionguid'],
       ['SWIMEVENT', 'swimeventguid'], ['AGEGROUP', 'agegroupguid'],
+      ['CLUB', 'clubguid'], ['ATHLETE', 'athleteguid'],
     ] as const) {
-      const { rows } = decodeGbin(zipEntries.get(`${table}-0001.gbin`)!)
+      const { cols, rows } = decodeGbin(zipEntries.get(`${table}-0001.gbin`)!)
+      expect(cols.find(c => c.name.toLowerCase() === col)?.type).toBe('G')
+      expect(rows.length).toBeGreaterThan(0)
       for (const row of rows) {
         const guid = row[col] as string
         expect(guid).toMatch(guidPattern)
@@ -488,10 +444,31 @@ describe('SMB save/restore', () => {
       }
     }
 
-    // Restore must not error — our schema has no backing column for these, must be dropped silently
-    expect(() => restoreSMB(smbPath, backend)).not.toThrow()
-    const styleCols = db.prepare("PRAGMA table_info(swimstyle)").all() as { name: string }[]
-    expect(styleCols.some(c => c.name === 'swimstyleguid')).toBe(false)
+    // Restore stores them, and the next export keeps the same values (no re-minting)
+    restoreSMB(smbPath, backend)
+    const stored = db.prepare(`SELECT athleteguid FROM athlete WHERE athleteid = 700`).get() as { athleteguid: string }
+    const exported = decodeGbin(zipEntries.get('ATHLETE-0001.gbin')!).rows[0].athleteguid
+    expect(stored.athleteguid).toBe(exported)
+    saveSMB(smbPath, backend)
+    expect(decodeGbin(readZipEntries(smbPath).get('ATHLETE-0001.gbin')!).rows[0].athleteguid).toBe(exported)
+  })
+
+  it('leaves SWIMRESULTGUID empty like Splash, and carries ISDIRTY/SYNCMODIFIED and the new SWIMEVENT dates', () => {
+    db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount, stroke) VALUES (1, 100, 'Freestyle', 1, 1)`)
+    db.exec(`INSERT INTO swimsession (swimsessionid, sessionnumber, name, course) VALUES (1, 1, 'Session 1', 1)`)
+    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode, starttimeeff) VALUES (100, 1, 1, 1, 2, 5, 1, '46345.5')`)
+    db.exec(`INSERT INTO club (clubid, name, code) VALUES (600, 'Club A', 'CA')`)
+    db.exec(`INSERT INTO athlete (athleteid, clubid, firstname, lastname, gender, isdirty, syncmodified) VALUES (700, 600, 'Ann', 'Lee', 2, 'T', 42)`)
+    db.exec(`INSERT INTO swimresult (swimresultid, athleteid, swimeventid) VALUES (800, 700, 100)`)
+    saveSMB(smbPath, backend)
+    const z = readZipEntries(smbPath)
+    expect(decodeGbin(z.get('SWIMRESULT-0001.gbin')!).rows[0].swimresultguid).toBeNull()
+    const a = decodeGbin(z.get('ATHLETE-0001.gbin')!).rows[0]
+    expect([a.isdirty, a.syncmodified]).toEqual(['T', 42])
+    const ev = decodeGbin(z.get('SWIMEVENT-0001.gbin')!)
+    expect(ev.cols.slice(-6).map(c => c.name)).toEqual(['SWIMEVENTGUID', 'SYNCMODIFIED', 'ISDIRTY', 'STARTTIMEEFF', 'OFFICIALAT', 'REVISED'])
+    expect(ev.rows[0].starttimeeff).toBe(46345.5)
+    expect(ev.rows[0].isdirty).toBe('F')  // column default
   })
 })
 

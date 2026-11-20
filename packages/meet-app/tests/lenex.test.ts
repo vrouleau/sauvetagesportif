@@ -666,11 +666,11 @@ describe('LENEX importer', () => {
       runImport(structureXml('city="Laval" nation="CAN" course="SCM" deadline="2027-03-15"', '',
         '<POOL lanemin="1" lanemax="8" />'))
       expect(g('MeetCity')).toBe('Laval')
-      expect(g('MeetCourse')).toBe('3')
+      expect(g('MeetCourse')).toBe('2')  // Splash's code for SCM (courses.ts)
       expect(g('PoolLaneMin')).toBe('1')
       expect(g('PoolLaneMax')).toBe('8')
       expect(mv()).toContain('CITY=S;Laval')
-      expect(mv()).toContain('COURSE=I;3')
+      expect(mv()).toContain('COURSE=I;2')
       expect(mv()).toContain('DEADLINE=D;20270315000000000')
       expect(mv()).toContain('LANEMIN=I;1')
       expect(mv()).toContain('LANEMAX=I;8')
@@ -679,7 +679,7 @@ describe('LENEX importer', () => {
     it('a session takes SESSION@course, else the meet course (was always 50 m)', () => {
       runImport(structureXml('course="SCM"'))
       const s1 = db.prepare(`SELECT course FROM swimsession WHERE sessionnumber=1`).get() as { course: number }
-      expect(s1.course).toBe(3)
+      expect(s1.course).toBe(2)  // SCM in Splash's codes
       runImport(structureXml('course="SCM"', 'course="LCM"'))
       const s2 = db.prepare(`SELECT course FROM swimsession WHERE sessionnumber=1`).get() as { course: number }
       expect(s2.course).toBe(1)
@@ -709,8 +709,8 @@ describe('LENEX importer', () => {
       expect(g('MeetName')).toBe('Structure Meet')
       expect(mv()).toContain('NAME=S;Structure Meet')
       expect(g('MeetCity')).toBe('Local City')
-      expect(g('MeetCourse')).toBe('3')
-      expect(mv()).toContain('COURSE=I;3')
+      expect(g('MeetCourse')).toBe('2')
+      expect(mv()).toContain('COURSE=I;2')
       expect(mv()).toContain('LANEMAX=I;8')
       // the deadline was still empty, so it is filled
       expect(mv()).toContain('DEADLINE=D;20270315000000000')
@@ -758,7 +758,7 @@ describe('LENEX importer', () => {
       importLenex(FIXTURE_PATH, db)
       for (const line of [
         'NAMEEN=S;CQS 2026 (pool) - Lifesaving - CSSG', 'CITY=S;Gatineau', 'STATE=S;QC', 'NATION=S;CAN',
-        'COURSE=I;3', 'DEADLINE=D;20260410000000000', 'RESERVECOUNT=I;2', 'STARTMETHOD=S;1',
+        'COURSE=I;2', 'DEADLINE=D;20260410000000000',  // 25 m = Splash's 2 'RESERVECOUNT=I;2', 'STARTMETHOD=S;1',
         'TIMING=I;2', 'TOUCHPADMODE=I;1', 'MASTERS=B;F',
         'HOSTCLUB=S;Club de sauvetage sportif de Gatineau', 'ORGANIZERURL=S;https://cssgatineau.ca/accueil',
         'FACILITYNAME=S;Centre sportif de Gatineau', 'FACILITYSTREET=S;850, boul. de La Gappe',
@@ -976,6 +976,74 @@ describe('LENEX importer', () => {
       for (const p of [structurePath, openEntryPath, correctedEntryPath]) {
         try { unlinkSync(p) } catch {}
       }
+    }
+  })
+
+  // ENTRY > MEETINFO (team-app writes one per timed entry: where/when the entry time was
+  // swum) used to be dropped on import — Splash keeps it in QTTIME/QTDATE/…, and our own
+  // seeding's qualification-period filter (QUALIFROM/QUALITO) reads swimresult.qtdate.
+  it('imports ENTRY > MEETINFO into the qt* columns (individual and relay)', () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<LENEX version="3.0">
+  <MEETS>
+    <MEET name="Test Meet" city="Test City" nation="CAN" course="LCM">
+      <SESSIONS>
+        <SESSION number="1" name="Session 1">
+          <EVENTS>
+            <EVENT eventid="100" number="1" gender="F" round="TIM">
+              <SWIMSTYLE swimstyleid="503" distance="200" relaycount="1" name="200 m Nage avec obstacles" />
+              <AGEGROUPS><AGEGROUP agegroupid="1000" agemin="15" agemax="18" gender="F" /></AGEGROUPS>
+            </EVENT>
+            <EVENT eventid="101" number="2" gender="F" round="TIM">
+              <SWIMSTYLE swimstyleid="504" distance="100" relaycount="1" name="100 m Portage" />
+              <AGEGROUPS><AGEGROUP agegroupid="1001" agemin="15" agemax="18" gender="F" /></AGEGROUPS>
+            </EVENT>
+            <EVENT eventid="102" number="3" gender="F" round="TIM">
+              <SWIMSTYLE swimstyleid="521" distance="200" relaycount="4" name="4x50 m Relais" />
+              <AGEGROUPS><AGEGROUP agegroupid="1002" agemin="15" agemax="18" gender="F" /></AGEGROUPS>
+            </EVENT>
+          </EVENTS>
+        </SESSION>
+      </SESSIONS>
+      <CLUBS>
+        <CLUB clubid="1" code="TST" name="Test Club">
+          <ATHLETES>
+            <ATHLETE athleteid="500" firstname="Test" lastname="Athlete" birthdate="2009-06-25" gender="F">
+              <ENTRIES>
+                <ENTRY eventid="100" agegroupid="1000" entrytime="00:02:27.85" entrycourse="LCM">
+                  <MEETINFO qualificationtime="00:02:27.85" course="SCM" date="2026-02-15" city="Laval" name="Invitation Laval" nation="CAN" />
+                </ENTRY>
+                <ENTRY eventid="101" agegroupid="1001" />
+              </ENTRIES>
+            </ATHLETE>
+          </ATHLETES>
+          <RELAYS>
+            <RELAY number="1" gender="F">
+              <ENTRIES>
+                <ENTRY eventid="102" agegroupid="1002" entrytime="00:02:10.00">
+                  <MEETINFO qualificationtime="00:02:10.00" course="LCM" date="2026-05-30" />
+                </ENTRY>
+              </ENTRIES>
+            </RELAY>
+          </RELAYS>
+        </CLUB>
+      </CLUBS>
+    </MEET>
+  </MEETS>
+</LENEX>`
+    const path = join(tmpdir(), `test-meetinfo-${randomBytes(4).toString('hex')}.lxf`)
+    writeZipSingleEntry(path, 'meet.lef', xml)
+    try {
+      importLenex(path, db)
+      const qt = (ev: number): Record<string, unknown> => db.prepare(
+        `SELECT qttime, qtcourse, qtdate, qtcity, qtname, qtnation FROM swimresult WHERE swimeventid = ?`).get(ev) as Record<string, unknown>
+      expect(qt(100)).toEqual({ qttime: 147850, qtcourse: 2, qtdate: '2026-02-15', qtcity: 'Laval', qtname: 'Invitation Laval', qtnation: 'CAN' })
+      // No MEETINFO → nothing invented
+      expect(qt(101)).toEqual({ qttime: null, qtcourse: null, qtdate: null, qtcity: null, qtname: null, qtnation: null })
+      expect(db.prepare(`SELECT qttime, qtcourse, qtdate FROM relay WHERE swimeventid = 102`).get())
+        .toEqual({ qttime: 130000, qtcourse: 1, qtdate: '2026-05-30' })
+    } finally {
+      try { unlinkSync(path) } catch {}
     }
   })
 
@@ -1490,8 +1558,9 @@ describe.each(LENEX_PARITY_BACKENDS)('importLenex backend parity [%s]', (kind) =
         expect(summary.sessions).toBe(1)
         expect(summary.events).toBe(1)
 
-        const styles = db.prepare('SELECT COUNT(*) AS c FROM swimstyle').get() as { c: number }
-        expect(styles.c).toBe(1)
+        // only the imported style (a Splash-schema database starts with Splash's own catalog, ids >= 1001)
+        const styles = db.prepare('SELECT COUNT(*) AS c FROM swimstyle WHERE swimstyleid < 1000').get() as { c: number }
+        expect(Number(styles.c)).toBe(1)
         const ags = db.prepare('SELECT COUNT(*) AS c FROM agegroup').get() as { c: number }
         expect(ags.c).toBe(1)
 
@@ -1500,8 +1569,8 @@ describe.each(LENEX_PARITY_BACKENDS)('importLenex backend parity [%s]', (kind) =
         const summary2 = importLenex(lxfPath, db)
         expect(summary2.sessions).toBe(1)
         expect(summary2.events).toBe(1)
-        const stylesAfter = db.prepare('SELECT COUNT(*) AS c FROM swimstyle').get() as { c: number }
-        expect(stylesAfter.c).toBe(1)
+        const stylesAfter = db.prepare('SELECT COUNT(*) AS c FROM swimstyle WHERE swimstyleid < 1000').get() as { c: number }
+        expect(Number(stylesAfter.c)).toBe(1)
         const agsAfter = db.prepare('SELECT COUNT(*) AS c FROM agegroup').get() as { c: number }
         expect(agsAfter.c).toBe(1)
       } finally {

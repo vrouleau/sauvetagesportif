@@ -30,6 +30,15 @@ import type { DbBackend } from './dbBackend'
 import { SqliteBackend } from './sqliteBackend'
 import { PgBackend, type PgConnectionConfig } from './pgBackend'
 import { runSchemaInit, runColumnBackfills } from './schema'
+import { SPLASH_DSQ_NO_OPTIONS, dsqAppliesTo } from './dsqCodes'
+import { ensureSplashSchema } from './splashPgSchema'
+
+/** A file from the repo's config/ folder (packaged: resources/, see package.json extraResources). */
+function readConfigFile(name: string): string {
+  const { readFileSync } = require('fs')
+  const path = app.isPackaged ? join(process.resourcesPath, name) : join(__dirname, '../../../../config', name)
+  return readFileSync(path, 'utf8')
+}
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
@@ -71,6 +80,15 @@ export async function connectToPg(config: PgConnectionConfig): Promise<void> {
   const testBackend = new PgBackend(config)
   await testBackend.testConnection()
 
+  // First to connect creates the database: meet-app creates exactly what Splash would
+  // (splashPgSchema.ts) — throws, before we switch over, on a database with foreign tables.
+  try {
+    ensureSplashSchema(testBackend, readConfigFile('splash-pg-schema.sql'), readConfigFile('splash-pg-seed.sql'))
+  } catch (e) {
+    testBackend.close()
+    throw e
+  }
+
   // Success — close old backend and switch
   if (activeBackend) {
     activeBackend.close()
@@ -92,13 +110,15 @@ export async function connectToPg(config: PgConnectionConfig): Promise<void> {
       name VARCHAR(250),
       name_en VARCHAR(250),
       options VARCHAR(5),
-      sortcode SMALLINT
+      sortcode SMALLINT,
+      appliesto VARCHAR(5)
     )`)
     // name_en is our own addition (bilingual DSQ codes) — Splash's own dsqitem
     // table doesn't have it, so CREATE TABLE IF NOT EXISTS above is a no-op
     // when connecting to a database Splash already created. Backfill the
     // column on the fly so we stay cross-compatible either way.
     testBackend.exec(`ALTER TABLE dsqitem ADD COLUMN IF NOT EXISTS name_en VARCHAR(250)`)
+    testBackend.exec(`ALTER TABLE dsqitem ADD COLUMN IF NOT EXISTS appliesto VARCHAR(5)`)  // ours, see dsqCodes.ts
     // If table is empty, seed from config (same as "Create Meet" does for SQLite)
     const count = testBackend.prepare(`SELECT COUNT(*) AS c FROM dsqitem`).get() as { c: number }
     if (count.c === 0) {
@@ -117,11 +137,11 @@ export async function connectToPg(config: PgConnectionConfig): Promise<void> {
           const codes = meetType === 'beach' ? (cfg.beach || []) : (cfg.pool || [])
           const baseId = meetType === 'beach' ? 4101 : 4001
           const stmt = testBackend.prepare(
-            `INSERT INTO dsqitem (dsqitemid, code, lenexcode, name, name_en, sortcode) VALUES (?, ?, ?, ?, ?, ?)`
+            `INSERT INTO dsqitem (dsqitemid, code, lenexcode, name, name_en, options, appliesto, sortcode) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
           )
           for (let i = 0; i < codes.length; i++) {
             const c = codes[i]
-            stmt.run(baseId + i, c.code, c.code, c.name_fr, c.name_en || '', i + 1)
+            stmt.run(baseId + i, c.code, c.code, c.name_fr, c.name_en || '', SPLASH_DSQ_NO_OPTIONS, dsqAppliesTo(c.options), i + 1)
           }
         }
       } catch { /* ignore seeding errors */ }
@@ -150,7 +170,7 @@ export async function connectToPg(config: PgConnectionConfig): Promise<void> {
   }
 
   // Persist the connection config
-  saveConnectionConfig(config)
+  await saveConnectionConfig(config)
 }
 
 /** Disconnect from PostgreSQL and revert to local SQLite */
@@ -167,7 +187,7 @@ export function disconnectPg(): void {
 
 /** Try to restore a previously saved PG connection on app startup */
 export async function restoreSavedConnection(): Promise<boolean> {
-  const config = loadConnectionConfig()
+  const config = await loadConnectionConfig()
   if (!config) return false
 
   try {
@@ -197,38 +217,46 @@ function getConfigPath(): string {
   return join(app.getPath('userData'), CONFIG_FILE)
 }
 
-function saveConnectionConfig(config: PgConnectionConfig): void {
+// Password encrypted with Electron's async safeStorage API (the sync one is deprecated since
+// Electron 45). decryptStringAsync also reads passwords saved by the old sync encryptString.
+async function saveConnectionConfig(config: PgConnectionConfig): Promise<void> {
+  const encrypted = await safeStorage.isAsyncEncryptionAvailable()
   const data = {
     host: config.host,
     port: config.port,
     database: config.database,
     user: config.user,
-    // Encrypt password using Electron's safeStorage
-    password: safeStorage.isEncryptionAvailable()
-      ? safeStorage.encryptString(config.password).toString('base64')
+    password: encrypted
+      ? (await safeStorage.encryptStringAsync(config.password)).toString('base64')
       : config.password,
-    encrypted: safeStorage.isEncryptionAvailable(),
+    encrypted,
   }
   writeFileSync(getConfigPath(), JSON.stringify(data, null, 2), 'utf-8')
 }
 
-function loadConnectionConfig(): PgConnectionConfig | null {
+async function loadConnectionConfig(): Promise<PgConnectionConfig | null> {
   const path = getConfigPath()
   if (!existsSync(path)) return null
 
   try {
     const raw = JSON.parse(readFileSync(path, 'utf-8'))
     let password = raw.password
-    if (raw.encrypted && safeStorage.isEncryptionAvailable()) {
-      password = safeStorage.decryptString(Buffer.from(raw.password, 'base64'))
+    let reEncrypt = false
+    if (raw.encrypted && await safeStorage.isAsyncEncryptionAvailable()) {
+      const dec = await safeStorage.decryptStringAsync(Buffer.from(raw.password, 'base64'))
+      password = dec.result
+      reEncrypt = dec.shouldReEncrypt
     }
-    return {
+    const config = {
       host: raw.host,
       port: raw.port,
       database: raw.database,
       user: raw.user,
       password,
     }
+    // Key rotated / better protection available: store it again with the current key
+    if (reEncrypt) await saveConnectionConfig(config).catch(() => {})
+    return config
   } catch {
     return null
   }

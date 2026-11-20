@@ -40,8 +40,10 @@
  * 1-byte flag follows: 0x00 = value is real, 0x01 = value is null.
  * Sentinels: I → 0, F → 0.0, D → -36522.0 (OLE date for 1800-01-01 00:00:00).
  * S/M fields use len=0 for null (no flag needed).
+ * G fields (Splash 11.85709+) are 16 raw GUID bytes, no flag; all-zero = null.
  */
 
+import { ROUND } from './rounds'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { inflateRawSync, deflateRawSync } from 'node:zlib'
 import { randomUUID } from 'node:crypto'
@@ -51,11 +53,14 @@ import type { DbBackend } from './dbBackend'
 
 export interface ColDef {
   name: string
-  type: 'I' | 'S' | 'D' | 'F' | 'M'
+  type: 'I' | 'S' | 'D' | 'F' | 'M' | 'G'
   size: number
-  // No backing column in our own schema — export-only, generated per row at save time
-  // (e.g. Splash's own per-row sync GUID columns). Never read from or written to our DB.
+  // No backing column in our own schema — export-only, generated per row at save time.
+  // Never read from or written to our DB. (Unused since the sync GUIDs got real columns.)
   synthetic?: boolean
+  // Sync GUID column: export writes the stored value, or a fresh GUID when the row has none
+  // (rows meet-app created itself). Splash fills every *GUID except SWIMRESULTGUID.
+  newGuid?: boolean
 }
 
 // Tables to include in SMB backup (order matters for FK dependencies).
@@ -104,7 +109,11 @@ const SMB_TABLES: { name: string; cols: ColDef[]; stub?: boolean }[] = [
       // typecast" crash surfacing deeper in Splash's own delete-final routine, in its generic
       // items/notification dispatch layer, once the earlier crash was fixed) makes an object-
       // identity mismatch from blank/duplicate GUIDs a live hypothesis again for THIS crash.
-      { name: 'SWIMSTYLEGUID', type: 'S', size: 36, synthetic: true },
+      // Type 'G' (16 raw bytes), not 'S': Splash 11.85709 (2026-11) writes every *GUID column
+      // as G;36 in its own .smb, and silently blanks a GUID it receives as S;36 on restore.
+      { name: 'SWIMSTYLEGUID', type: 'G', size: 36, newGuid: true },
+      { name: 'SYNCMODIFIED', type: 'I', size: 32 },
+      { name: 'ISDIRTY', type: 'S', size: 1 },
     ]
   },
   {
@@ -134,7 +143,9 @@ const SMB_TABLES: { name: string; cols: ColDef[]; stub?: boolean }[] = [
       { name: 'TOUCHPADMODE', type: 'I', size: 16 },
       { name: 'WARMUPFROM', type: 'D', size: 32 },
       { name: 'WARMUPUNTIL', type: 'D', size: 32 },
-      { name: 'SWIMSESSIONGUID', type: 'S', size: 36, synthetic: true },  // see SWIMSTYLEGUID comment above
+      { name: 'SWIMSESSIONGUID', type: 'G', size: 36, newGuid: true },
+      { name: 'SYNCMODIFIED', type: 'I', size: 32 },
+      { name: 'ISDIRTY', type: 'S', size: 1 },
     ]
   },
   {
@@ -166,6 +177,9 @@ const SMB_TABLES: { name: string; cols: ColDef[]; stub?: boolean }[] = [
       { name: 'SHORTNAMEEN', type: 'S', size: 30 },
       { name: 'SWRID', type: 'I', size: 32 },
       { name: 'TEAMNUMBER', type: 'I', size: 16 },
+      { name: 'CLUBGUID', type: 'G', size: 36, newGuid: true },
+      { name: 'SYNCMODIFIED', type: 'I', size: 32 },
+      { name: 'ISDIRTY', type: 'S', size: 1 },
     ]
   },
   {
@@ -199,6 +213,9 @@ const SMB_TABLES: { name: string; cols: ColDef[]; stub?: boolean }[] = [
       { name: 'SCHOOLYEAR', type: 'S', size: 10 },
       { name: 'MIDDLENAME', type: 'S', size: 50 },
       { name: 'MIDDLENAMEEN', type: 'S', size: 50 },
+      { name: 'ATHLETEGUID', type: 'G', size: 36, newGuid: true },
+      { name: 'SYNCMODIFIED', type: 'I', size: 32 },
+      { name: 'ISDIRTY', type: 'S', size: 1 },
     ]
   },
   {
@@ -243,7 +260,12 @@ const SMB_TABLES: { name: string; cols: ColDef[]; stub?: boolean }[] = [
       { name: 'COMBINEAGEGROUPS', type: 'S', size: 1 },
       { name: 'ROUNDONE', type: 'S', size: 20 },
       { name: 'INTERNALEVENT', type: 'S', size: 1 },
-      { name: 'SWIMEVENTGUID', type: 'S', size: 36, synthetic: true },  // see SWIMSTYLEGUID comment above
+      { name: 'SWIMEVENTGUID', type: 'G', size: 36, newGuid: true },
+      { name: 'SYNCMODIFIED', type: 'I', size: 32 },
+      { name: 'ISDIRTY', type: 'S', size: 1 },
+      { name: 'STARTTIMEEFF', type: 'D', size: 32 },
+      { name: 'OFFICIALAT', type: 'D', size: 32 },
+      { name: 'REVISED', type: 'D', size: 32 },
     ]
   },
   {
@@ -282,7 +304,9 @@ const SMB_TABLES: { name: string; cols: ColDef[]; stub?: boolean }[] = [
       { name: 'FOREIGNCOUNT', type: 'I', size: 16 },
       { name: 'FINALSEEDTYPE', type: 'I', size: 16 },
       { name: 'AFINAL8LANES', type: 'S', size: 1 }, // real Splash column, found missing via full schema diff against a genuine Splash-native .smb export
-      { name: 'AGEGROUPGUID', type: 'S', size: 36, synthetic: true },  // see SWIMSTYLEGUID comment above
+      { name: 'AGEGROUPGUID', type: 'G', size: 36, newGuid: true },
+      { name: 'SYNCMODIFIED', type: 'I', size: 32 },
+      { name: 'ISDIRTY', type: 'S', size: 1 },
     ]
   },
   // Real column defs captured from a populated Splash mdb via GetSchema("Columns") —
@@ -424,6 +448,9 @@ const SMB_TABLES: { name: string; cols: ColDef[]; stub?: boolean }[] = [
       { name: 'NOADVANCE', type: 'S', size: 1 },
       { name: 'OFFICIALSPLITS', type: 'S', size: 100 },
       { name: 'QTTIMING', type: 'I', size: 16 },
+      { name: 'SWIMRESULTGUID', type: 'G', size: 36 },  // Splash leaves it all-zero
+      { name: 'SYNCMODIFIED', type: 'I', size: 32 },
+      { name: 'ISDIRTY', type: 'S', size: 1 },
     ]
   },
   {
@@ -482,6 +509,9 @@ const SMB_TABLES: { name: string; cols: ColDef[]; stub?: boolean }[] = [
       { name: 'SWIMTIME', type: 'I', size: 32 },
       { name: 'TEAMNUMBER', type: 'I', size: 16 },
       { name: 'USETIMETYPE', type: 'I', size: 16 },
+      { name: 'RELAYGUID', type: 'G', size: 36, newGuid: true },
+      { name: 'SYNCMODIFIED', type: 'I', size: 32 },
+      { name: 'ISDIRTY', type: 'S', size: 1 },
     ]
   },
   {
@@ -614,6 +644,8 @@ export function encodeGbin(tableDef: { name: string; cols: ColDef[] }, rows: Rec
         lenBuf.writeUInt32LE(strBuf.length)
         chunks.push(lenBuf)
         if (strBuf.length > 0) chunks.push(strBuf)
+      } else if (col.type === 'G') {
+        chunks.push(guidToBytes(val))
       }
     }
   }
@@ -625,8 +657,41 @@ export function encodeGbin(tableDef: { name: string; cols: ColDef[] }, rows: Rec
 
 export const D_NULL_SENTINEL = -36522.0 // OLE date for 1800-01-01 00:00:00
 
+/** OLE date (wall-clock days since 1899-12-30) → 'YYYY-MM-DD HH:MM:SS.mmm' for a Postgres timestamp */
+export function oleToPgTimestamp(ole: number): string {
+  return new Date(OLE_EPOCH_MS + Math.round(ole * 86400000)).toISOString().replace('T', ' ').replace('Z', '')
+}
+
 /** OLE Automation epoch: 1899-12-30 in milliseconds since Unix epoch */
 const OLE_EPOCH_MS = Date.UTC(1899, 11, 30)
+
+// ── GUID (type G) ─────────────────────────────────────────────────────────────
+// 16 raw bytes in Windows GUID layout: the first three groups little-endian, the
+// last two as-is (.NET Guid.ToByteArray / Python uuid bytes_le). No null flag —
+// Splash writes an all-zero GUID for "none" (e.g. every SWIMRESULTGUID).
+
+const GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+export function guidToBytes(val: unknown): Buffer {
+  const b = Buffer.alloc(16)
+  const s = val == null ? '' : String(val).trim()
+  if (!GUID_RE.test(s)) return b
+  const hex = Buffer.from(s.replace(/-/g, ''), 'hex')
+  hex.subarray(0, 4).reverse().copy(b, 0)
+  hex.subarray(4, 6).reverse().copy(b, 4)
+  hex.subarray(6, 8).reverse().copy(b, 6)
+  hex.copy(b, 8, 8, 16)
+  return b
+}
+
+export function bytesToGuid(b: Buffer): string | null {
+  if (b.every(x => x === 0)) return null
+  const h = (start: number, end: number, le: boolean): string => {
+    const part = Buffer.from(b.subarray(start, end))
+    return (le ? part.reverse() : part).toString('hex')
+  }
+  return `${h(0, 4, true)}-${h(4, 6, true)}-${h(6, 8, true)}-${h(8, 10, false)}-${h(10, 16, false)}`
+}
 
 // ── GBIN decoding ─────────────────────────────────────────────────────────────
 
@@ -712,6 +777,12 @@ export function decodeGbin(data: Buffer): { cols: ColDef[]; rows: Record<string,
         offset += 4
         row[key] = mlen > 0 ? data.subarray(offset, offset + mlen).toString('utf8') : null
         offset += mlen
+      } else if (col.type === 'G') {
+        row[key] = bytesToGuid(data.subarray(offset, offset + 16))
+        offset += 16
+      } else {
+        // An unknown type has an unknown width: every later field would be misread
+        throw new Error(`Unsupported gbin column type '${col.type}' (${col.name})`)
       }
     }
     if (!valid) break
@@ -840,6 +911,28 @@ function crc32(buf: Buffer): number {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
+// Splash build our .smb files identify as (geologix.ini) — see GBIN_FORMAT.md version history
+export const SPLASH_BACKUP_VERSION = '11.85709'
+export const SPLASH_DDL_VERSION_APPLICATION = '20260901'
+
+/**
+ * Database file name Splash restores the backup into ([ExtraInfo] DBFilename) — Splash
+ * names it after the meet's own .mdb; ours follows the meet name so successive restores
+ * of different meets don't all overwrite one meet.mdb. ASCII only (geologix.ini is written
+ * as ASCII): accents stripped, characters Windows forbids in file names removed.
+ */
+export function mdbFilenameFor(meetName: string | null | undefined): string {
+  const base = (meetName ?? '')
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^\x20-\x7e]/g, '')
+    .replace(/[<>:"/\\|?*]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 100)
+    .replace(/[. ]+$/, '')
+  return `${base || 'meet'}.mdb`
+}
+
 export function saveSMB(filePath: string, db: DbBackend): { tables: number; rows: number } {
   const entries: ZipEntry[] = []
   const recordCounts: Record<string, number> = {}
@@ -853,8 +946,18 @@ export function saveSMB(filePath: string, db: DbBackend): { tables: number; rows
     // stub tables have no backing table in our schema — always export empty (see comment above SMB_TABLES)
     let rows = tableDef.stub ? [] : db.prepare(`SELECT ${colNames} FROM ${tableName}`).all() as Record<string, unknown>[]
 
-    // Synthetic columns (e.g. Splash's own per-row sync GUIDs) have no backing DB column —
-    // generate a fresh value per row at export time.
+    // Sync GUIDs: keep the stored one (Splash's own, from a restore or a shared Postgres
+    // database), mint one for rows meet-app created itself. Not written back — export is read-only.
+    const guidCols = tableDef.cols.filter(c => c.newGuid).map(c => c.name.toLowerCase())
+    if (guidCols.length > 0) {
+      rows = rows.map(row => {
+        const extra: Record<string, unknown> = {}
+        for (const c of guidCols) if (!row[c]) extra[c] = randomUUID()
+        return { ...row, ...extra }
+      })
+    }
+
+    // Synthetic columns have no backing DB column — generate a fresh value per row at export time.
     if (syntheticCols.length > 0) {
       rows = rows.map(row => {
         const extra: Record<string, unknown> = {}
@@ -871,100 +974,12 @@ export function saveSMB(filePath: string, db: DbBackend): { tables: number; rows
       rows = [{ recordagegroupid: 0, agemax: -1, agemin: -1, agetype: 0 }]
     }
 
-    // Reverse-map canonical round encoding → Splash MDB encoding for SWIMEVENT
-    // so that Splash can read the exported SMB correctly.
-    // Canonical: 1=PRE, 2=SEM, 4=FIN, 5=TIM
-    // Splash:    2=PRE, 2=SEM, 9=FIN, 1=TIM
-    if (tableName === 'swimevent') {
-      rows = rows.map(row => {
-        const round = row['round'] as number | null
-        let newRow = row
-        if (row['internalevent'] === 'T') newRow = { ...newRow, round: 11 }   // Break/Pause → MDB 11 (Splash's native encoding)
-        else if (round === 1) newRow = { ...newRow, round: 2 }   // PRE → MDB 2 (eventnumber/gender kept — Splash stores real values on both PRE and FIN)
-        else if (round === 4) newRow = { ...newRow, round: 9 }   // FIN → MDB 9
-        else if (round === 5) newRow = { ...newRow, round: 1 }   // TIM → MDB 1
-        // preveventid: our own schema leaves this NULL for every event that isn't itself a
-        // Final (the vast majority). Real Splash never stores NULL here — sampled across three
-        // populated Splash-native .mdb files (84 SWIMEVENT rows total): always either -1 ("no
-        // parent") or a real linked event id, never NULL. Confirmed via a live crash repro
-        // (2026-08-14): deleting a Final in Splash after restoring one of our own .smb exports
-        // left the target .mdb mid-operation (prelim's round already reverted PRE→TIM, but the
-        // Final row not yet removed) — consistent with Splash's delete-final routine walking
-        // every SWIMEVENT row's PREVEVENTID and choking on a NULL Access field read into a
-        // non-nullable Integer. Same fix already applied on the LXF export path (lenex.ts's
-        // `ev.preveventid ?? -1`) but never ported here.
-        if (newRow['preveventid'] == null) newRow = { ...newRow, preveventid: -1 }
-        return newRow
-      })
-    }
+    // swimevent.round / preveventid and agegroup.agemin/agemax are stored in Splash's own
+    // encoding (rounds.ts, NO_PREV_EVENT / NO_AGE_LIMIT in db.ts) — exported as they are.
 
-    // agegroup.agemax/agemin: our own app normalizes Splash's -1/>=99 "Open" sentinel to NULL
-    // internally (see db.ts's `normalizedMaxAge` comment: "agemax uses -1 or >=99 as a Splash
-    // 'Open' sentinel — normalize to null"), but never converts back on the way out. Real Splash
-    // never stores NULL in either column (confirmed: 0/90 NULL rows sampled across a real
-    // populated .mdb) — restore this sentinel on export, same bug class as preveventid above.
-    if (tableName === 'agegroup') {
-      rows = rows.map(row => {
-        let newRow = row
-        if (newRow['agemax'] == null) newRow = { ...newRow, agemax: -1 }
-        if (newRow['agemin'] == null) newRow = { ...newRow, agemin: -1 }
-        return newRow
-      })
-    }
+    // dsqitem.options (Splash's own code, dsqCodes.ts) and heat.agegroupid (fillHeatAgeGroups)
+    // are stored the way Splash stores them — exported as they are.
 
-    // dsqitem.options holds our own human-readable applies-to tag (e.g. "INDIVIDUAL,RELAY"),
-    // used by dsqitem's own DSQITEMS-XML consumer (scripts/generate_dsq_xml.py). Real Splash's
-    // OPTIONS;S;5 gbin column is an opaque numeric code (observed values: "80600", "00000", …)
-    // whose digit encoding isn't reverse-engineered yet — writing our tag text there overflows
-    // the 5-char field and Access rejects the whole restore. Until the encoding is known, write
-    // the confirmed-safe default (matches real "no options set" rows) instead of the tag text.
-    if (tableName === 'dsqitem') {
-      rows = rows.map(row => ({ ...row, options: '00000' }))
-    }
-
-    // Beach heats (generateHeatsBeach in db.ts) intentionally pool entries across every age
-    // group in an event, so heat.agegroupid is left NULL — our own UI never reads it (heat
-    // membership scoping lives on each swimresult/relay row instead). Real Splash's Results
-    // module has no such concept: every heat belongs to exactly one age group, and its heat
-    // view (THeat.VerifyStatus/UpdateStatus) dereferences that age group unconditionally —
-    // a NULL FK there crashes Splash with an access violation the moment the heat is opened.
-    // Backfill with any real, valid agegroupid drawn from the heat's own members purely for
-    // Splash-side compatibility; it doesn't feed back into our own data or heat-generation
-    // logic, and doesn't change what heat membership actually means in this app.
-    if (tableName === 'heat') {
-      const fallbackFromResult = db.prepare(
-        `SELECT MIN(agegroupid) AS agegroupid FROM swimresult WHERE heatid = ? AND agegroupid IS NOT NULL`
-      )
-      const fallbackFromRelay = db.prepare(
-        `SELECT MIN(agegroupid) AS agegroupid FROM relay WHERE heatid = ? AND agegroupid IS NOT NULL`
-      )
-      rows = rows.map(row => {
-        if (row['agegroupid'] != null) return row
-        const heatId = row['heatid']
-        let ag = (fallbackFromResult.get(heatId) as { agegroupid: number | null } | undefined)?.agegroupid
-        if (ag == null) {
-          ag = (fallbackFromRelay.get(heatId) as { agegroupid: number | null } | undefined)?.agegroupid
-        }
-        return ag != null ? { ...row, agegroupid: ag } : row
-      })
-
-      // Reverse-map canonical racestatus → Splash's own encoding, same pattern as the swimevent
-      // round remap above. We only ever write 4 (generated/seeded, not yet validated) or 5
-      // (validated/locked, see validateHeat()/invalidateHeat() in db.ts) — 5 happens to already
-      // match Splash, but Splash's own generator never writes 4 for the equivalent "seeded, not
-      // yet official" state; three real, populated Splash competition databases sampled directly
-      // via Microsoft.ACE.OLEDB.12.0 all used {2, 5} exclusively, never 4 — confirmed the actual
-      // root cause of the Results-module access violation (THeat.VerifyStatus/UpdateStatus, which
-      // exists specifically to interpret this field) after three other hypotheses were each
-      // individually ruled out by a bit-for-bit-identical crash following their fixes.
-      rows = rows.map(row => row['racestatus'] === 4 ? { ...row, racestatus: 2 } : row)
-    }
-
-    // Beach meets have no real pool "course" (LCM/SCY/SCM) — our own meet-config UI only ever
-    // offers those three, so BSGLOBAL.MeetCourse/MEETVALUES.COURSE always default to 1 (LCM) even
-    // for a beach meet. A real Splash-native import of this exact same beach entries LXF used
-    // COURSE=7, not 1 — single real sample, not independently reverse-engineered, but it's the
-    // best evidence available short of a full Splash course-enum dump.
     if (tableName === 'bsglobal') {
       // Splash stamps every genuine Meet Manager database with BSAPPLICATION="Meet Manager - MEET"
       // in BSGLOBAL — confirmed present in every real Splash-native .mdb sampled, and absent from
@@ -975,20 +990,7 @@ export function saveSMB(filePath: string, db: DbBackend): { tables: number; rows
       if (!rows.some(r => r['name'] === 'BSAPPLICATION')) {
         rows = [...rows, { name: 'BSAPPLICATION', data: 'Meet Manager - MEET' }]
       }
-      const meetType = rows.find(r => r['name'] === 'MEET_TYPE')?.['data']
-      if (meetType === 'BEACH') {
-        let sawMeetCourse = false
-        rows = rows.map(row => {
-          if (row['name'] === 'MeetCourse') { sawMeetCourse = true; return { ...row, data: '7' } }
-          if (row['name'] === 'MEETVALUES' && typeof row['data'] === 'string') {
-            const lines = row['data'].split(/\r?\n/).filter(l => l.length > 0 && !l.startsWith('COURSE='))
-            lines.push('COURSE=I;7')
-            return { ...row, data: lines.join('\r\n') }
-          }
-          return row
-        })
-        if (!sawMeetCourse) rows = [...rows, { name: 'MeetCourse', data: '7' }]
-      }
+      // A beach meet's COURSE=7 is stored as such (setBeachCourse, db.ts) — exported as is.
     }
 
     recordCounts[tableDef.name] = rows.length
@@ -1020,20 +1022,24 @@ export function saveSMB(filePath: string, db: DbBackend): { tables: number; rows
   ]
 
   // Version/GUID/[ExtraInfo] match the real installed Splash build's own .smb export
-  // (Meet Manager 11.84754, confirmed twice via direct comparison against genuine
-  // Splash-native re-exports). None of these were found to block a restore, but matching
+  // (Meet Manager 11.85709, compared 2026-11-20 against a genuine Splash re-export;
+  // previously 11.84754). None of these were found to block a restore, but matching
   // them keeps our file closer to what a real Splash install would produce.
+  // The application DDL version is never written below 20260901: that's the schema the
+  // G-typed GUID columns above belong to, even if our bsglobal carries an older value.
+  const ddlApp = [ddlVersions['BSDB_DDL_VERSION_APPLICATION'] ?? '', SPLASH_DDL_VERSION_APPLICATION].sort().pop()!
+  const meetNameRow = db.prepare(`SELECT data FROM bsglobal WHERE name = 'MeetName'`).get() as { data: string | null } | undefined
   const ini = [
     '[Geologix]',
     'Application=Meet Manager 11',
-    'Version=11.84754',
+    `Version=${SPLASH_BACKUP_VERSION}`,
     'Identification=BACKUP_MM_MEET_11',
     `GUID=${randomUUID()}`,
     'NullDateYear=1800',
     'ExtraFiles=0',
     '',
     '[BSGLOBAL]',
-    `BSDB_DDL_VERSION_APPLICATION=${ddlVersions['BSDB_DDL_VERSION_APPLICATION'] ?? '20260101'}`,
+    `BSDB_DDL_VERSION_APPLICATION=${ddlApp}`,
     `BSDB_DDL_VERSION_PICTURE=${ddlVersions['BSDB_DDL_VERSION_PICTURE'] ?? '01.01'}`,
     `BSDB_DDL_VERSION_SW_KATALOG=${ddlVersions['BSDB_DDL_VERSION_SW_KATALOG'] ?? '01.00'}`,
     '',
@@ -1044,7 +1050,7 @@ export function saveSMB(filePath: string, db: DbBackend): { tables: number; rows
     ...allTableNames.map(t => `${t}=${(recordCounts[t] ?? 0) > 0 ? 1 : 0}`),
     '',
     '[ExtraInfo]',
-    'DBFilename=meet.mdb',
+    `DBFilename=${mdbFilenameFor(meetNameRow?.data)}`,
     '',
   ].join('\r\n')
 
@@ -1119,12 +1125,14 @@ export function restoreSMB(filePath: string, db: DbBackend): { tables: number; r
         for (const row of recs) {
           const vals = colNames.map((c, idx) => {
             const v = row[c] ?? null
-            // For PG date columns: convert invalid OLE date values to null
-            // Valid OLE dates are roughly 2-73000 (1900-2100). Anything else is garbage.
+            // PG date columns are Splash's `timestamp`: an OLE date (days since 1899-12-30) goes
+            // in as a timestamp, not as the raw number. Valid OLE dates are roughly 2-73000
+            // (1900-2100); anything else (sentinels, garbage) is NULL.
             if (dateColIndices.has(idx)) {
               if (v === null || v === undefined) return null
               const numVal = typeof v === 'number' ? v : (typeof v === 'string' ? parseFloat(v) : NaN)
               if (isNaN(numVal) || numVal < 2 || numVal > 73000 || !isFinite(numVal)) return null
+              return oleToPgTimestamp(numVal)
             }
             return v
           })
@@ -1144,19 +1152,11 @@ export function restoreSMB(filePath: string, db: DbBackend): { tables: number; r
     db.prepare(`UPDATE swimresult SET entrytime = NULL WHERE entrytime >= 2147483647`).run()
     db.prepare(`UPDATE swimresult SET swimtime = NULL WHERE swimtime >= 2147483647`).run()
 
-    // ── Post-import normalization: Splash MDB round encoding → canonical ──
-    // Splash MDB uses: 1=TimedFinal, 2=Prelim, 9=Final, 11=Break/Pause
-    // Our canonical:   1=Prelim,     2=Semi,   4=Final, 5=TimedFinal
-    // Detect MDB encoding by presence of round=9 or round=11 (never used in canonical)
+    // ── Post-import: Splash event data repairs (breaks, prelim gender/number) ──
     normalizeRoundEncoding(db)
 
-    // ── Post-import normalization: Splash racestatus encoding → canonical ──
-    // Splash writes 2 for "generated/seeded, not yet officially validated" (confirmed against
-    // three real, populated Splash competition databases via Microsoft.ACE.OLEDB.12.0);
-    // our own canonical encoding uses 4 for that same state
-    // (decodeHeatStatus() in db.ts, validateHeat()/invalidateHeat()). 5 (validated) already matches
-    // in both encodings, so only 2→4 needs converting — symmetric with saveSMB's export-side 4→2.
-    db.prepare(`UPDATE heat SET racestatus = 4 WHERE racestatus = 2`).run()
+    // heat.racestatus: Splash writes 2 for "seeded, not yet official" — meet-app stores the same
+    // 2 since 2026-11 (HEAT_SEEDED, db.ts), so restored heats are kept as they are.
   } finally {
     db.enableForeignKeys()
   }
@@ -1164,59 +1164,20 @@ export function restoreSMB(filePath: string, db: DbBackend): { tables: number; r
   return { tables: SMB_TABLES.length, rows: totalInserted, detail: tableDetail.join(', ') }
 }
 
-// ── Round encoding normalization ──────────────────────────────────────────────
+// ── Splash event data repairs on restore ──────────────────────────────────────
 //
-// Splash Meet Manager (MDB) uses a different round encoding than our canonical
-// Lenex-based encoding. When restoring an SMB from Splash, we detect and convert.
-//
-// Splash MDB encoding:
-//   1 = Timed Final (MASTERS heats that are swum as timed finals)
-//   2 = Prelim/Heats (preliminary round)
-//   9 = Final (linked to a prelim via preveventid)
-//  11 = Break/Pause/Admin event (no swimstyle, internal)
-//
-// Canonical encoding (matches Lenex and our app's createEvent logic):
-//   1 = Prelim (PRE)
-//   2 = Semifinal (SEM)
-//   4 = Final (FIN)
-//   5 = Timed Final / Direct Final (TIM)
-//  11 = Break/Pause (unchanged, handled via internalevent flag)
+// swimevent.round is stored in Splash's own codes (rounds.ts) — no remapping. What's left:
+// - round 11 (Break) → internalevent='T', the flag meet-app uses for breaks
+// - prelims with gender 0 / event number 0 (see below)
 
 function normalizeRoundEncoding(db: DbBackend): void {
-  // SMB files always use Splash MDB round encoding (written by saveSMB or by Splash itself).
-  // Normalize to our canonical encoding on restore.
-  //
-  // Safety check: if no events use MDB-specific values (9=Final, 11=Break),
-  // and no events have round=1 or round=2, skip normalization (empty or pre-normalized DB).
   const hasEvents = db.prepare(
     `SELECT COUNT(*) AS c FROM swimevent WHERE round IS NOT NULL`
   ).get() as { c: number }
 
   if (hasEvents.c === 0) return
 
-  // Map round values: MDB → canonical
-  // 1 (MDB TimedFinal) → 5 (canonical TIM)
-  // 2 (MDB Prelim)     → 1 (canonical PRE)
-  // 9 (MDB Final)      → 4 (canonical FIN)
-  // 11 (MDB Break)     → 11 (unchanged, admin events)
-  // Use a temp value to avoid collisions during remapping (1→5, 2→1 would collide)
-  db.prepare(`UPDATE swimevent SET round = -1 WHERE round = 1`).run()
-  db.prepare(`UPDATE swimevent SET round = -2 WHERE round = 2`).run()
-  db.prepare(`UPDATE swimevent SET round = -9 WHERE round = 9`).run()
-  db.prepare(`UPDATE swimevent SET round = 5 WHERE round = -1`).run()  // MDB 1 → TIM
-  db.prepare(`UPDATE swimevent SET round = 1 WHERE round = -2`).run()  // MDB 2 → PRE
-  db.prepare(`UPDATE swimevent SET round = 4 WHERE round = -9`).run()  // MDB 9 → FIN
-
-  // Mark round=11 (Break/Pause) events as internal
-  db.prepare(`UPDATE swimevent SET internalevent = 'T' WHERE round = 11`).run()
-
-  // preveventid: real Splash (and, since the export-side fix above, our own re-exported files
-  // too) always stores -1 for "no parent", never NULL — our own internal convention is NULL.
-  // Some of our own code checks this truthily (e.g. `if (finalEvent?.preveventid)` in db.ts),
-  // which would wrongly treat a literal -1 as "has a parent" and go looking for an event with
-  // swimeventid=-1. Canonicalize on restore, same as the round remap above, so every downstream
-  // read only ever sees our own null-means-no-parent convention.
-  db.prepare(`UPDATE swimevent SET preveventid = NULL WHERE preveventid <= 0`).run()
+  db.prepare(`UPDATE swimevent SET internalevent = 'T' WHERE round = ${ROUND.BREAK}`).run()
 
   // Fix PRE events that have gender=0 and/or eventnumber=0.
   // In Splash MDB, prelim events store gender=0 and eventnumber=0 because
@@ -1232,7 +1193,7 @@ function normalizeRoundEncoding(db: DbBackend): void {
   const preEvents = db.prepare(`
     SELECT e.swimeventid, e.swimsessionid, e.swimstyleid, e.eventnumber, e.gender, e.sortcode
     FROM swimevent e
-    WHERE e.round = 1 AND e.gender = 0 AND e.swimstyleid IS NOT NULL
+    WHERE e.round = ${ROUND.PRE} AND e.gender = 0 AND e.swimstyleid IS NOT NULL
   `).all() as Array<{
     swimeventid: number; swimsessionid: number; swimstyleid: number
     eventnumber: number; gender: number; sortcode: number
@@ -1243,7 +1204,7 @@ function normalizeRoundEncoding(db: DbBackend): void {
     let gender: number | null = null
     const timEvent = db.prepare(`
       SELECT gender FROM swimevent
-      WHERE swimsessionid = ? AND swimstyleid = ? AND round = 5 AND sortcode = ?
+      WHERE swimsessionid = ? AND swimstyleid = ? AND round = ${ROUND.TIM} AND sortcode = ?
       LIMIT 1
     `).get(pre.swimsessionid, pre.swimstyleid, pre.sortcode - 1) as { gender: number } | undefined
 
@@ -1254,7 +1215,7 @@ function normalizeRoundEncoding(db: DbBackend): void {
     // Strategy 2: FIN event that references this PRE via preveventid
     if (!gender) {
       const finEvent = db.prepare(`
-        SELECT gender FROM swimevent WHERE preveventid = ? AND round = 4 LIMIT 1
+        SELECT gender FROM swimevent WHERE preveventid = ? AND round = ${ROUND.FIN} LIMIT 1
       `).get(pre.swimeventid) as { gender: number } | undefined
       if (finEvent && finEvent.gender !== 0) {
         gender = finEvent.gender
@@ -1274,7 +1235,7 @@ function normalizeRoundEncoding(db: DbBackend): void {
     SELECT e.swimeventid, e.sortcode, s.sessionnumber
     FROM swimevent e
     JOIN swimsession s ON s.swimsessionid = e.swimsessionid
-    WHERE e.round = 1 AND (e.eventnumber = 0 OR e.eventnumber IS NULL)
+    WHERE e.round = ${ROUND.PRE} AND (e.eventnumber = 0 OR e.eventnumber IS NULL)
       AND e.swimstyleid IS NOT NULL
     ORDER BY s.sessionnumber, e.sortcode
   `).all() as Array<{ swimeventid: number; sortcode: number; sessionnumber: number }>

@@ -32,7 +32,8 @@ export const SCHEMA_DDL: string[] = [
   `CREATE TABLE IF NOT EXISTS swimstyle (
     swimstyleid INTEGER PRIMARY KEY,
     code TEXT, distance INTEGER, name TEXT, relaycount INTEGER,
-    stroke INTEGER, sortcode INTEGER, technique INTEGER, uniqueid INTEGER
+    stroke INTEGER, sortcode INTEGER, technique INTEGER, uniqueid INTEGER,
+    swimstyleguid TEXT, isdirty TEXT DEFAULT 'F', syncmodified INTEGER
   )`,
   `CREATE TABLE IF NOT EXISTS club (
     clubid INTEGER PRIMARY KEY,
@@ -41,7 +42,8 @@ export const SCHEMA_DDL: string[] = [
     contactfax TEXT, contactphone TEXT, contactstate TEXT, contactstreet TEXT,
     contactstreet2 TEXT, contactzip TEXT, externalid TEXT, longcode TEXT,
     entryclubid INTEGER, entryemails TEXT, name TEXT, nameen TEXT, nation TEXT,
-    region TEXT, shortname TEXT, shortnameen TEXT, swrid INTEGER, teamnumber INTEGER
+    region TEXT, shortname TEXT, shortnameen TEXT, swrid INTEGER, teamnumber INTEGER,
+    clubguid TEXT, isdirty TEXT DEFAULT 'F', syncmodified INTEGER
   )`,
   `CREATE TABLE IF NOT EXISTS swimsession (
     swimsessionid INTEGER PRIMARY KEY,
@@ -52,7 +54,8 @@ export const SCHEMA_DDL: string[] = [
     pooltype INTEGER, remarks TEXT, remarksjury TEXT,
     roundtotenths TEXT DEFAULT 'F', sessionnumber INTEGER, startdate TEXT,
     timing INTEGER, tlmeeting TEXT, touchpadmode INTEGER,
-    warmupfrom TEXT, warmupuntil TEXT
+    warmupfrom TEXT, warmupuntil TEXT,
+    swimsessionguid TEXT, isdirty TEXT DEFAULT 'F', syncmodified INTEGER
   )`,
   `CREATE TABLE IF NOT EXISTS athlete (
     athleteid INTEGER PRIMARY KEY,
@@ -63,7 +66,8 @@ export const SCHEMA_DDL: string[] = [
     handicapsb INTEGER, handicapsm INTEGER, lastnameen TEXT, license TEXT,
     nation TEXT, sdmsid INTEGER, status INTEGER, swimlevel TEXT,
     swrid INTEGER, swrhashkey INTEGER, clubcode2 TEXT, coachname TEXT,
-    schoolyear TEXT, middlename TEXT, middlenameen TEXT
+    schoolyear TEXT, middlename TEXT, middlenameen TEXT,
+    athleteguid TEXT, isdirty TEXT DEFAULT 'F', syncmodified INTEGER
   )`,
   `CREATE TABLE IF NOT EXISTS swimevent (
     swimeventid INTEGER PRIMARY KEY,
@@ -85,7 +89,9 @@ export const SCHEMA_DDL: string[] = [
     swimstyleid INTEGER REFERENCES swimstyle(swimstyleid),
     twoperlane TEXT DEFAULT 'F',
     roundname TEXT, combineagegroups TEXT DEFAULT 'F',
-    roundone TEXT, internalevent TEXT DEFAULT 'F'
+    roundone TEXT, internalevent TEXT DEFAULT 'F',
+    swimeventguid TEXT, isdirty TEXT DEFAULT 'F', syncmodified INTEGER,
+    starttimeeff TEXT, officialat TEXT, revised TEXT
   )`,
   `CREATE TABLE IF NOT EXISTS agegroup (
     agegroupid INTEGER PRIMARY KEY,
@@ -101,7 +107,8 @@ export const SCHEMA_DDL: string[] = [
     swimlevels TEXT, useformedals TEXT DEFAULT 'F',
     useforscoring TEXT DEFAULT 'F', winnertitle TEXT,
     foreigncount INTEGER, finalseedtype INTEGER,
-    afinal8lanes TEXT DEFAULT 'F'
+    afinal8lanes TEXT DEFAULT 'F',
+    agegroupguid TEXT, isdirty TEXT DEFAULT 'F', syncmodified INTEGER
   )`,
   `CREATE TABLE IF NOT EXISTS heat (
     heatid INTEGER PRIMARY KEY,
@@ -129,7 +136,8 @@ export const SCHEMA_DDL: string[] = [
     swimeventid INTEGER REFERENCES swimevent(swimeventid) ON DELETE CASCADE,
     swimtime INTEGER, usetimetype INTEGER DEFAULT 0,
     dsqofficialid INTEGER, reservecode TEXT, noadvance TEXT DEFAULT 'F',
-    officialsplits TEXT, qttiming INTEGER
+    officialsplits TEXT, qttiming INTEGER,
+    swimresultguid TEXT, isdirty TEXT DEFAULT 'F', syncmodified INTEGER
   )`,
   `CREATE TABLE IF NOT EXISTS split (
     swimresultid INTEGER NOT NULL REFERENCES swimresult(swimresultid) ON DELETE CASCADE,
@@ -144,7 +152,8 @@ export const SCHEMA_DDL: string[] = [
     name TEXT,
     name_en TEXT,
     options TEXT,
-    sortcode INTEGER
+    sortcode INTEGER,
+    appliesto TEXT
   )`,
   `CREATE TABLE IF NOT EXISTS relay (
     relayid INTEGER PRIMARY KEY,
@@ -193,7 +202,8 @@ export const SCHEMA_DDL: string[] = [
     qtcity TEXT,
     qtname TEXT,
     qtnation TEXT,
-    qtcourse INTEGER
+    qtcourse INTEGER,
+    relayguid TEXT, isdirty TEXT DEFAULT 'F', syncmodified INTEGER
   )`,
   `CREATE TABLE IF NOT EXISTS relayposition (
     relayid INTEGER REFERENCES relay(relayid) ON DELETE CASCADE,
@@ -235,11 +245,63 @@ export const SCHEMA_DDL: string[] = [
  */
 const COLUMN_BACKFILLS: Array<{ table: string; ddl: string }> = [
   { table: 'agegroup', ddl: `ALTER TABLE agegroup ADD COLUMN afinal8lanes TEXT DEFAULT 'F'` },
+  // Our own DSQ columns, not in Splash's dsqitem: bilingual names, applies-to tag (dsqCodes.ts)
+  { table: 'dsqitem', ddl: `ALTER TABLE dsqitem ADD COLUMN name_en TEXT` },
+  { table: 'dsqitem', ddl: `ALTER TABLE dsqitem ADD COLUMN appliesto TEXT` },
+  // Splash 11.85709 (2026-11) sync columns: <table>guid (uuid on Splash's Postgres), isdirty,
+  // syncmodified; plus swimevent's starttimeeff/officialat/revised. Splash-created databases
+  // already have them (these then no-op); meet-app's own SQLite/Postgres databases get them here.
+  { table: 'swimstyle', ddl: `ALTER TABLE swimstyle ADD COLUMN swimstyleguid TEXT` },
+  { table: 'swimstyle', ddl: `ALTER TABLE swimstyle ADD COLUMN isdirty TEXT DEFAULT 'F'` },
+  { table: 'swimstyle', ddl: `ALTER TABLE swimstyle ADD COLUMN syncmodified INTEGER` },
+  { table: 'club', ddl: `ALTER TABLE club ADD COLUMN clubguid TEXT` },
+  { table: 'club', ddl: `ALTER TABLE club ADD COLUMN isdirty TEXT DEFAULT 'F'` },
+  { table: 'club', ddl: `ALTER TABLE club ADD COLUMN syncmodified INTEGER` },
+  { table: 'swimsession', ddl: `ALTER TABLE swimsession ADD COLUMN swimsessionguid TEXT` },
+  { table: 'swimsession', ddl: `ALTER TABLE swimsession ADD COLUMN isdirty TEXT DEFAULT 'F'` },
+  { table: 'swimsession', ddl: `ALTER TABLE swimsession ADD COLUMN syncmodified INTEGER` },
+  { table: 'athlete', ddl: `ALTER TABLE athlete ADD COLUMN athleteguid TEXT` },
+  { table: 'athlete', ddl: `ALTER TABLE athlete ADD COLUMN isdirty TEXT DEFAULT 'F'` },
+  { table: 'athlete', ddl: `ALTER TABLE athlete ADD COLUMN syncmodified INTEGER` },
+  { table: 'swimevent', ddl: `ALTER TABLE swimevent ADD COLUMN swimeventguid TEXT` },
+  { table: 'swimevent', ddl: `ALTER TABLE swimevent ADD COLUMN isdirty TEXT DEFAULT 'F'` },
+  { table: 'swimevent', ddl: `ALTER TABLE swimevent ADD COLUMN syncmodified INTEGER` },
+  { table: 'swimevent', ddl: `ALTER TABLE swimevent ADD COLUMN starttimeeff TEXT` },
+  { table: 'swimevent', ddl: `ALTER TABLE swimevent ADD COLUMN officialat TEXT` },
+  { table: 'swimevent', ddl: `ALTER TABLE swimevent ADD COLUMN revised TEXT` },
+  { table: 'agegroup', ddl: `ALTER TABLE agegroup ADD COLUMN agegroupguid TEXT` },
+  { table: 'agegroup', ddl: `ALTER TABLE agegroup ADD COLUMN isdirty TEXT DEFAULT 'F'` },
+  { table: 'agegroup', ddl: `ALTER TABLE agegroup ADD COLUMN syncmodified INTEGER` },
+  { table: 'swimresult', ddl: `ALTER TABLE swimresult ADD COLUMN swimresultguid TEXT` },
+  { table: 'swimresult', ddl: `ALTER TABLE swimresult ADD COLUMN isdirty TEXT DEFAULT 'F'` },
+  { table: 'swimresult', ddl: `ALTER TABLE swimresult ADD COLUMN syncmodified INTEGER` },
+  { table: 'relay', ddl: `ALTER TABLE relay ADD COLUMN relayguid TEXT` },
+  { table: 'relay', ddl: `ALTER TABLE relay ADD COLUMN isdirty TEXT DEFAULT 'F'` },
+  { table: 'relay', ddl: `ALTER TABLE relay ADD COLUMN syncmodified INTEGER` },
 ]
 
 /** Backfill columns added to SCHEMA_DDL after databases already existed (see COLUMN_BACKFILLS). */
 export function runColumnBackfills(backend: DbBackend): void {
-  for (const { ddl } of COLUMN_BACKFILLS) {
+  // Look the columns up first and only ALTER what's missing: a fresh database (and every
+  // Splash-created one) already has them all, and on Postgres each failing ALTER is a costly
+  // round trip — 29 of them per new database timed the PG test suites out.
+  const existing = new Map<string, Set<string>>()
+  const columnsOf = (table: string): Set<string> => {
+    let cols = existing.get(table)
+    if (!cols) {
+      const rows = backend.type === 'pg'
+        ? backend.prepare(`SELECT column_name AS name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ?`).all(table)
+        : backend.prepare(`PRAGMA table_info(${table})`).all()
+      cols = new Set((rows as Array<{ name: string }>).map(r => String(r.name).toLowerCase()))
+      existing.set(table, cols)
+    }
+    return cols
+  }
+  for (const { table, ddl } of COLUMN_BACKFILLS) {
+    const column = ddl.match(/ADD COLUMN (\w+)/i)?.[1]?.toLowerCase()
+    try {
+      if (column && columnsOf(table).has(column)) continue
+    } catch { /* lookup failed — fall through to the ALTER */ }
     try { backend.exec(ddl) } catch { /* column already exists */ }
   }
 }

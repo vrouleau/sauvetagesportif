@@ -156,7 +156,7 @@ export const registrationApiElectron: RegistrationAPI = {
     if (!athlete) throw new Error('Athlete not found')
     _lastAthleteId = athleteId
 
-    const course = meetConfig.COURSE === '3' ? 'SCM' : 'LCM'
+    const course = meetConfig.COURSE === 'SCM' ? 'SCM' : 'LCM'  // LENEX name (db:get-meet-config)
     const age = (await ipc()?.getMatchingAge(athlete.birthDate)) as number | null ?? calcAge(athlete.birthDate)
     const suggestedAgeCode = suggestAgeCode(age)
 

@@ -16,12 +16,14 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with Sauvetage Sportif. If not, see <https://www.gnu.org/licenses/>.
 
+import { courseFromName, courseToName } from './courses'
+import { ROUND, roundFromLenex, roundToLenex } from './rounds'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { inflateRawSync, deflateRawSync } from 'node:zlib'
 import Database from 'better-sqlite3'
 import { saveGeminiKeys } from './ocrGemini'
 import { generateBeachNumbers } from './beachNumber'
-import { parseOleDate, nextId, formatDaytime, parseMeetValues, readMeetValuesRaw, serializeMeetValues } from './db'
+import { parseOleDate, nextId, formatDaytime, parseMeetValues, readMeetValuesRaw, serializeMeetValues, fillHeatAgeGroups, setBeachCourse } from './db'
 import { getSeasonYear, loadAgeGroupRules } from './ageGroupRules'
 import { findSwimstyleIssues, type SwimstyleIssues } from './swimstyleRanges'
 import { readMeetHeader, readMeetValuesDotfile, meetHeaderXml, meetValuesDotfile } from './lenexMeetFields'
@@ -133,19 +135,30 @@ function encodeStroke(s: string | undefined): number {
   }
 }
 
-function encodeRound(r: string | undefined): number {
-  switch ((r ?? '').toUpperCase()) {
-    case 'PRE': return 1; case 'SEM': return 2; case 'FIN': return 4; case 'TIM': return 5
-    default: return 5
-  }
+// swimevent.round stores Splash's own codes (rounds.ts)
+const encodeRound = roundFromLenex
+
+/**
+ * ENTRY > MEETINFO — where an entry time was achieved (LENEX: qualificationtime, course,
+ * date, city, name, nation). Stored in the qt* columns Splash itself fills from the same
+ * element; seeding's qualification-period filter (QUALIFROM/QUALITO) reads qtdate.
+ * All null when the ENTRY has no MEETINFO.
+ */
+function readMeetInfo(entry: XmlElem): (number | string | null)[] {
+  const mi = child(entry, 'MEETINFO')?.attrs ?? {}
+  const date = /^\d{4}-\d{2}-\d{2}/.test(mi.date ?? '') ? mi.date!.slice(0, 10) : null
+  return [
+    lenexTimeToMs(mi.qualificationtime),
+    mi.course ? encodeCourse(mi.course) : null,
+    date,
+    mi.city || null,
+    mi.name || null,
+    mi.nation || null,
+  ]
 }
 
-function encodeCourse(c: string | undefined): number | null {
-  switch ((c ?? '').toUpperCase()) {
-    case 'LCM': return 1; case 'SCY': return 2; case 'SCM': return 3
-    default: return null
-  }
-}
+// Course codes: Splash's own (courses.ts) — 1 LCM, 2 SCM, 3 SCY
+const encodeCourse = (c: string | undefined): number | null => courseFromName(c)
 
 /**
  * Meet editor fields of an imported MEET → MEETVALUES (+ the bsglobal keys
@@ -216,7 +229,7 @@ function applyMeetLevelFields(
 
 function encodeHeatStatus(s: string | undefined): number {
   switch ((s ?? '').toUpperCase()) {
-    case 'SEEDED': return 4
+    case 'SEEDED': return 2  // Splash's seeded code (HEAT_SEEDED, db.ts)
     case 'OFFICIAL': case 'UNOFF': return 8
     default: return 0
   }
@@ -476,6 +489,10 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
          heatid=excluded.heatid, lane=excluded.lane, entrytime=excluded.entrytime,
          entrycourse=excluded.entrycourse, swimtime=excluded.swimtime,
          resultstatus=excluded.resultstatus, reactiontime=excluded.reactiontime`),
+    setResultQt: db.prepare(
+      `UPDATE swimresult SET qttime=?, qtcourse=?, qtdate=?, qtcity=?, qtname=?, qtnation=? WHERE swimresultid=?`),
+    setRelayQt: db.prepare(
+      `UPDATE relay SET qttime=?, qtcourse=?, qtdate=?, qtcity=?, qtname=?, qtnation=? WHERE relayid=?`),
     // An athlete belongs to at most one age-bracket division of a given event style
     // at a time. If an earlier ENTRIES import registered them under a different
     // division (e.g. before a late age-category correction in team-app), this clears
@@ -597,9 +614,10 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
       }
 
       const gender = encodeGender(ea.gender)
-      const round = encodeRound(ea.round)
       const sortcode = parseInt(ea.order ?? ea.number ?? '0', 10)
       const isInternal = (ea.internalevent === 'T' || isPlaceholderStyle) ? 'T' : 'F'
+      // A break/pause is Splash round 11 (createBreak does the same)
+      const round = isInternal === 'T' ? ROUND.BREAK : encodeRound(ea.round)
       const isMasters = ea.type === 'MASTERS' ? 'T' : 'F'
       const evName = ea.name ?? styleName
       const evComment = isInternal === 'T' ? evName : ''
@@ -632,7 +650,7 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
         try {
           stmts.upsertAgeGroup.run(
             agId, eventId, aa.name ?? '', parseInt(aa.agemin ?? '0', 10),
-            agemax < 0 ? null : agemax, gender, agIdx
+            agemax < 0 ? -1 : agemax, gender, agIdx  // -1 = Open, Splash's own value
           )
           // Store finalseedtype if present in LENEX
           if (finalSeedType != null) {
@@ -793,6 +811,7 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
             resId, athId, eventId, agegroupid, null, null, entrytime, entrycourse,
             null, entryStatus, null
           )
+          stmts.setResultQt.run(...readMeetInfo(entry), resId)
           summary.results++
         } catch (e) {
           summary.errors.push(`Entry athlete=${athId} event=${eventId}: ${e}`)
@@ -868,6 +887,7 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
             `INSERT INTO relay (relayid, clubid, swimeventid, agegroupid, teamnumber, name, gender, entrytime, entrycourse, resultstatus)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
           ).run(relayId, clubId, eventId, agegroupid, teamNumber, teamName, relayGender, entrytime, entrycourse, relayStatus)
+          stmts.setRelayQt.run(...readMeetInfo(entry), relayId)
 
           // Import relay positions — check ENTRY first, then fall back to RELAY level
           const entryPositions = child(entry, 'RELAYPOSITIONS')
@@ -909,10 +929,16 @@ export function importLenex(filePath: string, db: Database.Database): ImportSumm
   // ── Beach number generation (after all clubs/athletes/entries processed) ────
   const meetType = db.prepare(`SELECT data FROM bsglobal WHERE name = 'MEET_TYPE'`).get() as { data: string } | undefined
   if ((meetType?.data || 'POOL').toUpperCase() === 'BEACH') {
+    setBeachCourse(db)
     const bnResult = generateBeachNumbers(db)
     if (bnResult.errors.length > 0) {
       summary.errors.push(...bnResult.errors.map(e => `BeachNumber: ${e}`))
     }
+  }
+
+  // ── Imported heats carry no age group in LENEX — give each one, like Splash (fillHeatAgeGroups)
+  for (const { swimeventid } of db.prepare(`SELECT DISTINCT swimeventid FROM heat`).all() as Array<{ swimeventid: number }>) {
+    fillHeatAgeGroups(db, swimeventid)
   }
 
   return summary
@@ -944,24 +970,9 @@ function decodeStroke(s: number | null): string {
   }
 }
 
-function decodeRound(r: number | null): string {
-  switch (r) {
-    case 1: return 'PRE'
-    case 2: return 'SEM'
-    case 4: return 'FIN'
-    case 5: return 'TIM'
-    default: return 'TIM'
-  }
-}
+const decodeRound = roundToLenex
 
-function decodeCourse(c: number | null): string {
-  switch (c) {
-    case 1: return 'LCM'
-    case 2: return 'SCY'
-    case 3: return 'SCM'
-    default: return 'LCM'
-  }
-}
+const decodeCourse = (c: number | null): string => courseToName(c)
 
 function msToLenexTime(ms: number | null): string | null {
   if (!ms || ms <= 0) return null
@@ -1405,7 +1416,7 @@ export function exportLenexResults(filePath: string, db: Database.Database): Exp
       if (evHeats && evHeats.length > 0) {
         lines.push('              <HEATS>')
         for (const h of evHeats) {
-          const heatStatus = h.racestatus && h.racestatus >= 8 ? 'OFFICIAL' : h.racestatus === 4 ? 'SEEDED' : undefined
+          const heatStatus = h.racestatus && h.racestatus >= 8 ? 'OFFICIAL' : h.racestatus === 2 ? 'SEEDED' : undefined
           lines.push(`                <HEAT${attr('heatid', h.heatid)}${attr('number', h.heatnumber)}${attr('status', heatStatus)} />`)
         }
         lines.push('              </HEATS>')

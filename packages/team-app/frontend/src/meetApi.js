@@ -126,7 +126,7 @@ export const meetApiHttp = {
         const info = r.data || {}
         return {
           NAME: info.meet_name || '',
-          COURSE: info.course === 'LCM' ? '1' : info.course === 'SCM' ? '3' : '1',
+          COURSE: info.course || 'LCM',  // LENEX name, like /meet-config
           MASTERS: info.masters ? 'T' : 'F',
         }
       } catch { return {} }

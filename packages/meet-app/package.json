@@ -40,6 +40,14 @@
         "to": "dsq-codes.json"
       },
       {
+        "from": "../../config/splash-pg-schema.sql",
+        "to": "splash-pg-schema.sql"
+      },
+      {
+        "from": "../../config/splash-pg-seed.sql",
+        "to": "splash-pg-seed.sql"
+      },
+      {
         "from": "../../config/template_pool.lxf",
         "to": "template_pool.lxf"
       },

@@ -33,6 +33,7 @@ import {
 } from './helpers'
 import type { DbBackend } from '../src/main/dbBackend'
 import { runColumnBackfills } from '../src/main/schema'
+import { clearMeetBsglobal, fillHeatAgeGroups, setBeachCourse } from '../src/main/db'
 import { nextId } from '../src/main/db'
 
 const pgAvailable = await isPgTestAvailable()
@@ -45,7 +46,9 @@ if (!pgAvailable) {
 }
 
 describe.each(BACKENDS)('Schema integrity [%s]', (kind) => {
-  async function withDb(fn: (db: DbBackend) => void | Promise<void>) {
+  // PG databases get real Splash's schema (what meet-app creates on an empty Postgres database);
+  // `meetAppSchema` = meet-app's own SCHEMA_DDL, for tests that simulate an older meet-app database
+  async function withDb(fn: (db: DbBackend) => void | Promise<void>, opts: { meetAppSchema?: boolean } = {}) {
     if (kind === 'sqlite') {
       const { db, cleanup } = createTestDb()
       try {
@@ -54,7 +57,7 @@ describe.each(BACKENDS)('Schema integrity [%s]', (kind) => {
         cleanup()
       }
     } else {
-      const { db, cleanup } = await createPgTestDb()
+      const { db, cleanup } = await createPgTestDb({ splashSchema: !opts.meetAppSchema })
       try {
         await fn(db)
       } finally {
@@ -181,7 +184,71 @@ describe.each(BACKENDS)('Schema integrity [%s]', (kind) => {
 
       const row = db.prepare(`SELECT afinal8lanes FROM agegroup WHERE agegroupid = 1`).get() as { afinal8lanes: string | null }
       expect(row.afinal8lanes).toBe('F')
+    }, { meetAppSchema: true })
+  })
+
+  it('fillHeatAgeGroups gives every heat an age group (lowest of its members, else the first of the event)', async () => {
+    await withDb((db) => {
+      db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount, stroke) VALUES (1, 100, 'Free', 1, 1)`)
+      db.exec(`INSERT INTO swimsession (swimsessionid, sessionnumber, name, course) VALUES (1, 1, 'S1', 1)`)
+      db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode) VALUES (10, 1, 1, 1, 2, 1, 1)`)
+      db.exec(`INSERT INTO agegroup (agegroupid, swimeventid, agemin, agemax, gender, sortcode) VALUES (20, 10, 15, 18, 2, 1)`)
+      db.exec(`INSERT INTO agegroup (agegroupid, swimeventid, agemin, agemax, gender, sortcode) VALUES (21, 10, 19, -1, 2, 2)`)
+      db.exec(`INSERT INTO club (clubid, name, code) VALUES (30, 'C', 'C')`)
+      db.exec(`INSERT INTO athlete (athleteid, clubid, firstname, lastname, gender) VALUES (40, 30, 'A', 'B', 2)`)
+      db.exec(`INSERT INTO heat (heatid, swimeventid, heatnumber, racestatus, sortcode) VALUES (50, 10, 1, 2, 100)`)  // has a swimmer
+      db.exec(`INSERT INTO heat (heatid, swimeventid, heatnumber, racestatus, sortcode) VALUES (51, 10, 2, 2, 200)`)  // empty
+      db.exec(`INSERT INTO swimresult (swimresultid, athleteid, swimeventid, agegroupid, heatid, lane) VALUES (60, 40, 10, 21, 50, 4)`)
+
+      fillHeatAgeGroups(db, 10)
+
+      expect(db.prepare(`SELECT heatid, agegroupid FROM heat ORDER BY heatid`).all()).toEqual([
+        { heatid: 50, agegroupid: 21 },  // from its swimmer
+        { heatid: 51, agegroupid: 20 },  // empty → event's first age group
+      ])
     })
+  })
+
+  it('setBeachCourse stores Splash beach course 7 in MEETVALUES and MeetCourse', async () => {
+    await withDb((db) => {
+      db.prepare(`INSERT INTO bsglobal (name, data) VALUES ('MEETVALUES', 'COURSE=I;1')`).run()
+      setBeachCourse(db)
+      const g = (n: string) => (db.prepare(`SELECT data FROM bsglobal WHERE name = ?`).get(n) as { data: string }).data
+      expect(g('MEETVALUES')).toContain('COURSE=I;7')
+      expect(g('MEETVALUES')).not.toContain('COURSE=I;1')
+      expect(g('MeetCourse')).toBe('7')
+    })
+  })
+
+  it('clearMeetBsglobal keeps the Splash database keys (a shared Splash DB is refused without them)', async () => {
+    await withDb((db) => {
+      const keep = ['BSAPPLICATION', 'BSDB_DDL_VERSION_APPLICATION', 'DB_DDL_VERSION_BASE', 'REPORTDEFINITION',
+        'GeneralSettings', 'GUISettings', 'SETTINGS_TFImportEntriesDlg', 'GEMINI_KEY_FREE']
+      const drop = ['MeetName', 'MEETVALUES', 'MEET_TYPE', 'COMBINEDEVENTS', 'AGEDATE', 'SETTINGSX']
+      // ON CONFLICT: a Splash-schema database already has its own keys
+      const ins = db.prepare(`INSERT INTO bsglobal (name, data) VALUES (?, 'x') ON CONFLICT (name) DO NOTHING`)
+      for (const n of [...keep, ...drop]) ins.run(n)
+
+      clearMeetBsglobal(db)
+
+      const left = (db.prepare(`SELECT name FROM bsglobal`).all() as Array<{ name: string }>).map(r => r.name)
+      expect(left).toEqual(expect.arrayContaining(keep))
+      for (const n of drop) expect(left).not.toContain(n)
+    })
+  })
+
+  it('backfills the Splash 11.85709 sync columns onto a database that predates them', async () => {
+    await withDb((db) => {
+      db.exec(`DROP TABLE agegroup`)
+      db.exec(`CREATE TABLE agegroup (agegroupid INTEGER PRIMARY KEY, swimeventid INTEGER)`)
+      db.prepare(`INSERT INTO agegroup (agegroupid, swimeventid) VALUES (1, 1)`).run()
+
+      runColumnBackfills(db)
+      runColumnBackfills(db)  // idempotent
+
+      const row = db.prepare(`SELECT agegroupguid, isdirty, syncmodified FROM agegroup WHERE agegroupid = 1`).get()
+      expect(row).toEqual({ agegroupguid: null, isdirty: 'F', syncmodified: null })
+    }, { meetAppSchema: true })
   })
 
   it('nextId() never returns an id already used by a different table', async () => {

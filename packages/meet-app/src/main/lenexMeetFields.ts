@@ -24,6 +24,7 @@
 // can't carry (seeding, heats…) travel in the hidden `.meetvalues` zip entry.
 // MEETVALUES values here are typed Splash strings: { KEY: 'TYPE;value' }.
 
+import { COURSE } from './courses'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { app } from 'electron'
@@ -54,7 +55,13 @@ function getConfigPath(): string {
 
 let cached: Config | null = null
 function config(): Config {
-  if (!cached) cached = JSON.parse(readFileSync(getConfigPath(), 'utf-8')) as Config
+  if (!cached) {
+    cached = JSON.parse(readFileSync(getConfigPath(), 'utf-8')) as Config
+    // MEETVALUES COURSE: the shared file uses team-app's numbers; meet-app stores Splash's
+    // own (courses.ts) — Splash reads our MEETVALUES directly on a shared Postgres database.
+    const course = cached.fields.find(f => f.key === 'COURSE')
+    if (course) course.values = { [COURSE.LCM]: 'LCM', [COURSE.SCM]: 'SCM', [COURSE.SCY]: 'SCY' }
+  }
   return cached
 }
 
