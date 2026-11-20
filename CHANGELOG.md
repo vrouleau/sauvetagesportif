@@ -1,5 +1,43 @@
 # Changelog
 
+## [0.5.27] - 2026-11-20
+
+### ✨ Features
+
+- create the shared Postgres database with Splash's own schema (`cbca516`)
+- schema keeps up with Splash 11.85709 sync columns (SQLite + Postgres) (`838ba5c`)
+- import ENTRY > MEETINFO into the qt* columns (`49c881c`)
+- .smb header matches Splash 11.85709, restore target named after the meet (`ed59c7d`)
+- Splash 11.85709 .smb GUID column type (G) (`d896230`)
+- judge initials on timing strips (`54cacfd`)
+- chrono times on underlines instead of digit boxes (`61fbcb2`)
+- blank timing sheets for late arrivals / missing sheets (`1c3d598`)
+
+### 🐛 Bug Fixes
+
+- keep Splash's CRLFs in splash-pg-seed.sql through git's LF normalization (`a61a070`)
+- store Splash's own encodings — no translation layer on a shared Postgres DB (`41174cd`)
+- keep Splash's bsglobal keys when a meet is imported, created or reset (`25ee22b`)
+- saved Postgres password uses Electron's async safeStorage API (`d58ad8b`)
+- LXF MEETINFO date only when the entry time is the dated best time (`38d0c18`)
+- Traitement shows when no Gemini key is configured (`f525be7`)
+- timing strip digit labels overflowing the border (`defee19`)
+- individual entry count and hide best-time columns (`11c5d22`)
+
+### 📝 Documentation
+
+- splash-pg-seed.sql CRLF escapes (`ddb894e`)
+
+### ✅ Tests
+
+- shared editor sends round and course names (`1c2b1a0`)
+
+### Other
+
+- Merge pull request #115 from vrouleau/test/team-app-name-api (`1defb7d`)
+- Merge pull request #114 from vrouleau/feature/splash-11.85709-interworking (`6210dbc`)
+- Merge pull request #113 from vrouleau/feature/blank-timing-sheets (`59acff1`)
+
 ## [0.5.26] - 2026-11-19
 
 ### 🐛 Bug Fixes
