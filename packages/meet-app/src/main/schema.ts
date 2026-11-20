@@ -245,7 +245,8 @@ export const SCHEMA_DDL: string[] = [
  */
 const COLUMN_BACKFILLS: Array<{ table: string; ddl: string }> = [
   { table: 'agegroup', ddl: `ALTER TABLE agegroup ADD COLUMN afinal8lanes TEXT DEFAULT 'F'` },
-  // Our own DSQ applies-to tag (dsqCodes.ts) — kept out of Splash's dsqitem.options
+  // Our own DSQ columns, not in Splash's dsqitem: bilingual names, applies-to tag (dsqCodes.ts)
+  { table: 'dsqitem', ddl: `ALTER TABLE dsqitem ADD COLUMN name_en TEXT` },
   { table: 'dsqitem', ddl: `ALTER TABLE dsqitem ADD COLUMN appliesto TEXT` },
   // Splash 11.85709 (2026-11) sync columns: <table>guid (uuid on Splash's Postgres), isdirty,
   // syncmodified; plus swimevent's starttimeeff/officialat/revised. Splash-created databases

@@ -1558,8 +1558,9 @@ describe.each(LENEX_PARITY_BACKENDS)('importLenex backend parity [%s]', (kind) =
         expect(summary.sessions).toBe(1)
         expect(summary.events).toBe(1)
 
-        const styles = db.prepare('SELECT COUNT(*) AS c FROM swimstyle').get() as { c: number }
-        expect(styles.c).toBe(1)
+        // only the imported style (a Splash-schema database starts with Splash's own catalog, ids >= 1001)
+        const styles = db.prepare('SELECT COUNT(*) AS c FROM swimstyle WHERE swimstyleid < 1000').get() as { c: number }
+        expect(Number(styles.c)).toBe(1)
         const ags = db.prepare('SELECT COUNT(*) AS c FROM agegroup').get() as { c: number }
         expect(ags.c).toBe(1)
 
@@ -1568,8 +1569,8 @@ describe.each(LENEX_PARITY_BACKENDS)('importLenex backend parity [%s]', (kind) =
         const summary2 = importLenex(lxfPath, db)
         expect(summary2.sessions).toBe(1)
         expect(summary2.events).toBe(1)
-        const stylesAfter = db.prepare('SELECT COUNT(*) AS c FROM swimstyle').get() as { c: number }
-        expect(stylesAfter.c).toBe(1)
+        const stylesAfter = db.prepare('SELECT COUNT(*) AS c FROM swimstyle WHERE swimstyleid < 1000').get() as { c: number }
+        expect(Number(stylesAfter.c)).toBe(1)
         const agsAfter = db.prepare('SELECT COUNT(*) AS c FROM agegroup').get() as { c: number }
         expect(agsAfter.c).toBe(1)
       } finally {

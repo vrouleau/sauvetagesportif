@@ -46,7 +46,9 @@ if (!pgAvailable) {
 }
 
 describe.each(BACKENDS)('Schema integrity [%s]', (kind) => {
-  async function withDb(fn: (db: DbBackend) => void | Promise<void>) {
+  // PG databases get real Splash's schema (what meet-app creates on an empty Postgres database);
+  // `meetAppSchema` = meet-app's own SCHEMA_DDL, for tests that simulate an older meet-app database
+  async function withDb(fn: (db: DbBackend) => void | Promise<void>, opts: { meetAppSchema?: boolean } = {}) {
     if (kind === 'sqlite') {
       const { db, cleanup } = createTestDb()
       try {
@@ -55,7 +57,7 @@ describe.each(BACKENDS)('Schema integrity [%s]', (kind) => {
         cleanup()
       }
     } else {
-      const { db, cleanup } = await createPgTestDb()
+      const { db, cleanup } = await createPgTestDb({ splashSchema: !opts.meetAppSchema })
       try {
         await fn(db)
       } finally {
@@ -182,7 +184,7 @@ describe.each(BACKENDS)('Schema integrity [%s]', (kind) => {
 
       const row = db.prepare(`SELECT afinal8lanes FROM agegroup WHERE agegroupid = 1`).get() as { afinal8lanes: string | null }
       expect(row.afinal8lanes).toBe('F')
-    })
+    }, { meetAppSchema: true })
   })
 
   it('fillHeatAgeGroups gives every heat an age group (lowest of its members, else the first of the event)', async () => {
@@ -223,13 +225,15 @@ describe.each(BACKENDS)('Schema integrity [%s]', (kind) => {
       const keep = ['BSAPPLICATION', 'BSDB_DDL_VERSION_APPLICATION', 'DB_DDL_VERSION_BASE', 'REPORTDEFINITION',
         'GeneralSettings', 'GUISettings', 'SETTINGS_TFImportEntriesDlg', 'GEMINI_KEY_FREE']
       const drop = ['MeetName', 'MEETVALUES', 'MEET_TYPE', 'COMBINEDEVENTS', 'AGEDATE', 'SETTINGSX']
-      const ins = db.prepare(`INSERT INTO bsglobal (name, data) VALUES (?, 'x')`)
+      // ON CONFLICT: a Splash-schema database already has its own keys
+      const ins = db.prepare(`INSERT INTO bsglobal (name, data) VALUES (?, 'x') ON CONFLICT (name) DO NOTHING`)
       for (const n of [...keep, ...drop]) ins.run(n)
 
       clearMeetBsglobal(db)
 
-      const left = (db.prepare(`SELECT name FROM bsglobal`).all() as Array<{ name: string }>).map(r => r.name).sort()
-      expect(left).toEqual([...keep].sort())
+      const left = (db.prepare(`SELECT name FROM bsglobal`).all() as Array<{ name: string }>).map(r => r.name)
+      expect(left).toEqual(expect.arrayContaining(keep))
+      for (const n of drop) expect(left).not.toContain(n)
     })
   })
 
@@ -244,7 +248,7 @@ describe.each(BACKENDS)('Schema integrity [%s]', (kind) => {
 
       const row = db.prepare(`SELECT agegroupguid, isdirty, syncmodified FROM agegroup WHERE agegroupid = 1`).get()
       expect(row).toEqual({ agegroupguid: null, isdirty: 'F', syncmodified: null })
-    })
+    }, { meetAppSchema: true })
   })
 
   it('nextId() never returns an id already used by a different table', async () => {

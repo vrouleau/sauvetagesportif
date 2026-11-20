@@ -31,6 +31,14 @@ import { SqliteBackend } from './sqliteBackend'
 import { PgBackend, type PgConnectionConfig } from './pgBackend'
 import { runSchemaInit, runColumnBackfills } from './schema'
 import { SPLASH_DSQ_NO_OPTIONS, dsqAppliesTo } from './dsqCodes'
+import { ensureSplashSchema } from './splashPgSchema'
+
+/** A file from the repo's config/ folder (packaged: resources/, see package.json extraResources). */
+function readConfigFile(name: string): string {
+  const { readFileSync } = require('fs')
+  const path = app.isPackaged ? join(process.resourcesPath, name) : join(__dirname, '../../../../config', name)
+  return readFileSync(path, 'utf8')
+}
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
@@ -71,6 +79,15 @@ export async function connectToPg(config: PgConnectionConfig): Promise<void> {
   // Test connection first
   const testBackend = new PgBackend(config)
   await testBackend.testConnection()
+
+  // First to connect creates the database: meet-app creates exactly what Splash would
+  // (splashPgSchema.ts) — throws, before we switch over, on a database with foreign tables.
+  try {
+    ensureSplashSchema(testBackend, readConfigFile('splash-pg-schema.sql'), readConfigFile('splash-pg-seed.sql'))
+  } catch (e) {
+    testBackend.close()
+    throw e
+  }
 
   // Success — close old backend and switch
   if (activeBackend) {

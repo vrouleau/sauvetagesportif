@@ -657,6 +657,11 @@ export function encodeGbin(tableDef: { name: string; cols: ColDef[] }, rows: Rec
 
 export const D_NULL_SENTINEL = -36522.0 // OLE date for 1800-01-01 00:00:00
 
+/** OLE date (wall-clock days since 1899-12-30) → 'YYYY-MM-DD HH:MM:SS.mmm' for a Postgres timestamp */
+export function oleToPgTimestamp(ole: number): string {
+  return new Date(OLE_EPOCH_MS + Math.round(ole * 86400000)).toISOString().replace('T', ' ').replace('Z', '')
+}
+
 /** OLE Automation epoch: 1899-12-30 in milliseconds since Unix epoch */
 const OLE_EPOCH_MS = Date.UTC(1899, 11, 30)
 
@@ -1120,12 +1125,14 @@ export function restoreSMB(filePath: string, db: DbBackend): { tables: number; r
         for (const row of recs) {
           const vals = colNames.map((c, idx) => {
             const v = row[c] ?? null
-            // For PG date columns: convert invalid OLE date values to null
-            // Valid OLE dates are roughly 2-73000 (1900-2100). Anything else is garbage.
+            // PG date columns are Splash's `timestamp`: an OLE date (days since 1899-12-30) goes
+            // in as a timestamp, not as the raw number. Valid OLE dates are roughly 2-73000
+            // (1900-2100); anything else (sentinels, garbage) is NULL.
             if (dateColIndices.has(idx)) {
               if (v === null || v === undefined) return null
               const numVal = typeof v === 'number' ? v : (typeof v === 'string' ? parseFloat(v) : NaN)
               if (isNaN(numVal) || numVal < 2 || numVal > 73000 || !isFinite(numVal)) return null
+              return oleToPgTimestamp(numVal)
             }
             return v
           })

@@ -60,6 +60,8 @@ config/
   combined-events-config.json  — Shared category/points config (both apps)
   template_pool.lxf            — Pool meet template (swimstyleids 500-531)
   template_beach.lxf           — Beach meet template (swimstyleids 601-624)
+  splash-pg-schema.sql         — Splash's own Postgres schema (pg_dump); meet-app creates it on an empty shared PG database
+  splash-pg-seed.sql           — Rows Splash writes into a new database (see packages/meet-app/CLAUDE.md)
 
 packages/
   shared-ui/src/
