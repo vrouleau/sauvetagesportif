@@ -137,7 +137,11 @@ const SHEET_STYLES = `
       .time-line { height: 0.48in; border-bottom: 2px solid #000; }
       .time-m { width: 0.5in; }
       .time-ss, .time-hh { width: 0.85in; }
-      .separator { font-size: 20pt; font-weight: bold; width: 0.14in; text-align: center; line-height: 1; padding-bottom: 1pt; }      .digit-labels { display: flex; gap: 4pt; margin-left: 0.65in; margin-top: 1pt; }
+      .separator { font-size: 20pt; font-weight: bold; width: 0.14in; text-align: center; line-height: 1; padding-bottom: 1pt; }      /* Judge's initials / signature, right end of each chrono row */
+      .sig { margin-left: auto; display: flex; align-items: flex-end; gap: 6pt; }
+      .sig-label { font-size: 9pt; color: #444; padding-bottom: 3pt; }
+      .sig-line { width: 1.6in; height: 0.48in; border-bottom: 1.5px solid #000; }
+      .digit-labels { display: flex; gap: 4pt; margin-left: 0.65in; margin-top: 1pt; }
       .digit-labels span { text-align: center; font-size: 7pt; color: #999; }
       .digit-labels .sep-space { width: 0.14in; }
       .reg-mark { position: absolute; width: 6pt; height: 6pt; background: #000; }
@@ -167,6 +171,10 @@ const chronoRowHtml = (label: string): string => `
       <div class="time-line time-ss"></div>
       <div class="separator">.</div>
       <div class="time-line time-hh"></div>
+    </div>
+    <div class="sig">
+      <span class="sig-label">Initiales</span>
+      <span class="sig-line"></span>
     </div>
   </div>`
 

@@ -127,7 +127,7 @@ Après la génération, l'onglet séries affiche :
    - Code-barres Code128 pleine largeur (pour le scanner)
    - Nom de l'épreuve, numéro de série, numéro de couloir
    - Nom de l'athlète et code du club
-   - Deux rangées de lignes pour les temps M : SS . HH (Chrono 1 / Chrono 2)
+   - Deux rangées de lignes pour les temps M : SS . HH (Chrono 1 / Chrono 2), avec les initiales de chaque juge à droite
 4. Imprimer sur papier lettre standard, découper en bandes, distribuer aux chronométreurs
 
 ### Fiches chrono vierges (arrivées tardives / fiches manquantes)

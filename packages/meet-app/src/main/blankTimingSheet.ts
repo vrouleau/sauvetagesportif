@@ -46,7 +46,7 @@ Each time is written on three underlined fields: minutes, seconds, hundredths,
 with the separators : and . pre-printed between them (format M:SS.HH).
 The handwriting may go above or across the lines. Seconds and hundredths are two digits:
 if only one digit is written on such a field, pad it with a leading 0.
-Ignore any separator the timer also wrote by hand.
+Ignore any separator the timer also wrote by hand, and ignore the "Initiales" signatures on the right.
 
 Read the handwritten digits carefully and return ONLY the two times in this exact format:
 C1:M:SS.HH
@@ -66,7 +66,7 @@ Each time is written on three underlined fields: minutes, seconds, hundredths,
 with the separators : and . pre-printed between them (format M:SS.HH).
 The handwriting may go above or across the lines. Seconds and hundredths are two digits:
 if only one digit is written on such a field, pad it with a leading 0.
-Ignore any separator the timer also wrote by hand.
+Ignore any separator the timer also wrote by hand, and ignore the "Initiales" signatures on the right.
 Ignore the swimmer name line.
 
 Read the handwriting carefully and return ONLY these five lines in this exact format:

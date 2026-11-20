@@ -127,7 +127,7 @@ After generation, the heats tab shows:
    - Full-width Code128 barcode (for scanner)
    - Event name, heat number, lane number
    - Athlete name and club code
-   - Two rows of underlined time fields M : SS . HH (Chrono 1 / Chrono 2)
+   - Two rows of underlined time fields M : SS . HH (Chrono 1 / Chrono 2), each with the judge's initials on the right
 4. Print on standard letter paper, cut into strips, distribute to lane timers
 
 ### Blank Timing Sheets (late arrivals / missing sheets)

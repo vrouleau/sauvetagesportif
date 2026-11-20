@@ -131,6 +131,7 @@ describe('Blank timing sheet HTML', () => {
     expect((html.match(/Chrono 1/g) ?? []).length).toBe(3)
     expect((html.match(/class="time-line /g) ?? []).length).toBe(3 * 2 * 3) // 3 strips × 2 chronos × M/SS/HH
     expect(html).not.toContain('digit-box')
+    expect((html.match(/class="sig-line"/g) ?? []).length).toBe(3 * 2) // one judge's initials per chrono
     expect(html).not.toContain('<svg')
   })
 
