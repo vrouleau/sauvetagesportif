@@ -881,6 +881,28 @@ function crc32(buf: Buffer): number {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
+// Splash build our .smb files identify as (geologix.ini) — see GBIN_FORMAT.md version history
+export const SPLASH_BACKUP_VERSION = '11.85709'
+export const SPLASH_DDL_VERSION_APPLICATION = '20260901'
+
+/**
+ * Database file name Splash restores the backup into ([ExtraInfo] DBFilename) — Splash
+ * names it after the meet's own .mdb; ours follows the meet name so successive restores
+ * of different meets don't all overwrite one meet.mdb. ASCII only (geologix.ini is written
+ * as ASCII): accents stripped, characters Windows forbids in file names removed.
+ */
+export function mdbFilenameFor(meetName: string | null | undefined): string {
+  const base = (meetName ?? '')
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^\x20-\x7e]/g, '')
+    .replace(/[<>:"/\\|?*]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 100)
+    .replace(/[. ]+$/, '')
+  return `${base || 'meet'}.mdb`
+}
+
 export function saveSMB(filePath: string, db: DbBackend): { tables: number; rows: number } {
   const entries: ZipEntry[] = []
   const recordCounts: Record<string, number> = {}
@@ -1061,20 +1083,24 @@ export function saveSMB(filePath: string, db: DbBackend): { tables: number; rows
   ]
 
   // Version/GUID/[ExtraInfo] match the real installed Splash build's own .smb export
-  // (Meet Manager 11.84754, confirmed twice via direct comparison against genuine
-  // Splash-native re-exports). None of these were found to block a restore, but matching
+  // (Meet Manager 11.85709, compared 2026-11-20 against a genuine Splash re-export;
+  // previously 11.84754). None of these were found to block a restore, but matching
   // them keeps our file closer to what a real Splash install would produce.
+  // The application DDL version is never written below 20260901: that's the schema the
+  // G-typed GUID columns above belong to, even if our bsglobal carries an older value.
+  const ddlApp = [ddlVersions['BSDB_DDL_VERSION_APPLICATION'] ?? '', SPLASH_DDL_VERSION_APPLICATION].sort().pop()!
+  const meetNameRow = db.prepare(`SELECT data FROM bsglobal WHERE name = 'MeetName'`).get() as { data: string | null } | undefined
   const ini = [
     '[Geologix]',
     'Application=Meet Manager 11',
-    'Version=11.84754',
+    `Version=${SPLASH_BACKUP_VERSION}`,
     'Identification=BACKUP_MM_MEET_11',
     `GUID=${randomUUID()}`,
     'NullDateYear=1800',
     'ExtraFiles=0',
     '',
     '[BSGLOBAL]',
-    `BSDB_DDL_VERSION_APPLICATION=${ddlVersions['BSDB_DDL_VERSION_APPLICATION'] ?? '20260101'}`,
+    `BSDB_DDL_VERSION_APPLICATION=${ddlApp}`,
     `BSDB_DDL_VERSION_PICTURE=${ddlVersions['BSDB_DDL_VERSION_PICTURE'] ?? '01.01'}`,
     `BSDB_DDL_VERSION_SW_KATALOG=${ddlVersions['BSDB_DDL_VERSION_SW_KATALOG'] ?? '01.00'}`,
     '',
@@ -1085,7 +1111,7 @@ export function saveSMB(filePath: string, db: DbBackend): { tables: number; rows
     ...allTableNames.map(t => `${t}=${(recordCounts[t] ?? 0) > 0 ? 1 : 0}`),
     '',
     '[ExtraInfo]',
-    'DBFilename=meet.mdb',
+    `DBFilename=${mdbFilenameFor(meetNameRow?.data)}`,
     '',
   ].join('\r\n')
 

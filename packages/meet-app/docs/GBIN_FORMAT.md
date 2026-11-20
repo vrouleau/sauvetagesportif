@@ -265,6 +265,11 @@ DBFilename=MyMeet.mdb
 - `NullDateYear=1800` confirms that dates in year 1800 are null/time-only containers
 - `[RecordCount]` lists expected row counts per table
 - `[Tables]` indicates which tables have data (1) or are empty (0)
+- `[ExtraInfo] DBFilename` is the `.mdb` Splash restores into (in its Meets folder). Splash
+  writes the source database's own name; meet-app writes the meet name, accents stripped
+  (`mdbFilenameFor` in `smb.ts`), so restoring different meets doesn't overwrite one `meet.mdb`
+- meet-app writes `Version=11.85709` and `BSDB_DDL_VERSION_APPLICATION` no older than
+  `20260901` (the schema with `G` GUID columns)
 
 ---
 

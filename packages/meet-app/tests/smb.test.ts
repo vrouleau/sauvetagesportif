@@ -30,7 +30,7 @@ import { SqliteBackend } from '../src/main/sqliteBackend'
 import type { DbBackend } from '../src/main/dbBackend'
 
 // Import the SMB functions directly
-import { saveSMB, restoreSMB, readZipEntries, decodeGbin } from '../src/main/smb'
+import { saveSMB, restoreSMB, readZipEntries, decodeGbin, mdbFilenameFor } from '../src/main/smb'
 
 describe('SMB save/restore', () => {
   let db: Database.Database
@@ -143,6 +143,33 @@ describe('SMB save/restore', () => {
     const rows = db.prepare(`SELECT data FROM bsglobal WHERE name='BSAPPLICATION'`).all() as { data: string }[]
     expect(rows.length).toBe(1)
     expect(rows[0].data).toBe('Meet Manager - MEET')
+  })
+
+  it('writes the Splash 11.85709 header and names the restore target after the meet', () => {
+    db.prepare(`INSERT INTO bsglobal (name, data) VALUES ('MeetName', 'Invitation Provinciale Novembre 2026')`).run()
+    saveSMB(smbPath, backend)
+    const ini = readZipEntries(smbPath).get('geologix.ini')!.toString('utf8')
+    expect(ini).toContain('Version=11.85709')
+    expect(ini).toContain('BSDB_DDL_VERSION_APPLICATION=20260901')
+    expect(ini).toContain('DBFilename=Invitation Provinciale Novembre 2026.mdb')
+  })
+
+  it('never writes an application DDL version older than the G-typed GUID schema, keeps a newer one', () => {
+    db.prepare(`INSERT INTO bsglobal (name, data) VALUES ('BSDB_DDL_VERSION_APPLICATION', '20260401')`).run()
+    saveSMB(smbPath, backend)
+    expect(readZipEntries(smbPath).get('geologix.ini')!.toString('utf8')).toContain('BSDB_DDL_VERSION_APPLICATION=20260901')
+    db.prepare(`UPDATE bsglobal SET data = '20270101' WHERE name = 'BSDB_DDL_VERSION_APPLICATION'`).run()
+    saveSMB(smbPath, backend)
+    expect(readZipEntries(smbPath).get('geologix.ini')!.toString('utf8')).toContain('BSDB_DDL_VERSION_APPLICATION=20270101')
+  })
+
+  it('mdbFilenameFor makes a safe ASCII Windows file name, falling back to meet.mdb', () => {
+    expect(mdbFilenameFor('Championnats Québec — Été 2026')).toBe('Championnats Quebec Ete 2026.mdb')
+    expect(mdbFilenameFor('CQS 2025: A/B "finale"?')).toBe('CQS 2025 A B finale.mdb')
+    expect(mdbFilenameFor('Meet...  ')).toBe('Meet.mdb')
+    expect(mdbFilenameFor('')).toBe('meet.mdb')
+    expect(mdbFilenameFor(null)).toBe('meet.mdb')
+    expect(mdbFilenameFor('x'.repeat(300))).toBe('x'.repeat(100) + '.mdb')
   })
 
   it('handles empty database gracefully', () => {
