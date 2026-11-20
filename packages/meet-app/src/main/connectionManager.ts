@@ -150,7 +150,7 @@ export async function connectToPg(config: PgConnectionConfig): Promise<void> {
   }
 
   // Persist the connection config
-  saveConnectionConfig(config)
+  await saveConnectionConfig(config)
 }
 
 /** Disconnect from PostgreSQL and revert to local SQLite */
@@ -167,7 +167,7 @@ export function disconnectPg(): void {
 
 /** Try to restore a previously saved PG connection on app startup */
 export async function restoreSavedConnection(): Promise<boolean> {
-  const config = loadConnectionConfig()
+  const config = await loadConnectionConfig()
   if (!config) return false
 
   try {
@@ -197,38 +197,46 @@ function getConfigPath(): string {
   return join(app.getPath('userData'), CONFIG_FILE)
 }
 
-function saveConnectionConfig(config: PgConnectionConfig): void {
+// Password encrypted with Electron's async safeStorage API (the sync one is deprecated since
+// Electron 45). decryptStringAsync also reads passwords saved by the old sync encryptString.
+async function saveConnectionConfig(config: PgConnectionConfig): Promise<void> {
+  const encrypted = await safeStorage.isAsyncEncryptionAvailable()
   const data = {
     host: config.host,
     port: config.port,
     database: config.database,
     user: config.user,
-    // Encrypt password using Electron's safeStorage
-    password: safeStorage.isEncryptionAvailable()
-      ? safeStorage.encryptString(config.password).toString('base64')
+    password: encrypted
+      ? (await safeStorage.encryptStringAsync(config.password)).toString('base64')
       : config.password,
-    encrypted: safeStorage.isEncryptionAvailable(),
+    encrypted,
   }
   writeFileSync(getConfigPath(), JSON.stringify(data, null, 2), 'utf-8')
 }
 
-function loadConnectionConfig(): PgConnectionConfig | null {
+async function loadConnectionConfig(): Promise<PgConnectionConfig | null> {
   const path = getConfigPath()
   if (!existsSync(path)) return null
 
   try {
     const raw = JSON.parse(readFileSync(path, 'utf-8'))
     let password = raw.password
-    if (raw.encrypted && safeStorage.isEncryptionAvailable()) {
-      password = safeStorage.decryptString(Buffer.from(raw.password, 'base64'))
+    let reEncrypt = false
+    if (raw.encrypted && await safeStorage.isAsyncEncryptionAvailable()) {
+      const dec = await safeStorage.decryptStringAsync(Buffer.from(raw.password, 'base64'))
+      password = dec.result
+      reEncrypt = dec.shouldReEncrypt
     }
-    return {
+    const config = {
       host: raw.host,
       port: raw.port,
       database: raw.database,
       user: raw.user,
       password,
     }
+    // Key rotated / better protection available: store it again with the current key
+    if (reEncrypt) await saveConnectionConfig(config).catch(() => {})
+    return config
   } catch {
     return null
   }
