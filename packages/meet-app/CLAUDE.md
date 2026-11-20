@@ -219,7 +219,7 @@ The Final is created in the *same* session as the prelim, placed directly
 after it (no separate "Finales" session is created). The link is `preveventid`
 on the Final row, pointing back at the prelim — exposed to the frontend as
 `CompetitionEvent.prevEventId`. Deleting a Final reverses the split: the
-paired prelim's `round` is set back to `5` (TIM/Finale directe), as if it had
+paired prelim's `round` is set back to TIM (`1`, Splash's code — the shared editor sends `'TIM'`), as if it had
 never been converted.
 
 **Prelim's age groups stop counting for medals/scoring once split (found 2026-08-14).**
@@ -266,7 +266,7 @@ time, `.smb` export carries them through correctly too.
 - Swimstyle id guard (`file:import-lenex` handler, runs before the DB wipe): ids outside `config/swimstyle-ranges.json` (pool 500-531 / beach 601-624) → confirmation dialog; pool+beach mixed → refused. See `config/CLAUDE.md`.
 - Loads team-app's `.swimstyles` zip dotfile (full style catalog, incl. styles no event uses) before the events; an event's own SWIMSTYLE still wins
 - Remaps `swimstyleid` via `uniqueid` attribute (Splash uses internal auto-increment IDs in MDB but canonical 5xx UIDs in Lenex)
-- Events with `round=11` (MDB encoding for Break/Pause) are marked `internalevent='T'`
+- Break/pause events (`internalevent="T"`) get Splash's round `11`; other rounds map LENEX ↔ Splash codes via `rounds.ts`
 - Meet editor fields (`applyMeetLevelFields`): every field mapped by `config/lenex-meet-fields.json` (`lenexMeetFields.ts`, shared with team-app — see `config/CLAUDE.md`), read from Splash's own places (MEET attributes, POOL, FACILITY, QUALIFY, CONTACT, FEES) plus the `.meetvalues` dotfile's heat settings; lanes fall back to the first SESSION's. Mirrored into `MeetName/MeetCity/MeetNation/MeetCourse/MeetOrganizer(Url)/PoolLaneMin/Max`. A structure import takes them all; an entries import into an existing meet fills only the empty ones (locally edited values kept — it used to skip them all, #110). AGEDATE is always synced.
 - Session course = `SESSION@course`, else `MEET@course`, else LCM (was always LCM). New sessions created in the app take the meet's course.
 - Auto-detects `MEET_TYPE` from swim style IDs: if any `swimstyleid >= 600` → `BEACH`, else `POOL` (only when not already set)
@@ -347,6 +347,16 @@ Full rules: `docs/HEAT_GENERATION_RULES.md`
 - **Preload**: `window.api.db.generateHeats(eventId?, sessionId?)`
 - **UI**: "Générer séries" button in EventsPage toolbar
 - **Tests**: `tests/heat-generation.test.ts` (28 tests)
+
+### Splash's encoding (shared Postgres)
+Splash reads our rows as-is on a shared Postgres database, so meet-app stores every Splash column the way Splash does — no translation in `.smb` export/restore either:
+- `swimevent.round`: Splash codes (`rounds.ts`): 1 TIM, 2 PRE, 6 SEM, 9 FIN, 11 Break
+- `swimevent.preveventid`: `-1` for no linked prelim (`NO_PREV_EVENT`; read through `linkedPrelim()`, never truthily)
+- `agegroup.agemin/agemax`: `-1` for no limit (`NO_AGE_LIMIT`)
+- `dsqitem.options`: Splash's own code (`00000`); our individual/relay tag is in our own `dsqitem.appliesto` (`dsqCodes.ts`)
+- course (`swimsession.course`, `entrycourse`, `qtcourse`, MEETVALUES `COURSE`, `MeetCourse`): Splash codes (`courses.ts`): 1 LCM, **2 SCM**, 3 SCY (team-app's are 2 SCY / 3 SCM — the editor and API use the LENEX name); a beach meet's COURSE is 7 (`setBeachCourse`)
+
+Heats: Splash's Results module crashes on a heat `racestatus` it doesn't use (meet-app used to write `4`) and on a NULL `heat.agegroupid`. meet-app stores what Splash stores: seeded = `2` (`HEAT_SEEDED`), validated = `5`, and every heat gets an age group (`fillHeatAgeGroups`: its members' lowest, else the event's first — meet-app itself never reads it). LXF import/new meet/reset keep Splash's own `bsglobal` keys (`clearMeetBsglobal`) — without `BSAPPLICATION`/DDL versions Splash refuses the database ("contains wrong data").
 
 ### Seeding methods (`agegroup.finalseedtype` or `MEETVALUES.SEEDMETHOD`)
 - `0` = Circle seeding (FINA prelims — round-robin across heats)

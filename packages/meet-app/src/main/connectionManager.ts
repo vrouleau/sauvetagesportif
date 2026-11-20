@@ -30,6 +30,7 @@ import type { DbBackend } from './dbBackend'
 import { SqliteBackend } from './sqliteBackend'
 import { PgBackend, type PgConnectionConfig } from './pgBackend'
 import { runSchemaInit, runColumnBackfills } from './schema'
+import { SPLASH_DSQ_NO_OPTIONS, dsqAppliesTo } from './dsqCodes'
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
@@ -92,13 +93,15 @@ export async function connectToPg(config: PgConnectionConfig): Promise<void> {
       name VARCHAR(250),
       name_en VARCHAR(250),
       options VARCHAR(5),
-      sortcode SMALLINT
+      sortcode SMALLINT,
+      appliesto VARCHAR(5)
     )`)
     // name_en is our own addition (bilingual DSQ codes) — Splash's own dsqitem
     // table doesn't have it, so CREATE TABLE IF NOT EXISTS above is a no-op
     // when connecting to a database Splash already created. Backfill the
     // column on the fly so we stay cross-compatible either way.
     testBackend.exec(`ALTER TABLE dsqitem ADD COLUMN IF NOT EXISTS name_en VARCHAR(250)`)
+    testBackend.exec(`ALTER TABLE dsqitem ADD COLUMN IF NOT EXISTS appliesto VARCHAR(5)`)  // ours, see dsqCodes.ts
     // If table is empty, seed from config (same as "Create Meet" does for SQLite)
     const count = testBackend.prepare(`SELECT COUNT(*) AS c FROM dsqitem`).get() as { c: number }
     if (count.c === 0) {
@@ -117,11 +120,11 @@ export async function connectToPg(config: PgConnectionConfig): Promise<void> {
           const codes = meetType === 'beach' ? (cfg.beach || []) : (cfg.pool || [])
           const baseId = meetType === 'beach' ? 4101 : 4001
           const stmt = testBackend.prepare(
-            `INSERT INTO dsqitem (dsqitemid, code, lenexcode, name, name_en, sortcode) VALUES (?, ?, ?, ?, ?, ?)`
+            `INSERT INTO dsqitem (dsqitemid, code, lenexcode, name, name_en, options, appliesto, sortcode) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
           )
           for (let i = 0; i < codes.length; i++) {
             const c = codes[i]
-            stmt.run(baseId + i, c.code, c.code, c.name_fr, c.name_en || '', i + 1)
+            stmt.run(baseId + i, c.code, c.code, c.name_fr, c.name_en || '', SPLASH_DSQ_NO_OPTIONS, dsqAppliesTo(c.options), i + 1)
           }
         }
       } catch { /* ignore seeding errors */ }

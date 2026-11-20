@@ -126,11 +126,11 @@ Team-app `docker-compose.yml` uses `context: ../..` (monorepo root). Always run 
 ### Column encoding (SQLite; also meet-app's optional shared PostgreSQL)
 - `swimevent.roundname` — event name (NOT `name`)
 - `swimevent.internalevent` — `'T'` = pause/admin event
-- `swimevent.round` — `11` in MDB encoding means Break/Pause → converted to `internalevent='T'` on import
+- `swimevent.round` — meet-app stores **Splash's own codes** (`packages/meet-app/src/main/rounds.ts`): `1`=TIM, `2`=PRE, `6`=SEM, `9`=FIN, `11`=Break (also `internalevent='T'`). team-app keeps its own (`1`=PRE, `2`=SEM, `4`=FIN, `5`=TIM); the shared EventsPage sends LENEX names (`'PRE'`, `'TIM'`) and each backend maps them. In general meet-app stores every Splash column the way Splash does — Splash reads our rows directly on a shared Postgres database (see `packages/meet-app/CLAUDE.md`, "Splash's encoding")
 - Gender: `0`=All (individual events only), `1`=M, `2`=F, `3`=Mixed (relay events only). An age group's gender always mirrors its parent event's — never independently set (cascades on event gender update, both apps). Individual events: All/M/F. Relay events: Mixed/M/F, no All. LENEX's real `GENDER` attribute enum is `ALL|M|F|MIXED` — our own exporter used to non-conformantly write `X` for Mixed; still accepted on import for backward compatibility. See `docs/AGE_GROUP_GENDER_MODEL.md` for the full design rationale (what Splash/LENEX's data model still supports vs. what our UI enforces).
 - Times: INTEGER milliseconds (`0` = no time, same as NULL)
 - Boolean: CHAR(1) `'T'`/`'F'`
-- `agegroup.agemax` — `99` or `-1` both mean "Open" (no upper limit)
+- `agegroup.agemax` — `99` or `-1` both mean "Open" (no upper limit); meet-app writes `-1` (Splash's value) for no limit, never NULL. `swimevent.preveventid` "no linked prelim" is `-1` too
 
 ### MEETVALUES format
 Meet-level config in `bsglobal` uses Splash's format: `KEY=TYPE;VALUE\r\n`

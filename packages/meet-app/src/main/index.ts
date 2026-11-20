@@ -16,6 +16,9 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with Sauvetage Sportif. If not, see <https://www.gnu.org/licenses/>.
 
+import { roundToLenex } from './rounds'
+import { courseToName } from './courses'
+import { SPLASH_DSQ_NO_OPTIONS, dsqAppliesTo } from './dsqCodes'
 import { app, BrowserWindow, shell, ipcMain, dialog, nativeImage, Menu, session } from 'electron'
 import { join } from 'path'
 import { writeFileSync, unlinkSync } from 'fs'
@@ -103,27 +106,6 @@ function getDsqConfigPath(): string {
 }
 
 /**
- * dsq-codes.json's "options" field ("INDIVIDUAL,RELAY" etc.) is our own human-readable
- * applies-to tag, also consumed as-is by scripts/generate_dsq_xml.py's XML output — but
- * `dsqitem.options` in the DB is VARCHAR(5) on Postgres (connectionManager.ts, deliberately
- * matching real Splash's own column width, since this table can be shared live with a real
- * Splash instance connected to the same Postgres database) and the long form overflows it
- * outright ("value too long for type character varying(5)"). SQLite has no such limit, which is
- * why this only ever surfaced against Postgres. Compact to single-letter codes that still carry
- * the individual/relay meaning HeatsPage.tsx's DSQ dropdown filter needs, instead of blanking it
- * out the way smb.ts's .smb-export path does (that path doesn't need the semantic meaning back,
- * this one does).
- */
-function compactDsqOptions(options: string): string {
-  const hasIndividual = options.includes('INDIVIDUAL')
-  const hasRelay = options.includes('RELAY')
-  if (hasIndividual && hasRelay) return 'IR'
-  if (hasIndividual) return 'I'
-  if (hasRelay) return 'R'
-  return ''
-}
-
-/**
  * Seed dsqitem table from config/dsq-codes.json.
  * @param db - database handle (SQLite or PG-like)
  * @param meetType - 'pool' or 'beach'
@@ -153,17 +135,17 @@ function seedDsqCodes(db: ReturnType<typeof getLocalDb>, meetType: string, lang:
     // bundles), so no backend branching is needed — same portable form lenex.ts already uses
     // for bsglobal upserts.
     const stmt = db.prepare(
-      `INSERT INTO dsqitem (dsqitemid, code, lenexcode, name, options, sortcode)
-       VALUES (?, ?, ?, ?, ?, ?)
+      `INSERT INTO dsqitem (dsqitemid, code, lenexcode, name, options, appliesto, sortcode)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (dsqitemid) DO UPDATE SET code=excluded.code, lenexcode=excluded.lenexcode,
-         name=excluded.name, options=excluded.options, sortcode=excluded.sortcode`
+         name=excluded.name, options=excluded.options, appliesto=excluded.appliesto, sortcode=excluded.sortcode`
     )
 
     for (let i = 0; i < codes.length; i++) {
       const c = codes[i]
       // Use the language-appropriate name based on the current app toggle
       const name = (lang === 'en' && c.name_en) ? c.name_en : c.name_fr
-      stmt.run(baseId + i, c.code, c.code, name, compactDsqOptions(c.options || 'INDIVIDUAL,RELAY'), i + 1)
+      stmt.run(baseId + i, c.code, c.code, name, SPLASH_DSQ_NO_OPTIONS, dsqAppliesTo(c.options), i + 1)
     }
 
 
@@ -297,7 +279,11 @@ ipcMain.handle('db:move-age-group', async (_event, agegroupId: number, targetEve
   }
 })
 
-ipcMain.handle('db:get-meet-config', () => getMeetValues())
+// COURSE goes to the shared editor as a LENEX name ('LCM'/'SCM'/'SCY'), stored as Splash's code (courses.ts)
+ipcMain.handle('db:get-meet-config', () => {
+  const mv = getMeetValues()
+  return mv['COURSE'] != null ? { ...mv, COURSE: courseToName(mv['COURSE']) } : mv
+})
 
 ipcMain.handle('db:set-meet-config', (_event, entries: Record<string, { type: string; value: string }>) => {
   setMeetValues(entries)
@@ -384,7 +370,8 @@ ipcMain.handle('db:get-matching-age', (_event, birthDate: string) => {
 ipcMain.handle('db:get-dsq-items', () => {
   const db = getLocalDb()
   try {
-    return db.prepare(`SELECT dsqitemid, code, name, options, sortcode FROM dsqitem WHERE code IS NOT NULL AND code != '' ORDER BY sortcode`).all()
+    // `options` on the wire = our appliesto tag (dsqCodes.ts), not Splash's own options column
+    return db.prepare(`SELECT dsqitemid, code, name, appliesto AS options, sortcode FROM dsqitem WHERE code IS NOT NULL AND code != '' ORDER BY sortcode`).all()
   } catch {
     return []
   }
@@ -2323,7 +2310,6 @@ function _pushStartListsAfterGeneration(eventId?: number, sessionId?: number): v
 
     if (events.length > 0) {
       const genderMap: Record<number, string> = { 0: 'ALL', 1: 'M', 2: 'F', 3: 'X' }
-      const roundMap: Record<number, string> = { 1: 'PRE', 2: 'SEM', 4: 'FIN', 5: 'TIM' }
 
       const eventsPayload = events.map(e => ({
         event_id: e.swimeventid,
@@ -2334,7 +2320,7 @@ function _pushStartListsAfterGeneration(eventId?: number, sessionId?: number): v
         session_date: e.startdate ? (parseOleDate(e.startdate) ?? null) : null,
         gender: genderMap[e.gender] || 'X',
         distance: e.distance,
-        round: roundMap[e.round] || 'TIM',
+        round: roundToLenex(e.round),
         scheduled_time: e.daytime ? new Date(e.daytime).toTimeString().slice(0, 5) : '',
         total_heats: e.total_heats,
       }))

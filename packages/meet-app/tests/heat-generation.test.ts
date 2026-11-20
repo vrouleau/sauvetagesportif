@@ -524,6 +524,20 @@ describe.each(BACKENDS)('Heat generation [%s]', (kind) => {
       expect(assignments).toHaveLength(8)
     })
 
+    it('stores combined heats the way Splash does: racestatus 2 and an age group', async () => {
+      // On a Postgres database shared with Splash, its Results module reads our heats as-is and
+      // crashes on racestatus=4 (our old "seeded" code) or a NULL heat.agegroupid.
+      setLanes(1, 8)
+      setMeetValues('COMBINEAGEGROUPS=B;T')
+      addEntries(1, 1, 4, 60000) // age group 1
+      addEntries(1, 2, 4, 65000) // age group 2
+
+      await generateHeats(1, undefined, db)
+
+      const rows = db.prepare(`SELECT racestatus, agegroupid FROM heat WHERE swimeventid = 1`).all()
+      expect(rows).toEqual([{ racestatus: 2, agegroupid: 1 }])
+    })
+
     it('creates separate heats per age group when not combined', async () => {
       setLanes(1, 8)
       addEntries(1, 1, 4, 60000) // age group 1

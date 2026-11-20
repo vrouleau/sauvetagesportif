@@ -92,9 +92,9 @@ def _get_meet_type(conn: sqlite3.Connection) -> str:
 
 
 def _load_dsq_pool(conn: sqlite3.Connection, want: str) -> list[int]:
-    """want: 'I' (individual) or 'R' (relay) -- matches dsqitem.options'
-    compact encoding ('I'/'R'/'IR'), see index.ts's compactDsqOptions()."""
-    rows = conn.execute("SELECT dsqitemid, options FROM dsqitem").fetchall()
+    """want: 'I' (individual) or 'R' (relay) -- matches dsqitem.appliesto
+    ('I'/'R'/'IR'), see src/main/dsqCodes.ts."""
+    rows = conn.execute("SELECT dsqitemid, appliesto FROM dsqitem").fetchall()
     return [dsqitemid for dsqitemid, options in rows if options and want in options]
 
 

@@ -152,7 +152,8 @@ export const SCHEMA_DDL: string[] = [
     name TEXT,
     name_en TEXT,
     options TEXT,
-    sortcode INTEGER
+    sortcode INTEGER,
+    appliesto TEXT
   )`,
   `CREATE TABLE IF NOT EXISTS relay (
     relayid INTEGER PRIMARY KEY,
@@ -244,6 +245,8 @@ export const SCHEMA_DDL: string[] = [
  */
 const COLUMN_BACKFILLS: Array<{ table: string; ddl: string }> = [
   { table: 'agegroup', ddl: `ALTER TABLE agegroup ADD COLUMN afinal8lanes TEXT DEFAULT 'F'` },
+  // Our own DSQ applies-to tag (dsqCodes.ts) — kept out of Splash's dsqitem.options
+  { table: 'dsqitem', ddl: `ALTER TABLE dsqitem ADD COLUMN appliesto TEXT` },
   // Splash 11.85709 (2026-11) sync columns: <table>guid (uuid on Splash's Postgres), isdirty,
   // syncmodified; plus swimevent's starttimeeff/officialat/revised. Splash-created databases
   // already have them (these then no-op); meet-app's own SQLite/Postgres databases get them here.

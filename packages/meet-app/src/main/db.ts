@@ -17,6 +17,8 @@
 // along with Sauvetage Sportif. If not, see <https://www.gnu.org/licenses/>.
 
 import { assignLateBeachNumber } from './beachNumber'
+import { ROUND, phaseOfRound, roundFromPhase, roundFromRequest } from './rounds'
+import { COURSE, courseFromRequest, courseToName } from './courses'
 import { resolveMatchingAge, getSeasonYear } from './ageGroupRules'
 import {
   regenerateCombinedEvents, resolveToFinal, loadCombinedEventsConfig,
@@ -74,17 +76,49 @@ function decodeGender(g: number | null): 'M' | 'F' | 'X' | 'ALL' {
   return 'X'
 }
 
+/**
+ * heat.racestatus — Splash's own encoding: 2 = seeded (not yet official), 5 = validated.
+ * Splash reads our rows as-is on a shared Postgres database, and its Results module crashes
+ * on a heat status it doesn't use (4 did), so we store exactly what Splash stores.
+ */
+export const HEAT_SEEDED = 2
+
 function decodeHeatStatus(s: number | null): 'empty' | 'assigned' | 'completed' | 'validated' {
   if (s != null && s >= 8) return 'completed'
   if (s != null && s === 5) return 'validated'
-  if (s != null && s >= 4) return 'assigned'
+  if (s != null && s >= HEAT_SEEDED) return 'assigned'
   return 'empty'
 }
 
+/**
+ * Give every heat of an event an age group, like Splash does: its Results module dereferences
+ * heat.agegroupid unconditionally and crashes on NULL. Heats pooling several age groups
+ * (COMBINEAGEGROUPS, beach) take their members' lowest one, an empty heat the event's first.
+ * meet-app itself never reads heat.agegroupid — heat membership lives on swimresult/relay.
+ */
+export function fillHeatAgeGroups(db: { prepare(sql: string): { run(...a: unknown[]): unknown } }, eventId: number): void {
+  db.prepare(
+    `UPDATE heat SET agegroupid = COALESCE(
+       (SELECT MIN(r.agegroupid) FROM swimresult r WHERE r.heatid = heat.heatid),
+       (SELECT MIN(rl.agegroupid) FROM relay rl WHERE rl.heatid = heat.heatid),
+       (SELECT ag.agegroupid FROM agegroup ag WHERE ag.swimeventid = heat.swimeventid ORDER BY ag.sortcode, ag.agegroupid LIMIT 1))
+     WHERE swimeventid = ? AND agegroupid IS NULL`
+  ).run(eventId)
+}
+
+/** agegroup.agemin/agemax "no limit" (Open): Splash stores -1 (never NULL), so do we. */
+export const NO_AGE_LIMIT = -1
+
+/** swimevent.preveventid "no linked prelim": Splash stores -1 (never NULL), so do we. */
+export const NO_PREV_EVENT = -1
+
+/** The prelim a final is linked to, or null — accepts Splash's -1 and a NULL alike. */
+export function linkedPrelim(preveventid: number | null | undefined): number | null {
+  return preveventid != null && preveventid > 0 ? preveventid : null
+}
+
 function decodePhase(round: number | null): 'Finale' | 'Eliminatoire' | 'Finale directe' {
-  if (round === 1) return 'Eliminatoire'
-  if (round === 4) return 'Finale'
-  return 'Finale directe'
+  return phaseOfRound(round)
 }
 
 function decodeResultStatus(s: number | null): 'DNS' | 'DNF' | 'DSQ' | 'EXH' | null {
@@ -370,8 +404,8 @@ export interface SessionRow {
   time?: string
   endTime?: string
   poolSize: number
-  /** LENEX course code: 1=LCM (50 m), 2=SCY (25 yd), 3=SCM (25 m) */
-  course?: number
+  /** LENEX course name — stored as Splash's code (courses.ts) */
+  course?: 'LCM' | 'SCM' | 'SCY'
   laneMin?: number
   laneMax?: number
   warmupFrom?: string
@@ -472,7 +506,7 @@ export async function getHeatListSessions(injectedDb?: ReturnType<typeof getLoca
              a.athleteid, a.firstname, a.lastname, a.birthdate, a.nation, a.handicapex,
              a.nameprefix AS beachnumber,
              c.code AS clubcode, c.name AS clubname,
-             COALESCE(NULLIF(ag.name, ''), CASE WHEN ag.agemin IS NOT NULL THEN CAST(ag.agemin AS TEXT) || '-' || COALESCE(CAST(ag.agemax AS TEXT), '+') END, '???') AS agegroupname
+             COALESCE(NULLIF(ag.name, ''), CASE WHEN ag.agemin IS NOT NULL THEN CAST(ag.agemin AS TEXT) || '-' || CASE WHEN ag.agemax IS NULL OR ag.agemax < 0 OR ag.agemax >= 99 THEN '+' ELSE CAST(ag.agemax AS TEXT) END END, '???') AS agegroupname
       FROM swimresult r
       JOIN athlete a ON r.athleteid = a.athleteid
       LEFT JOIN club c ON a.clubid = c.clubid
@@ -546,7 +580,7 @@ export async function getHeatListSessions(injectedDb?: ReturnType<typeof getLoca
       SELECT r.relayid, r.heatid, r.lane, r.swimeventid, r.clubid, r.name AS teamname,
              r.entrytime, r.swimtime, r.reactiontime, r.resultstatus, r.dsqitemid, r.agegroupid,
              c.code AS clubcode, c.name AS clubname,
-             COALESCE(NULLIF(ag.name, ''), CASE WHEN ag.agemin IS NOT NULL THEN CAST(ag.agemin AS TEXT) || '-' || COALESCE(CAST(ag.agemax AS TEXT), '+') END, '???') AS agegroupname
+             COALESCE(NULLIF(ag.name, ''), CASE WHEN ag.agemin IS NOT NULL THEN CAST(ag.agemin AS TEXT) || '-' || CASE WHEN ag.agemax IS NULL OR ag.agemax < 0 OR ag.agemax >= 99 THEN '+' ELSE CAST(ag.agemax AS TEXT) END END, '???') AS agegroupname
       FROM relay r
       LEFT JOIN club c ON r.clubid = c.clubid
       LEFT JOIN agegroup ag ON r.agegroupid = ag.agegroupid
@@ -754,7 +788,7 @@ export async function getSessions(injectedDb?: ReturnType<typeof getLocalDb>): P
       scheduledTime: formatDaytime(e.daytime),
       duration: formatDaytime(e.duration),
       swimstyleId: e.swimstyleid ?? null,
-      prevEventId: e.preveventid ?? null,
+      prevEventId: linkedPrelim(e.preveventid),
       finalOrder: e.finalorder,
       maxEntries: e.maxentries ?? null,
       masters: e.masters === 'T',
@@ -769,7 +803,7 @@ export async function getSessions(injectedDb?: ReturnType<typeof getLocalDb>): P
     time: formatDaytime(s.daytime),
     endTime: formatDaytime(s.endtime),
     poolSize: s.course === 3 ? 25 : s.course === 2 ? 25 : 50,
-    course: s.course ?? 1,
+    course: courseToName(s.course),
     laneMin: s.lanemin ?? undefined,
     laneMax: s.lanemax ?? undefined,
     warmupFrom: formatDaytime(s.warmupfrom),
@@ -811,7 +845,7 @@ export async function getAthletes(): Promise<AthleteRow[]> {
 
   const entries = db.prepare(`
     SELECT r.athleteid, r.swimeventid, r.entrytime, r.agegroupid, r.resultstatus,
-           COALESCE(NULLIF(ag.name, ''), CASE WHEN ag.agemin IS NOT NULL THEN CAST(ag.agemin AS TEXT) || '-' || COALESCE(CAST(ag.agemax AS TEXT), '+') END, '???') AS agegroupname,
+           COALESCE(NULLIF(ag.name, ''), CASE WHEN ag.agemin IS NOT NULL THEN CAST(ag.agemin AS TEXT) || '-' || CASE WHEN ag.agemax IS NULL OR ag.agemax < 0 OR ag.agemax >= 99 THEN '+' ELSE CAST(ag.agemax AS TEXT) END END, '???') AS agegroupname,
            e.eventnumber,
            ss.distance, ss.stroke, ss.name AS stylename
     FROM swimresult r
@@ -1035,7 +1069,7 @@ export async function getAvailableRelayTeamsForEvent(eventId: number): Promise<A
   const rows = db.prepare(`
     SELECT r.relayid, r.name AS teamname, r.entrytime,
            c.code AS clubcode, c.name AS clubname,
-           COALESCE(NULLIF(ag.name, ''), CASE WHEN ag.agemin IS NOT NULL THEN CAST(ag.agemin AS TEXT) || '-' || COALESCE(CAST(ag.agemax AS TEXT), '+') END, '???') AS agegroupname
+           COALESCE(NULLIF(ag.name, ''), CASE WHEN ag.agemin IS NOT NULL THEN CAST(ag.agemin AS TEXT) || '-' || CASE WHEN ag.agemax IS NULL OR ag.agemax < 0 OR ag.agemax >= 99 THEN '+' ELSE CAST(ag.agemax AS TEXT) END END, '???') AS agegroupname
     FROM relay r
     LEFT JOIN club c ON r.clubid = c.clubid
     LEFT JOIN agegroup ag ON r.agegroupid = ag.agegroupid
@@ -1285,7 +1319,7 @@ export async function createSession(name: string, sessionNumber: number): Promis
   // A new session takes the meet's pool length (MeetCourse, else MEETVALUES COURSE, else 50 m).
   const g = db.prepare(`SELECT data FROM bsglobal WHERE name='MeetCourse'`).get() as { data: string | null } | undefined
   const meetCourse = parseInt(g?.data || readMeetValues(db)['COURSE'] || '1', 10)
-  const course = [1, 2, 3].includes(meetCourse) ? meetCourse : 1
+  const course = ([COURSE.LCM, COURSE.SCM, COURSE.SCY] as number[]).includes(meetCourse) ? meetCourse : COURSE.LCM
   db.prepare(
     `INSERT INTO swimsession (swimsessionid, sessionnumber, name, course, following, poolglobal, roundtotenths)
      VALUES (?, ?, ?, ?, 'F', 'F', 'F')`
@@ -1299,7 +1333,8 @@ export interface SessionUpdate {
   startdate?: string | null
   daytime?: string | null
   endtime?: string | null
-  course?: number
+  /** LENEX name from the shared editor (or a Splash code) — stored as Splash code */
+  course?: number | string
   lanemin?: number | null
   lanemax?: number | null
   warmupfrom?: string | null
@@ -1331,7 +1366,7 @@ export async function updateSession(sessionId: number, data: SessionUpdate): Pro
   if (data.startdate !== undefined) { sets.push('startdate=?'); vals.push(data.startdate) }
   if (data.daytime !== undefined) { sets.push('daytime=?'); vals.push(timeToTimestamp(data.daytime)) }
   if (data.endtime !== undefined) { sets.push('endtime=?'); vals.push(timeToTimestamp(data.endtime)) }
-  if (data.course !== undefined) { sets.push('course=?'); vals.push(data.course) }
+  if (data.course !== undefined) { sets.push('course=?'); vals.push(courseFromRequest(data.course)) }  // name from the editor → Splash code
   if (data.lanemin !== undefined) { sets.push('lanemin=?'); vals.push(data.lanemin) }
   if (data.lanemax !== undefined) { sets.push('lanemax=?'); vals.push(data.lanemax) }
   if (data.warmupfrom !== undefined) { sets.push('warmupfrom=?'); vals.push(timeToTimestamp(data.warmupfrom)) }
@@ -1371,9 +1406,9 @@ export async function createBreak(
     `INSERT INTO swimevent
        (swimeventid, swimsessionid, eventnumber, gender, round, sortcode,
         splashmecanedit, masters, pfineignore, seedbonuslast,
-        seedexhlast, seedlateentrylast, seedingglobal, twoperlane, combineagegroups, comment)
-     VALUES (?, ?, ?, NULL, 11, ?,
-             'F','F','F','F','F','F','F','F','F', ?)`
+        seedexhlast, seedlateentrylast, seedingglobal, twoperlane, combineagegroups, comment, preveventid)
+     VALUES (?, ?, ?, NULL, ${ROUND.BREAK}, ?,
+             'F','F','F','F','F','F','F','F','F', ?, ${NO_PREV_EVENT})`
   ).run(id, sessionId, eventnumber, sortcode, name)
   return id
 }
@@ -1389,7 +1424,7 @@ export async function createEvent(
   const db = getLocalDb()
   const id = nextId('swimevent', 'swimeventid')
   const gNum = gender === 'ALL' ? 0 : gender === 'M' ? 1 : gender === 'F' ? 2 : 3
-  const round = phase === 'Eliminatoire' ? 1 : phase === 'Finale' ? 4 : 5
+  const round = roundFromPhase(phase)
 
   const styleRow = distance > 0
     ? db.prepare(
@@ -1444,9 +1479,9 @@ export async function createEvent(
     `INSERT INTO swimevent
        (swimeventid, swimsessionid, eventnumber, gender, round, swimstyleid, sortcode,
         internalevent, splashmecanedit, masters, pfineignore, seedbonuslast,
-        seedexhlast, seedlateentrylast, seedingglobal, twoperlane, combineagegroups)
+        seedexhlast, seedlateentrylast, seedingglobal, twoperlane, combineagegroups, preveventid)
      VALUES (?, ?, ?, ?, ?, ?, ?,
-             'F','F','F','F','F','F','F','F','F','F')`
+             'F','F','F','F','F','F','F','F','F','F', ${NO_PREV_EVENT})`
   ).run(id, sessionId, eventnumber, gNum, round, swimstyleid, sortcode)
   regenerateCombinedEvents(db)
   regeneratePointScores(db)
@@ -1484,12 +1519,12 @@ export async function duplicateEvent(sourceEventId: number, targetSessionId: num
         internalevent, splashmecanedit, masters, pfineignore, seedbonuslast,
         seedexhlast, seedlateentrylast, seedingglobal, twoperlane, combineagegroups,
         comment, daytime, duration, entrytimeconversion, entrytimepercent,
-        externalid, fee, finalorder, lanemax, maxentries, singleheats, sponsor)
+        externalid, fee, finalorder, lanemax, maxentries, singleheats, sponsor, preveventid)
      VALUES (?, ?, ?, ?, ?, ?, ?,
              ?, ?, ?, ?, ?,
              ?, ?, ?, ?, ?,
              ?, ?, ?, ?, ?,
-             ?, ?, ?, ?, ?, ?, ?)`
+             ?, ?, ?, ?, ?, ?, ?, ${NO_PREV_EVENT})`
   ).run(
     newId, targetSessionId, newNum, src.gender, src.round, src.swimstyleid, sortcode,
     src.internalevent ?? 'F', src.splashmecanedit ?? 'F', src.masters ?? 'F',
@@ -1549,13 +1584,13 @@ export async function createAgeGroup(
   const sortcode = (sortRow.maxsort ?? 0) + 1
   // Default heatcount: 2 for finals (A+B), 1 otherwise
   const evRound = db.prepare(`SELECT round FROM swimevent WHERE swimeventid=?`).get(eventId) as { round: number | null } | undefined
-  const heatcount = evRound?.round === 4 ? 2 : 1
+  const heatcount = evRound?.round === ROUND.FIN ? 2 : 1
   db.prepare(
     `INSERT INTO agegroup
        (agegroupid, swimeventid, name, agemin, agemax, gender, heatcount, sortcode,
         useformedals, useforscoring, allofficial, agebytotal, forceprelim, seedwithtsonly)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'T','T','T','F','F','F')`
-  ).run(id, eventId, name, minAge, maxAge, gNum, heatcount, sortcode)
+  ).run(id, eventId, name, minAge ?? NO_AGE_LIMIT, maxAge ?? NO_AGE_LIMIT, gNum, heatcount, sortcode)
   regenerateCombinedEvents(db)
   regeneratePointScores(db)
   return id
@@ -1894,6 +1929,7 @@ export async function generateHeats(eventId?: number, sessionId?: number, inject
         }
       }
     }
+    fillHeatAgeGroups(db, evId)
   }
 
   return { heatsCreated: totalHeats, entriesAssigned: totalAssigned }
@@ -1977,7 +2013,7 @@ function generateHeatsBeach(
       const heatId = nextId('heat', 'heatid', db)
       db.prepare(
         `INSERT INTO heat (heatid, swimeventid, heatnumber, racestatus, sortcode)
-         VALUES (?, ?, 1, 4, 100)`
+         VALUES (?, ?, 1, ${HEAT_SEEDED}, 100)`
       ).run(heatId, evId)
       totalHeats++
       continue
@@ -2014,7 +2050,7 @@ function generateHeatsBeach(
 
       db.prepare(
         `INSERT INTO heat (heatid, swimeventid, heatnumber, racestatus, sortcode)
-         VALUES (?, ?, ?, 4, ?)`
+         VALUES (?, ?, ?, ${HEAT_SEEDED}, ?)`
       ).run(heatId, evId, heatNumber, heatNumber * 100)
       totalHeats++
 
@@ -2026,6 +2062,7 @@ function generateHeatsBeach(
       }
     }
   }
+  for (const evId of eventIds) fillHeatAgeGroups(db, evId)
 
   return { heatsCreated: totalHeats, entriesAssigned: totalAssigned }
 }
@@ -2233,7 +2270,7 @@ function seedAndAssignHeats(
   // ── Create heat rows and assign lanes ──
   const insertHeat = db.prepare(
     `INSERT INTO heat (heatid, swimeventid, agegroupid, heatnumber, racestatus, sortcode)
-     VALUES (?, ?, ?, ?, 4, ?)`
+     VALUES (?, ?, ?, ?, ${HEAT_SEEDED}, ?)`
   )
   const updateResult = db.prepare(
     isRelay
@@ -2427,6 +2464,19 @@ export function readMeetValues(db: MeetValuesDb): MeetValues {
 }
 
 /** MEETVALUES of `db`, values kept raw (`TYPE;VALUE`). */
+/**
+ * A beach meet has no pool length: Splash stores MEETVALUES COURSE (and MeetCourse) = 7 for it
+ * (courses.ts). Called once a meet is a beach meet (LXF import / new beach meet).
+ */
+export function setBeachCourse(db: MeetValuesDb & { prepare(sql: string): { run(...a: unknown[]): unknown } }): void {
+  const mv = readMeetValuesRaw(db)
+  mv['COURSE'] = `I;${COURSE.BEACH}`
+  writeMeetValuesRaw(db, mv)
+  db.prepare(
+    `INSERT INTO bsglobal (name, data) VALUES ('MeetCourse', ?) ON CONFLICT(name) DO UPDATE SET data=excluded.data`
+  ).run(String(COURSE.BEACH))
+}
+
 export function readMeetValuesRaw(db: MeetValuesDb): MeetValues {
   return parseMeetValues(readMeetValuesBlob(db), { keepType: true })
 }
@@ -2461,12 +2511,16 @@ export function setMeetValues(
   if (updates.CITY) syncStmt.run('MeetCity', updates.CITY.value)
   if (updates.NATION) syncStmt.run('MeetNation', updates.NATION.value)
   if (updates.COURSE) {
-    const courseMap: Record<string, string> = { '1': '1', '2': '2', '3': '3' }
-    syncStmt.run('MeetCourse', courseMap[updates.COURSE.value] ?? updates.COURSE.value)
-    // The pool length is one setting: the meet's sessions take it, so fixing it
-    // late doesn't mean rebuilding sessions (same as team-app's set_meet_config).
-    const course = parseInt(updates.COURSE.value, 10)
-    if ([1, 2, 3].includes(course)) db.prepare(`UPDATE swimsession SET course=?`).run(course)
+    // The shared editor sends a LENEX name ('LCM'/'SCM'/'SCY'); stored as Splash's code (courses.ts)
+    const course = courseFromRequest(updates.COURSE.value)
+    if (course != null) {
+      existing['COURSE'] = `I;${course}`
+      writeMeetValuesRaw(db, existing)
+      syncStmt.run('MeetCourse', String(course))
+      // The pool length is one setting: the meet's sessions take it, so fixing it
+      // late doesn't mean rebuilding sessions (same as team-app's set_meet_config).
+      if (([COURSE.LCM, COURSE.SCM, COURSE.SCY] as number[]).includes(course)) db.prepare(`UPDATE swimsession SET course=?`).run(course)
+    }
   }
 }
 
@@ -2508,7 +2562,8 @@ export async function reorderEvents(updates: Array<{ eventId: number; sessionId:
 export interface EventUpdate {
   eventnumber?: number
   gender?: number
-  round?: number
+  /** Splash code, or a LENEX name ('PRE', 'TIM', 'FIN'…) — what the shared EventsPage sends */
+  round?: number | string
   swimstyleid?: number | null
   daytime?: string | null
   duration?: string | null
@@ -2528,7 +2583,8 @@ export async function updateEvent(eventId: number, data: EventUpdate, injectedDb
 
   if (data.eventnumber !== undefined) { sets.push('eventnumber=?'); vals.push(data.eventnumber) }
   if (data.gender !== undefined) { sets.push('gender=?'); vals.push(data.gender) }
-  if (data.round !== undefined) { sets.push('round=?'); vals.push(data.round) }
+  const round = data.round !== undefined ? roundFromRequest(data.round) : undefined
+  if (round !== undefined) { sets.push('round=?'); vals.push(round) }
   if (data.swimstyleid !== undefined) { sets.push('swimstyleid=?'); vals.push(data.swimstyleid) }
   if (data.daytime !== undefined) {
     const t = data.daytime
@@ -2570,7 +2626,7 @@ export async function updateEvent(eventId: number, data: EventUpdate, injectedDb
   }
   // Deleting a Final reverts its prelim's round back to TIM (see EventsPage.tsx's
   // delete handler) — undo the flip above so the now-unsplit event counts again.
-  if (data.round !== undefined && data.round === 5) {
+  if (round === ROUND.TIM) {
     db.prepare(`UPDATE agegroup SET useformedals='T', useforscoring='T' WHERE swimeventid=?`).run(eventId)
   }
 
@@ -2598,8 +2654,8 @@ export async function updateAgeGroup(agegroupId: number, data: AgeGroupUpdate): 
   const vals: unknown[] = []
 
   if (data.name !== undefined) { sets.push('name=?'); vals.push(data.name) }
-  if (data.agemin !== undefined) { sets.push('agemin=?'); vals.push(data.agemin) }
-  if (data.agemax !== undefined) { sets.push('agemax=?'); vals.push(data.agemax) }
+  if (data.agemin !== undefined) { sets.push('agemin=?'); vals.push(data.agemin ?? NO_AGE_LIMIT) }
+  if (data.agemax !== undefined) { sets.push('agemax=?'); vals.push(data.agemax ?? NO_AGE_LIMIT) }
   if (data.gender !== undefined) { sets.push('gender=?'); vals.push(data.gender) }
   if (data.finalseedtype !== undefined) { sets.push('finalseedtype=?'); vals.push(data.finalseedtype) }
   if (data.heatcount !== undefined) { sets.push('heatcount=?'); vals.push(data.heatcount) }
@@ -2629,7 +2685,7 @@ export async function validateHeat(heatId: number): Promise<void> {
 export async function invalidateHeat(heatId: number): Promise<void> {
   const db = getLocalDb()
   db.prepare(
-    `UPDATE heat SET racestatus = 4 WHERE heatid = ? AND racestatus = 5`
+    `UPDATE heat SET racestatus = ${HEAT_SEEDED} WHERE heatid = ? AND racestatus = 5`
   ).run(heatId)
 }
 
@@ -2645,7 +2701,7 @@ export async function validateEvent(eventId: number): Promise<void> {
 export async function invalidateEvent(eventId: number): Promise<void> {
   const db = getLocalDb()
   db.prepare(
-    `UPDATE heat SET racestatus = 4 WHERE swimeventid = ? AND racestatus = 5`
+    `UPDATE heat SET racestatus = ${HEAT_SEEDED} WHERE swimeventid = ? AND racestatus = 5`
   ).run(eventId)
 }
 
@@ -2663,7 +2719,7 @@ export async function validateSession(sessionId: number): Promise<void> {
 export async function invalidateSession(sessionId: number): Promise<void> {
   const db = getLocalDb()
   db.prepare(
-    `UPDATE heat SET racestatus = 4
+    `UPDATE heat SET racestatus = ${HEAT_SEEDED}
      WHERE swimeventid IN (SELECT swimeventid FROM swimevent WHERE swimsessionid = ? AND internalevent = 'F')
        AND racestatus = 5`
   ).run(sessionId)
@@ -2712,7 +2768,7 @@ export interface FinalCandidateRow {
   finalFix: boolean
 }
 
-/** Get all final events (round=4) with their linked prelim event info */
+/** Get all final events (round = ROUND.FIN) with their linked prelim event info */
 export function getFinalEvents(): FinalEventRow[] {
   const db = getLocalDb()
 
@@ -2724,7 +2780,7 @@ export function getFinalEvents(): FinalEventRow[] {
     FROM swimevent e
     JOIN swimsession s ON e.swimsessionid = s.swimsessionid
     LEFT JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid
-    WHERE e.round = 4 AND e.internalevent = 'F'
+    WHERE e.round = ${ROUND.FIN} AND e.internalevent = 'F'
     ORDER BY s.sessionnumber, e.sortcode
   `).all() as Array<{
     swimeventid: number; eventnumber: number | null; gender: number | null
@@ -2777,7 +2833,7 @@ export function getFinalEvents(): FinalEventRow[] {
       sessionId: r.swimsessionid,
       sessionNumber: r.sessionnumber ?? 0,
       sessionName: r.sessionname ?? '',
-      prelimEventId: r.preveventid ?? 0,
+      prelimEventId: linkedPrelim(r.preveventid) ?? 0,
       laneCount,
       heatCount,
       finalOrder: r.finalorder ?? 0,
@@ -2798,8 +2854,8 @@ export function getFinalCandidates(finalEventId: number): FinalCandidateRow[] {
     `SELECT preveventid FROM swimevent WHERE swimeventid = ?`
   ).get(finalEventId) as { preveventid: number | null } | undefined
 
-  if (!finalEvent?.preveventid) return []
-  const prelimEventId = finalEvent.preveventid
+  const prelimEventId = linkedPrelim(finalEvent?.preveventid)
+  if (prelimEventId == null) return []
 
   if (eventIsRelay(db, finalEventId)) {
     return getFinalCandidatesRelay(db, finalEventId, prelimEventId, isBeachMeet3)
@@ -2810,7 +2866,7 @@ export function getFinalCandidates(finalEventId: number): FinalCandidateRow[] {
     SELECT r.swimresultid, r.athleteid, r.swimtime, r.resultstatus, r.agegroupid,
            a.lastname, a.firstname, a.birthdate,
            c.code AS clubcode,
-           COALESCE(NULLIF(ag.name, ''), CASE WHEN ag.agemin IS NOT NULL THEN CAST(ag.agemin AS TEXT) || '-' || COALESCE(CAST(ag.agemax AS TEXT), '+') END, '???') AS agegroupname
+           COALESCE(NULLIF(ag.name, ''), CASE WHEN ag.agemin IS NOT NULL THEN CAST(ag.agemin AS TEXT) || '-' || CASE WHEN ag.agemax IS NULL OR ag.agemax < 0 OR ag.agemax >= 99 THEN '+' ELSE CAST(ag.agemax AS TEXT) END END, '???') AS agegroupname
     FROM swimresult r
     JOIN athlete a ON r.athleteid = a.athleteid
     LEFT JOIN club c ON a.clubid = c.clubid
@@ -2881,7 +2937,7 @@ function getFinalCandidatesRelay(
   const prelimTeams = db.prepare(`
     SELECT r.relayid, r.clubid, r.teamnumber, r.name AS teamname, r.swimtime, r.resultstatus,
            c.code AS clubcode,
-           COALESCE(NULLIF(ag.name, ''), CASE WHEN ag.agemin IS NOT NULL THEN CAST(ag.agemin AS TEXT) || '-' || COALESCE(CAST(ag.agemax AS TEXT), '+') END, '???') AS agegroupname
+           COALESCE(NULLIF(ag.name, ''), CASE WHEN ag.agemin IS NOT NULL THEN CAST(ag.agemin AS TEXT) || '-' || CASE WHEN ag.agemax IS NULL OR ag.agemax < 0 OR ag.agemax >= 99 THEN '+' ELSE CAST(ag.agemax AS TEXT) END END, '???') AS agegroupname
     FROM relay r
     LEFT JOIN club c ON r.clubid = c.clubid
     LEFT JOIN agegroup ag ON r.agegroupid = ag.agegroupid
@@ -3025,10 +3081,11 @@ export function setQualification(
       ).get(finalEventId) as { preveventid: number | null } | undefined
 
       let prelimAgId: number | null = null
-      if (evRow?.preveventid) {
+      const prelimId = linkedPrelim(evRow?.preveventid)
+      if (prelimId != null) {
         const pRes = db.prepare(
           `SELECT agegroupid FROM swimresult WHERE swimeventid = ? AND athleteid = ?`
-        ).get(evRow.preveventid, athleteId) as { agegroupid: number | null } | undefined
+        ).get(prelimId, athleteId) as { agegroupid: number | null } | undefined
         prelimAgId = pRes?.agegroupid ?? null
       }
       const agId = resolveFinalAgeGroupId(db, finalEventId, prelimAgId)
@@ -3050,10 +3107,11 @@ export function setQualification(
 
     let entryTime: number | null = null
     let prelimAgId: number | null = null
-    if (finalEvent?.preveventid) {
+    const prelimId = linkedPrelim(finalEvent?.preveventid)
+    if (prelimId != null) {
       const prelimResult = db.prepare(
         `SELECT swimtime, agegroupid FROM swimresult WHERE swimeventid = ? AND athleteid = ?`
-      ).get(finalEvent.preveventid, athleteId) as { swimtime: number | null; agegroupid: number | null } | undefined
+      ).get(prelimId, athleteId) as { swimtime: number | null; agegroupid: number | null } | undefined
       entryTime = prelimResult?.swimtime ?? null
       prelimAgId = prelimResult?.agegroupid ?? null
     }
@@ -3283,7 +3341,7 @@ export function seedFinals(finalEventId: number): { ok: boolean; heatsCreated: n
 
     db.prepare(
       `INSERT INTO heat (heatid, swimeventid, heatnumber, racestatus, sortcode, finalcode)
-       VALUES (?, ?, ?, 4, ?, ?)`
+       VALUES (?, ?, ?, ${HEAT_SEEDED}, ?, ?)`
     ).run(heatId, finalEventId, heatNumber, heatNumber * 100, letter)
 
     // Lane assignment: center-out for pool, sequential for beach
@@ -3315,6 +3373,7 @@ export function seedFinals(finalEventId: number): { ok: boolean; heatsCreated: n
     }
   }
 
+  fillHeatAgeGroups(db, finalEventId)
   return { ok: overflow === 0, heatsCreated, assigned, overflow }
 }
 
@@ -3626,7 +3685,7 @@ export function getEntriesByEvent(selectedEventIds: number[]): EntryByEventRow[]
              COALESCE(c.code, '') AS clubCode,
              r.entrytime AS entryTime,
              a.nameprefix AS beachNumber,
-             COALESCE(NULLIF(ag2.name, ''), CASE WHEN ag2.agemin IS NOT NULL THEN CAST(ag2.agemin AS TEXT) || '-' || COALESCE(CAST(ag2.agemax AS TEXT), '+') END, '') AS ageGroupName,
+             COALESCE(NULLIF(ag2.name, ''), CASE WHEN ag2.agemin IS NOT NULL THEN CAST(ag2.agemin AS TEXT) || '-' || CASE WHEN ag2.agemax IS NULL OR ag2.agemax < 0 OR ag2.agemax >= 99 THEN '+' ELSE CAST(ag2.agemax AS TEXT) END END, '') AS ageGroupName,
              0 AS isRelay
       FROM swimresult r
       JOIN athlete a ON r.athleteid = a.athleteid
@@ -3658,7 +3717,7 @@ export function getEntriesByEvent(selectedEventIds: number[]): EntryByEventRow[]
              COALESCE(c.name, c.code, '') AS clubName,
              COALESCE(c.code, '') AS clubCode,
              r.entrytime AS entryTime,
-             COALESCE(NULLIF(ag2.name, ''), CASE WHEN ag2.agemin IS NOT NULL THEN CAST(ag2.agemin AS TEXT) || '-' || COALESCE(CAST(ag2.agemax AS TEXT), '+') END, '') AS ageGroupName
+             COALESCE(NULLIF(ag2.name, ''), CASE WHEN ag2.agemin IS NOT NULL THEN CAST(ag2.agemin AS TEXT) || '-' || CASE WHEN ag2.agemax IS NULL OR ag2.agemax < 0 OR ag2.agemax >= 99 THEN '+' ELSE CAST(ag2.agemax AS TEXT) END END, '') AS ageGroupName
       FROM relay r
       JOIN swimevent e ON r.swimeventid = e.swimeventid
       LEFT JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid

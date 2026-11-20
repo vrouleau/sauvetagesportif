@@ -250,7 +250,17 @@ class TestCourseStorage:
         assert _get_meet_config(db, mid, "meet_course") == "LCM"
         assert db.get(Meet, mid).course == 1
         assert "COURSE=I;1" in _mv(db, mid)
-        assert api.get_meet_config(_Req(meet_id=mid), db=db)["COURSE"] == "1"
+        # The shared editor gets the LENEX name (meet-app stores different numbers)
+        assert api.get_meet_config(_Req(meet_id=mid), db=db)["COURSE"] == "LCM"
+
+    def test_meet_editor_sends_course_names(self, db):
+        mid = api.create_new_meet({"meet_type": "pool"}, db=db)["meet_id"]
+        api.set_meet_config({"COURSE": {"type": "I", "value": "SCM"}}, request=_Req(meet_id=mid), db=db)
+        db.commit()
+        assert _get_meet_config(db, mid, "meet_course") == "SCM"
+        assert db.get(Meet, mid).course == 3
+        assert "COURSE=I;3" in _mv(db, mid)  # MEETVALUES keeps team-app's own number
+        assert api.get_meet_config(_Req(meet_id=mid), db=db)["COURSE"] == "SCM"
 
     def test_new_session_takes_the_meet_course(self, db):
         mid = api.create_new_meet({"meet_type": "pool"}, db=db)["meet_id"]
@@ -261,7 +271,7 @@ class TestCourseStorage:
         assert ses.course == 3
         listed = api.list_sessions(_Req(meet_id=mid), db=db)
         listed = listed["sessions"] if isinstance(listed, dict) else listed
-        assert listed[0]["course"] == 3
+        assert listed[0]["course"] == "SCM"  # LENEX name for the shared editor
         assert listed[0]["poolSize"] == 25
 
     def test_session_without_course_shows_50m(self, db):

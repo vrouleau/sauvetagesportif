@@ -666,11 +666,11 @@ describe('LENEX importer', () => {
       runImport(structureXml('city="Laval" nation="CAN" course="SCM" deadline="2027-03-15"', '',
         '<POOL lanemin="1" lanemax="8" />'))
       expect(g('MeetCity')).toBe('Laval')
-      expect(g('MeetCourse')).toBe('3')
+      expect(g('MeetCourse')).toBe('2')  // Splash's code for SCM (courses.ts)
       expect(g('PoolLaneMin')).toBe('1')
       expect(g('PoolLaneMax')).toBe('8')
       expect(mv()).toContain('CITY=S;Laval')
-      expect(mv()).toContain('COURSE=I;3')
+      expect(mv()).toContain('COURSE=I;2')
       expect(mv()).toContain('DEADLINE=D;20270315000000000')
       expect(mv()).toContain('LANEMIN=I;1')
       expect(mv()).toContain('LANEMAX=I;8')
@@ -679,7 +679,7 @@ describe('LENEX importer', () => {
     it('a session takes SESSION@course, else the meet course (was always 50 m)', () => {
       runImport(structureXml('course="SCM"'))
       const s1 = db.prepare(`SELECT course FROM swimsession WHERE sessionnumber=1`).get() as { course: number }
-      expect(s1.course).toBe(3)
+      expect(s1.course).toBe(2)  // SCM in Splash's codes
       runImport(structureXml('course="SCM"', 'course="LCM"'))
       const s2 = db.prepare(`SELECT course FROM swimsession WHERE sessionnumber=1`).get() as { course: number }
       expect(s2.course).toBe(1)
@@ -709,8 +709,8 @@ describe('LENEX importer', () => {
       expect(g('MeetName')).toBe('Structure Meet')
       expect(mv()).toContain('NAME=S;Structure Meet')
       expect(g('MeetCity')).toBe('Local City')
-      expect(g('MeetCourse')).toBe('3')
-      expect(mv()).toContain('COURSE=I;3')
+      expect(g('MeetCourse')).toBe('2')
+      expect(mv()).toContain('COURSE=I;2')
       expect(mv()).toContain('LANEMAX=I;8')
       // the deadline was still empty, so it is filled
       expect(mv()).toContain('DEADLINE=D;20270315000000000')
@@ -758,7 +758,7 @@ describe('LENEX importer', () => {
       importLenex(FIXTURE_PATH, db)
       for (const line of [
         'NAMEEN=S;CQS 2026 (pool) - Lifesaving - CSSG', 'CITY=S;Gatineau', 'STATE=S;QC', 'NATION=S;CAN',
-        'COURSE=I;3', 'DEADLINE=D;20260410000000000', 'RESERVECOUNT=I;2', 'STARTMETHOD=S;1',
+        'COURSE=I;2', 'DEADLINE=D;20260410000000000',  // 25 m = Splash's 2 'RESERVECOUNT=I;2', 'STARTMETHOD=S;1',
         'TIMING=I;2', 'TOUCHPADMODE=I;1', 'MASTERS=B;F',
         'HOSTCLUB=S;Club de sauvetage sportif de Gatineau', 'ORGANIZERURL=S;https://cssgatineau.ca/accueil',
         'FACILITYNAME=S;Centre sportif de Gatineau', 'FACILITYSTREET=S;850, boul. de La Gappe',
@@ -1037,7 +1037,7 @@ describe('LENEX importer', () => {
       importLenex(path, db)
       const qt = (ev: number): Record<string, unknown> => db.prepare(
         `SELECT qttime, qtcourse, qtdate, qtcity, qtname, qtnation FROM swimresult WHERE swimeventid = ?`).get(ev) as Record<string, unknown>
-      expect(qt(100)).toEqual({ qttime: 147850, qtcourse: 3, qtdate: '2026-02-15', qtcity: 'Laval', qtname: 'Invitation Laval', qtnation: 'CAN' })
+      expect(qt(100)).toEqual({ qttime: 147850, qtcourse: 2, qtdate: '2026-02-15', qtcity: 'Laval', qtname: 'Invitation Laval', qtnation: 'CAN' })
       // No MEETINFO → nothing invented
       expect(qt(101)).toEqual({ qttime: null, qtcourse: null, qtdate: null, qtcity: null, qtname: null, qtnation: null })
       expect(db.prepare(`SELECT qttime, qtcourse, qtdate FROM relay WHERE swimeventid = 102`).get())

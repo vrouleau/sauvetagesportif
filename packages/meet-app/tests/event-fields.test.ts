@@ -108,8 +108,8 @@ describe('Event field round-trip (getSessions <-> updateEvent)', () => {
 
     // Convert event 1 (TIM) into a PRE, and link a new FIN event to it — mirrors
     // handleConvertToFinal's step 1 (round -> PRE) and step 3 (preveventid link).
-    await updateEvent(1, { round: 1 }, db)
-    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode, internalevent) VALUES (4, 1, 1, 1, 1, 4, 3, 'F')`)
+    await updateEvent(1, { round: 'PRE' }, db)  // what the shared EventsPage sends
+    db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode, internalevent) VALUES (4, 1, 1, 1, 1, 9, 3, 'F')`)  // 9 = Splash's Final
     await updateEvent(4, { preveventid: 1 }, db)
 
     const flags = db.prepare(`SELECT useformedals, useforscoring FROM agegroup WHERE swimeventid=1`).all() as Array<{ useformedals: string; useforscoring: string }>
@@ -121,7 +121,7 @@ describe('Event field round-trip (getSessions <-> updateEvent)', () => {
 
     // Deleting the final reverts the prelim's round back to TIM — its age groups
     // must count again, matching a plain (never-split) Timed Final.
-    await updateEvent(1, { round: 5 }, db)
+    await updateEvent(1, { round: 'TIM' }, db)
     const flagsAfter = db.prepare(`SELECT useformedals, useforscoring FROM agegroup WHERE swimeventid=1`).all() as Array<{ useformedals: string; useforscoring: string }>
     for (const f of flagsAfter) {
       expect(f.useformedals).toBe('T')

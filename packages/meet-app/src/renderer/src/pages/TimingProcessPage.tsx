@@ -68,7 +68,8 @@ interface BlankTarget {
 
 const isBlank = (scan: ScanRecord | null) => !!scan && scan.barcodeRaw.startsWith('BLANK-')
 
-const ROUND_LABEL: Record<number, string> = { 1: 'Préliminaire', 2: 'Demi-finale', 4: 'Finale', 5: 'Finale directe' }
+// swimevent.round — Splash codes (src/main/rounds.ts)
+const ROUND_LABEL: Record<number, string> = { 1: 'Finale directe', 2: 'Préliminaire', 6: 'Demi-finale', 9: 'Finale' }
 
 function scanLabel(scan: ScanRecord): string {
   if (!isBlank(scan)) return scan.barcodeRaw

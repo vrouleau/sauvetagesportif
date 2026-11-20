@@ -930,7 +930,8 @@ def get_meet_config(request: Request, db: Session = Depends(get_db)):
     if name:
         result["NAME"] = name
     if meetsid:
-        result["COURSE"] = str(COURSE_TO_INT[_get_meet_course(db, meetsid)])
+        # LENEX name for the shared editor (meet-app stores other numbers than ours)
+        result["COURSE"] = _get_meet_course(db, meetsid)
     return result
 
 
@@ -960,8 +961,10 @@ def set_meet_config(entries: dict, request: Request, db: Session = Depends(get_d
         elif key == "COURSE":
             # meets.course + meet_course; MEETVALUES is rewritten below.
             old_course = _get_meet_course(db, meetsid)
-            course = INT_TO_COURSE.get(int(value) if str(value).isdigit() else 0)
+            # The shared editor sends a LENEX name ('LCM'/'SCM'/'SCY'); our own number still accepted
+            course = INT_TO_COURSE.get(int(value)) if str(value).isdigit() else str(value).upper()
             new_course = _set_meet_course(db, meetsid, course, sync_meetvalues=False)
+            existing["COURSE"] = f"I;{COURSE_TO_INT[new_course]}"  # MEETVALUES keeps our number
             if meetsid is not None and new_course != old_course:
                 # The pool length is one setting: an organizer who fixes it late
                 # shouldn't have to rebuild sessions or relay teams. The meet's
@@ -1616,7 +1619,7 @@ def list_sessions(request: Request, db: Session = Depends(get_db)):
             "time": s.daytime.strftime("%H:%M") if s.daytime else None,
             "endTime": s.endtime.strftime("%H:%M") if s.endtime else None,
             "poolSize": 25 if s.course in (2, 3) else 50,
-            "course": s.course or 1,
+            "course": INT_TO_COURSE.get(s.course or 1, "LCM"),  # LENEX name for the shared editor
             "laneMin": s.lanemin,
             "laneMax": s.lanemax,
             "warmupFrom": s.warmupfrom.strftime("%H:%M") if s.warmupfrom else None,
@@ -1684,6 +1687,8 @@ def update_session(session_id: int, data: dict = Body(default={}), db: Session =
             val = data[key]
             if key == "roundtotenths":
                 val = "T" if val else "F"
+            elif key == "course" and isinstance(val, str) and not val.isdigit():
+                val = COURSE_TO_INT.get(val.upper(), 1)  # LENEX name from the shared editor
             elif key == "startdate" and val:
                 from datetime import date as _d
                 try:
@@ -1976,6 +1981,11 @@ def update_event(event_id: int, request: Request, data: dict = Body(default={}),
             # Convert gender string to int if needed
             if key == "gender" and isinstance(val, str):
                 val = LENEX_GENDER.get(val, GENDER_MIXED)
+            elif key == "round" and isinstance(val, str):
+                # The shared EventsPage sends LENEX names ('PRE', 'TIM'…): meet-app stores
+                # Splash's own codes, team-app its own — each backend maps the name itself.
+                from ..events import _round_from_lenex
+                val = _round_from_lenex(val.upper())
             elif key in ("daytime", "duration"):
                 val = _parse_event_time(val)
             setattr(event, col, val)

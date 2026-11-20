@@ -33,7 +33,7 @@ import {
 } from './helpers'
 import type { DbBackend } from '../src/main/dbBackend'
 import { runColumnBackfills } from '../src/main/schema'
-import { clearMeetBsglobal } from '../src/main/db'
+import { clearMeetBsglobal, fillHeatAgeGroups, setBeachCourse } from '../src/main/db'
 import { nextId } from '../src/main/db'
 
 const pgAvailable = await isPgTestAvailable()
@@ -182,6 +182,39 @@ describe.each(BACKENDS)('Schema integrity [%s]', (kind) => {
 
       const row = db.prepare(`SELECT afinal8lanes FROM agegroup WHERE agegroupid = 1`).get() as { afinal8lanes: string | null }
       expect(row.afinal8lanes).toBe('F')
+    })
+  })
+
+  it('fillHeatAgeGroups gives every heat an age group (lowest of its members, else the first of the event)', async () => {
+    await withDb((db) => {
+      db.exec(`INSERT INTO swimstyle (swimstyleid, distance, name, relaycount, stroke) VALUES (1, 100, 'Free', 1, 1)`)
+      db.exec(`INSERT INTO swimsession (swimsessionid, sessionnumber, name, course) VALUES (1, 1, 'S1', 1)`)
+      db.exec(`INSERT INTO swimevent (swimeventid, swimsessionid, swimstyleid, eventnumber, gender, round, sortcode) VALUES (10, 1, 1, 1, 2, 1, 1)`)
+      db.exec(`INSERT INTO agegroup (agegroupid, swimeventid, agemin, agemax, gender, sortcode) VALUES (20, 10, 15, 18, 2, 1)`)
+      db.exec(`INSERT INTO agegroup (agegroupid, swimeventid, agemin, agemax, gender, sortcode) VALUES (21, 10, 19, -1, 2, 2)`)
+      db.exec(`INSERT INTO club (clubid, name, code) VALUES (30, 'C', 'C')`)
+      db.exec(`INSERT INTO athlete (athleteid, clubid, firstname, lastname, gender) VALUES (40, 30, 'A', 'B', 2)`)
+      db.exec(`INSERT INTO heat (heatid, swimeventid, heatnumber, racestatus, sortcode) VALUES (50, 10, 1, 2, 100)`)  // has a swimmer
+      db.exec(`INSERT INTO heat (heatid, swimeventid, heatnumber, racestatus, sortcode) VALUES (51, 10, 2, 2, 200)`)  // empty
+      db.exec(`INSERT INTO swimresult (swimresultid, athleteid, swimeventid, agegroupid, heatid, lane) VALUES (60, 40, 10, 21, 50, 4)`)
+
+      fillHeatAgeGroups(db, 10)
+
+      expect(db.prepare(`SELECT heatid, agegroupid FROM heat ORDER BY heatid`).all()).toEqual([
+        { heatid: 50, agegroupid: 21 },  // from its swimmer
+        { heatid: 51, agegroupid: 20 },  // empty → event's first age group
+      ])
+    })
+  })
+
+  it('setBeachCourse stores Splash beach course 7 in MEETVALUES and MeetCourse', async () => {
+    await withDb((db) => {
+      db.prepare(`INSERT INTO bsglobal (name, data) VALUES ('MEETVALUES', 'COURSE=I;1')`).run()
+      setBeachCourse(db)
+      const g = (n: string) => (db.prepare(`SELECT data FROM bsglobal WHERE name = ?`).get(n) as { data: string }).data
+      expect(g('MEETVALUES')).toContain('COURSE=I;7')
+      expect(g('MEETVALUES')).not.toContain('COURSE=I;1')
+      expect(g('MeetCourse')).toBe('7')
     })
   })
 

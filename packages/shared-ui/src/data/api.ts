@@ -32,8 +32,8 @@ export interface Session {
   time?: string
   endTime?: string
   poolSize: number
-  /** LENEX course code: 1=LCM (50 m), 2=SCY (25 yd), 3=SCM (25 m) */
-  course?: number
+  /** LENEX course name — each backend stores its own number (meet-app: Splash's) */
+  course?: 'LCM' | 'SCM' | 'SCY'
   laneMin?: number
   laneMax?: number
   warmupFrom?: string

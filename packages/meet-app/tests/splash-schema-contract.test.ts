@@ -62,7 +62,9 @@ if (!pgAvailable) {
 
 /** Columns we intentionally added that real Splash doesn't have. */
 const KNOWN_EXTRA_COLUMNS: Record<string, string[]> = {
-  dsqitem: ['name_en'], // bilingual DSQ codes — backfilled via ALTER TABLE in connectionManager.ts
+  // name_en: bilingual DSQ codes; appliesto: our individual/relay tag (dsqCodes.ts) — both
+  // backfilled via ALTER TABLE in connectionManager.ts / COLUMN_BACKFILLS
+  dsqitem: ['name_en', 'appliesto'],
 }
 
 function parseSplashSchema(): Map<string, Set<string>> {
