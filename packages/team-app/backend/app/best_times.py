@@ -301,11 +301,19 @@ def get_best_time_date(
     style_id: int,
     course: str,
     max_age_months: int = 18,
+    time_ms: int | None = None,
 ) -> date | None:
-    """Date of the resolved best time for a specific member/style/course."""
+    """Date of the resolved best time for a specific member/style/course.
+
+    With `time_ms`, only when that best time *is* `time_ms` — the date of a
+    different (e.g. faster/slower) time says nothing about when `time_ms` was
+    swum, so a coach-typed entry time gets None.
+    """
     entry = pick_course(get_best_times_for_member(db, member_id, max_age_months).get(str(style_id), {}),
                         course, style_id in course_free_style_ids(db))
     if not entry or not entry["date"]:
+        return None
+    if time_ms is not None and entry["time_ms"] != time_ms:
         return None
     return date.fromisoformat(entry["date"])
 

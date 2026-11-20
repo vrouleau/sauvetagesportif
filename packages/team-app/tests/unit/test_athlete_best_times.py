@@ -145,6 +145,15 @@ def test_stale_fastest_result_does_not_survive_a_newer_slower_one(db):
     assert get_best_time_date(db, 1, FREE, "LCM") == _ago(30).date()
 
 
+def test_best_time_date_only_when_entry_time_is_that_best_time(db):
+    # LXF MEETINFO date: a coach-typed entry time must not borrow the date of a
+    # different best time (it would trip a QUALIFY period filter when seeding).
+    _result(db, 1, 61000, _ago(200))
+    assert get_best_time_date(db, 1, FREE, "LCM", time_ms=61000) == _ago(200).date()
+    assert get_best_time_date(db, 1, FREE, "LCM", time_ms=59000) is None
+    assert get_best_time_date(db, 2, FREE, "LCM", time_ms=59000) is None  # no best time at all
+
+
 def test_no_eligible_source_means_no_best_time(db):
     _result(db, 1, 55000, _ago(30 * 24))           # expired
     _result(db, 2, 50000, _ago(10), status=4)      # HC/EXH

@@ -474,13 +474,20 @@ def generate_lxf(db: Session, meetsid: int | None = None) -> bytes:
                     entry_attrs["status"] = "EXH"
                 entry_xml = ET.SubElement(entries_xml, "ENTRY", entry_attrs)
                 if reg.entrytime and ev.swimstyleid:
+                    # MEETINFO date = when the entry time was swum: the best time's own
+                    # date when the entry time is that best time; none for a time the
+                    # coach typed (we don't know when it was swum — a made-up date would
+                    # trip a QUALIFY period filter in Splash/meet-app seeding). Expiry
+                    # doesn't depend on it: team-app dates a typed time at meet close.
                     bt_date = get_best_time_date(db, ath.membersid, ev.swimstyleid,
-                                                 meet_struct.course or "LCM")
+                                                 meet_struct.course or "LCM",
+                                                 time_ms=reg.entrytime)
                     meetinfo_attrs = {
                         "qualificationtime": _ms_to_lenex(reg.entrytime),
                         "course": meet_struct.course or "LCM",
-                        "date": str(bt_date) if bt_date else str(date.today()),
                     }
+                    if bt_date:
+                        meetinfo_attrs["date"] = str(bt_date)
                     ET.SubElement(entry_xml, "MEETINFO", meetinfo_attrs)
 
     # ── Relay teams (RELAY/RELAYPOSITION elements per club) ────────────────
