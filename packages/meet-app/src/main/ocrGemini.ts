@@ -29,6 +29,10 @@ import { app } from 'electron'
 import { join } from 'path'
 import { existsSync, readFileSync, writeFileSync } from 'fs'
 import type { OcrEngine } from './ocrEngine'
+import {
+  CHRONO_PROMPT, BLANK_SHEET_PROMPT, parseChronoTimes, parseBlankSheetResponse,
+  type BlankSheetReading,
+} from './blankTimingSheet'
 
 /** Single digit OCR result */
 interface OcrResult { text: string; confidence: number }
@@ -47,21 +51,6 @@ const GEMINI_MODELS = [
 function getGeminiUrl(model: string, apiKey: string): string {
   return `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`
 }
-
-const PROMPT = `This image shows a timing sheet from a lifesaving sport competition.
-There are two rows of handwritten times in digit boxes labeled "Chrono 1" and "Chrono 2".
-Each time is in the format M:SS.HH (1 digit for minutes, 2 for seconds, 2 for hundredths).
-The separators : and . are pre-printed between the boxes.
-
-Read the handwritten digits carefully and return ONLY the two times in this exact format:
-C1:M:SS.HH
-C2:M:SS.HH
-
-For example:
-C1:1:23.45
-C2:1:24.02
-
-If you cannot read a time clearly, write "unclear" for that line. Return nothing else.`
 
 export class GeminiOcrEngine implements OcrEngine {
   readonly name = 'gemini' as const
@@ -94,80 +83,64 @@ export class GeminiOcrEngine implements OcrEngine {
     confidence: number
     raw: string
   }> {
+    const text = await this.generate(CHRONO_PROMPT, imageBuffer)
+    return { ...parseChronoTimes(text), raw: text }
+  }
+
+  /**
+   * Read a hand-filled blank strip: event / heat / lane plus both chrono times.
+   */
+  async recognizeBlankSheet(imageBuffer: Buffer): Promise<BlankSheetReading & { raw: string }> {
+    const text = await this.generate(BLANK_SHEET_PROMPT, imageBuffer)
+    return { ...parseBlankSheetResponse(text), raw: text }
+  }
+
+  /** Send prompt + JPEG to Gemini (model fallback, free → paid key on 429). */
+  private async generate(prompt: string, imageBuffer: Buffer): Promise<string> {
     if (!this.apiKey) throw new Error('Gemini API key not set')
 
-    const base64 = imageBuffer.toString('base64')
+    const body = JSON.stringify({
+      contents: [{
+        parts: [
+          { text: prompt },
+          { inline_data: { mime_type: 'image/jpeg', data: imageBuffer.toString('base64') } },
+        ],
+      }],
+      generationConfig: { temperature: 0, maxOutputTokens: 1000 },
+    })
+    const post = (model: string, key: string) => fetch(getGeminiUrl(model, key), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+    })
+    const textOf = async (resp: Response): Promise<string> => {
+      const data = await resp.json() as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> }
+      return data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? ''
+    }
 
     // Try models in order (fallback if rate limited)
     let lastError = ''
     for (const model of GEMINI_MODELS) {
-      const url = getGeminiUrl(model, this.apiKey)
-
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{
-            parts: [
-              { text: PROMPT },
-              {
-                inline_data: {
-                  mime_type: 'image/jpeg',
-                  data: base64,
-                },
-              },
-            ],
-          }],
-          generationConfig: {
-            temperature: 0,
-            maxOutputTokens: 1000,
-          },
-        }),
-      })
+      const response = await post(model, this.apiKey)
 
       if (response.status === 429) {
-        // Rate limited — try switching to paid key
+        // Rate limited — try switching to paid key, retry same model
         const paidKey = switchToPaidKey()
         if (paidKey && paidKey !== this.apiKey) {
           this.apiKey = paidKey
-          // Retry with paid key on same model
-          const retryUrl = getGeminiUrl(model, paidKey)
-          const retryResp = await fetch(retryUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              contents: [{
-                parts: [
-                  { text: PROMPT },
-                  { inline_data: { mime_type: 'image/jpeg', data: base64 } },
-                ],
-              }],
-              generationConfig: { temperature: 0, maxOutputTokens: 1000 },
-            }),
-          })
-          if (retryResp.ok) {
-            const data = await retryResp.json() as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> }
-            const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? ''
-            return { ...parseGeminiResponse(text), raw: text }
-          }
+          const retryResp = await post(model, paidKey)
+          if (retryResp.ok) return textOf(retryResp)
         }
         lastError = `Rate limited on ${model}`
         continue
       }
 
       if (!response.ok) {
-        const err = await response.text()
-        lastError = `Gemini API error ${response.status}: ${err}`
+        lastError = `Gemini API error ${response.status}: ${await response.text()}`
         continue
       }
 
-      const data = await response.json() as {
-        candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>
-      }
-
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? ''
-      const parsed = parseGeminiResponse(text)
-      return { ...parsed, raw: text }
+      return textOf(response)
     }
 
     throw new Error(lastError || 'All Gemini models failed')
@@ -266,31 +239,4 @@ function refreshKeysFromDb(): void {
       }
     } catch { /* no keys available */ }
   }
-}
-
-// ── Response parsing ──────────────────────────────────────────────────────────
-
-function parseGeminiResponse(text: string): { time1: string; time2: string; confidence: number } {
-  const lines = text.split('\n').map((l) => l.trim()).filter(Boolean)
-
-  let time1 = ''
-  let time2 = ''
-
-  for (const line of lines) {
-    const m1 = line.match(/^(?:C1|Chrono\s*1)\s*[:=]\s*(.+)$/i)
-    if (m1) { time1 = m1[1].trim(); continue }
-    const m2 = line.match(/^(?:C2|Chrono\s*2)\s*[:=]\s*(.+)$/i)
-    if (m2) { time2 = m2[1].trim(); continue }
-  }
-
-  // Fallback: extract time patterns
-  if (!time1 && !time2) {
-    const timePattern = /(\d{1,2}:\d{2}\.\d{2})/g
-    const matches = text.match(timePattern)
-    if (matches && matches.length >= 1) time1 = matches[0]
-    if (matches && matches.length >= 2) time2 = matches[1]
-  }
-
-  const confidence = (time1 && time1 !== 'unclear' && time2 && time2 !== 'unclear') ? 0.95 : 0.3
-  return { time1, time2, confidence }
 }

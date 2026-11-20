@@ -21,6 +21,8 @@
  *
  * Pure scanning mode — no time entry here.
  * Workflow: activate camera → scan sheets one after another → beep confirms each.
+ * Blank sheets (no barcode) are captured manually — button or Space bar — and
+ * get their event/heat/lane from Gemini / the operator in the Traitement tab.
  * Time entry happens in the Traitement tab.
  */
 
@@ -154,6 +156,38 @@ export default function TimingScanPage() {
     scanLoop()
     return () => { running = false }
   }, [cameraActive])
+
+  // Capture a blank (hand-identified) sheet — no barcode to trigger on
+  const captureBlank = useCallback(async () => {
+    const imageBase64 = captureFrame()
+    if (!imageBase64) return
+    setFlash(true)
+    setTimeout(() => setFlash(false), 300)
+    playBeep()
+    const api = timingApi()
+    if (!api) return
+    const barcodeRaw = `BLANK-${Date.now()}`
+    const result = await api.saveScan({
+      eventNumber: 0, swimEventId: 0, heatNumber: 0, lane: 0, barcodeRaw, imageBase64,
+    })
+    if (result.ok) {
+      setScanCount((c) => c + 1)
+      setLastBarcode('Fiche vierge')
+    }
+  }, [])
+
+  // Space bar = capture blank sheet (while the camera runs)
+  useEffect(() => {
+    if (!cameraActive) return
+    function onKey(e: KeyboardEvent) {
+      if (e.code !== 'Space' || e.repeat) return
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+      e.preventDefault()
+      captureBlank()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [cameraActive, captureBlank])
 
   // Handle decoded barcode
   const handleBarcodeDecode = useCallback(async (raw: string) => {
@@ -293,7 +327,14 @@ export default function TimingScanPage() {
 
       {/* Controls */}
       {cameraActive && (
-        <div className="flex justify-center">
+        <div className="flex justify-center gap-3">
+          <button
+            onClick={captureBlank}
+            className="px-4 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700"
+            title="Les fiches vierges n'ont pas de code-barres : cadrez la fiche puis capturez (Espace)"
+          >
+            📸 Capturer fiche vierge (Espace)
+          </button>
           <button
             onClick={stopCamera}
             className="px-4 py-1 bg-gray-600 text-white text-xs rounded hover:bg-gray-700"

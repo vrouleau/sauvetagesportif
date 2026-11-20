@@ -19,11 +19,12 @@
 /**
  * Timing sheet PDF generator.
  *
- * Produces printable sheets in PORTRAIT with 3 lane strips per page.
+ * Produces printable sheets in PORTRAIT with 3 lane strips per page
+ * (plus blank, hand-identified strips — see generateBlankTimingSheetsHtml).
  * Each strip includes:
  * - Code128B barcode (rendered as inline SVG)
  * - Event info (name, heat, lane, athlete)
- * - TWO rows of boxed digit cells (Judge 1 and Judge 2) for M:SS.HH
+ * - TWO rows of underlined M : SS . HH fields (Chrono 1 and Chrono 2)
  * - Corner registration marks for perspective correction during scanning
  *
  * Each strip has BOTH judges' time entry on the same slip, so we only
@@ -49,7 +50,7 @@ export interface TimingSheetPage {
 /**
  * Generate all timing sheet pages for a given heat.
  * Groups lanes into pages of 3 strips each.
- * Each strip has both judges' time boxes (no separate judge sheets needed).
+ * Each strip has both judges' time fields (no separate judge sheets needed).
  */
 export function buildTimingSheetPages(
   swimEventId: number,
@@ -80,12 +81,7 @@ export function buildTimingSheetPages(
 
 // ── HTML-based PDF generation ─────────────────────────────────────────────────
 
-/**
- * Generate the HTML content for timing sheets (portrait, 3 strips/page).
- * Each strip has two judge time-entry rows.
- */
-export function generateTimingSheetsHtml(pages: TimingSheetPage[]): string {
-  const styles = `
+const SHEET_STYLES = `
     <style>
       @page { margin: 0; size: letter portrait; }
       * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -128,29 +124,80 @@ export function generateTimingSheetsHtml(pages: TimingSheetPage[]): string {
       .strip-info .details { color: #222; margin-top: 3pt; font-size: 10pt; }
       .strip-info .athlete { color: #444; font-weight: 500; margin-top: 2pt; font-size: 10pt; }
       .barcode-area { text-align: center; margin-top: 0.1in; }
-      .barcode-area svg { height: 60pt; width: 100%; }
+      /* 48pt (was 60pt): with the athlete line, 60pt pushed the M/S/H digit labels
+         out below the strip border. Code128 reads by bar width, height is ample. */
+      .barcode-area svg { height: 48pt; width: 100%; }
       .barcode-text { font-family: monospace; font-size: 11pt; color: #000; margin-top: 3pt; text-align: center; font-weight: bold; letter-spacing: 2pt; }
-      .judges-section { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 0.12in; }
-      .judge-row { display: flex; align-items: center; gap: 0.1in; }
-      .judge-label { font-size: 9pt; font-weight: bold; width: 0.55in; text-align: right; color: #333; }
-      .digit-row { display: flex; align-items: center; gap: 3pt; }
-      .digit-box {
-        width: 0.38in; height: 0.48in;
-        border: 2px solid #000;
-        background: #fafafa;
-      }
-      .separator { font-size: 20pt; font-weight: bold; width: 0.12in; text-align: center; line-height: 0.48in; }
-      .digit-labels { display: flex; gap: 3pt; margin-left: 0.65in; margin-top: 1pt; }
-      .digit-labels span { width: 0.38in; text-align: center; font-size: 7pt; color: #999; }
-      .digit-labels .sep-space { width: 0.12in; }
+      .judges-section { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 0.1in; }
+      .judge-row { display: flex; align-items: flex-end; gap: 0.1in; }
+      .judge-label { font-size: 9pt; font-weight: bold; width: 0.55in; text-align: right; color: #333; padding-bottom: 3pt; }
+      /* Times: one underline per group (M : SS . HH) — free handwriting, but the
+         printed separators still tell the reader which digits are which. */
+      .digit-row { display: flex; align-items: flex-end; gap: 4pt; }
+      .time-line { height: 0.48in; border-bottom: 2px solid #000; }
+      .time-m { width: 0.5in; }
+      .time-ss, .time-hh { width: 0.85in; }
+      .separator { font-size: 20pt; font-weight: bold; width: 0.14in; text-align: center; line-height: 1; padding-bottom: 1pt; }      /* Judge's initials / signature, right end of each chrono row */
+      .sig { margin-left: auto; display: flex; align-items: flex-end; gap: 6pt; }
+      .sig-label { font-size: 9pt; color: #444; padding-bottom: 3pt; }
+      .sig-line { width: 1.6in; height: 0.48in; border-bottom: 1.5px solid #000; }
+      .digit-labels { display: flex; gap: 4pt; margin-left: 0.65in; margin-top: 1pt; }
+      .digit-labels span { text-align: center; font-size: 7pt; color: #999; }
+      .digit-labels .sep-space { width: 0.14in; }
       .reg-mark { position: absolute; width: 6pt; height: 6pt; background: #000; }
       .reg-tl { top: 3pt; left: 3pt; }
       .reg-tr { top: 3pt; right: 3pt; }
       .reg-bl { bottom: 3pt; left: 3pt; }
       .reg-br { bottom: 3pt; right: 3pt; }
+      /* Blank strip: hand-written identity on underlines */
+      .blank-tag { position: absolute; top: 0.1in; right: 0.3in; font-size: 8pt; font-weight: bold; letter-spacing: 1pt; color: #555; }
+      .id-row { display: flex; align-items: flex-end; gap: 0.3in; margin-top: 0.1in; }
+      .id-field { display: flex; align-items: flex-end; gap: 6pt; }
+      .id-label { font-size: 12pt; font-weight: bold; }
+      .id-line { width: 1.1in; height: 0.45in; border-bottom: 2px solid #000; }
+      .name-row { display: flex; align-items: flex-end; gap: 6pt; margin-top: 0.12in; }
+      .name-label { font-size: 9pt; color: #444; white-space: nowrap; }
+      .name-line { flex: 1; height: 0.3in; border-bottom: 1px solid #666; }
     </style>
-  `
+`
 
+/** One chrono row: M : SS . HH on underlines. */
+const chronoRowHtml = (label: string): string => `
+  <div class="judge-row">
+    <div class="judge-label">${label}</div>
+    <div class="digit-row">
+      <div class="time-line time-m"></div>
+      <div class="separator">:</div>
+      <div class="time-line time-ss"></div>
+      <div class="separator">.</div>
+      <div class="time-line time-hh"></div>
+    </div>
+    <div class="sig">
+      <span class="sig-label">Initiales</span>
+      <span class="sig-line"></span>
+    </div>
+  </div>`
+
+/** Chrono 1 / Chrono 2 rows (M:SS.HH) — shared by barcoded and blank strips. */
+const CHRONO_ROWS_HTML = `
+<div class="judges-section">
+  ${chronoRowHtml('Chrono 1')}
+  ${chronoRowHtml('Chrono 2')}
+  <div class="digit-labels">
+    <span class="time-m">min</span>
+    <span class="sep-space"></span>
+    <span class="time-ss">sec</span>
+    <span class="sep-space"></span>
+    <span class="time-hh">1/100</span>
+  </div>
+</div>
+`
+
+/**
+ * Generate the HTML content for timing sheets (portrait, 3 strips/page).
+ * Each strip has two judge time-entry rows.
+ */
+export function generateTimingSheetsHtml(pages: TimingSheetPage[]): string {
   const pagesHtml = pages.map((page) => {
     const stripsHtml = page.strips.map((strip) => {
       // Barcode encodes lane with judge=1 (the strip covers both judges, barcode identifies the lane)
@@ -173,41 +220,7 @@ export function generateTimingSheetsHtml(pages: TimingSheetPage[]): string {
             ${barcodeSvg}
             <div class="barcode-text">${barcodeValue}</div>
           </div>
-          <div class="judges-section">
-            <div class="judge-row">
-              <div class="judge-label">Chrono 1</div>
-              <div class="digit-row">
-                <div class="digit-box"></div>
-                <div class="separator">:</div>
-                <div class="digit-box"></div>
-                <div class="digit-box"></div>
-                <div class="separator">.</div>
-                <div class="digit-box"></div>
-                <div class="digit-box"></div>
-              </div>
-            </div>
-            <div class="judge-row">
-              <div class="judge-label">Chrono 2</div>
-              <div class="digit-row">
-                <div class="digit-box"></div>
-                <div class="separator">:</div>
-                <div class="digit-box"></div>
-                <div class="digit-box"></div>
-                <div class="separator">.</div>
-                <div class="digit-box"></div>
-                <div class="digit-box"></div>
-              </div>
-            </div>
-            <div class="digit-labels">
-              <span>M</span>
-              <span class="sep-space"></span>
-              <span>S</span>
-              <span>S</span>
-              <span class="sep-space"></span>
-              <span>H</span>
-              <span>H</span>
-            </div>
-          </div>
+          ${CHRONO_ROWS_HTML}
         </div>
       `
     }).join('<div class="cut-line"></div>')
@@ -215,7 +228,38 @@ export function generateTimingSheetsHtml(pages: TimingSheetPage[]): string {
     return `<div class="page">${stripsHtml}</div>`
   }).join('')
 
-  return `<!DOCTYPE html><html><head><meta charset="utf-8">${styles}</head><body>${pagesHtml}</body></html>`
+  return wrapSheetsHtml(pagesHtml)
+}
+
+/**
+ * Blank timing sheets (late arrivals / missing sheets): same strip as above,
+ * but no barcode — Épreuve / Série / Couloir are hand-written on underlines,
+ * and Gemini reads them back along with the times (BLANK_SHEET_PROMPT).
+ */
+export function generateBlankTimingSheetsHtml(pageCount = 1): string {
+  const pages = Math.max(1, Math.min(50, Math.floor(pageCount) || 1))
+  const strip = `
+        <div class="strip">
+          <div class="reg-mark reg-tl"></div>
+          <div class="reg-mark reg-tr"></div>
+          <div class="reg-mark reg-bl"></div>
+          <div class="reg-mark reg-br"></div>
+          <div class="blank-tag">FICHE VIERGE</div>
+          <div class="id-row">
+            <div class="id-field"><span class="id-label">Épreuve</span><span class="id-line"></span></div>
+            <div class="id-field"><span class="id-label">Série</span><span class="id-line"></span></div>
+            <div class="id-field"><span class="id-label">Couloir</span><span class="id-line"></span></div>
+          </div>
+          <div class="name-row"><span class="name-label">Nageur / équipe (club)</span><span class="name-line"></span></div>
+          ${CHRONO_ROWS_HTML}
+        </div>
+      `
+  const pageHtml = `<div class="page">${[strip, strip, strip].join('<div class="cut-line"></div>')}</div>`
+  return wrapSheetsHtml(pageHtml.repeat(pages))
+}
+
+function wrapSheetsHtml(pagesHtml: string): string {
+  return `<!DOCTYPE html><html><head><meta charset="utf-8">${SHEET_STYLES}</head><body>${pagesHtml}</body></html>`
 }
 
 function escHtml(s: string): string {

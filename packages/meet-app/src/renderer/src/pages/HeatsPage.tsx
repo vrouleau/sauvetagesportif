@@ -948,6 +948,20 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
     await reportApi.print(result.html, { line1: '', line2: '', today: '' })
   }
 
+  // Blank strips (no barcode) for late arrivals / missing sheets — timers
+  // hand-write event / heat / lane; one page of 3, print as many copies as needed.
+  async function handlePrintBlankTimingSheets() {
+    const api = (window as any).api?.timing
+    const reportApi = (window as any).api?.report
+    if (!api || !reportApi) return
+    const result = await api.generateBlankSheets(1)
+    if (!result.ok) {
+      window.alert(`Erreur: ${result.error}`)
+      return
+    }
+    await reportApi.print(result.html, { line1: '', line2: '', today: '' })
+  }
+
   async function handlePrintPositionSheets() {
     const api = (window as any).api?.timing
     const reportApi = (window as any).api?.report
@@ -1259,6 +1273,17 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
               title="Imprimer les fiches de chronométrage pour la session"
             >
               🖨 Fiches chrono
+            </button>
+          )}
+          {!isBeach && (
+            <button
+              onClick={handlePrintBlankTimingSheets}
+              className="border border-gray-400 bg-white hover:bg-purple-50 px-2 py-0.5 text-xs font-medium text-purple-700"
+              title={lang === 'fr'
+                ? 'Fiches chrono vierges (sans code-barres) pour arrivées tardives ou fiches manquantes — épreuve / série / couloir écrits à la main'
+                : 'Blank timing sheets (no barcode) for late arrivals or missing sheets — event / heat / lane written by hand'}
+            >
+              🖨 {lang === 'fr' ? 'Fiches vierges' : 'Blank sheets'}
             </button>
           )}
           {/* Call to Marshall — event selected, no times, not validated */}
