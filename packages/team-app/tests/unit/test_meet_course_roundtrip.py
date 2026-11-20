@@ -49,6 +49,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "backend"))
 
 from app.models import (  # noqa: E402
     Base, BsGlobal, MeetConfig, SwimEvent, SwimSession, SwimStyle, GENDER_F, GENDER_M, GENDER_MIXED,
+    ROUND_PRE, ROUND_TIM, ROUND_FIN,
 )
 from app.models_team import Meet, Member, Relay, RelayPos, TeamClub  # noqa: E402
 from app.routers import api  # noqa: E402
@@ -274,6 +275,7 @@ class TestCourseStorage:
         assert listed[0]["course"] == "SCM"  # LENEX name for the shared editor
         assert listed[0]["poolSize"] == 25
 
+
     def test_session_without_course_shows_50m(self, db):
         """It used to show 25 m (`50 if course == 1 else 25`)."""
         mid = api.create_new_meet({"meet_type": "pool"}, db=db)["meet_id"]
@@ -468,3 +470,40 @@ def test_suggestion_rounds_like_the_shared_ui():
     assert suggest_relay_entry_time([120000, 120010]) == 120010
     assert suggest_relay_entry_time([120000, None, 0]) == 120000
     assert suggest_relay_entry_time([None]) is None
+
+
+class TestSharedEditorSendsNames:
+    """The shared EventsPage sends LENEX names, not numbers: meet-app stores Splash's codes
+    (round 1 TIM / 2 PRE / 9 FIN, course 2 SCM / 3 SCY), team-app its own — each backend
+    maps the name. team-app's stored numbers don't change."""
+
+    def test_session_course_name_is_stored_as_our_number_and_listed_as_a_name(self, db):
+        mid = api.create_new_meet({"meet_type": "pool"}, db=db)["meet_id"]
+        api.create_session(_Req(meet_id=mid), {"name": "S1", "number": 1}, db=db)
+        ses = db.query(SwimSession).filter(SwimSession.meetsid == mid).first()
+        for name, number in (("SCM", 3), ("SCY", 2), ("LCM", 1)):
+            api.update_session(ses.swimsessionid, {"course": name}, db=db)
+            db.refresh(ses)
+            assert ses.course == number
+            listed = api.list_sessions(_Req(meet_id=mid), db=db)
+            listed = listed["sessions"] if isinstance(listed, dict) else listed
+            row = next(s for s in listed if s["id"] == ses.swimsessionid)
+            assert row["course"] == name
+        api.update_session(ses.swimsessionid, {"course": 3}, db=db)  # our own number still accepted
+        db.refresh(ses)
+        assert ses.course == 3
+
+    def test_event_round_name_is_stored_as_our_number(self, db):
+        mid = api.create_new_meet({"meet_type": "pool"}, db=db)["meet_id"]
+        api.create_session(_Req(meet_id=mid), {"name": "S1", "number": 1}, db=db)
+        ses = db.query(SwimSession).filter(SwimSession.meetsid == mid).first()
+        api.create_event(_Req(meet_id=mid), {"sessionId": ses.swimsessionid, "number": 1, "gender": "F"}, db=db)
+        ev = db.query(SwimEvent).filter(SwimEvent.meetsid == mid).first()
+        # convert to prelim + final, then delete the final: what EventsPage sends
+        for name, number in (("PRE", ROUND_PRE), ("TIM", ROUND_TIM), ("FIN", ROUND_FIN), ("pre", ROUND_PRE)):
+            api.update_event(ev.swimeventid, _Req(meet_id=mid), {"round": name}, db=db)
+            db.refresh(ev)
+            assert ev.round == number
+        api.update_event(ev.swimeventid, _Req(meet_id=mid), {"round": ROUND_TIM}, db=db)  # number still accepted
+        db.refresh(ev)
+        assert ev.round == ROUND_TIM
