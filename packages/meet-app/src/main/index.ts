@@ -40,6 +40,7 @@ import {
   createAgeGroup, deleteAgeGroup, updateAgeGroup, moveAgeGroup,
   saveAthlete,
   flushMeet,
+  clearMeetBsglobal,
   generateHeats,
   getLocalDb, closeLocalDb,
   getMeetValues, setMeetValues,
@@ -1374,7 +1375,7 @@ ipcMain.handle('file:import-lenex', async (event, filePath: string, lang?: strin
     db.exec(`DELETE FROM athlete`)
     db.exec(`DELETE FROM club`)
     db.exec(`DELETE FROM dsqitem`)
-    db.exec(`DELETE FROM bsglobal`)
+    clearMeetBsglobal(db)  // keeps Splash's own keys — a shared Splash DB is refused without them
 
     const summary = importLenex(filePath, db)
 
@@ -1508,7 +1509,7 @@ ipcMain.handle('file:new-meet', async (_event, meetType?: string, lang?: string)
     db.exec(`DELETE FROM athlete`)
     db.exec(`DELETE FROM club`)
     db.exec(`DELETE FROM dsqitem`)
-    db.exec(`DELETE FROM bsglobal`)
+    clearMeetBsglobal(db)  // keeps Splash's own keys — a shared Splash DB is refused without them
 
     // Resolve template path based on meet type
     const templateFile = type === 'beach' ? 'template_beach.lxf' : 'template_pool.lxf'

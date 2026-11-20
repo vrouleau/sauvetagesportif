@@ -33,6 +33,7 @@ import {
 } from './helpers'
 import type { DbBackend } from '../src/main/dbBackend'
 import { runColumnBackfills } from '../src/main/schema'
+import { clearMeetBsglobal } from '../src/main/db'
 import { nextId } from '../src/main/db'
 
 const pgAvailable = await isPgTestAvailable()
@@ -181,6 +182,21 @@ describe.each(BACKENDS)('Schema integrity [%s]', (kind) => {
 
       const row = db.prepare(`SELECT afinal8lanes FROM agegroup WHERE agegroupid = 1`).get() as { afinal8lanes: string | null }
       expect(row.afinal8lanes).toBe('F')
+    })
+  })
+
+  it('clearMeetBsglobal keeps the Splash database keys (a shared Splash DB is refused without them)', async () => {
+    await withDb((db) => {
+      const keep = ['BSAPPLICATION', 'BSDB_DDL_VERSION_APPLICATION', 'DB_DDL_VERSION_BASE', 'REPORTDEFINITION',
+        'GeneralSettings', 'GUISettings', 'SETTINGS_TFImportEntriesDlg', 'GEMINI_KEY_FREE']
+      const drop = ['MeetName', 'MEETVALUES', 'MEET_TYPE', 'COMBINEDEVENTS', 'AGEDATE', 'SETTINGSX']
+      const ins = db.prepare(`INSERT INTO bsglobal (name, data) VALUES (?, 'x')`)
+      for (const n of [...keep, ...drop]) ins.run(n)
+
+      clearMeetBsglobal(db)
+
+      const left = (db.prepare(`SELECT name FROM bsglobal`).all() as Array<{ name: string }>).map(r => r.name).sort()
+      expect(left).toEqual([...keep].sort())
     })
   })
 

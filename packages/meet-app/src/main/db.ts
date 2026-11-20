@@ -2306,6 +2306,27 @@ function parseLanesbyplace(s: string | null | undefined): number[] | null {
 
 // ── Flush: delete all meet data ───────────────────────────────────────────────
 
+/**
+ * bsglobal keys that belong to the database/application, not to the meet — kept when a meet is
+ * reset or replaced. On a Postgres database shared with real Splash, wiping them (BSAPPLICATION,
+ * the DDL versions…) makes Splash refuse the database: "File/Database contains wrong data".
+ */
+const BSGLOBAL_KEEP_EXACT = [
+  'GEMINI_KEY_FREE', 'GEMINI_KEY_PAID',
+  'BSAPPLICATION', 'REPORTDEFINITION', 'GeneralSettings', 'GUISettings',
+  'AgegroupHeatCountSet', 'BsSwHandicapMedleyStylesOk',
+]
+
+/** Delete every meet-level bsglobal key, keeping Splash's database keys and the Gemini keys. */
+export function clearMeetBsglobal(db: { prepare(sql: string): { run(...a: unknown[]): unknown } }): void {
+  db.prepare(
+    `DELETE FROM bsglobal
+      WHERE name NOT IN (${BSGLOBAL_KEEP_EXACT.map(() => '?').join(', ')})
+        AND name NOT LIKE '%DDL_VERSION%'
+        AND name NOT LIKE 'SETTINGS\\_%' ESCAPE '\\'`
+  ).run(...BSGLOBAL_KEEP_EXACT)
+}
+
 export async function flushMeet(): Promise<void> {
   const db = getLocalDb()
   db.exec(`DELETE FROM split`)
@@ -2316,18 +2337,12 @@ export async function flushMeet(): Promise<void> {
   db.exec(`DELETE FROM swimsession`)
   db.exec(`DELETE FROM athlete`)
   db.exec(`DELETE FROM club`)
-  // Clear bsglobal but preserve Gemini keys
-  const preserved = db.prepare(
-    `SELECT name, data FROM bsglobal WHERE name IN ('GEMINI_KEY_FREE', 'GEMINI_KEY_PAID')`
-  ).all() as Array<{ name: string; data: string | null }>
-  db.exec(`DELETE FROM bsglobal`)
-  // Restore preserved keys + set default age_base_date
+  // Clear the meet's bsglobal keys (Gemini keys and Splash's own database keys are kept)
+  clearMeetBsglobal(db)
+  // Set default age_base_date
   const upsert = db.prepare(
     `INSERT INTO bsglobal (name, data) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET data=excluded.data`
   )
-  for (const row of preserved) {
-    if (row.data) upsert.run(row.name, row.data)
-  }
   const year = new Date().getFullYear()
   const ageDate = `D;${year}1231000000000`
   upsert.run('AGEDATE', ageDate)
