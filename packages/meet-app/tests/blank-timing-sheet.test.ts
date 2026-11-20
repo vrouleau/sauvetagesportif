@@ -120,7 +120,7 @@ describe('Blank sheet target resolution', () => {
 })
 
 describe('Blank timing sheet HTML', () => {
-  it('has underlined event/heat/lane fields, chrono boxes, and no barcode', () => {
+  it('has underlined event/heat/lane and chrono fields, and no barcode', () => {
     const html = generateBlankTimingSheetsHtml()
     expect((html.match(/class="strip"/g) ?? []).length).toBe(3)
     expect((html.match(/class="id-line"/g) ?? []).length).toBe(9)
@@ -129,7 +129,8 @@ describe('Blank timing sheet HTML', () => {
     expect(html).toContain('Couloir')
     expect(html).toContain('FICHE VIERGE')
     expect((html.match(/Chrono 1/g) ?? []).length).toBe(3)
-    expect((html.match(/class="digit-box"/g) ?? []).length).toBe(3 * 2 * 5)
+    expect((html.match(/class="time-line /g) ?? []).length).toBe(3 * 2 * 3) // 3 strips × 2 chronos × M/SS/HH
+    expect(html).not.toContain('digit-box')
     expect(html).not.toContain('<svg')
   })
 
@@ -145,7 +146,7 @@ describe('Blank timing sheet HTML', () => {
     const html = generateTimingSheetsHtml(pages)
     expect(html).toContain('E5-U1496-H2-L3')
     expect(html).toContain('<svg')
-    expect((html.match(/class="digit-box"/g) ?? []).length).toBe(2 * 2 * 5)
+    expect((html.match(/class="time-line /g) ?? []).length).toBe(2 * 2 * 3)
     expect(html).not.toContain('FICHE VIERGE')
   })
 })

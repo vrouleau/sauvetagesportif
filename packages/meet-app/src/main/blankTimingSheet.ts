@@ -41,9 +41,12 @@ export function makeBlankBarcode(now: number = Date.now()): string {
 // ── Gemini prompts + parsing ──────────────────────────────────────────────────
 
 export const CHRONO_PROMPT = `This image shows a timing sheet from a lifesaving sport competition.
-There are two rows of handwritten times in digit boxes labeled "Chrono 1" and "Chrono 2".
-Each time is in the format M:SS.HH (1 digit for minutes, 2 for seconds, 2 for hundredths).
-The separators : and . are pre-printed between the boxes.
+There are two rows of handwritten times labeled "Chrono 1" and "Chrono 2".
+Each time is written on three underlined fields: minutes, seconds, hundredths,
+with the separators : and . pre-printed between them (format M:SS.HH).
+The handwriting may go above or across the lines. Seconds and hundredths are two digits:
+if only one digit is written on such a field, pad it with a leading 0.
+Ignore any separator the timer also wrote by hand.
 
 Read the handwritten digits carefully and return ONLY the two times in this exact format:
 C1:M:SS.HH
@@ -58,9 +61,12 @@ If you cannot read a time clearly, write "unclear" for that line. Return nothing
 export const BLANK_SHEET_PROMPT = `This image shows a hand-filled BLANK timing sheet from a lifesaving sport competition.
 At the top, three numbers are handwritten on underlined fields labeled
 "Épreuve" (event number), "Série" (heat number) and "Couloir" (lane number).
-Below, two rows of handwritten times in digit boxes labeled "Chrono 1" and "Chrono 2".
-Each time is in the format M:SS.HH (1 digit for minutes, 2 for seconds, 2 for hundredths).
-The separators : and . are pre-printed between the boxes.
+Below, two rows of handwritten times labeled "Chrono 1" and "Chrono 2".
+Each time is written on three underlined fields: minutes, seconds, hundredths,
+with the separators : and . pre-printed between them (format M:SS.HH).
+The handwriting may go above or across the lines. Seconds and hundredths are two digits:
+if only one digit is written on such a field, pad it with a leading 0.
+Ignore any separator the timer also wrote by hand.
 Ignore the swimmer name line.
 
 Read the handwriting carefully and return ONLY these five lines in this exact format:

@@ -127,13 +127,13 @@ Après la génération, l'onglet séries affiche :
    - Code-barres Code128 pleine largeur (pour le scanner)
    - Nom de l'épreuve, numéro de série, numéro de couloir
    - Nom de l'athlète et code du club
-   - Deux rangées de cases à chiffres (Chrono 1 / Chrono 2)
+   - Deux rangées de lignes pour les temps M : SS . HH (Chrono 1 / Chrono 2)
 4. Imprimer sur papier lettre standard, découper en bandes, distribuer aux chronométreurs
 
 ### Fiches chrono vierges (arrivées tardives / fiches manquantes)
 
 1. Cliquer **🖨 Fiches vierges** — une page de 3 bandes sans code-barres (imprimer le nombre de copies voulu)
-2. Le chronométreur écrit à la main **Épreuve**, **Série** et **Couloir** sur les lignes, puis les deux temps dans les cases
+2. Le chronométreur écrit à la main **Épreuve**, **Série** et **Couloir** sur les lignes, puis les deux temps sur les lignes
 3. Au scanner, capturer la fiche avec **📸 Capturer fiche vierge** (ou la barre d'espace) — il n'y a pas de code-barres à détecter
 4. Dans **Traitement**, Gemini lit l'épreuve / série / couloir et les temps ; vérifier le nageur affiché avant d'accepter. Si une préliminaire et sa finale partagent le numéro d'épreuve, choisir la ronde
 

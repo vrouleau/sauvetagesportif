@@ -24,7 +24,7 @@
  * Each strip includes:
  * - Code128B barcode (rendered as inline SVG)
  * - Event info (name, heat, lane, athlete)
- * - TWO rows of boxed digit cells (Judge 1 and Judge 2) for M:SS.HH
+ * - TWO rows of underlined M : SS . HH fields (Chrono 1 and Chrono 2)
  * - Corner registration marks for perspective correction during scanning
  *
  * Each strip has BOTH judges' time entry on the same slip, so we only
@@ -50,7 +50,7 @@ export interface TimingSheetPage {
 /**
  * Generate all timing sheet pages for a given heat.
  * Groups lanes into pages of 3 strips each.
- * Each strip has both judges' time boxes (no separate judge sheets needed).
+ * Each strip has both judges' time fields (no separate judge sheets needed).
  */
 export function buildTimingSheetPages(
   swimEventId: number,
@@ -129,18 +129,17 @@ const SHEET_STYLES = `
       .barcode-area svg { height: 48pt; width: 100%; }
       .barcode-text { font-family: monospace; font-size: 11pt; color: #000; margin-top: 3pt; text-align: center; font-weight: bold; letter-spacing: 2pt; }
       .judges-section { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 0.1in; }
-      .judge-row { display: flex; align-items: center; gap: 0.1in; }
-      .judge-label { font-size: 9pt; font-weight: bold; width: 0.55in; text-align: right; color: #333; }
-      .digit-row { display: flex; align-items: center; gap: 3pt; }
-      .digit-box {
-        width: 0.38in; height: 0.48in;
-        border: 2px solid #000;
-        background: #fafafa;
-      }
-      .separator { font-size: 20pt; font-weight: bold; width: 0.12in; text-align: center; line-height: 0.48in; }
-      .digit-labels { display: flex; gap: 3pt; margin-left: 0.65in; margin-top: 1pt; }
-      .digit-labels span { width: 0.38in; text-align: center; font-size: 7pt; color: #999; }
-      .digit-labels .sep-space { width: 0.12in; }
+      .judge-row { display: flex; align-items: flex-end; gap: 0.1in; }
+      .judge-label { font-size: 9pt; font-weight: bold; width: 0.55in; text-align: right; color: #333; padding-bottom: 3pt; }
+      /* Times: one underline per group (M : SS . HH) — free handwriting, but the
+         printed separators still tell the reader which digits are which. */
+      .digit-row { display: flex; align-items: flex-end; gap: 4pt; }
+      .time-line { height: 0.48in; border-bottom: 2px solid #000; }
+      .time-m { width: 0.5in; }
+      .time-ss, .time-hh { width: 0.85in; }
+      .separator { font-size: 20pt; font-weight: bold; width: 0.14in; text-align: center; line-height: 1; padding-bottom: 1pt; }      .digit-labels { display: flex; gap: 4pt; margin-left: 0.65in; margin-top: 1pt; }
+      .digit-labels span { text-align: center; font-size: 7pt; color: #999; }
+      .digit-labels .sep-space { width: 0.14in; }
       .reg-mark { position: absolute; width: 6pt; height: 6pt; background: #000; }
       .reg-tl { top: 3pt; left: 3pt; }
       .reg-tr { top: 3pt; right: 3pt; }
@@ -158,41 +157,30 @@ const SHEET_STYLES = `
     </style>
 `
 
-/** Chrono 1 / Chrono 2 digit-box rows (M:SS.HH) — shared by barcoded and blank strips. */
+/** One chrono row: M : SS . HH on underlines. */
+const chronoRowHtml = (label: string): string => `
+  <div class="judge-row">
+    <div class="judge-label">${label}</div>
+    <div class="digit-row">
+      <div class="time-line time-m"></div>
+      <div class="separator">:</div>
+      <div class="time-line time-ss"></div>
+      <div class="separator">.</div>
+      <div class="time-line time-hh"></div>
+    </div>
+  </div>`
+
+/** Chrono 1 / Chrono 2 rows (M:SS.HH) — shared by barcoded and blank strips. */
 const CHRONO_ROWS_HTML = `
 <div class="judges-section">
-  <div class="judge-row">
-    <div class="judge-label">Chrono 1</div>
-    <div class="digit-row">
-      <div class="digit-box"></div>
-      <div class="separator">:</div>
-      <div class="digit-box"></div>
-      <div class="digit-box"></div>
-      <div class="separator">.</div>
-      <div class="digit-box"></div>
-      <div class="digit-box"></div>
-    </div>
-  </div>
-  <div class="judge-row">
-    <div class="judge-label">Chrono 2</div>
-    <div class="digit-row">
-      <div class="digit-box"></div>
-      <div class="separator">:</div>
-      <div class="digit-box"></div>
-      <div class="digit-box"></div>
-      <div class="separator">.</div>
-      <div class="digit-box"></div>
-      <div class="digit-box"></div>
-    </div>
-  </div>
+  ${chronoRowHtml('Chrono 1')}
+  ${chronoRowHtml('Chrono 2')}
   <div class="digit-labels">
-    <span>M</span>
+    <span class="time-m">min</span>
     <span class="sep-space"></span>
-    <span>S</span>
-    <span>S</span>
+    <span class="time-ss">sec</span>
     <span class="sep-space"></span>
-    <span>H</span>
-    <span>H</span>
+    <span class="time-hh">1/100</span>
   </div>
 </div>
 `
