@@ -124,9 +124,11 @@ const SHEET_STYLES = `
       .strip-info .details { color: #222; margin-top: 3pt; font-size: 10pt; }
       .strip-info .athlete { color: #444; font-weight: 500; margin-top: 2pt; font-size: 10pt; }
       .barcode-area { text-align: center; margin-top: 0.1in; }
-      .barcode-area svg { height: 60pt; width: 100%; }
+      /* 48pt (was 60pt): with the athlete line, 60pt pushed the M/S/H digit labels
+         out below the strip border. Code128 reads by bar width, height is ample. */
+      .barcode-area svg { height: 48pt; width: 100%; }
       .barcode-text { font-family: monospace; font-size: 11pt; color: #000; margin-top: 3pt; text-align: center; font-weight: bold; letter-spacing: 2pt; }
-      .judges-section { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 0.12in; }
+      .judges-section { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 0.1in; }
       .judge-row { display: flex; align-items: center; gap: 0.1in; }
       .judge-label { font-size: 9pt; font-weight: bold; width: 0.55in; text-align: right; color: #333; }
       .digit-row { display: flex; align-items: center; gap: 3pt; }
