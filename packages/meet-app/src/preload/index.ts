@@ -257,8 +257,14 @@ const api = {
       ipcRenderer.invoke('timing:get-scans-for-processing', filter),
     runOcr: (scanId: number, engine: string) =>
       ipcRenderer.invoke('timing:run-ocr', scanId, engine),
-    validateScan: (scanId: number, time1: string, timeMs1: number, time2: string, timeMs2: number) =>
-      ipcRenderer.invoke('timing:validate-scan', scanId, time1, timeMs1, time2, timeMs2),
+    validateScan: (
+      scanId: number, time1: string, timeMs1: number, time2: string, timeMs2: number,
+      target?: { eventNumber: number; swimEventId: number; heatNumber: number; lane: number },
+    ) => ipcRenderer.invoke('timing:validate-scan', scanId, time1, timeMs1, time2, timeMs2, target),
+    findBlankTargets: (eventNumber: number, heatNumber: number, lane: number) =>
+      ipcRenderer.invoke('timing:find-blank-targets', eventNumber, heatNumber, lane),
+    generateBlankSheets: (pageCount?: number) =>
+      ipcRenderer.invoke('timing:generate-blank-sheets', pageCount),
     markError: (scanId: number, notes: string) =>
       ipcRenderer.invoke('timing:mark-error', scanId, notes),
     generateSheets: (sessionId: number) =>

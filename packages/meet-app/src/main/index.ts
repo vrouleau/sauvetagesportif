@@ -72,15 +72,16 @@ import { regeneratePointScores } from './pointScores'
 import {
   closeScanDb, insertScan,
   getScanById, findExistingScan,
-  updateScanOcrResult, validateScan,
+  updateScanIdentity, validateScan,
   getScanSummary, getScansByStatus,
   clearAllScans, deleteScan,
   type ScanStatus,
 } from './timingScanDb'
-import { generateTimingSheetsHtml, buildTimingSheetPages } from './timingSheets'
+import { generateTimingSheetsHtml, generateBlankTimingSheetsHtml, buildTimingSheetPages } from './timingSheets'
+import { isBlankScan, findBlankSheetCandidates } from './blankTimingSheet'
 import { generatePositionSheetsHtml, type PositionSheetEvent, type PositionSheetHeat } from './positionSheets'
 import { type OcrEngine } from './ocrEngine'
-import { startGeminiBackground, setGeminiBackgroundEnabled, isGeminiBackgroundEnabled, resetGeminiAttempted } from './geminiBackground'
+import { startGeminiBackground, setGeminiBackgroundEnabled, isGeminiBackgroundEnabled, resetGeminiAttempted, recognizeScan } from './geminiBackground'
 import { GeminiOcrEngine, getCurrentGeminiTier, loadGeminiKeys, saveGeminiKeys } from './ocrGemini'
 import {
   connectToPg, disconnectPg, getConnectionInfo, restoreSavedConnection, isPgConnected,
@@ -1776,14 +1777,7 @@ ipcMain.handle('timing:run-ocr', async (_event, scanId: number, _engineName: str
       activeOcrEngine = geminiEngine as unknown as OcrEngine
     }
 
-    const visionResult = await geminiEngine.recognizeFullImage(scan.imageBlob)
-
-    updateScanOcrResult(scanId, {
-      recognizedTime1: visionResult.time1,
-      recognizedTime2: visionResult.time2,
-      ocrEngine: 'gemini',
-      ocrConfidence: visionResult.confidence,
-    })
+    const visionResult = await recognizeScan(geminiEngine, scan)
 
     return {
       ok: true,
@@ -1798,8 +1792,19 @@ ipcMain.handle('timing:run-ocr', async (_event, scanId: number, _engineName: str
   }
 })
 
-ipcMain.handle('timing:validate-scan', (_event, scanId: number, time1: string, timeMs1: number, time2: string, timeMs2: number) => {
+ipcMain.handle('timing:validate-scan', (
+  _event, scanId: number, time1: string, timeMs1: number, time2: string, timeMs2: number,
+  // Blank sheets: the event/heat/lane the operator confirmed (none on barcoded strips)
+  target?: { eventNumber: number; swimEventId: number; heatNumber: number; lane: number },
+) => {
   try {
+    const before = getScanById(scanId)
+    if (before && isBlankScan(before.barcodeRaw)) {
+      if (!target || !(target.swimEventId > 0)) {
+        return { ok: false, error: 'Fiche vierge : épreuve / série / couloir non résolus' }
+      }
+      updateScanIdentity(scanId, target)
+    }
     validateScan(scanId, time1, timeMs1, time2, timeMs2)
 
     // Also write directly to the meet database
@@ -1814,6 +1819,15 @@ ipcMain.handle('timing:validate-scan', (_event, scanId: number, time1: string, t
     return { ok: true }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+})
+
+/** Entries seeded at a blank sheet's handwritten event/heat/lane (0, 1, or prelim+final). */
+ipcMain.handle('timing:find-blank-targets', (_event, eventNumber: number, heatNumber: number, lane: number) => {
+  try {
+    return findBlankSheetCandidates(getLocalDb(), eventNumber, heatNumber, lane)
+  } catch {
+    return []
   }
 })
 
@@ -1926,6 +1940,14 @@ ipcMain.handle('timing:generate-sheets', async (_event, sessionId: number) => {
 
     const html = generateTimingSheetsHtml(allPages)
     return { ok: true, html }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+})
+
+ipcMain.handle('timing:generate-blank-sheets', (_event, pageCount?: number) => {
+  try {
+    return { ok: true, html: generateBlankTimingSheetsHtml(pageCount ?? 1) }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
   }

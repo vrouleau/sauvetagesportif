@@ -130,6 +130,13 @@ After generation, the heats tab shows:
    - Two rows of digit boxes (Chrono 1 / Chrono 2)
 4. Print on standard letter paper, cut into strips, distribute to lane timers
 
+### Blank Timing Sheets (late arrivals / missing sheets)
+
+1. Click **🖨 Fiches vierges** (Blank sheets) — one page of 3 strips with no barcode (print as many copies as needed)
+2. The timer hand-writes **Épreuve** (event), **Série** (heat) and **Couloir** (lane) on the lines, then both times in the boxes
+3. In the Scanner tab, capture the sheet with **📸 Capturer fiche vierge** (or the Space bar) — there is no barcode to detect
+4. In **Traitement**, Gemini reads event / heat / lane and the times; check the swimmer shown before accepting. If a prelim and its final share the event number, pick the round
+
 ---
 
 ### Enter Results Manually
@@ -158,6 +165,7 @@ The **Scanner** tab enables batch scanning of completed timing sheets:
 2. On successful read, the image is captured and stored
 3. The barcode identifies: Event number, Heat number, Lane number
 4. Move to the next sheet — scanning is hands-free
+5. Blank sheet (no barcode): frame the sheet, then click **📸 Capturer fiche vierge** or press **Space**
 
 ![Scanner tab](assets/meet-pool-scanner.png)
 

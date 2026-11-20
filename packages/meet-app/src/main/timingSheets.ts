@@ -19,7 +19,8 @@
 /**
  * Timing sheet PDF generator.
  *
- * Produces printable sheets in PORTRAIT with 3 lane strips per page.
+ * Produces printable sheets in PORTRAIT with 3 lane strips per page
+ * (plus blank, hand-identified strips — see generateBlankTimingSheetsHtml).
  * Each strip includes:
  * - Code128B barcode (rendered as inline SVG)
  * - Event info (name, heat, lane, athlete)
@@ -80,12 +81,7 @@ export function buildTimingSheetPages(
 
 // ── HTML-based PDF generation ─────────────────────────────────────────────────
 
-/**
- * Generate the HTML content for timing sheets (portrait, 3 strips/page).
- * Each strip has two judge time-entry rows.
- */
-export function generateTimingSheetsHtml(pages: TimingSheetPage[]): string {
-  const styles = `
+const SHEET_STYLES = `
     <style>
       @page { margin: 0; size: letter portrait; }
       * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -148,9 +144,62 @@ export function generateTimingSheetsHtml(pages: TimingSheetPage[]): string {
       .reg-tr { top: 3pt; right: 3pt; }
       .reg-bl { bottom: 3pt; left: 3pt; }
       .reg-br { bottom: 3pt; right: 3pt; }
+      /* Blank strip: hand-written identity on underlines */
+      .blank-tag { position: absolute; top: 0.1in; right: 0.3in; font-size: 8pt; font-weight: bold; letter-spacing: 1pt; color: #555; }
+      .id-row { display: flex; align-items: flex-end; gap: 0.3in; margin-top: 0.1in; }
+      .id-field { display: flex; align-items: flex-end; gap: 6pt; }
+      .id-label { font-size: 12pt; font-weight: bold; }
+      .id-line { width: 1.1in; height: 0.45in; border-bottom: 2px solid #000; }
+      .name-row { display: flex; align-items: flex-end; gap: 6pt; margin-top: 0.12in; }
+      .name-label { font-size: 9pt; color: #444; white-space: nowrap; }
+      .name-line { flex: 1; height: 0.3in; border-bottom: 1px solid #666; }
     </style>
-  `
+`
 
+/** Chrono 1 / Chrono 2 digit-box rows (M:SS.HH) — shared by barcoded and blank strips. */
+const CHRONO_ROWS_HTML = `
+<div class="judges-section">
+  <div class="judge-row">
+    <div class="judge-label">Chrono 1</div>
+    <div class="digit-row">
+      <div class="digit-box"></div>
+      <div class="separator">:</div>
+      <div class="digit-box"></div>
+      <div class="digit-box"></div>
+      <div class="separator">.</div>
+      <div class="digit-box"></div>
+      <div class="digit-box"></div>
+    </div>
+  </div>
+  <div class="judge-row">
+    <div class="judge-label">Chrono 2</div>
+    <div class="digit-row">
+      <div class="digit-box"></div>
+      <div class="separator">:</div>
+      <div class="digit-box"></div>
+      <div class="digit-box"></div>
+      <div class="separator">.</div>
+      <div class="digit-box"></div>
+      <div class="digit-box"></div>
+    </div>
+  </div>
+  <div class="digit-labels">
+    <span>M</span>
+    <span class="sep-space"></span>
+    <span>S</span>
+    <span>S</span>
+    <span class="sep-space"></span>
+    <span>H</span>
+    <span>H</span>
+  </div>
+</div>
+`
+
+/**
+ * Generate the HTML content for timing sheets (portrait, 3 strips/page).
+ * Each strip has two judge time-entry rows.
+ */
+export function generateTimingSheetsHtml(pages: TimingSheetPage[]): string {
   const pagesHtml = pages.map((page) => {
     const stripsHtml = page.strips.map((strip) => {
       // Barcode encodes lane with judge=1 (the strip covers both judges, barcode identifies the lane)
@@ -173,41 +222,7 @@ export function generateTimingSheetsHtml(pages: TimingSheetPage[]): string {
             ${barcodeSvg}
             <div class="barcode-text">${barcodeValue}</div>
           </div>
-          <div class="judges-section">
-            <div class="judge-row">
-              <div class="judge-label">Chrono 1</div>
-              <div class="digit-row">
-                <div class="digit-box"></div>
-                <div class="separator">:</div>
-                <div class="digit-box"></div>
-                <div class="digit-box"></div>
-                <div class="separator">.</div>
-                <div class="digit-box"></div>
-                <div class="digit-box"></div>
-              </div>
-            </div>
-            <div class="judge-row">
-              <div class="judge-label">Chrono 2</div>
-              <div class="digit-row">
-                <div class="digit-box"></div>
-                <div class="separator">:</div>
-                <div class="digit-box"></div>
-                <div class="digit-box"></div>
-                <div class="separator">.</div>
-                <div class="digit-box"></div>
-                <div class="digit-box"></div>
-              </div>
-            </div>
-            <div class="digit-labels">
-              <span>M</span>
-              <span class="sep-space"></span>
-              <span>S</span>
-              <span>S</span>
-              <span class="sep-space"></span>
-              <span>H</span>
-              <span>H</span>
-            </div>
-          </div>
+          ${CHRONO_ROWS_HTML}
         </div>
       `
     }).join('<div class="cut-line"></div>')
@@ -215,7 +230,38 @@ export function generateTimingSheetsHtml(pages: TimingSheetPage[]): string {
     return `<div class="page">${stripsHtml}</div>`
   }).join('')
 
-  return `<!DOCTYPE html><html><head><meta charset="utf-8">${styles}</head><body>${pagesHtml}</body></html>`
+  return wrapSheetsHtml(pagesHtml)
+}
+
+/**
+ * Blank timing sheets (late arrivals / missing sheets): same strip as above,
+ * but no barcode — Épreuve / Série / Couloir are hand-written on underlines,
+ * and Gemini reads them back along with the times (BLANK_SHEET_PROMPT).
+ */
+export function generateBlankTimingSheetsHtml(pageCount = 1): string {
+  const pages = Math.max(1, Math.min(50, Math.floor(pageCount) || 1))
+  const strip = `
+        <div class="strip">
+          <div class="reg-mark reg-tl"></div>
+          <div class="reg-mark reg-tr"></div>
+          <div class="reg-mark reg-bl"></div>
+          <div class="reg-mark reg-br"></div>
+          <div class="blank-tag">FICHE VIERGE</div>
+          <div class="id-row">
+            <div class="id-field"><span class="id-label">Épreuve</span><span class="id-line"></span></div>
+            <div class="id-field"><span class="id-label">Série</span><span class="id-line"></span></div>
+            <div class="id-field"><span class="id-label">Couloir</span><span class="id-line"></span></div>
+          </div>
+          <div class="name-row"><span class="name-label">Nageur / équipe (club)</span><span class="name-line"></span></div>
+          ${CHRONO_ROWS_HTML}
+        </div>
+      `
+  const pageHtml = `<div class="page">${[strip, strip, strip].join('<div class="cut-line"></div>')}</div>`
+  return wrapSheetsHtml(pageHtml.repeat(pages))
+}
+
+function wrapSheetsHtml(pagesHtml: string): string {
+  return `<!DOCTYPE html><html><head><meta charset="utf-8">${SHEET_STYLES}</head><body>${pagesHtml}</body></html>`
 }
 
 function escHtml(s: string): string {

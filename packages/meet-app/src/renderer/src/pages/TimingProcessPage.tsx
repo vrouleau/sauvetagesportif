@@ -24,6 +24,8 @@
  * - Gemini OCR runs in background (toggle on/off)
  * - Manual entry always available regardless of Gemini state
  * - Accept saves to meet DB immediately
+ * - Blank sheets (BLANK-… scans, no barcode): event / heat / lane are editable
+ *   too, pre-filled by Gemini, and must resolve to a seeded entry to accept
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react'
@@ -52,13 +54,40 @@ interface ScanRecord {
   notes: string | null
 }
 
+interface BlankTarget {
+  swimEventId: number
+  eventNumber: number
+  heatNumber: number
+  lane: number
+  round: number
+  eventName: string
+  entryLabel: string
+  clubCode: string
+  hasTime: boolean
+}
+
+const isBlank = (scan: ScanRecord | null) => !!scan && scan.barcodeRaw.startsWith('BLANK-')
+
+const ROUND_LABEL: Record<number, string> = { 1: 'Préliminaire', 2: 'Demi-finale', 4: 'Finale', 5: 'Finale directe' }
+
+function scanLabel(scan: ScanRecord): string {
+  if (!isBlank(scan)) return scan.barcodeRaw
+  return scan.eventNumber > 0
+    ? `Vierge · E${scan.eventNumber}-H${scan.heatNumber}-L${scan.lane}`
+    : 'Vierge · ?'
+}
+
 function timingApi() {
   return (window as unknown as {
     api?: {
       timing?: {
         getScansForProcessing: (filter: ScanStatus | 'all') => Promise<ScanRecord[]>
         runOcr: (scanId: number, engine: string) => Promise<{ ok: boolean; result?: { time1: string; time2: string; overallConfidence: number }; error?: string }>
-        validateScan: (scanId: number, time1: string, timeMs1: number, time2: string, timeMs2: number) => Promise<{ ok: boolean }>
+        validateScan: (
+          scanId: number, time1: string, timeMs1: number, time2: string, timeMs2: number,
+          target?: { eventNumber: number; swimEventId: number; heatNumber: number; lane: number },
+        ) => Promise<{ ok: boolean; error?: string }>
+        findBlankTargets: (eventNumber: number, heatNumber: number, lane: number) => Promise<BlankTarget[]>
         markError: (scanId: number, notes: string) => Promise<{ ok: boolean }>
       }
     }
@@ -77,6 +106,12 @@ export default function TimingProcessPage() {
   })
   const [geminiTier, setGeminiTier] = useState<'free' | 'paid' | 'none'>('free')
   const time1InputRef = useRef<HTMLInputElement>(null)
+  // Blank sheets: hand-written identity + the entries seeded there
+  const [editEvent, setEditEvent] = useState('')
+  const [editHeat, setEditHeat] = useState('')
+  const [editLane, setEditLane] = useState('')
+  const [targets, setTargets] = useState<BlankTarget[]>([])
+  const [targetId, setTargetId] = useState(0)
 
   // Sync toggle with main process
   useEffect(() => {
@@ -91,8 +126,10 @@ export default function TimingProcessPage() {
       if (!api) return
       const data = await api.getScansForProcessing(filter)
       setScans((prev) => {
-        if (JSON.stringify(prev.map(s => ({ id: s.scanId, s: s.status, t1: s.recognizedTime1 }))) !==
-            JSON.stringify(data.map(s => ({ id: s.scanId, s: s.status, t1: s.recognizedTime1 })))) {
+        const key = (list: ScanRecord[]) => JSON.stringify(list.map(s => ({
+          id: s.scanId, s: s.status, t1: s.recognizedTime1, e: s.eventNumber, h: s.heatNumber, l: s.lane, u: s.swimEventId,
+        })))
+        if (key(prev) !== key(data)) {
           return data
         }
         return prev
@@ -140,6 +177,38 @@ export default function TimingProcessPage() {
     }
   }, [currentIndex, currentScan?.scanId])
 
+  // Blank sheet identity: reset on scan switch, and when Gemini fills it in
+  useEffect(() => {
+    if (!currentScan || !isBlank(currentScan)) return
+    const n = (v: number) => (v > 0 ? String(v) : '')
+    setEditEvent(n(currentScan.eventNumber))
+    setEditHeat(n(currentScan.heatNumber))
+    setEditLane(n(currentScan.lane))
+    setTargetId(currentScan.swimEventId)
+  }, [currentScan?.scanId, currentScan?.eventNumber, currentScan?.heatNumber, currentScan?.lane, currentScan?.swimEventId])
+
+  // Look up what's seeded at the typed event/heat/lane
+  const blank = isBlank(currentScan)
+  useEffect(() => {
+    if (!blank) { setTargets([]); return }
+    const e = parseInt(editEvent, 10), h = parseInt(editHeat, 10), l = parseInt(editLane, 10)
+    if (!(e > 0 && h > 0 && l > 0)) { setTargets([]); return }
+    let cancelled = false
+    timingApi()?.findBlankTargets(e, h, l).then((list) => {
+      if (cancelled) return
+      setTargets(list)
+      setTargetId((prev) => {
+        if (list.some((t) => t.swimEventId === prev)) return prev
+        if (list.length === 1) return list[0].swimEventId
+        const open = list.filter((t) => !t.hasTime)
+        return open.length === 1 ? open[0].swimEventId : 0
+      })
+    })
+    return () => { cancelled = true }
+  }, [blank, editEvent, editHeat, editLane])
+
+  const blankTarget = blank ? targets.find((t) => t.swimEventId === targetId) ?? null : null
+
   // Backlog count (unprocessed scans waiting for Gemini)
   const backlogCount = scans.filter((s) => s.status === 'unprocessed' && !s.recognizedTime1).length
 
@@ -155,6 +224,7 @@ export default function TimingProcessPage() {
   // Accept / validate
   const handleAccept = useCallback(async () => {
     if (!currentScan || !editTime1 || !editTime2) return
+    if (isBlank(currentScan) && !blankTarget) return
     const api = timingApi()
     if (!api) return
 
@@ -165,13 +235,20 @@ export default function TimingProcessPage() {
       return
     }
 
-    await api.validateScan(currentScan.scanId, editTime1, timeMs1, editTime2, timeMs2)
+    const target = blankTarget
+      ? { eventNumber: blankTarget.eventNumber, swimEventId: blankTarget.swimEventId, heatNumber: blankTarget.heatNumber, lane: blankTarget.lane }
+      : undefined
+    const res = await api.validateScan(currentScan.scanId, editTime1, timeMs1, editTime2, timeMs2, target)
+    if (!res.ok) {
+      alert(res.error ?? 'Erreur')
+      return
+    }
 
     // Update local state
     setScans((prev) => {
       const updated = prev.map((s) =>
         s.scanId === currentScan.scanId
-          ? { ...s, status: 'validated' as ScanStatus, validatedTime1: editTime1, validatedTime2: editTime2, timeMs1, timeMs2 }
+          ? { ...s, ...(target ?? {}), status: 'validated' as ScanStatus, validatedTime1: editTime1, validatedTime2: editTime2, timeMs1, timeMs2 }
           : s
       )
       // If filtering by "unprocessed", remove validated from the list
@@ -199,14 +276,14 @@ export default function TimingProcessPage() {
         goNext()
       }
     }
-  }, [currentScan, editTime1, editTime2, scans, currentIndex, filter])
+  }, [currentScan, editTime1, editTime2, scans, currentIndex, filter, blankTarget])
 
   // Flag — delete the scan
   const handleFlag = useCallback(async () => {
     if (!currentScan) return
     const api = timingApi()
     if (!api) return
-    if (!window.confirm(`Supprimer le scan ${currentScan.barcodeRaw}?`)) return
+    if (!window.confirm(`Supprimer le scan ${scanLabel(currentScan)}?`)) return
     await api.markError(currentScan.scanId, 'Illisible — supprimé')
     // Remove from local list
     setScans((prev) => prev.filter((s) => s.scanId !== currentScan.scanId))
@@ -310,7 +387,7 @@ export default function TimingProcessPage() {
                   }`}
                 >
                   <span className={`${statusColor(scan.status)} font-bold`}>{statusLabel(scan.status)}</span>
-                  <span className="font-mono flex-1">{scan.barcodeRaw}</span>
+                  <span className="font-mono flex-1">{scanLabel(scan)}</span>
                   {scan.status === 'validated' && (
                     <span className="text-2xs text-green-600">✓</span>
                   )}
@@ -322,10 +399,12 @@ export default function TimingProcessPage() {
           {/* Image */}
           <div className="flex-1 flex flex-col bg-white border border-gray-200 rounded overflow-hidden">
             <div className="px-3 py-2 bg-gray-50 border-b border-gray-200 text-xs flex justify-between items-center">
-              <span className="font-mono font-bold">{currentScan?.barcodeRaw}</span>
-              <span className="text-gray-500">
-                Épr. {currentScan?.eventNumber} | Série {currentScan?.heatNumber} | Couloir {currentScan?.lane}
-              </span>
+              <span className="font-mono font-bold">{blank ? 'Fiche vierge' : currentScan?.barcodeRaw}</span>
+              {!blank && (
+                <span className="text-gray-500">
+                  Épr. {currentScan?.eventNumber} | Série {currentScan?.heatNumber} | Couloir {currentScan?.lane}
+                </span>
+              )}
             </div>
             <div className="flex-1 flex items-center justify-center p-2 bg-gray-100 overflow-auto">
               {currentScan?.imageBase64 ? (
@@ -343,6 +422,59 @@ export default function TimingProcessPage() {
           {/* Time entry panel */}
           <div className="w-64 flex flex-col gap-3">
             <div className="bg-white border border-gray-200 rounded p-3">
+              {/* Blank sheet: hand-written identity */}
+              {blank && (
+                <div className="mb-3 pb-3 border-b border-gray-200">
+                  <div className="grid grid-cols-3 gap-2">
+                    {([
+                      ['Épr.', editEvent, setEditEvent],
+                      ['Série', editHeat, setEditHeat],
+                      ['Couloir', editLane, setEditLane],
+                    ] as const).map(([label, value, set]) => (
+                      <div key={label}>
+                        <label className="text-xs font-semibold text-gray-500 mb-1 block">{label}</label>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          value={value}
+                          onChange={(e) => set(e.target.value.replace(/\D/g, ''))}
+                          className="w-full font-mono text-center border-2 border-gray-300 rounded px-1 py-0.5 focus:border-blue-500 focus:outline-none"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  {targets.length > 1 && (
+                    <select
+                      value={targetId}
+                      onChange={(e) => setTargetId(Number(e.target.value))}
+                      className="mt-2 w-full text-xs border border-gray-300 rounded px-1 py-1"
+                    >
+                      <option value={0}>— Choisir la ronde —</option>
+                      {targets.map((t) => (
+                        <option key={t.swimEventId} value={t.swimEventId}>
+                          {ROUND_LABEL[t.round] ?? `Ronde ${t.round}`}{t.hasTime ? ' (a déjà un temps)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  <div className="mt-2 text-xs">
+                    {blankTarget ? (
+                      <div className="text-gray-700">
+                        <div className="font-semibold">{blankTarget.eventName}</div>
+                        <div>{blankTarget.entryLabel}{blankTarget.clubCode ? ` (${blankTarget.clubCode})` : ''}</div>
+                        {blankTarget.hasTime && <div className="text-orange-600">⚠ Ce couloir a déjà un temps — il sera remplacé</div>}
+                      </div>
+                    ) : editEvent && editHeat && editLane ? (
+                      <div className="text-red-600">
+                        {targets.length > 1 ? 'Choisissez la ronde' : 'Aucun nageur à ce couloir'}
+                      </div>
+                    ) : (
+                      <div className="text-gray-400">Saisir épreuve / série / couloir</div>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* Chrono 1 */}
               <div className="mb-3">
                 <label className="text-xs font-semibold text-gray-500 mb-1 block">Chrono 1</label>
@@ -371,7 +503,7 @@ export default function TimingProcessPage() {
               {/* Accept */}
               <button
                 onClick={handleAccept}
-                disabled={!editTime1 || !editTime2}
+                disabled={!editTime1 || !editTime2 || (blank && !blankTarget)}
                 className="w-full py-2 bg-green-600 text-white text-sm font-medium rounded hover:bg-green-700 disabled:opacity-30"
               >
                 ✓ Accepter (Enter)

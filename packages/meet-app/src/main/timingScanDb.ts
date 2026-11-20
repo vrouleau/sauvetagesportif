@@ -186,6 +186,24 @@ export function updateScanOcrResult(scanId: number, result: {
   `).run(result.recognizedTime1, result.recognizedTime2, result.ocrEngine, result.ocrConfidence, new Date().toISOString(), scanId)
 }
 
+/**
+ * Set a scan's event/heat/lane identity — blank sheets are saved with zeros
+ * and get theirs from Gemini or the operator.
+ */
+export function updateScanIdentity(scanId: number, identity: {
+  eventNumber: number
+  swimEventId: number
+  heatNumber: number
+  lane: number
+}): void {
+  const db = getScanDb()
+  db.prepare(`
+    UPDATE timing_scan
+    SET event_number = ?, swim_event_id = ?, heat_number = ?, lane = ?
+    WHERE scan_id = ?
+  `).run(identity.eventNumber, identity.swimEventId, identity.heatNumber, identity.lane, scanId)
+}
+
 /** Validate a scan (operator confirmed both times) */
 export function validateScan(scanId: number, validatedTime1: string, timeMs1: number, validatedTime2: string, timeMs2: number): void {
   const db = getScanDb()

@@ -285,6 +285,8 @@ time, `.smb` export carries them through correctly too.
 | `timing:run-ocr` | Run OCR engine on a scan (Gemini) |
 | `timing:validate-scan` | Accept times → write to swimresult |
 | `timing:generate-sheets` | Generate timing sheet HTML for a session |
+| `timing:generate-blank-sheets` | Blank (hand-identified, no barcode) timing sheet HTML |
+| `timing:find-blank-targets` | Entries seeded at a blank sheet's event/heat/lane |
 | `timing:set-gemini-background` | Enable/disable background Gemini processing |
 | `timing:get-gemini-key` | Get masked API keys |
 | `timing:set-gemini-key` | Set free/paid API keys |
@@ -442,6 +444,19 @@ Athletes in beach meets get a unique jersey/bib identifier stored in `athlete.na
 - Scan write-back (`_writeScanTimes` in `index.ts`) targets the `swimresult` seeded at event/heat/lane, falling back to the `relay` team there
 - Two rows of 5 digit boxes (M:SS.HH) labeled "Chrono 1" / "Chrono 2"
 - Corner registration marks for future perspective correction
+
+### Blank sheets (late arrivals / missing sheets)
+- HeatsPage "🖨 Fiches vierges" (pool) → `timing:generate-blank-sheets` → `generateBlankTimingSheetsHtml`:
+  same strip, no barcode; `Épreuve / Série / Couloir` hand-written on underlines (+ a swimmer line)
+- Scanner: no barcode to trigger on → manual "📸 Capturer fiche vierge" button / Space bar;
+  saved as `barcode_raw = 'BLANK-<ms>'` with event/heat/lane/swimEventId = 0
+- Gemini (`recognizeScan` in `geminiBackground.ts`) uses `BLANK_SHEET_PROMPT` for these (reads E/H/L + C1/C2),
+  then `findBlankSheetCandidates` maps event number + heat + lane to the seeded swimresult/relay.
+  A prelim and its final share `eventnumber`, so 2 candidates are possible: `pickBlankSheetTarget` takes the
+  only one without a time, else leaves `swimEventId = 0` for the operator (round dropdown in Traitement)
+- Traitement: blank scans have editable Épr./Série/Couloir; Accept is blocked until they resolve to a seeded
+  entry; `timing:validate-scan` takes the confirmed `target` and refuses a blank scan without one
+- Pure logic + prompts: `src/main/blankTimingSheet.ts`; tests: `tests/blank-timing-sheet.test.ts`
 
 ### Barcode format
 `E{eventNumber}-U{swimEventId}-H{heatNumber}-L{lane}` — e.g. `E5-U1496-H2-L3` = Event 5, Heat 2, Lane 3.
