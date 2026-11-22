@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.5.28] - 2026-11-22
+
+### Other
+
+- Guard against duplicate athletes when adding one (`f280509`)
+- Fix club change blocked by archived relay history (`2f37e31`)
+- Merge pull request #116 from vrouleau/fix/closure-date-local-time (`50be94a`)
+- Fix closure date check closing registration a day early (`a282487`)
+
 ## [0.5.27] - 2026-11-20
 
 ### ✨ Features
