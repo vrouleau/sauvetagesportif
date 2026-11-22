@@ -1546,8 +1546,15 @@ def update_athlete(athlete_id: int, data: AthleteUpdate, request: Request, db: S
         target_club = db.get(TeamClub, data.club_id)
         if not target_club:
             raise HTTPException(404, "Target club not found")
-        from ..models_team import RelayPos
-        on_relay = db.query(RelayPos).filter(RelayPos.membersid == athlete_id).first()
+        from ..models_team import RelayPos, Relay, Meet
+        # Archived (completed) meets are history — their relay rows must not block a club move.
+        on_relay = (
+            db.query(RelayPos)
+            .join(Relay, Relay.relaysid == RelayPos.relaysid)
+            .join(Meet, Meet.meetsid == Relay.meetsid)
+            .filter(RelayPos.membersid == athlete_id, Meet.meetstate != 3)
+            .first()
+        )
         if on_relay:
             raise HTTPException(409, "Cannot change club while athlete is on a relay team — remove them from all relay teams first")
         member.clubsid = data.club_id
