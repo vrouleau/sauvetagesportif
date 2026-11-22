@@ -47,6 +47,21 @@ interface IndividualEntryPageState {
   error: string | null
 }
 
+interface DuplicateMatch {
+  id: number
+  first_name: string
+  last_name: string
+  birthdate: string | null
+  license: string
+  club_id: number
+  club: string
+}
+
+interface DuplicateGuardState {
+  data: { first_name: string; last_name: string; gender: string; birthdate: string | null; license: string; club_id: number }
+  matches: DuplicateMatch[]
+}
+
 interface AddAthleteDialogState {
   open: boolean
   clubId: number
@@ -148,6 +163,7 @@ function useIndividualEntryPage(api: RegistrationAPI, role: string, clubId?: str
   })
 
   const [addDialog, setAddDialog] = useState<AddAthleteDialogState>({ open: false, clubId: 0, clubName: '' })
+  const [dupGuard, setDupGuard] = useState<DuplicateGuardState | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState<DeleteConfirmState>({ open: false, athleteId: 0, athleteName: '' })
   const [selectedClubId, setSelectedClubId] = useState<number | null>(null)
   // Athletes with at least one individual entry — highlighted in the tree so
@@ -271,24 +287,50 @@ function useIndividualEntryPage(api: RegistrationAPI, role: string, clubId?: str
     setSelectedClubId(clubId)
   }, [])
 
-  const confirmAddAthlete = useCallback(async (data: { first_name: string; last_name: string; gender: string; birthdate: string | null; license: string; club_id: number }) => {
+  const refreshClubAthletes = useCallback(async (clubId: number) => {
+    const athletes = await api.getAthletesByClub(String(clubId))
+    setState(prev => {
+      const newMap = new Map(prev.athletesByClub)
+      newMap.set(clubId, athletes)
+      return { ...prev, athletesByClub: newMap }
+    })
+  }, [api])
+
+  const confirmAddAthlete = useCallback(async (data: { first_name: string; last_name: string; gender: string; birthdate: string | null; license: string; club_id: number; force?: boolean }) => {
     try {
       await api.addAthlete(data)
       setAddDialog({ open: false, clubId: 0, clubName: '' })
-      // Refresh the club's athletes
-      const athletes = await api.getAthletesByClub(String(data.club_id))
-      setState(prev => {
-        const newMap = new Map(prev.athletesByClub)
-        newMap.set(data.club_id, athletes)
-        return { ...prev, athletesByClub: newMap }
-      })
+      setDupGuard(null)
+      await refreshClubAthletes(data.club_id)
     } catch (err) {
+      // Duplicate guard (team-app): the athlete may already exist, maybe in another club
+      const detail = (err as { detail?: { code?: string; matches?: DuplicateMatch[] } }).detail
+      if (detail && typeof detail === 'object' && detail.code === 'possible_duplicate') {
+        setDupGuard({ data, matches: detail.matches ?? [] })
+        return
+      }
       setState(prev => ({
         ...prev,
         error: err instanceof Error ? err.message : 'Failed to add athlete',
       }))
     }
-  }, [api])
+  }, [api, refreshClubAthletes])
+
+  const moveDuplicateHere = useCallback(async (match: DuplicateMatch) => {
+    if (!dupGuard || !api.moveAthleteToClub) return
+    const clubId = dupGuard.data.club_id
+    try {
+      await api.moveAthleteToClub(match.id, clubId)
+      setDupGuard(null)
+      setAddDialog({ open: false, clubId: 0, clubName: '' })
+      // the athlete left their old club's list too
+      const clubs = new Set([clubId, match.club_id])
+      await Promise.all([...clubs].map(refreshClubAthletes))
+    } catch (err) {
+      const d = (err as { detail?: unknown }).detail
+      alert(typeof d === 'string' ? d : 'Could not move athlete')
+    }
+  }, [api, dupGuard, refreshClubAthletes])
 
   const cancelAddAthlete = useCallback(() => {
     setAddDialog({ open: false, clubId: 0, clubName: '' })
@@ -415,6 +457,9 @@ function useIndividualEntryPage(api: RegistrationAPI, role: string, clubId?: str
     debouncedFilter,
     filteredAthletesByClub,
     addDialog,
+    dupGuard,
+    setDupGuard,
+    moveDuplicateHere,
     deleteConfirm,
     selectedClubId,
     setFilterText,
@@ -505,6 +550,9 @@ export default function IndividualEntryPage({ role, clubId, refreshKey, onImport
     debouncedFilter,
     filteredAthletesByClub,
     addDialog,
+    dupGuard,
+    setDupGuard,
+    moveDuplicateHere,
     deleteConfirm,
     selectedClubId,
     setFilterText,
@@ -735,6 +783,57 @@ export default function IndividualEntryPage({ role, clubId, refreshKey, onImport
           onConfirm={confirmAddAthlete}
           onCancel={cancelAddAthlete}
         />
+      )}
+
+      {/* Duplicate guard: the athlete being added may already exist */}
+      {dupGuard && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40">
+          <div className="bg-white border border-gray-400 shadow-xl w-[440px] text-xs">
+            <div className="flex items-center justify-between bg-gray-700 text-white px-3 py-2">
+              <span className="font-semibold">{tr.dupTitle}</span>
+              <button onClick={() => setDupGuard(null)} className="hover:text-gray-300 text-lg leading-none">×</button>
+            </div>
+            <div className="p-5">
+              <p className="mb-3">{tr.dupIntro}</p>
+              {dupGuard.matches.map(m => {
+                const sameClub = m.club_id === dupGuard.data.club_id
+                return (
+                  <div key={m.id} className="border border-gray-300 bg-gray-50 p-2 mb-2 flex items-center justify-between gap-2">
+                    <div>
+                      <div className="font-semibold">{m.last_name}, {m.first_name}</div>
+                      <div className="text-gray-600">
+                        {[m.birthdate, m.license && `${tr.nran} ${m.license}`].filter(Boolean).join(' · ')}
+                      </div>
+                      <div className="text-gray-600">{sameClub ? tr.dupSameClub : tr.dupInClub.replace('{club}', m.club)}</div>
+                    </div>
+                    {!sameClub && api.moveAthleteToClub && (
+                      <button
+                        onClick={() => moveDuplicateHere(m)}
+                        className="px-3 py-1 bg-blue-600 text-white hover:bg-blue-700 border border-blue-700 shrink-0"
+                      >
+                        {tr.dupMove.replace('{club}', addDialog.clubName)}
+                      </button>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+            <div className="flex items-center justify-end px-5 py-3 border-t border-gray-200 bg-gray-50 gap-2">
+              <button
+                onClick={() => setDupGuard(null)}
+                className="px-4 py-1 border border-gray-400 bg-white hover:bg-gray-100 text-gray-700"
+              >
+                {t.athletes.dialog.cancel}
+              </button>
+              <button
+                onClick={() => confirmAddAthlete({ ...dupGuard.data, force: true })}
+                className="px-4 py-1 border border-gray-400 bg-white hover:bg-gray-100 text-gray-700"
+              >
+                {tr.dupCreateAnyway}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Delete Confirmation Dialog */}

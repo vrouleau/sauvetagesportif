@@ -105,6 +105,11 @@ export const registrationApiHttp = {
     invalidateCache()
   },
 
+  async moveAthleteToClub(athleteId, clubId) {
+    await api.post(`/athletes/${athleteId}/move-club`, { club_id: clubId })
+    invalidateCache()
+  },
+
   async deleteAthlete(id) {
     await api.delete(`/athletes/${id}`)
     invalidateCache()
