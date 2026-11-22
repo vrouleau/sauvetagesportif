@@ -32,7 +32,8 @@ export default function Login({ onLogin }) {
     fetch('/api/meet-info')
       .then(r => r.json())
       .then(data => {
-        if (data.closure_date && new Date(data.closure_date) < new Date()) setClosed(true)
+        // End of the deadline day in local time (a bare "YYYY-MM-DD" parses as midnight UTC).
+        if (data.closure_date && new Date() > new Date(data.closure_date + 'T23:59:59')) setClosed(true)
       })
       .catch(() => {})
   }, [])

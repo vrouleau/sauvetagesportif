@@ -48,7 +48,10 @@ export default function SelfInvite() {
       .then(data => {
         setMeetName(data.meet_name || '')
         if (!data.meet_name && data.events === 0) setNoMeet(true)
-        if (data.closure_date && new Date(data.closure_date) < new Date()) setClosed(true)
+        // A date-only string ("2026-11-22") parses as midnight UTC, which closed the page
+        // the evening before the deadline in Quebec. Compare against the end of the deadline
+        // day in local time, same as Organizer.jsx.
+        if (data.closure_date && new Date() > new Date(data.closure_date + 'T23:59:59')) setClosed(true)
       })
       .catch(() => {})
   }, [])
