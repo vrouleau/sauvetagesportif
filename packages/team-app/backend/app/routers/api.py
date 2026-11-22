@@ -86,6 +86,8 @@ class AthleteCreate(BaseModel):
     birthdate: str | None = None
     license: str = ""
     club_id: int
+    # True once the coach confirmed "create anyway" after a possible_duplicate 409.
+    force: bool = False
 
     @field_validator("gender")
     @classmethod
@@ -1481,6 +1483,19 @@ def create_athlete(data: AthleteCreate, request: Request, db: Session = Depends(
     if caller_club is not None and data.club_id != caller_club:
         raise HTTPException(403, "Cannot create athletes in another club")
     from datetime import date as d
+    if not data.force:
+        from ..athlete_dupes import find_similar_members
+        similar = find_similar_members(
+            db, data.first_name, data.last_name,
+            d.fromisoformat(data.birthdate) if data.birthdate else None,
+            data.license)
+        if similar:
+            raise HTTPException(409, {
+                "code": "possible_duplicate",
+                "message": "Un athlète semblable existe déjà. / A similar athlete already exists.",
+                "matches": similar,
+                "target_club_id": data.club_id,
+            })
     member = Member(
         firstname=data.first_name,
         lastname=data.last_name,
@@ -1517,6 +1532,57 @@ def delete_athlete(athlete_id: int, request: Request, db: Session = Depends(get_
     return {"deleted": True}
 
 
+def _ensure_not_on_live_relay(db: Session, athlete_id: int) -> None:
+    """409 if the athlete sits on a relay team of a non-archived meet.
+    Archived (completed) meets are history — their relay rows must not block a club move."""
+    from ..models_team import RelayPos, Relay, Meet
+    on_relay = (
+        db.query(RelayPos)
+        .join(Relay, Relay.relaysid == RelayPos.relaysid)
+        .join(Meet, Meet.meetsid == Relay.meetsid)
+        .filter(RelayPos.membersid == athlete_id, Meet.meetstate != 3)
+        .first()
+    )
+    if on_relay:
+        raise HTTPException(409, "Cannot change club while athlete is on a relay team — remove them from all relay teams first")
+
+
+@router.post("/athletes/{athlete_id}/move-club")
+def move_athlete_club(athlete_id: int, request: Request, body: dict = Body(default={}),
+                      db: Session = Depends(get_db)):
+    """Move an existing athlete to another club — the "already registered
+    elsewhere, move them instead?" answer of the add-athlete duplicate guard.
+
+    A coach moves the athlete into *their own* club (club_id is ignored); admin /
+    organizer name the target in ``club_id``. Refused while the athlete is on a
+    live relay team, and — for a coach — while they have entries in the open
+    meet (those would silently leave the old club's invoice and entries)."""
+    pin = request.headers.get("X-Club-Pin", "")
+    _check_closure(db, pin)
+    role, caller_club = _resolve_role(pin, db)
+    if role == "none":
+        raise HTTPException(401, "Authentication required")
+    member = db.get(Member, athlete_id)
+    if not member:
+        raise HTTPException(404)
+    target_id = caller_club if role == "coach" else body.get("club_id")
+    if not target_id or not db.get(TeamClub, target_id):
+        raise HTTPException(404, "Target club not found")
+    if member.clubsid == target_id:
+        return {"ok": True, "moved": False}
+    _ensure_not_on_live_relay(db, athlete_id)
+    if role == "coach":
+        meetsid = resolve_meetsid(request, db)
+        if meetsid and _individual_entry_counts(db, meetsid).get(athlete_id):
+            raise HTTPException(409, "Cet athlète a des inscriptions dans son club actuel pour ce meet; "
+                                     "demandez à l'organisateur de le déplacer. / "
+                                     "This athlete has entries in their current club for this meet; "
+                                     "ask the organizer to move them.")
+    member.clubsid = target_id
+    db.commit()
+    return {"ok": True, "moved": True}
+
+
 @router.put("/athletes/{athlete_id}")
 def update_athlete(athlete_id: int, data: AthleteUpdate, request: Request, db: Session = Depends(get_db)):
     pin = request.headers.get("X-Club-Pin", "")
@@ -1546,17 +1612,7 @@ def update_athlete(athlete_id: int, data: AthleteUpdate, request: Request, db: S
         target_club = db.get(TeamClub, data.club_id)
         if not target_club:
             raise HTTPException(404, "Target club not found")
-        from ..models_team import RelayPos, Relay, Meet
-        # Archived (completed) meets are history — their relay rows must not block a club move.
-        on_relay = (
-            db.query(RelayPos)
-            .join(Relay, Relay.relaysid == RelayPos.relaysid)
-            .join(Meet, Meet.meetsid == Relay.meetsid)
-            .filter(RelayPos.membersid == athlete_id, Meet.meetstate != 3)
-            .first()
-        )
-        if on_relay:
-            raise HTTPException(409, "Cannot change club while athlete is on a relay team — remove them from all relay teams first")
+        _ensure_not_on_live_relay(db, athlete_id)
         member.clubsid = data.club_id
     db.commit()
     return {"ok": True}

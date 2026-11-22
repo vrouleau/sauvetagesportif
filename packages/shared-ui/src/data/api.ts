@@ -314,7 +314,9 @@ export interface RegistrationAPI {
   getAthletesByClub(clubId: string): Promise<AthleteListItem[]>
   /** Bulk fetch: returns all athletes keyed by club ID. Avoids N+1 requests. */
   getAllAthletesGrouped?(): Promise<Record<string, AthleteListItem[]>>
-  addAthlete(data: { first_name: string; last_name: string; gender: string; birthdate: string | null; license: string; club_id: number }): Promise<void>
+  addAthlete(data: { first_name: string; last_name: string; gender: string; birthdate: string | null; license: string; club_id: number; force?: boolean }): Promise<void>
+  /** team-app only: move an already-registered athlete into the caller's club (duplicate guard). */
+  moveAthleteToClub?(athleteId: number, clubId: number): Promise<void>
   deleteAthlete(id: number): Promise<void>
   getRegistration(athleteId: number): Promise<RegistrationData>
   updateAthlete(athleteId: number, data: Record<string, unknown>): Promise<void>
