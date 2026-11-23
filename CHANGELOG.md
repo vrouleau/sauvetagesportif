@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.5.31] - 2026-11-23
+
+### 🐛 Bug Fixes
+
+- correct "Serior" typo in pool meet template name (`1d69078`)
+- keep print entries button visible when registrations are closed (`e88e3cb`)
+
+### 🔧 Chores
+
+- Bump the npm-minor-patch group with 4 updates (`e81b475`)
+- Bump the pip-minor-patch group (`7eb3bdb`)
+- Bump the frontend-minor-patch group (`718a073`)
+- Update sqlalchemy requirement (`639a488`)
+- Update hypothesis requirement (`7b3e9e8`)
+
+### Other
+
+- Merge pull request #127 from vrouleau/chrono-sheets-no-heat-break (`4f02019`)
+- Chrono sheets: pack strips across heats, no page break per heat (`1774839`)
+- Merge pull request #124 from vrouleau/dependabot/npm_and_yarn/npm-minor-patch-2b32e44862 (`b915648`)
+- Merge pull request #123 from vrouleau/dependabot/pip/packages/team-app/backend/pip-minor-patch-f842413917 (`94f20fc`)
+- Merge pull request #121 from vrouleau/dependabot/npm_and_yarn/packages/team-app/frontend/frontend-minor-patch-b0f2e86f56 (`f334052`)
+- Merge pull request #122 from vrouleau/dependabot/pip/packages/team-app/tests/sqlalchemy-gte-2.1.9 (`8ac5387`)
+- Merge branch 'main' into dependabot/pip/packages/team-app/tests/sqlalchemy-gte-2.1.9 (`33bb7a3`)
+- Merge pull request #120 from vrouleau/dependabot/pip/packages/team-app/tests/hypothesis-gte-6.170.17 (`93f3828`)
+- Merge pull request #125 from vrouleau/fix/print-button-when-closed (`bc8affb`)
+- Merge pull request #126 from vrouleau/fix/pool-template-senior-typo (`3ab6e3b`)
+
 ## [0.5.30] - 2026-11-23
 
 ### Other
