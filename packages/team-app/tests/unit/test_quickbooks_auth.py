@@ -27,7 +27,7 @@ from app.models import Base, BsGlobal
 from app import models_team, models_live, models_serc  # noqa: F401 — register tables
 from app.database import get_db
 from app.invoice_providers import (
-    InvoiceContext, ProviderError, get_provider, quickbooks_auth as qbo, selected_provider_name,
+    ProviderError, get_provider, quickbooks_auth as qbo, selected_provider_name,
 )
 from app.invoice_providers.quickbooks_provider import QuickBooksProvider
 from app.routers.quickbooks import router as qbo_router
@@ -394,13 +394,6 @@ class TestProvider:
     def test_connect_start_returns_the_consent_url(self, db):
         out = QuickBooksProvider().connect_start(db, org_club=None)
         assert out["url"].startswith("https://appcenter.intuit.com/connect/oauth2?")
-
-    def test_push_not_available_until_phase_3(self, db):
-        with pytest.raises(ProviderError) as e:
-            QuickBooksProvider().push(InvoiceContext(
-                db=db, club=None, org_club=None, items=[], invoice_no="x", total_cents=0,
-                meet_name="m", meetsid=1))
-        assert e.value.status == 501
 
 
 class TestCallbackRoute:

@@ -3284,18 +3284,27 @@ def send_club_invoice(club_id: int, request: Request, data: dict | None = None, 
         raise HTTPException(400, "No billable items for this club")
 
     from ..invoices import invoice_number, record_invoice_sent, items_total_cents
+    from ..models_team import ClubMeetInvite
     total_cents = items_total_cents(items)
     invoice_no = invoice_number(db, club.clubsid, meetsid, total_cents)
+
+    # What this provider took for this club + meet last time, if anything.
+    prior = db.get(ClubMeetInvite, (club.clubsid, meetsid)) if meetsid else None
+    if prior and prior.invoice_provider != provider.name:
+        prior = None
 
     try:
         result = provider.push(InvoiceContext(
             db=db, club=club, org_club=org_club, items=items, invoice_no=invoice_no,
             total_cents=total_cents, meet_name=_meet_name(db, meetsid), meetsid=meetsid, lang=lang,
+            prior_external_id=prior.provider_invoice_id if prior else None,
+            prior_account=prior.provider_account if prior else None,
         ))
     except ProviderError as e:
         raise HTTPException(e.status, e.message)
 
-    record_invoice_sent(db, club.clubsid, meetsid, total_cents)
+    record_invoice_sent(db, club.clubsid, meetsid, total_cents, provider=provider.name,
+                        external_id=result.external_id, account=result.account)
     db.commit()
 
     return {

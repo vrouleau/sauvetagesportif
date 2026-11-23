@@ -274,6 +274,23 @@ class ClubMeetInvite(Base):
     # invoice is sent with a total different from the last one sent.
     invoice_rev = Column(Integer)
     invoice_last_total_cents = Column(Integer)
+    # The provider (stripe | quickbooks) that last took this club's invoice and
+    # the invoice's id there, plus the provider account it lives in (QuickBooks
+    # realm): lets a re-push find the invoice instead of duplicating it.
+    invoice_provider = Column(String(20))
+    provider_invoice_id = Column(String(100))
+    provider_account = Column(String(100))
+
+
+# ── QBO_CUSTOMERS (club -> QuickBooks customer) ──────────────────────────────
+# One QuickBooks company per installation, but ids are per company: keyed by
+# realm so switching sandbox -> production never reuses a sandbox id. Matching
+# by club (not by name) keeps a renamed club on its existing customer.
+class QboCustomer(Base):
+    __tablename__ = "qbo_customers"
+    clubsid = Column(Integer, ForeignKey("clubs.clubsid", ondelete="CASCADE"), primary_key=True)
+    realm_id = Column(String(50), primary_key=True)
+    customer_id = Column(String(50), nullable=False)
 
 
 # ── RELAYS ────────────────────────────────────────────────────────────────────

@@ -1,6 +1,6 @@
 # QuickBooks Online as an invoice provider (alternative to Stripe)
 
-Status: **plan only** — nothing implemented yet.
+Status: phases 1-3 implemented (provider abstraction, OAuth connection, invoice push: create + idempotent re-push). Phase 4 (update the same invoice when the total changes, paid-invoice guard) and the fake-qbo integration service are still to do; until phase 4 a changed total is refused with a 409. No "Société must be the organizer" guard exists: `INVOICE_PROVIDER` is the only switch, set per installation.
 
 ## Goal
 

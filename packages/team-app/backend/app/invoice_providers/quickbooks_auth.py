@@ -379,15 +379,16 @@ def keepalive(db: Session) -> bool:
 # API client
 # ---------------------------------------------------------------------------
 
-def _fault_message(resp: httpx.Response) -> str:
+def _fault(resp: httpx.Response) -> tuple[str, Optional[str]]:
+    """`(message, code)` from a QuickBooks Fault body, else the bare HTTP status."""
     try:
         errs = resp.json().get("Fault", {}).get("Error", [])
         if errs:
             e = errs[0]
-            return f"{e.get('Message', '')} {e.get('Detail', '')}".strip()
+            return f"{e.get('Message', '')} {e.get('Detail', '')}".strip(), e.get("code")
     except ValueError:
         pass
-    return f"HTTP {resp.status_code}"
+    return f"HTTP {resp.status_code}", None
 
 
 def api_request(db: Session, method: str, path: str, *,
@@ -415,6 +416,7 @@ def api_request(db: Session, method: str, path: str, *,
             continue
         break
     if resp.status_code >= 400:
-        raise ProviderError(f"QuickBooks: {_fault_message(resp)}",
-                            502 if resp.status_code >= 500 else 400)
+        message, code = _fault(resp)
+        raise ProviderError(f"QuickBooks: {message}",
+                            502 if resp.status_code >= 500 else 400, code)
     return resp.json()

@@ -397,8 +397,12 @@ def invoice_number(db: Session, club_id: int, meetsid: int | None, total_cents: 
     return format_invoice_number(_meet_year(db, meetsid), meetsid, club_id, rev)
 
 
-def record_invoice_sent(db: Session, club_id: int, meetsid: int | None, total_cents: int) -> None:
+def record_invoice_sent(db: Session, club_id: int, meetsid: int | None, total_cents: int, *,
+                        provider: str | None = None, external_id: str | None = None,
+                        account: str | None = None) -> None:
     """Persist the revision/total of a sent invoice and bump the send count.
+    A provider push also records where the invoice lives (provider, its id and
+    account) so re-pushing finds it again.
 
     The send count (`stripe_send_count`) is shared by the Stripe and email
     paths. Caller commits.
@@ -412,6 +416,10 @@ def record_invoice_sent(db: Session, club_id: int, meetsid: int | None, total_ce
     row.invoice_rev = next_invoice_rev(row.invoice_rev, row.invoice_last_total_cents, total_cents)
     row.invoice_last_total_cents = total_cents
     row.stripe_send_count = (row.stripe_send_count or 0) + 1
+    if provider and external_id:
+        row.invoice_provider = provider
+        row.provider_invoice_id = external_id
+        row.provider_account = account
 
 
 def items_total_cents(items: list[dict]) -> int:

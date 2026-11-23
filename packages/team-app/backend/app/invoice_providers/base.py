@@ -37,10 +37,11 @@ from ..models_team import TeamClub
 class ProviderError(Exception):
     """A provider refused or failed; the router turns it into an HTTP error."""
 
-    def __init__(self, message: str, status: int = 400):
+    def __init__(self, message: str, status: int = 400, code: Optional[str] = None):
         super().__init__(message)
         self.message = message
         self.status = status
+        self.code = code  # the provider's own error code, when it gave one
 
 
 @dataclass
@@ -55,11 +56,17 @@ class InvoiceContext:
     meet_name: str
     meetsid: Optional[int]
     lang: str = "fr"
+    # What the last successful push of this club's invoice for this meet
+    # recorded (same provider only), so a re-push finds its invoice instead of
+    # creating a second one.
+    prior_external_id: Optional[str] = None
+    prior_account: Optional[str] = None
 
 
 @dataclass
 class PushResult:
     external_id: str                # the provider's own invoice id
+    account: Optional[str] = None   # the provider account it lives in (QuickBooks realm)
 
 
 class InvoiceProvider:
