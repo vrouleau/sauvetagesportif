@@ -20,7 +20,8 @@ docker compose up -d     # builds images, starts DB + backend + frontend
 | `SECRET_KEY` | Session encryption — **change this** | `change-me-to-a-random-string` |
 | `ADMIN_PIN` | Admin login PIN | `314159` |
 | `RESEND_API_KEY` | Email delivery (optional) | empty |
-| `STRIPE_API_KEY` | Invoice generation (optional) | empty |
+| `INVOICE_PROVIDER` | Active invoice provider, `stripe` (unset = Stripe if `STRIPE_API_KEY` set, else none) | empty |
+| `STRIPE_API_KEY` | Stripe invoicing (optional) | empty |
 | `TURNSTILE_SITE_KEY` / `_SECRET_KEY` | Cloudflare CAPTCHA (optional) | empty |
 
 **Common operations:**
@@ -210,7 +211,9 @@ Coach best times are written only at meet close, never on registration:
 | `POST /api/import-results-lxf` | Import results .lxf as historical meet; organizer path also resets current meet + PINs + clears organizer. Guards (before any write): 400 `not_results_file` if no RESULT has a time/status; 400 `beach_results_not_archived` if the file uses any beach style (also on `admin/import-historical`; close a beach meet with `admin/close-meet-without-results`); 409 `meet_mismatch` (override `?force_meet=true`, separate from `?force`) if the file's meet name or event ids don't match the open meet being closed — see `lxf_to_team.py` | Organizer/Admin |
 | `GET /api/athletes` | Athlete list | Any authenticated |
 | `POST /api/invoices/pdf-zip` | ZIP of invoice PDFs (`{club_ids}`) | Organizer/Admin |
-| `POST /api/clubs/{id}/invoice` | Send Stripe invoice | Organizer/Admin |
+| `POST /api/clubs/{id}/invoice` | Push the invoice to the active provider (`INVOICE_PROVIDER`) | Organizer/Admin |
+| `GET /api/invoice-provider` | Active provider + connection status (`provider: none` when there is none) | Organizer/Admin |
+| `POST /api/invoice-provider/connect` / `disconnect` | Connect/disconnect the active provider (Stripe: Connect onboarding link) | Organizer/Admin |
 | `POST /api/clubs/{id}/send-invoice-email` | Email invoice (HTML + PDF, Interac instructions, Reply-To organizer) | Organizer/Admin |
 | `POST /api/invoices/notify-organizer` | One summary email to the organizer for a batch of emailed invoices (`{club_ids, lang}`) | Organizer/Admin |
 | `GET /api/admin/gemini-keys` | Get masked Gemini API keys | Admin |
@@ -268,6 +271,7 @@ backend/app/
   events.py             — LENEX meet structure parser
   best_times.py         — Best times: one resolver over archived results + coach-entered times (see "Best times storage")
   export.py             — LENEX export (registrations + Gemini key transport; session names + pause events included; SERC events/relays excluded — meet-app has no notion of them)
+  invoice_providers/    — One module per invoice provider behind `base.InvoiceProvider` (`stripe_provider.py`); `INVOICE_PROVIDER` picks the single active one
   invoices.py           — Invoice line items, deterministic invoice numbers (YEAR-MEET-CLUB[-Rn]), PDF renderer
   emailing.py           — Resend transport, shared email footer, invoice + organizer-summary email templates
   age_codes.py          — Age-group bounds <-> category codes (age_group_code strict / relay_age_code lenient, age_code_to_range)
@@ -381,8 +385,9 @@ Existing members missing `handicapex` are backfilled on re-import; existing non-
 
 ## Invoices
 
-After the closure date the Organizer page shows **Download PDF / Send PDF / Send Stripe**.
+After the closure date the Organizer page shows **Download PDF / Send PDF / Send to the provider** (the provider button's label follows `INVOICE_PROVIDER`; hidden when there is none).
 - **Invoice number** (`invoices.invoice_number`): `YEAR-MEETSID-CLUBSID`, e.g. `2026-012-0045`. Year = `meets.mindate`, else first session date. Revision suffix `-R2`… when a send's total differs from the last sent total (`club_meet_invites.invoice_rev` / `invoice_last_total_cents`, migration m0005). Downloading a PDF previews the number without persisting; `record_invoice_sent` persists it on a successful send.
+- **Provider**: exactly one of Stripe/QuickBooks per installation, from the `INVOICE_PROVIDER` env var (never both). The router (`send_club_invoice`) does the provider-neutral work — meet, organizer, line items, invoice number, `record_invoice_sent` — and hands an `InvoiceContext` to `provider.push()`; a provider raises `ProviderError(message, status)`. Plan: `docs/QUICKBOOKS_PLAN.md`.
 - **Send count**: `club_meet_invites.stripe_send_count` is the shared counter for Stripe *and* email sends (name predates the email path).
 - **Email path**: pays by Interac e-Transfer to the organizer club's email, invoice number in the memo. No Autodeposit: security question "What is the invoice number?" / « Quel est le numéro de facture? », answer = invoice number. The UI then calls `notify-organizer` once per batch; it rebuilds numbers from persisted revisions, not from the request.
 - **Who is named** (`_invoice_email_parties`): Interac recipient = organizer club's email if the meet has an organizer, else `SUPPORT_EMAIL` (no organizer → the admin is the organizer). Contact sentence, Reply-To and batch summary = `SUPPORT_EMAIL` when the admin sends or there is no organizer, else the organizer. No Interac recipient (organizer without email, or no organizer and no `SUPPORT_EMAIL`) → 400 before anything is sent.

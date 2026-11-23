@@ -3167,139 +3167,51 @@ def set_gemini_keys(data: dict, db: Session = Depends(get_db)):
 
 
 # ---------------------------------------------------------------------------
-# Stripe
+# Invoice provider (Stripe / QuickBooks — chosen by INVOICE_PROVIDER)
 # ---------------------------------------------------------------------------
 
-# Map the club's 3-letter LENEX/IOC nation code to the ISO-3166 alpha-2 country
-# Stripe expects. These clubs are Québec-based, so CA is both the common case
-# and the safe fallback for unknown/missing codes.
-_NATION_TO_ISO2 = {
-    "CAN": "CA", "USA": "US", "FRA": "FR", "GBR": "GB", "MEX": "MX",
-    "AUS": "AU", "NZL": "NZ", "GER": "DE", "ESP": "ES", "ITA": "IT",
-    "BEL": "BE", "NED": "NL", "SUI": "CH",
-}
-
-
-def _club_country_iso2(club: TeamClub) -> str:
-    return _NATION_TO_ISO2.get((club.nation or "").upper(), "CA")
-
-
-def _public_business_url() -> str | None:
-    """APP_BASE_URL only when it's a real public http(s) URL.
-
-    Stripe's business_profile.url rejects localhost / non-public hosts ("Not a
-    valid URL"), and APP_BASE_URL defaults to http://localhost:8001 in dev — so
-    prefilling it blindly breaks account creation. Return None in that case and
-    let Stripe collect the URL during onboarding instead.
-    """
-    url = (os.environ.get("APP_BASE_URL") or "").strip()
-    if not url.startswith(("http://", "https://")):
-        return None
-    lowered = url.lower()
-    if "localhost" in lowered or "127.0.0.1" in lowered or "0.0.0.0" in lowered:
-        return None
-    return url
-
-
-def _create_connect_account(stripe, club: TeamClub):
-    """Create a Standard connected account, prefilled from the club.
-
-    Prefilling the known club info (business name, email, country, MCC) means
-    Stripe's hosted onboarding wizard asks the admin fewer questions. NOTE:
-    this platform's risk config requires Stripe to be the losses collector,
-    which rules out Express/Custom dashboards — Standard is the only supported
-    type here (verified against the Connect API). The win is the prefill +
-    deferred (currently_due) fields, not a lighter account type.
-    """
-    business_profile = {
-        "name": (club.name or None),
-        "mcc": "8699",  # Membership organisations (sports clubs)
-    }
-    public_url = _public_business_url()
-    if public_url:
-        business_profile["url"] = public_url
-    return stripe.Account.create(
-        type="standard",
-        country=_club_country_iso2(club),
-        email=(club.email or None),
-        business_type="non_profit",
-        business_profile=business_profile,
-    )
-
-
-@router.post("/stripe/connect", dependencies=[Depends(require_organizer_or_admin)])
-def stripe_connect_start(db: Session = Depends(get_db)):
-    import stripe
-    stripe.api_key = os.environ.get("STRIPE_API_KEY")
-    if not stripe.api_key:
-        raise HTTPException(500, "STRIPE_API_KEY not configured")
-
+def _provider_org_club(db: Session) -> TeamClub:
     org_cfg = _get_organizer_club_id(db)
     if not org_cfg:
         raise HTTPException(400, "No organizer club set")
     club = db.get(TeamClub, int(org_cfg))
     if not club:
         raise HTTPException(404, "Organizer club not found")
-
-    # If we have a stored account id, make sure it still exists on Stripe. An
-    # account that was deleted/closed in the Stripe dashboard leaves a dangling
-    # id here, and AccountLink.create would then 404 ("No such account"),
-    # bricking the connect button. Treat a missing account as "not connected"
-    # and fall through to creating a fresh one.
-    if club.stripe_account_id:
-        try:
-            stripe.Account.retrieve(club.stripe_account_id)
-        except stripe.InvalidRequestError:
-            club.stripe_account_id = None
-            db.commit()
-
-    if not club.stripe_account_id:
-        account = _create_connect_account(stripe, club)
-        club.stripe_account_id = account.id
-        db.commit()
-
-    base_url = os.environ.get("APP_BASE_URL", "http://localhost:8001")
-    link = stripe.AccountLink.create(
-        account=club.stripe_account_id,
-        refresh_url=f"{base_url}/organizer?stripe=refresh",
-        return_url=f"{base_url}/organizer?stripe=success",
-        type="account_onboarding",
-        # Collect only what's due right now; optional fields are deferred to the
-        # first payout, letting the admin finish the initial flow faster.
-        collection_options={"fields": "currently_due"},
-    )
-    return {"url": link.url}
+    return club
 
 
-@router.get("/stripe/status", dependencies=[Depends(require_organizer_or_admin)])
-def stripe_connect_status(db: Session = Depends(get_db)):
-    import stripe
+@router.get("/invoice-provider", dependencies=[Depends(require_organizer_or_admin)])
+def invoice_provider_status(db: Session = Depends(get_db)):
+    """Which provider is active and whether it is connected — drives the
+    Organizer page's invoice buttons (`provider` is `none` when there is none)."""
+    from ..invoice_providers import PROVIDER_NONE, get_provider
+    provider = get_provider()
+    if not provider:
+        return {"provider": PROVIDER_NONE, "connected": False}
     org_cfg = _get_organizer_club_id(db)
-    if not org_cfg:
-        return {"connected": False}
-    club = db.get(TeamClub, int(org_cfg))
-    if not club or not club.stripe_account_id:
-        return {"connected": False}
-    stripe.api_key = os.environ.get("STRIPE_API_KEY")
-    if not stripe.api_key:
-        return {"connected": False}
+    org_club = db.get(TeamClub, int(org_cfg)) if org_cfg else None
+    return {"provider": provider.name, **provider.status(db, org_club)}
+
+
+@router.post("/invoice-provider/connect", dependencies=[Depends(require_organizer_or_admin)])
+def invoice_provider_connect(db: Session = Depends(get_db)):
+    from ..invoice_providers import ProviderError, get_provider
+    provider = get_provider()
+    if not provider:
+        raise HTTPException(400, "No invoice provider configured")
     try:
-        acct = stripe.Account.retrieve(club.stripe_account_id)
-        return {"connected": acct.charges_enabled, "account_id": club.stripe_account_id}
-    except Exception:
-        return {"connected": False}
+        return provider.connect_start(db, _provider_org_club(db))
+    except ProviderError as e:
+        raise HTTPException(e.status, e.message)
 
 
-@router.post("/stripe/disconnect", dependencies=[Depends(require_organizer_or_admin)])
-def stripe_disconnect(db: Session = Depends(get_db)):
-    org_cfg = _get_organizer_club_id(db)
-    if not org_cfg:
-        raise HTTPException(400, "No organizer club set")
-    club = db.get(TeamClub, int(org_cfg))
-    if not club:
-        raise HTTPException(404, "Organizer club not found")
-    club.stripe_account_id = None
-    db.commit()
+@router.post("/invoice-provider/disconnect", dependencies=[Depends(require_organizer_or_admin)])
+def invoice_provider_disconnect(db: Session = Depends(get_db)):
+    from ..invoice_providers import get_provider
+    provider = get_provider()
+    if not provider:
+        raise HTTPException(400, "No invoice provider configured")
+    provider.disconnect(db, _provider_org_club(db))
     return {"ok": True}
 
 
@@ -3342,19 +3254,24 @@ def invoices_pdf_zip(data: dict, request: Request, db: Session = Depends(get_db)
 
 @router.post("/clubs/{club_id}/invoice", dependencies=[Depends(require_organizer_or_admin)])
 def send_club_invoice(club_id: int, request: Request, data: dict | None = None, db: Session = Depends(get_db)):
-    """Create and send a Stripe invoice for a club on the organizer's connected account."""
-    import stripe
-    stripe.api_key = os.environ.get("STRIPE_API_KEY")
-    if not stripe.api_key:
-        raise HTTPException(500, "STRIPE_API_KEY not configured")
+    """Push a club's invoice to the active invoice provider (Stripe, ...).
+
+    The provider is chosen by the INVOICE_PROVIDER env var — see
+    invoice_providers/. Everything provider-neutral happens here; the provider
+    only turns the finished invoice into its own objects.
+    """
+    from ..invoice_providers import InvoiceContext, ProviderError, get_provider
+    provider = get_provider()
+    if not provider:
+        raise HTTPException(400, "No invoice provider configured")
 
     meetsid = resolve_meetsid(request, db)
     org_cfg = _get_organizer_club_id(db, meetsid=meetsid)
     if not org_cfg:
         raise HTTPException(400, "No organizer club set")
     org_club = db.get(TeamClub, int(org_cfg))
-    if not org_club or not org_club.stripe_account_id:
-        raise HTTPException(400, "Organizer has no connected Stripe account")
+    if not org_club:
+        raise HTTPException(400, "No organizer club set")
 
     club = db.get(TeamClub, club_id)
     if not club:
@@ -3367,88 +3284,23 @@ def send_club_invoice(club_id: int, request: Request, data: dict | None = None, 
         raise HTTPException(400, "No billable items for this club")
 
     from ..invoices import invoice_number, record_invoice_sent, items_total_cents
-    acct = org_club.stripe_account_id
-    meet_name = _meet_name(db, meetsid)
     total_cents = items_total_cents(items)
     invoice_no = invoice_number(db, club.clubsid, meetsid, total_cents)
 
-    email = (club.email or "").strip()
-    customer = None
-    if email:
-        existing = stripe.Customer.list(email=email, limit=1, stripe_account=acct)
-        if existing.data:
-            customer = existing.data[0]
-    if not customer:
-        customer = stripe.Customer.create(
-            name=club.name,
-            email=email or None,
-            metadata={"meetmanager_club_id": str(club.clubsid)},
-            stripe_account=acct,
-        )
-
-    # Surface the organising club on the invoice/PDF. Stripe locks the big
-    # header title to the connected account's business name/website (that's
-    # where "meetmanager.vrouleau.app" comes from and it can't be overridden
-    # per-invoice), so we add the organiser as a labelled custom field instead.
-    # Stripe caps custom_fields name/value at 30 chars each.
-    # The invoice number is the same deterministic one used on the PDF and
-    # the email invoice (invoices.invoice_number), independent of Stripe's own.
-    custom_fields = [
-        {"name": "Organisateur"[:30], "value": (org_club.name or "")[:30]},
-        {"name": "N° facture"[:30], "value": invoice_no[:30]},
-    ]
-
-    invoice = stripe.Invoice.create(
-        customer=customer.id,
-        auto_advance=False,
-        currency="cad",
-        collection_method="send_invoice",
-        days_until_due=30,
-        description=f"{meet_name} — {'Registrations' if lang == 'en' else 'Inscriptions'}",
-        custom_fields=custom_fields,
-        metadata={"meetmanager_club_id": str(club.clubsid), "meetmanager_meet": meet_name,
-                  "meetmanager_invoice_no": invoice_no},
-        pending_invoice_items_behavior="exclude",
-        stripe_account=acct,
-    )
-
-    for it in items:
-        desc_parts = []
-        if it.get("event_number"):
-            desc_parts.append(f"#{it['event_number']}")
-        if it.get("event_name"):
-            desc_parts.append(it["event_name"])
-        if it.get("description"):
-            desc_parts.append(it["description"])
-        # Use price_data (unit_amount + quantity via an inline product) instead
-        # of a pre-multiplied `amount`. A lump `amount` makes Stripe render
-        # Qty 1 with the unit price equal to the whole line total — that's why
-        # "Frais par athlète" showed Qty 1 / CA$200 instead of Qty 4 / CA$50.
-        # The product must live on the same connected account as the invoice.
-        line_desc = " — ".join(desc_parts) or ("Registration" if lang == "en" else "Inscription")
-        product = stripe.Product.create(name=line_desc[:250], stripe_account=acct)
-        stripe.InvoiceItem.create(
-            customer=customer.id,
-            invoice=invoice.id,
-            price_data={
-                "currency": "cad",
-                "product": product.id,
-                "unit_amount": it["unit_cents"],
-            },
-            quantity=it["qty"],
-            description=line_desc,
-            stripe_account=acct,
-        )
-
-    stripe.Invoice.finalize_invoice(invoice.id, stripe_account=acct)
-    stripe.Invoice.send_invoice(invoice.id, stripe_account=acct)
+    try:
+        result = provider.push(InvoiceContext(
+            db=db, club=club, org_club=org_club, items=items, invoice_no=invoice_no,
+            total_cents=total_cents, meet_name=_meet_name(db, meetsid), meetsid=meetsid, lang=lang,
+        ))
+    except ProviderError as e:
+        raise HTTPException(e.status, e.message)
 
     record_invoice_sent(db, club.clubsid, meetsid, total_cents)
     db.commit()
 
     return {
         "club": club.name,
-        "invoice_id": invoice.id,
+        "invoice_id": result.external_id,
         "invoice_no": invoice_no,
         "total_cents": total_cents,
     }

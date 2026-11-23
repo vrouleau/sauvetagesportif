@@ -18,8 +18,8 @@
 
 """Build club registration-fee line items, invoice numbers and invoice PDFs.
 
-The Stripe and email send flows live in routers/api.py (send_club_invoice,
-send_club_invoice_email); this module provides the shared line-item builder
+The provider (Stripe…) and email send flows live in routers/api.py
+(send_club_invoice -> invoice_providers/, send_club_invoice_email); this module provides the shared line-item builder
 (_club_line_items), the deterministic invoice numbering they all use, and the
 ReportLab PDF renderer.
 """

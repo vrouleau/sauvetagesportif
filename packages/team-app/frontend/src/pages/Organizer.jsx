@@ -28,7 +28,8 @@ export default function Organizer() {
   const [meetInfo, setMeetInfo] = useState(null)
   const [clubs, setClubs] = useState([])
   const [checked, setChecked] = useState({})
-  const [stripeStatus, setStripeStatus] = useState(null)
+  // { provider: 'stripe'|'none'|…, connected } from GET /invoice-provider
+  const [providerInfo, setProviderInfo] = useState(null)
   const [msg, setMsg] = useState('')
   const [msgError, setMsgError] = useState(false)
   const [showImportConfirm, setShowImportConfirm] = useState(false)
@@ -37,7 +38,7 @@ export default function Organizer() {
   const importResultsRef = useRef(null)
   const isAdmin = localStorage.getItem('role') === 'admin'
 
-  useEffect(() => { loadMeetInfo(); loadClubs(); loadStripeStatus() }, [])
+  useEffect(() => { loadMeetInfo(); loadClubs(); loadProviderInfo() }, [])
 
   async function loadMeetInfo() {
     const r = await api.get('/meet-info')
@@ -50,26 +51,26 @@ export default function Organizer() {
     setClubs(r.data.filter(c => c.id !== orgId))
   }
 
-  async function loadStripeStatus() {
+  async function loadProviderInfo() {
     try {
-      const r = await api.get('/stripe/status')
-      setStripeStatus(r.data)
-    } catch { setStripeStatus({ connected: false }) }
+      const r = await api.get('/invoice-provider')
+      setProviderInfo(r.data)
+    } catch { setProviderInfo({ provider: 'none', connected: false }) }
   }
 
-  async function connectStripe() {
+  async function connectProvider() {
     try {
-      const r = await api.post('/stripe/connect', {})
+      const r = await api.post('/invoice-provider/connect', {})
       window.location.href = r.data.url
     } catch (e) { setMsg(e.detail || e.message || 'Error') }
   }
 
-  async function disconnectStripe() {
-    if (!confirm(lang === 'fr' ? 'Déconnecter Stripe ?' : 'Disconnect Stripe?')) return
+  async function disconnectProvider() {
+    if (!confirm(lang === 'fr' ? `Déconnecter ${providerName} ?` : `Disconnect ${providerName}?`)) return
     try {
-      await api.post('/stripe/disconnect', {})
-      setStripeStatus({ connected: false })
-      setMsg(lang === 'fr' ? 'Stripe déconnecté' : 'Stripe disconnected')
+      await api.post('/invoice-provider/disconnect', {})
+      setProviderInfo({ provider, connected: false })
+      setMsg(lang === 'fr' ? `${providerName} déconnecté` : `${providerName} disconnected`)
     } catch (e) { setMsg(e.message || 'Error') }
   }
 
@@ -300,7 +301,8 @@ export default function Organizer() {
 
   // Send invoices to the checked clubs that have an email, one request per
   // club. `channel` is 'email' (HTML + PDF with Interac instructions) or
-  // 'stripe' (Stripe-hosted invoice). Both bump the same per-club send count.
+  // 'provider' (the active invoice provider: Stripe, …). Both bump the same
+  // per-club send count.
   async function sendSelectedInvoices(channel) {
     const ids = selectedSendableIds()
     if (!ids.length) return
@@ -311,7 +313,7 @@ export default function Organizer() {
     const failures = []
     for (const id of ids) {
       try {
-        if (channel === 'stripe') await api.post(`/clubs/${id}/invoice`, { lang })
+        if (channel === 'provider') await api.post(`/clubs/${id}/invoice`, { lang })
         else await api.post(`/clubs/${id}/send-invoice-email`, { lang })
         sentIds.push(id)
       } catch (e) {
@@ -355,7 +357,7 @@ export default function Organizer() {
   const closurePassed = meetInfo?.closure_date && new Date() > new Date(meetInfo.closure_date + 'T23:59:59')
 
   // Before the registration deadline: invite mode. After: invoice mode, with
-  // Download PDF / Send PDF (email) / Send Stripe side by side.
+  // Download PDF / Send PDF (email) / Send to the provider side by side.
   const mode = !closurePassed ? 'invite' : 'invoice'
 
   const hasEmail = c => !!(c.email && c.email.trim())
@@ -371,7 +373,7 @@ export default function Organizer() {
     return (c.registered_athlete_count || 0) > 0
   }
 
-  // Checked clubs that the email/Stripe send buttons will actually send to.
+  // Checked clubs that the email/provider send buttons will actually send to.
   function selectedSendableIds() {
     return clubs.filter(c => checked[c.id] && isSelectable(c) && hasEmail(c)).map(c => c.id)
   }
@@ -383,7 +385,13 @@ export default function Organizer() {
   // becomes non-selectable.
   const checkedCount = selectableClubs.filter(c => checked[c.id]).length
   const sendableCount = selectableClubs.filter(c => checked[c.id] && hasEmail(c)).length
-  const stripeConnected = !!stripeStatus?.connected
+  // Only one provider is ever active (INVOICE_PROVIDER); its UI strings are
+  // keyed by name (send_<p>_btn, <p>_connect_btn, …) so a new provider only
+  // adds translations.
+  const provider = providerInfo?.provider || 'none'
+  const hasProvider = provider !== 'none'
+  const providerName = hasProvider ? t[`${provider}_name`] || provider : ''
+  const providerConnected = hasProvider && !!providerInfo?.connected
 
   function statusText(c) {
     const parts = []
@@ -411,10 +419,10 @@ export default function Organizer() {
           </span>
         )}
         <div className="flex-1" />
-        {/* Stripe status (passive indicator only — the connect/disconnect
+        {/* Provider status (passive indicator only — the connect/disconnect
             control lives in the actions bar below) */}
-        {stripeStatus?.connected && (
-          <span className="text-xs text-green-700">✓ Stripe</span>
+        {providerConnected && (
+          <span className="text-xs text-green-700">✓ {providerName}</span>
         )}
         {/* Closure date */}
         {/* Closure date (read-only, set via meet config) */}
@@ -447,11 +455,13 @@ export default function Organizer() {
               className="text-white px-3 py-1 rounded text-xs disabled:opacity-50 bg-teal-600 hover:bg-teal-700">
               {t.send_pdf_btn} {sendableCount > 0 && `(${sendableCount})`}
             </button>
-            <button onClick={() => sendSelectedInvoices('stripe')} disabled={!stripeConnected || !sendableCount}
-              title={stripeConnected ? undefined : t.stripe_connect_first}
-              className="text-white px-3 py-1 rounded text-xs disabled:opacity-50 bg-blue-600 hover:bg-blue-700">
-              {t.send_stripe_btn} {stripeConnected && sendableCount > 0 && `(${sendableCount})`}
-            </button>
+            {hasProvider && (
+              <button onClick={() => sendSelectedInvoices('provider')} disabled={!providerConnected || !sendableCount}
+                title={providerConnected ? undefined : t[`${provider}_connect_first`]}
+                className="text-white px-3 py-1 rounded text-xs disabled:opacity-50 bg-blue-600 hover:bg-blue-700">
+                {t[`send_${provider}_btn`]} {providerConnected && sendableCount > 0 && `(${sendableCount})`}
+              </button>
+            )}
           </>
         )}
         <div className="w-px h-4 bg-gray-300" />
@@ -473,20 +483,23 @@ export default function Organizer() {
           className="px-3 py-1 bg-gray-500 text-white text-xs rounded hover:bg-gray-600">
           {lang === 'fr' ? 'Fermer sans résultats' : 'Close without results'}
         </button>
-        <div className="w-px h-4 bg-gray-300" />
-        {/* Single Stripe toggle: connect when disconnected, disconnect when
-            connected — replaces the old ambiguous "Disconnect" link and the
-            separate connect link that used to sit in the toolbar. */}
-        {stripeStatus?.connected ? (
-          <button onClick={disconnectStripe}
-            className="px-3 py-1 bg-red-600 text-white text-xs rounded hover:bg-red-700">
-            {t.stripe_disconnect_btn}
-          </button>
-        ) : (
-          <button onClick={connectStripe}
-            className="px-3 py-1 bg-purple-600 text-white text-xs rounded hover:bg-purple-700">
-            {t.stripe_connect_btn}
-          </button>
+        {hasProvider && (
+          <>
+            <div className="w-px h-4 bg-gray-300" />
+            {/* Single provider toggle: connect when disconnected, disconnect
+                when connected. */}
+            {providerConnected ? (
+              <button onClick={disconnectProvider}
+                className="px-3 py-1 bg-red-600 text-white text-xs rounded hover:bg-red-700">
+                {t[`${provider}_disconnect_btn`]}
+              </button>
+            ) : (
+              <button onClick={connectProvider}
+                className="px-3 py-1 bg-purple-600 text-white text-xs rounded hover:bg-purple-700">
+                {t[`${provider}_connect_btn`]}
+              </button>
+            )}
+          </>
         )}
         <div className="flex-1" />
         {msg && <span className={`text-xs max-w-xl truncate ${msgError ? 'text-red-600' : 'text-green-700'}`} title={msg}>{msg}</span>}

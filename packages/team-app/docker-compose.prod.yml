@@ -12,6 +12,7 @@ services:
       RESEND_FROM_EMAIL: "${RESEND_FROM_EMAIL:-noreply@example.com}"
       APP_BASE_URL: "${APP_BASE_URL:-http://localhost:8001}"
       SECRET_KEY: "${SECRET_KEY}"
+      INVOICE_PROVIDER: "${INVOICE_PROVIDER:-}"
       STRIPE_API_KEY: "${STRIPE_API_KEY:-}"
       SUPPORT_EMAIL: "${SUPPORT_EMAIL:-}"
       TURNSTILE_SECRET_KEY: "${TURNSTILE_SECRET_KEY:-}"
