@@ -464,3 +464,107 @@ class TestCallbackRoute:
         r = client.get("/api/quickbooks/callback", params={"code": "c", "state": "s", "realmId": "1"})
         assert r.headers["location"].endswith("reason=not_enabled")
         assert intuit.requests == []
+
+
+class TestSecretBox:
+    def test_round_trip(self):
+        from app.secret_box import decrypt_text, encrypt_text
+        token = encrypt_text("refresh-token-é")
+        assert "refresh-token" not in token and decrypt_text(token) == "refresh-token-é"
+
+    def test_a_different_secret_key_cannot_read_it(self, monkeypatch):
+        from app.secret_box import decrypt_text, encrypt_text
+        token = encrypt_text("x")
+        monkeypatch.setenv("SECRET_KEY", "another-key")
+        assert decrypt_text(token) is None
+
+    def test_garbage_is_not_an_exception(self):
+        from app.secret_box import decrypt_text
+        assert decrypt_text("not-a-fernet-token") is None
+
+    def test_no_secret_key_is_an_error_not_a_weak_key(self, monkeypatch):
+        from app.secret_box import encrypt_text
+        monkeypatch.delenv("SECRET_KEY")
+        with pytest.raises(RuntimeError):
+            encrypt_text("x")
+
+
+class TestStoredConnectionIsDefensive:
+    def _store(self, db, plain):
+        from app.secret_box import encrypt_text
+        db.add(BsGlobal(name=qbo.CONN_KEY, data=encrypt_text(plain)))
+        db.commit()
+
+    def test_corrupted_json_is_treated_as_not_connected(self, db):
+        self._store(db, "{not json")
+        assert qbo.load_connection(db) is None and qbo.status(db)["connected"] is False
+
+    def test_a_record_from_another_shape_is_treated_as_not_connected(self, db):
+        self._store(db, json.dumps({"realm_id": "1"}))  # missing fields
+        assert qbo.load_connection(db) is None
+
+    def test_plaintext_in_the_row_is_never_trusted(self, db):
+        db.add(BsGlobal(name=qbo.CONN_KEY, data=json.dumps({"access_token": "x"})))
+        db.commit()
+        assert qbo.load_connection(db) is None
+
+    def test_malformed_state_value_is_refused(self, db):
+        db.add(BsGlobal(name=qbo.STATE_KEY, data="no-separator"))
+        db.commit()
+        assert qbo.consume_state(db, "no-separator") is False
+        assert db.get(BsGlobal, qbo.STATE_KEY) is None  # and it is gone
+
+
+class TestNetworkFailures:
+    def _down(self, monkeypatch):
+        def boom(request):
+            raise httpx.ConnectError("unreachable")
+        monkeypatch.setattr(qbo, "_transport", httpx.MockTransport(boom))
+
+    def test_token_endpoint_unreachable_is_a_502_and_never_flags_reconnect(self, db, intuit, monkeypatch):
+        _connect(db, intuit)
+        _age(db, access_expires_at=time.time() - 10)
+        self._down(monkeypatch)
+        with pytest.raises(ProviderError) as e:
+            qbo.get_access_token(db)
+        assert e.value.status == 502 and "reach QuickBooks" in e.value.message
+        assert qbo.status(db)["connected"] is True
+
+    def test_api_unreachable_is_a_502(self, db, intuit, monkeypatch):
+        _connect(db, intuit)
+        self._down(monkeypatch)
+        with pytest.raises(ProviderError) as e:
+            qbo.api_request(db, "GET", "companyinfo/123")
+        assert e.value.status == 502
+
+    def test_a_second_401_is_reported_not_retried_forever(self, db, intuit, monkeypatch):
+        _connect(db, intuit)
+        before = len([r for r in intuit.requests if "/companyinfo/" in str(r.url)])  # connecting looked up the name
+        intuit.api_status = [401]  # every call is refused, even after the refresh
+        with pytest.raises(ProviderError) as e:
+            qbo.api_request(db, "GET", "companyinfo/123")
+        assert e.value.status == 400
+        after = len([r for r in intuit.requests if "/companyinfo/" in str(r.url)])
+        assert after - before == 2  # tried, refreshed, tried again, then gave up
+
+    def test_a_non_json_error_body_still_gives_a_message(self, db, intuit, monkeypatch):
+        _connect(db, intuit)
+        monkeypatch.setattr(qbo, "_transport", httpx.MockTransport(lambda r: httpx.Response(503, text="<html>down</html>")))
+        with pytest.raises(ProviderError) as e:
+            qbo.api_request(db, "GET", "companyinfo/123")
+        assert e.value.status == 502 and "HTTP 503" in e.value.message
+
+
+class TestEnvironmentSwitch:
+    def test_environment_is_normalised_and_defaults_to_sandbox(self, monkeypatch):
+        for raw, expected in (("", "sandbox"), ("Sandbox", "sandbox"), ("PRODUCTION", "production"),
+                              (" production ", "production"), ("prod", "sandbox"), ("typo", "sandbox")):
+            monkeypatch.setenv("QBO_ENVIRONMENT", raw)
+            assert qbo.environment() == expected, raw
+
+    def test_endpoint_overrides(self, monkeypatch):
+        monkeypatch.setenv("QBO_AUTH_URL", "http://fake/auth")
+        monkeypatch.setenv("QBO_TOKEN_URL", "http://fake/token")
+        monkeypatch.setenv("QBO_REVOKE_URL", "http://fake/revoke")
+        assert (qbo._url("auth"), qbo._url("token"), qbo._url("revoke")) == \
+            ("http://fake/auth", "http://fake/token", "http://fake/revoke")

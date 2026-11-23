@@ -34,6 +34,26 @@ from app.routers import api
 
 REALM = "R1"
 
+# What the fake QuickBooks accepts: ONLY property names that appeared in real
+# Intuit sandbox responses (captured 2026-11-23) or in Intuit's documented
+# create examples. Anything else is refused with error 2010, like the real API,
+# so a misremembered name fails a test instead of the first real push (the
+# lesson of "SalesItemLineItemDetail", which Intuit's API does not know).
+REAL_INVOICE_PROPS = {
+    "Id", "SyncToken", "sparse", "MetaData", "domain", "DocNumber", "TxnDate", "CurrencyRef", "CustomField",
+    "LinkedTxn", "Line", "TxnTaxDetail", "CustomerRef", "CustomerMemo", "BillAddr", "ShipAddr", "SalesTermRef",
+    "DueDate", "TotalAmt", "ApplyTaxAfterDiscount", "PrintStatus", "EmailStatus", "BillEmail", "Balance",
+    "PrivateNote", "AllowOnlinePayment", "AllowIPNPayment", "FreeFormAddress",
+}
+REAL_LINE_PROPS = {"Id", "LineNum", "Description", "Amount", "DetailType", "SalesItemLineDetail",
+                   "SubTotalLineDetail", "DiscountLineDetail", "LinkedTxn", "CustomExtensions"}
+REAL_DETAIL_TYPES = {"SalesItemLineDetail", "SubTotalLineDetail", "DiscountLineDetail", "DescriptionOnly"}
+REAL_SALES_LINE_PROPS = {"ItemRef", "UnitPrice", "Qty", "ItemAccountRef", "TaxCodeRef", "ServiceDate"}
+REAL_CUSTOMER_PROPS = {"Id", "SyncToken", "sparse", "DisplayName", "PrimaryEmailAddr", "CompanyName", "GivenName",
+                       "FamilyName", "BillAddr", "Notes", "Active", "CurrencyRef", "DefaultTaxCodeRef"}
+REAL_ITEM_PROPS = {"Id", "SyncToken", "sparse", "Name", "Type", "IncomeAccountRef", "Active", "UnitPrice",
+                   "Taxable", "Description", "TrackQtyOnHand", "ExpenseAccountRef"}
+
 
 class FakeQbo:
     """A tiny QuickBooks: customers, items, accounts, tax codes and invoices."""
@@ -61,12 +81,54 @@ class FakeQbo:
     def _fault(self, status, code, message):
         return httpx.Response(status, json={"Fault": {"Error": [{"Message": message, "Detail": "", "code": code}]}})
 
+    @staticmethod
+    def _invalid_property(path: str, body: dict):
+        """The first property real QuickBooks would not recognise, else None."""
+        allowed = {"invoice": REAL_INVOICE_PROPS, "customer": REAL_CUSTOMER_PROPS, "item": REAL_ITEM_PROPS}.get(path)
+        if allowed is None:
+            return None
+        for key in body:
+            if key not in allowed:
+                return key
+        for ref in ("CustomerRef", "IncomeAccountRef"):  # references are {"value": "<string id>"}
+            if ref in body and not isinstance(body[ref].get("value"), str):
+                return f"{ref}.value"
+        if path != "invoice":
+            return None
+        for line in body.get("Line", []):
+            for key in line:
+                if key not in REAL_LINE_PROPS:
+                    return f"Line.{key}"
+            kind = line.get("DetailType")
+            if kind not in REAL_DETAIL_TYPES:
+                return "Line.DetailType"
+            if kind not in line:  # the detail object is named after the type
+                return f"Line.{kind}"
+            if not isinstance(line.get("Amount"), (int, float)):
+                return "Line.Amount"
+            if kind == "SalesItemLineDetail":
+                detail = line[kind]
+                for key in detail:
+                    if key not in REAL_SALES_LINE_PROPS:
+                        return f"Line.SalesItemLineDetail.{key}"
+                for num in ("Qty", "UnitPrice"):
+                    if num in detail and not isinstance(detail[num], (int, float)):
+                        return f"Line.SalesItemLineDetail.{num}"
+                for ref in ("ItemRef", "TaxCodeRef"):
+                    if ref in detail and not isinstance(detail[ref].get("value"), str):
+                        return f"Line.SalesItemLineDetail.{ref}.value"
+        return None
+
     def handler(self, request: httpx.Request) -> httpx.Response:
         path = urlparse(str(request.url)).path.split(f"/v3/company/{REALM}/", 1)[-1]
         self.log.append((request.method, path))
         self.urls.append(str(request.url))
         self.raw.append((request.content, request.headers.get("content-type", "")))
         body = json.loads(request.content) if request.content else None
+        if request.method == "POST" and body is not None:
+            bad = self._invalid_property(path.split("?")[0], body)
+            if bad:
+                return self._fault(400, "2010", f"Request has invalid or unsupported property Property Name:{bad}")
 
         if request.method == "GET" and path == "query":
             sql = parse_qs(urlparse(str(request.url)).query)["query"][0]
@@ -793,3 +855,220 @@ class TestStatusEndpoints:
         monkeypatch.delenv("STRIPE_API_KEY", raising=False)
         assert api.invoice_provider_statuses(_ReqWithMeet(), db) == {"statuses": {}}
         assert api.invoice_provider_status(db) == {"provider": "none", "connected": False}
+
+
+# A real invoice, as the Intuit sandbox returned it on 2026-11-23 (trimmed to the
+# parts that matter): note DetailType "SalesItemLineDetail", integer UnitPrice,
+# the automatic SubTotalLineDetail line and QuickBooks' own TotalAmt/Balance.
+REAL_INVOICE = {
+    "Id": "130", "SyncToken": "0", "DocNumber": "1037", "TxnDate": "2026-10-28",
+    "Line": [
+        {"Id": "1", "LineNum": 1, "Description": "Rock Fountain", "Amount": 275.0, "DetailType": "SalesItemLineDetail",
+         "SalesItemLineDetail": {"ItemRef": {"value": "5", "name": "Rock Fountain"}, "UnitPrice": 275, "Qty": 1,
+                                 "TaxCodeRef": {"value": "TAX"}}},
+        {"Id": "3", "LineNum": 3, "Description": "Concrete for fountain installation", "Amount": 47.5,
+         "DetailType": "SalesItemLineDetail",
+         "SalesItemLineDetail": {"ItemRef": {"value": "3", "name": "Concrete"}, "UnitPrice": 9.5, "Qty": 5,
+                                 "TaxCodeRef": {"value": "TAX"}}},
+        {"Amount": 322.5, "DetailType": "SubTotalLineDetail", "SubTotalLineDetail": {}},
+    ],
+    "TotalAmt": 362.07, "Balance": 362.07, "DueDate": "2026-11-27", "EmailStatus": "NotSet",
+}
+
+
+class TestFakeIsAsStrictAsQuickBooks:
+    """Guard the guard: the fake must keep refusing what real QuickBooks refused."""
+
+    def _post(self, db, qb, body, path="invoice"):
+        return qbo.api_request(db, "POST", path, json_body=body)
+
+    def _line(self, **over):
+        line = {"DetailType": "SalesItemLineDetail", "Amount": 1.0,
+                "SalesItemLineDetail": {"ItemRef": {"value": "7"}}}
+        line.update(over)
+        return line
+
+    def test_the_wrong_name_we_once_shipped_is_refused(self, db, qb):
+        bad = {"CustomerRef": {"value": "1"}, "Line": [{
+            "DetailType": "SalesItemLineItemDetail", "Amount": 1.0,
+            "SalesItemLineItemDetail": {"ItemRef": {"value": "7"}}}]}
+        with pytest.raises(ProviderError) as e:
+            self._post(db, qb, bad)
+        assert e.value.code == "2010" and "Line.SalesItemLineItemDetail" in e.value.message
+
+    def test_a_detail_object_not_matching_its_type_is_refused(self, db, qb):
+        # says it is a sales line, but carries the detail object of another type
+        line = {"DetailType": "SalesItemLineDetail", "Amount": 1.0, "SubTotalLineDetail": {}}
+        with pytest.raises(ProviderError) as e:
+            self._post(db, qb, {"CustomerRef": {"value": "1"}, "Line": [line]})
+        assert "Line.SalesItemLineDetail" in e.value.message
+
+    def test_unknown_properties_are_refused_at_every_level(self, db, qb):
+        for body, where in (
+            ({"CustomerRef": {"value": "1"}, "Line": [], "Memo": "x"}, "Memo"),
+            ({"CustomerRef": {"value": "1"}, "Line": [self._line(Memo="x")]}, "Line.Memo"),
+            ({"CustomerRef": {"value": "1"},
+              "Line": [self._line(SalesItemLineDetail={"ItemRef": {"value": "7"}, "Tax": 1})]},
+             "Line.SalesItemLineDetail.Tax"),
+        ):
+            with pytest.raises(ProviderError) as e:
+                self._post(db, qb, body)
+            assert where in e.value.message
+
+    def test_numbers_and_ids_must_have_the_right_type(self, db, qb):
+        for body, where in (
+            ({"CustomerRef": {"value": 1}, "Line": []}, "CustomerRef.value"),
+            ({"CustomerRef": {"value": "1"}, "Line": [self._line(Amount="1.00")]}, "Line.Amount"),
+            ({"CustomerRef": {"value": "1"},
+              "Line": [self._line(SalesItemLineDetail={"ItemRef": {"value": 7}})]},
+             "Line.SalesItemLineDetail.ItemRef.value"),
+            ({"CustomerRef": {"value": "1"},
+              "Line": [self._line(SalesItemLineDetail={"ItemRef": {"value": "7"}, "Qty": "1"})]},
+             "Line.SalesItemLineDetail.Qty"),
+        ):
+            with pytest.raises(ProviderError) as e:
+                self._post(db, qb, body)
+            assert where in e.value.message
+
+    def test_customers_and_items_are_validated_too(self, db, qb):
+        with pytest.raises(ProviderError) as e:
+            self._post(db, qb, {"DisplayName": "X", "Email": "a@b.ca"}, "customer")
+        assert "Email" in e.value.message
+        with pytest.raises(ProviderError) as e:
+            self._post(db, qb, {"Name": "X", "Type": "Service", "IncomeAccount": "30"}, "item")
+        assert "IncomeAccount" in e.value.message
+
+    def test_what_the_app_really_sends_is_accepted(self, db, qb):
+        """The strict fake does not break the happy path: every push test above
+        already goes through it, this one just says so explicitly."""
+        result = QuickBooksProvider().push(_ctx(db))
+        assert result.external_id in qb.invoices
+
+
+class TestRealShapes:
+    """Our parsing against responses shaped exactly like Intuit's."""
+
+    def test_real_invoice_is_recognised_as_unchanged(self):
+        from app.invoice_providers.quickbooks_provider import _same_lines
+        desired = [dict(ln) for ln in REAL_INVOICE["Line"] if ln["DetailType"] == "SalesItemLineDetail"]
+        assert _same_lines(REAL_INVOICE, desired) is True
+
+    def test_subtotal_line_and_integer_unit_price_do_not_confuse_the_comparison(self):
+        from app.invoice_providers.quickbooks_provider import _line_key, _same_lines
+        assert _line_key(REAL_INVOICE["Line"][0]) == ("Rock Fountain", 275.0, 1.0, 275.0)
+        ours = [{"DetailType": "SalesItemLineDetail", "Amount": 275.0, "Description": "Rock Fountain",
+                 "SalesItemLineDetail": {"ItemRef": {"value": "5"}, "Qty": 1, "UnitPrice": 275.0}}]
+        assert _same_lines(REAL_INVOICE, ours) is False  # the second real line is missing from ours
+
+    def test_description_whitespace_from_quickbooks_is_ignored(self):
+        from app.invoice_providers.quickbooks_provider import _same_lines
+        stored = {"Line": [{"DetailType": "SalesItemLineDetail", "Description": " A — b ", "Amount": 1.0,
+                            "SalesItemLineDetail": {"Qty": 1, "UnitPrice": 1}}]}
+        ours = [{"DetailType": "SalesItemLineDetail", "Description": "A — b", "Amount": 1.0,
+                 "SalesItemLineDetail": {"Qty": 1, "UnitPrice": 1.0}}]
+        assert _same_lines(stored, ours) is True
+
+    def test_the_real_invoice_counts_as_open(self):
+        from app.invoice_providers.quickbooks_provider import _cents, _refuse_if_settled, invoice_state
+        assert invoice_state(_cents(REAL_INVOICE["TotalAmt"]), _cents(REAL_INVOICE["Balance"])) == "open"
+        _refuse_if_settled(REAL_INVOICE, "1037")  # does not raise
+
+    def test_status_query_answered_in_the_real_shape(self, db, monkeypatch):
+        """QuickBooks answers a column query with sparse rows and 'sparse': true."""
+        real = {"QueryResponse": {"Invoice": [
+            {"Id": "158", "DocNumber": "2099-999-0003", "TotalAmt": 120.0, "Balance": 95.0, "DueDate": "2020-01-01",
+             "sparse": True},
+        ], "startPosition": 1, "maxResults": 1}, "time": "2026-11-23T14:28:19.345-08:00"}
+        monkeypatch.setattr(qbo, "_transport", httpx.MockTransport(lambda request: httpx.Response(200, json=real)))
+        out = QuickBooksProvider().invoice_statuses(db, {31: ("158", REALM)})
+        assert out[31] == {"state": "partial", "total_cents": 12000, "balance_cents": 9500,
+                           "doc_number": "2099-999-0003", "due_date": "2020-01-01", "overdue": True}
+
+    def test_empty_query_answer_has_no_entity_key(self, db, monkeypatch):
+        """No match: QuickBooks returns {} inside QueryResponse, not an empty list."""
+        empty = {"QueryResponse": {}, "time": "2026-11-23T14:28:19.345-08:00"}
+        monkeypatch.setattr(qbo, "_transport", httpx.MockTransport(lambda request: httpx.Response(200, json=empty)))
+        assert QuickBooksProvider().invoice_statuses(db, {31: ("158", REALM)}) == {31: {"state": "missing"}}
+
+    def test_fault_in_the_real_shape_is_parsed(self, db, monkeypatch):
+        fault = {"Fault": {"Error": [{"Message": "Stale Object Error",
+                                      "Detail": "Stale Object Error : You and Craig Carlson were working on this at the same time.",
+                                      "code": "5010", "element": ""}], "type": "ValidationFault"},
+                 "time": "2026-11-23T14:28:19.345-08:00"}
+        monkeypatch.setattr(qbo, "_transport", httpx.MockTransport(lambda request: httpx.Response(400, json=fault)))
+        with pytest.raises(ProviderError) as e:
+            qbo.api_request(db, "POST", "invoice", json_body={"Id": "1"})
+        assert e.value.code == "5010" and "Craig Carlson" in e.value.message and e.value.status == 400
+
+
+class TestHelpers:
+    def test_query_escaping(self):
+        assert qp._q("Club d'Alma") == "Club d\\'Alma"
+        assert qp._q("a\\b") == "a\\\\b"
+        assert qp._q("plain") == "plain"
+
+    def test_display_name_rules(self):
+        from types import SimpleNamespace
+        name = lambda n: qp._display_name(SimpleNamespace(name=n, clubsid=7))  # noqa: E731
+        assert name("A:B") == "A-B" and name("  Club  ") == "Club"
+        assert name("") == "Club 7" and name(None) == "Club 7"
+        assert len(name("x" * 900)) == 500
+
+    def test_line_description_rules(self):
+        line = qp._line({"event_number": 12, "event_name": "50m", "description": "x", "qty": 1, "unit_cents": 100},
+                        "fr", "7", None)
+        assert line["Description"] == "#12 — 50m — x"
+        assert qp._line({"qty": 1, "unit_cents": 100}, "fr", "7", None)["Description"] == "Inscription"
+        assert qp._line({"qty": 1, "unit_cents": 100}, "en", "7", None)["Description"] == "Registration"
+
+    def test_cents_rounding_is_exact_for_money(self):
+        line = qp._line({"event_name": "x", "qty": 3, "unit_cents": 1999}, "fr", "7", None)
+        assert line["Amount"] == 59.97 and line["SalesItemLineDetail"]["UnitPrice"] == 19.99
+        assert qp._cents(0.1 + 0.2) == 30 and qp._cents(None) == 0 and qp._cents("12.34") == 1234
+
+
+class TestProviderRoutes:
+    """The generic /invoice-provider routes with QuickBooks behind them."""
+
+    def test_connect_returns_the_consent_url(self, db, qb, monkeypatch):
+        monkeypatch.setenv("INVOICE_PROVIDER", "quickbooks")
+        _set_organizer_club_id(db, 10, meetsid=1)
+        db.commit()
+        assert api.invoice_provider_connect(db)["url"].startswith("https://appcenter.intuit.com/connect/oauth2?")
+
+    def test_connect_needs_an_organizer(self, db, qb, monkeypatch):
+        monkeypatch.setenv("INVOICE_PROVIDER", "quickbooks")
+        with pytest.raises(HTTPException) as e:
+            api.invoice_provider_connect(db)
+        assert e.value.status_code == 400
+
+    def test_connect_without_a_provider(self, db, monkeypatch):
+        monkeypatch.delenv("INVOICE_PROVIDER", raising=False)
+        monkeypatch.delenv("STRIPE_API_KEY", raising=False)
+        with pytest.raises(HTTPException) as e:
+            api.invoice_provider_connect(db)
+        assert e.value.status_code == 400 and "No invoice provider" in e.value.detail
+
+    def test_a_provider_error_becomes_an_http_error(self, db, qb, monkeypatch):
+        monkeypatch.setenv("INVOICE_PROVIDER", "quickbooks")
+        monkeypatch.delenv("QBO_CLIENT_SECRET")
+        _set_organizer_club_id(db, 10, meetsid=1)
+        db.commit()
+        with pytest.raises(HTTPException) as e:
+            api.invoice_provider_connect(db)
+        assert e.value.status_code == 500 and "QBO_CLIENT_ID" in e.value.detail
+
+    def test_disconnect_forgets_the_connection(self, db, qb, monkeypatch):
+        monkeypatch.setenv("INVOICE_PROVIDER", "quickbooks")
+        _set_organizer_club_id(db, 10, meetsid=1)
+        db.commit()
+        assert api.invoice_provider_disconnect(db) == {"ok": True}
+        assert db.get(BsGlobal, qbo.CONN_KEY) is None
+        assert api.invoice_provider_status(db)["connected"] is False
+
+    def test_disconnect_without_a_provider(self, db, monkeypatch):
+        monkeypatch.delenv("INVOICE_PROVIDER", raising=False)
+        monkeypatch.delenv("STRIPE_API_KEY", raising=False)
+        with pytest.raises(HTTPException) as e:
+            api.invoice_provider_disconnect(db)
+        assert e.value.status_code == 400

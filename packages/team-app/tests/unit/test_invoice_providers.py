@@ -140,3 +140,105 @@ class TestStripePush:
         with pytest.raises(ProviderError) as e:
             StripeProvider().push(ctx)
         assert e.value.status == 400
+
+
+class _Account:
+    def __init__(self, acct_id, charges_enabled=True):
+        self.id, self.charges_enabled = acct_id, charges_enabled
+
+
+class _DB:
+    commits = 0
+
+    def commit(self):
+        self.commits += 1
+
+
+class _InvalidRequestError(Exception):
+    pass
+
+
+def _fake_connect_stripe(retrieve=None):
+    mod = types.ModuleType("stripe")
+    mod.api_key = None
+    mod.InvalidRequestError = _InvalidRequestError
+    mod.created = []
+    mod.Account = SimpleNamespace(
+        retrieve=retrieve or (lambda acct: _Account(acct)),
+        create=lambda **kw: (mod.created.append(kw), _Account("acct_new"))[1],
+    )
+    mod.AccountLink = SimpleNamespace(create=lambda **kw: SimpleNamespace(url=f"https://connect.example/{kw['account']}"))
+    return mod
+
+
+class TestStripeConnect:
+    def _club(self, account=None, nation="CAN"):
+        return SimpleNamespace(name="Société", email="soc@example.org", nation=nation, stripe_account_id=account)
+
+    def test_status_needs_a_key_and_an_account(self, monkeypatch):
+        monkeypatch.setitem(sys.modules, "stripe", _fake_connect_stripe())
+        assert StripeProvider().status(None, None) == {"connected": False}
+        assert StripeProvider().status(None, self._club(account=None)) == {"connected": False}
+        assert StripeProvider().status(None, self._club(account="acct_1")) == {"connected": False}  # no key
+
+    def test_status_reports_charges_enabled(self, monkeypatch):
+        monkeypatch.setenv("STRIPE_API_KEY", "sk_test_x")
+        monkeypatch.setitem(sys.modules, "stripe", _fake_connect_stripe(lambda a: _Account(a, charges_enabled=False)))
+        assert StripeProvider().status(None, self._club("acct_1")) == {"connected": False, "account_id": "acct_1"}
+        monkeypatch.setitem(sys.modules, "stripe", _fake_connect_stripe())
+        assert StripeProvider().status(None, self._club("acct_1")) == {"connected": True, "account_id": "acct_1"}
+
+    def test_status_never_raises(self, monkeypatch):
+        def boom(acct):
+            raise RuntimeError("stripe down")
+        monkeypatch.setenv("STRIPE_API_KEY", "sk_test_x")
+        monkeypatch.setitem(sys.modules, "stripe", _fake_connect_stripe(boom))
+        assert StripeProvider().status(None, self._club("acct_1")) == {"connected": False}
+
+    def test_connect_creates_a_prefilled_account_and_returns_the_link(self, monkeypatch):
+        monkeypatch.setenv("STRIPE_API_KEY", "sk_test_x")
+        fake = _fake_connect_stripe()
+        monkeypatch.setitem(sys.modules, "stripe", fake)
+        club, db = self._club(account=None, nation="USA"), _DB()
+        out = StripeProvider().connect_start(db, club)
+        assert club.stripe_account_id == "acct_new" and db.commits == 1
+        assert out == {"url": "https://connect.example/acct_new"}
+        created = fake.created[0]
+        assert created["type"] == "standard" and created["country"] == "US" and created["email"] == "soc@example.org"
+        assert created["business_profile"]["mcc"] == "8699" and created["business_type"] == "non_profit"
+
+    def test_connect_keeps_a_live_account(self, monkeypatch):
+        monkeypatch.setenv("STRIPE_API_KEY", "sk_test_x")
+        fake = _fake_connect_stripe()
+        monkeypatch.setitem(sys.modules, "stripe", fake)
+        club = self._club(account="acct_live")
+        assert StripeProvider().connect_start(_DB(), club)["url"].endswith("acct_live")
+        assert fake.created == []
+
+    def test_connect_replaces_an_account_deleted_on_stripe(self, monkeypatch):
+        def gone(acct):
+            raise _InvalidRequestError("No such account")
+        monkeypatch.setenv("STRIPE_API_KEY", "sk_test_x")
+        fake = _fake_connect_stripe(gone)
+        monkeypatch.setitem(sys.modules, "stripe", fake)
+        club = self._club(account="acct_dangling")
+        out = StripeProvider().connect_start(_DB(), club)
+        assert club.stripe_account_id == "acct_new" and out["url"].endswith("acct_new")
+
+    def test_connect_without_a_key_is_a_500(self, monkeypatch):
+        monkeypatch.setitem(sys.modules, "stripe", _fake_connect_stripe())
+        with pytest.raises(ProviderError) as e:
+            StripeProvider().connect_start(_DB(), self._club())
+        assert e.value.status == 500
+
+    def test_disconnect_forgets_the_account(self):
+        club, db = self._club(account="acct_1"), _DB()
+        StripeProvider().disconnect(db, club)
+        assert club.stripe_account_id is None and db.commits == 1
+
+    def test_unknown_nation_falls_back_to_canada(self, monkeypatch):
+        monkeypatch.setenv("STRIPE_API_KEY", "sk_test_x")
+        fake = _fake_connect_stripe()
+        monkeypatch.setitem(sys.modules, "stripe", fake)
+        StripeProvider().connect_start(_DB(), self._club(nation="ZZZ"))
+        assert fake.created[0]["country"] == "CA"
