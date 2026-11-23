@@ -48,6 +48,8 @@ class FakeQbo:
         self.raw: list[tuple[bytes, str]] = []  # (request body, content-type)
         self.fail_invoice = None
         self.reject_key = None  # reject any invoice body carrying this property
+        self.require_tax = False  # reject invoice lines that carry no TaxCodeRef
+        self.urls: list[str] = []
         self._ids = iter(range(100, 10_000))
 
     def calls(self, method, path):
@@ -59,19 +61,26 @@ class FakeQbo:
     def handler(self, request: httpx.Request) -> httpx.Response:
         path = urlparse(str(request.url)).path.split(f"/v3/company/{REALM}/", 1)[-1]
         self.log.append((request.method, path))
+        self.urls.append(str(request.url))
         self.raw.append((request.content, request.headers.get("content-type", "")))
         body = json.loads(request.content) if request.content else None
 
         if request.method == "GET" and path == "query":
             sql = parse_qs(urlparse(str(request.url)).query)["query"][0]
-            m = re.fullmatch(r"select \* from (\w+) where (\w+) = '(.*)'", sql)
+            m = re.fullmatch(r"select \* from (\w+)(?: where (\w+) = '(.*)')?", sql)
             assert m, sql
             entity, field, raw = m.groups()
-            value = re.sub(r"\\(.)", r"\1", raw)  # undo \' and \\
             pool = {"Customer": self.customers, "Item": self.items, "Account": self.accounts,
                     "TaxCode": self.taxcodes, "Invoice": self.invoices}[entity]
-            hits = [r for r in pool.values() if r.get(field) == value and r.get("Active", True)]
+            if field is None:  # no where clause: everything
+                hits = list(pool.values())
+            else:
+                value = re.sub(r"\\(.)", r"\1", raw)  # undo \' and \\
+                hits = [r for r in pool.values() if r.get(field) == value and r.get("Active", True)]
             return httpx.Response(200, json={"QueryResponse": {entity: hits} if hits else {}})
+
+        if request.method == "GET" and path.startswith("companyinfo/"):
+            return httpx.Response(200, json={"CompanyInfo": {"CompanyName": "Sandbox Co", "Country": "CA"}})
 
         for kind, pool in (("customer", self.customers), ("invoice", self.invoices)):
             if request.method == "GET" and path.startswith(f"{kind}/"):
@@ -92,6 +101,8 @@ class FakeQbo:
             self.invoices.pop(body["Id"], None)
             return httpx.Response(200, json={"Invoice": {"Id": body["Id"], "status": "Deleted"}})
         if request.method == "POST" and path == "invoice":
+            if self.require_tax and any("TaxCodeRef" not in ln["SalesItemLineItemDetail"] for ln in body["Line"]):
+                return self._fault(400, "2010", "Request has invalid or unsupported property")
             if self.reject_key and self.reject_key in body:
                 return self._fault(400, "2010", "Request has invalid or unsupported property")
             if self.fail_invoice:
@@ -491,15 +502,37 @@ class TestProbe:
 
     def test_every_step_accepted_and_nothing_left_behind(self, probe, qb, capsys):
         assert probe.main() == 0
-        assert "All steps accepted" in capsys.readouterr().out
+        out = capsys.readouterr().out
+        assert "country CA" in out and "tax codes in this company: 'Exempt' (id 4)" in out
+        assert "ok    minimal, as the app sends it" in out and "All steps accepted" in out
+        assert "QBO_TAX_CODE" not in out
         assert qb.invoices == {}  # each probe invoice was deleted again
 
-    def test_names_the_first_step_that_fails(self, probe, qb, capsys):
+    def test_finds_that_the_company_needs_a_tax_code(self, probe, qb, capsys):
+        qb.require_tax = True
+        assert probe.main() == 0
+        out = capsys.readouterr().out
+        assert "FAIL  minimal, as the app sends it" in out
+        assert "ok    minimal + tax code 'Exempt' (id 4)" in out
+        assert "==> this company needs a tax code on each line: set QBO_TAX_CODE=Exempt" in out
+        assert "All steps accepted" in out and qb.invoices == {}
+
+    def test_names_the_first_field_step_that_fails(self, probe, qb, capsys):
         qb.reject_key = "BillEmail"
         assert probe.main() == 1
         out = capsys.readouterr().out
         assert "FAIL  step 7  + BillEmail" in out and "ok    step 6" in out
         assert qb.invoices == {}
+
+    def test_reports_when_even_the_bare_invoice_is_refused(self, probe, qb, capsys):
+        qb.fail_invoice = "nope"
+        assert probe.main() == 1
+        assert "not in our fields" in capsys.readouterr().out
+
+    def test_a_none_query_parameter_is_dropped(self, db, qb):
+        qbo.api_request(db, "GET", "companyinfo/1", params={"minorversion": None})
+        qbo.api_request(db, "GET", "companyinfo/1")
+        assert "minorversion" not in qb.urls[-2] and "minorversion=75" in qb.urls[-1]
 
     def test_steps_add_fields_cumulatively(self, probe):
         minimal = probe.build_body(0, "58", "7", None)

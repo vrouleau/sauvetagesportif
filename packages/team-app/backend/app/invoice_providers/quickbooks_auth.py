@@ -401,7 +401,8 @@ def api_request(db: Session, method: str, path: str, *,
     """
     token, realm = get_access_token(db)
     url = f"{api_base()}/v3/company/{realm}/{path.lstrip('/')}"
-    query = {"minorversion": MINOR_VERSION, **(params or {})}
+    # a None value drops that query parameter (the probe tries "no minorversion")
+    query = {k: v for k, v in {"minorversion": MINOR_VERSION, **(params or {})}.items() if v is not None}
     resp = None
     # The body is sent ASCII-only (accents and dashes as \uXXXX escapes) with a
     # bare application/json type: QuickBooks answered "failed to parse json
