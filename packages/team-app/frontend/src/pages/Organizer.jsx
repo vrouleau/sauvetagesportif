@@ -40,6 +40,18 @@ export default function Organizer() {
 
   useEffect(() => { loadMeetInfo(); loadClubs(); loadProviderInfo() }, [])
 
+  // Back from Intuit's consent page (GET /api/quickbooks/callback redirects to
+  // /organizer?quickbooks=success|error&reason=…): say how it went, then drop
+  // the parameters so a refresh doesn't repeat the message.
+  useEffect(() => {
+    const qp = new URLSearchParams(window.location.search)
+    const result = qp.get('quickbooks')
+    if (!result) return
+    if (result === 'success') { setMsgError(false); setMsg(t.quickbooks_connected_msg) }
+    else { setMsgError(true); setMsg(t.quickbooks_connect_error(qp.get('reason'))) }
+    window.history.replaceState({}, '', window.location.pathname)
+  }, [])
+
   async function loadMeetInfo() {
     const r = await api.get('/meet-info')
     setMeetInfo(r.data)
@@ -422,7 +434,14 @@ export default function Organizer() {
         {/* Provider status (passive indicator only — the connect/disconnect
             control lives in the actions bar below) */}
         {providerConnected && (
-          <span className="text-xs text-green-700">✓ {providerName}</span>
+          <span className="text-xs text-green-700">
+            ✓ {providerName}{providerInfo?.company_name ? ` — ${providerInfo.company_name}` : ''}
+          </span>
+        )}
+        {hasProvider && providerInfo?.reconnect_required && (
+          <span className="text-xs text-amber-700">
+            ⚠ {providerName}: {t[`${provider}_reconnect_required`] || ''}
+          </span>
         )}
         {/* Closure date */}
         {/* Closure date (read-only, set via meet config) */}

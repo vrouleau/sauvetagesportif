@@ -39,6 +39,7 @@ from .routers.push_notifications import router as push_router
 from .routers.serc import router as serc_router
 from .routers.serc_print import router as serc_print_router
 from .routers.entries_print import router as entries_print_router
+from .routers.quickbooks import router as quickbooks_router
 
 app = FastAPI(title="Meet Manager", docs_url=None, redoc_url=None)
 
@@ -103,6 +104,7 @@ app.include_router(push_router)
 app.include_router(serc_router)
 app.include_router(serc_print_router)
 app.include_router(entries_print_router)
+app.include_router(quickbooks_router)
 
 
 @app.on_event("startup")
@@ -140,6 +142,32 @@ async def startup():
     # Start auto-backup scheduler
     import asyncio
     asyncio.create_task(_auto_backup_loop())
+    asyncio.create_task(_quickbooks_keepalive_loop())
+
+
+async def _quickbooks_keepalive_loop():
+    """Every 6 h, refresh an idle QuickBooks connection so its refresh token
+    (100-day rolling window) never lapses between meets. Does nothing unless
+    INVOICE_PROVIDER=quickbooks and a connection exists."""
+    import asyncio
+    from .invoice_providers import selected_provider_name
+    from .invoice_providers import quickbooks_auth
+
+    await asyncio.sleep(120)
+    while True:
+        if selected_provider_name() == "quickbooks":
+            def _run():
+                db = SessionLocal()
+                try:
+                    return quickbooks_auth.keepalive(db)
+                finally:
+                    db.close()
+            try:
+                if await asyncio.to_thread(_run):
+                    print("QuickBooks keepalive: tokens refreshed")
+            except Exception as e:
+                print(f"QuickBooks keepalive error: {e}")
+        await asyncio.sleep(6 * 3600)
 
 
 async def _auto_backup_loop():

@@ -122,7 +122,10 @@ python -m pytest tests/ -v
 | `APP_BASE_URL` | Yes | Public URL (used in emails) |
 | `RESEND_API_KEY` | No | Resend.com API key for email delivery |
 | `RESEND_FROM_EMAIL` | No | Sender email address |
-| `INVOICE_PROVIDER` | No | Active invoice provider (`stripe`); unset = Stripe when `STRIPE_API_KEY` is set |
+| `INVOICE_PROVIDER` | No | Active invoice provider (`stripe` or `quickbooks`); unset = Stripe when `STRIPE_API_KEY` is set |
+| `QBO_CLIENT_ID` / `QBO_CLIENT_SECRET` | With QuickBooks | Intuit app keys (Development keys for the sandbox) |
+| `QBO_ENVIRONMENT` | No | `sandbox` (default) or `production` |
+| `QBO_REDIRECT_URI` | No | OAuth redirect URI as registered in the Intuit app; default `APP_BASE_URL` + `/api/quickbooks/callback` |
 | `STRIPE_API_KEY` | No | Stripe secret key for invoicing |
 | `BEST_TIME_MAX_AGE_MONTHS` | No | Expiry window for best times (default: 18) |
 | `SUPPORT_EMAIL` | No | Shown in footer and emails |

@@ -35,7 +35,7 @@ __all__ = [
 ]
 
 PROVIDER_NONE = "none"
-_KNOWN = ("stripe",)  # "quickbooks" is added with its provider
+_KNOWN = ("stripe", "quickbooks")
 
 
 def selected_provider_name() -> str:
@@ -56,4 +56,7 @@ def get_provider() -> Optional[InvoiceProvider]:
     if name == "stripe":
         from .stripe_provider import StripeProvider
         return StripeProvider()
+    if name == "quickbooks":
+        from .quickbooks_provider import QuickBooksProvider
+        return QuickBooksProvider()
     return None

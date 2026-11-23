@@ -20,8 +20,9 @@ docker compose up -d     # builds images, starts DB + backend + frontend
 | `SECRET_KEY` | Session encryption — **change this** | `change-me-to-a-random-string` |
 | `ADMIN_PIN` | Admin login PIN | `314159` |
 | `RESEND_API_KEY` | Email delivery (optional) | empty |
-| `INVOICE_PROVIDER` | Active invoice provider, `stripe` (unset = Stripe if `STRIPE_API_KEY` set, else none) | empty |
+| `INVOICE_PROVIDER` | Active invoice provider, `stripe` or `quickbooks` (unset = Stripe if `STRIPE_API_KEY` set, else none) | empty |
 | `STRIPE_API_KEY` | Stripe invoicing (optional) | empty |
+| `QBO_CLIENT_ID` / `QBO_CLIENT_SECRET` / `QBO_ENVIRONMENT` / `QBO_REDIRECT_URI` | QuickBooks Online (Intuit app keys; environment `sandbox` default or `production`; redirect URI default `APP_BASE_URL/api/quickbooks/callback`) | empty / `sandbox` |
 | `TURNSTILE_SITE_KEY` / `_SECRET_KEY` | Cloudflare CAPTCHA (optional) | empty |
 
 **Common operations:**
@@ -212,6 +213,7 @@ Coach best times are written only at meet close, never on registration:
 | `GET /api/athletes` | Athlete list | Any authenticated |
 | `POST /api/invoices/pdf-zip` | ZIP of invoice PDFs (`{club_ids}`) | Organizer/Admin |
 | `POST /api/clubs/{id}/invoice` | Push the invoice to the active provider (`INVOICE_PROVIDER`) | Organizer/Admin |
+| `GET /api/quickbooks/callback` | Intuit OAuth redirect target — **public** (a browser redirect has no PIN header); authenticated by the one-time `state` from connect; redirects to `/organizer?quickbooks=success\|error&reason=…` | Public (state) |
 | `GET /api/invoice-provider` | Active provider + connection status (`provider: none` when there is none) | Organizer/Admin |
 | `POST /api/invoice-provider/connect` / `disconnect` | Connect/disconnect the active provider (Stripe: Connect onboarding link) | Organizer/Admin |
 | `POST /api/clubs/{id}/send-invoice-email` | Email invoice (HTML + PDF, Interac instructions, Reply-To organizer) | Organizer/Admin |
@@ -271,7 +273,7 @@ backend/app/
   events.py             — LENEX meet structure parser
   best_times.py         — Best times: one resolver over archived results + coach-entered times (see "Best times storage")
   export.py             — LENEX export (registrations + Gemini key transport; session names + pause events included; SERC events/relays excluded — meet-app has no notion of them)
-  invoice_providers/    — One module per invoice provider behind `base.InvoiceProvider` (`stripe_provider.py`); `INVOICE_PROVIDER` picks the single active one
+  invoice_providers/    — One module per invoice provider behind `base.InvoiceProvider` (`stripe_provider.py`, `quickbooks_provider.py` + `quickbooks_auth.py`); `secret_box.py` = Fernet over `SECRET_KEY` for stored secrets; `INVOICE_PROVIDER` picks the single active one
   invoices.py           — Invoice line items, deterministic invoice numbers (YEAR-MEET-CLUB[-Rn]), PDF renderer
   emailing.py           — Resend transport, shared email footer, invoice + organizer-summary email templates
   age_codes.py          — Age-group bounds <-> category codes (age_group_code strict / relay_age_code lenient, age_code_to_range)
@@ -388,6 +390,7 @@ Existing members missing `handicapex` are backfilled on re-import; existing non-
 After the closure date the Organizer page shows **Download PDF / Send PDF / Send to the provider** (the provider button's label follows `INVOICE_PROVIDER`; hidden when there is none).
 - **Invoice number** (`invoices.invoice_number`): `YEAR-MEETSID-CLUBSID`, e.g. `2026-012-0045`. Year = `meets.mindate`, else first session date. Revision suffix `-R2`… when a send's total differs from the last sent total (`club_meet_invites.invoice_rev` / `invoice_last_total_cents`, migration m0005). Downloading a PDF previews the number without persisting; `record_invoice_sent` persists it on a successful send.
 - **Provider**: exactly one of Stripe/QuickBooks per installation, from the `INVOICE_PROVIDER` env var (never both). The router (`send_club_invoice`) does the provider-neutral work — meet, organizer, line items, invoice number, `record_invoice_sent` — and hands an `InvoiceContext` to `provider.push()`; a provider raises `ProviderError(message, status)`. Plan: `docs/QUICKBOOKS_PLAN.md`.
+- **QuickBooks connection** (`quickbooks_auth.py`): one company per installation (the Société's), connected via Intuit OAuth2 from the same Connect button Stripe uses. Tokens live in `bsglobal.qbo_connection`, Fernet-encrypted (`secret_box`, key from `SECRET_KEY`). Every refresh rotates the refresh token, so it is committed before the new access token is used, and refreshes are serialized by a process-wide lock that re-reads the stored tokens (single backend process assumed). Only `invalid_grant` flips the connection to *reconnect required*; network/5xx never do. `status()` is local (no Intuit call). `main._quickbooks_keepalive_loop` refreshes an idle connection weekly so the 100-day rolling refresh window never lapses. `QBO_ENVIRONMENT` defaults to `sandbox`; a connection made in another environment counts as not connected. Restoring an older DB backup brings back a rotated (dead) refresh token → reconnect. `push` is phase 3 (501 for now).
 - **Send count**: `club_meet_invites.stripe_send_count` is the shared counter for Stripe *and* email sends (name predates the email path).
 - **Email path**: pays by Interac e-Transfer to the organizer club's email, invoice number in the memo. No Autodeposit: security question "What is the invoice number?" / « Quel est le numéro de facture? », answer = invoice number. The UI then calls `notify-organizer` once per batch; it rebuilds numbers from persisted revisions, not from the request.
 - **Who is named** (`_invoice_email_parties`): Interac recipient = organizer club's email if the meet has an organizer, else `SUPPORT_EMAIL` (no organizer → the admin is the organizer). Contact sentence, Reply-To and batch summary = `SUPPORT_EMAIL` when the admin sends or there is no organizer, else the organizer. No Interac recipient (organizer without email, or no organizer and no `SUPPORT_EMAIL`) → 400 before anything is sent.
