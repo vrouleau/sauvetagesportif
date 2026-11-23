@@ -3310,6 +3310,7 @@ def send_club_invoice(club_id: int, request: Request, data: dict | None = None, 
     return {
         "club": club.name,
         "invoice_id": result.external_id,
+        "action": result.action,
         "invoice_no": invoice_no,
         "total_cents": total_cents,
     }

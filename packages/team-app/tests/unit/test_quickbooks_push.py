@@ -49,6 +49,8 @@ class FakeQbo:
         self.fail_invoice = None
         self.reject_key = None  # reject any invoice body carrying this property
         self.require_tax = False  # reject invoice lines that carry no TaxCodeRef
+        self.updates: list[dict] = []  # bodies of invoice updates (POST with an Id)
+        self.stale_once = None  # callable(invoice): simulate someone else saving first
         self.urls: list[str] = []
         self._ids = iter(range(100, 10_000))
 
@@ -100,6 +102,23 @@ class FakeQbo:
         if request.method == "POST" and path == "invoice" and "operation=delete" in str(request.url):
             self.invoices.pop(body["Id"], None)
             return httpx.Response(200, json={"Invoice": {"Id": body["Id"], "status": "Deleted"}})
+        if request.method == "POST" and path == "invoice" and body.get("Id"):
+            inv = self.invoices.get(body["Id"])
+            if not inv:
+                return self._fault(400, "610", "Object Not Found")
+            if self.stale_once:
+                hook, self.stale_once = self.stale_once, None
+                inv["SyncToken"] = str(int(inv["SyncToken"]) + 1)  # someone else saved first
+                hook(inv)
+            if inv["SyncToken"] != body["SyncToken"]:
+                return self._fault(400, "5010", "Stale Object Error")
+            self.updates.append(body)
+            paid = round(inv["TotalAmt"] - inv["Balance"], 2)
+            inv["Line"] = body["Line"]  # sparse update: the whole line array is replaced
+            inv["TotalAmt"] = round(sum(ln["Amount"] for ln in body["Line"]), 2)
+            inv["Balance"] = round(inv["TotalAmt"] - paid, 2)
+            inv["SyncToken"] = str(int(inv["SyncToken"]) + 1)
+            return httpx.Response(200, json={"Invoice": inv})
         if request.method == "POST" and path == "invoice":
             if self.require_tax and any("TaxCodeRef" not in ln["SalesItemLineDetail"] for ln in body["Line"]):
                 return self._fault(400, "2010", "Request has invalid or unsupported property")
@@ -109,7 +128,7 @@ class FakeQbo:
                 return self._fault(400, "6000", self.fail_invoice)
             iid = str(next(self._ids))
             total = round(sum(line["Amount"] for line in body["Line"]), 2)
-            self.invoices[iid] = {"Id": iid, "SyncToken": "0", "TotalAmt": total, **body}
+            self.invoices[iid] = {"Id": iid, "SyncToken": "0", "TotalAmt": total, "Balance": total, **body}
             return httpx.Response(200, json={"Invoice": self.invoices[iid]})
         return httpx.Response(404)
 
@@ -241,12 +260,96 @@ class TestIdempotency:
         assert result.external_id != "999"
         assert not [1 for m, p in qb.log if p == "invoice/999"]
 
-    def test_changed_total_is_refused_not_duplicated(self, db, qb):
+
+class TestUpdate:
+    """The club's entries changed after the invoice was pushed."""
+
+    MORE = ITEMS + [{"event_number": None, "event_name": "NEW, Zoe", "description": "Frais d'athlète $5.00",
+                     "qty": 1, "unit_cents": 500}]
+
+    def _first(self, db, qb):
         first = QuickBooksProvider().push(_ctx(db))
-        more = ITEMS + [{"event_number": None, "event_name": "X", "description": "", "qty": 1, "unit_cents": 500}]
+        return first, (first.external_id, REALM)
+
+    def test_changed_entries_update_the_same_invoice(self, db, qb):
+        first, prior = self._first(db, qb)
+        result = QuickBooksProvider().push(_ctx(db, items=self.MORE, total=5000, prior=prior,
+                                                invoice_no="2026-001-0020-R2"))
+        assert result.action == "updated" and result.external_id == first.external_id
+        assert len(qb.invoices) == 1
+        inv = qb.invoices[first.external_id]
+        assert inv["DocNumber"] == "2026-001-0020"  # keeps its number: no -R2 in QuickBooks
+        assert inv["TotalAmt"] == 50.0 and len(inv["Line"]) == 3
+        update = qb.updates[0]
+        assert update["sparse"] is True and set(update) == {"Id", "SyncToken", "sparse", "Line"}
+
+    def test_removed_entries_drop_their_lines(self, db, qb):
+        first, prior = self._first(db, qb)
+        QuickBooksProvider().push(_ctx(db, items=ITEMS[:1], total=2500, prior=prior))
+        assert [ln["Description"] for ln in qb.invoices[first.external_id]["Line"]] == \
+            ["TREMBLAY, Anne — Frais d'athlète $5.00, 2 individuelles"]
+
+    def test_same_total_but_different_lines_still_updates(self, db, qb):
+        first, prior = self._first(db, qb)
+        swapped = [dict(ITEMS[0], event_name="GAGNON, Luc"), ITEMS[1]]
+        result = QuickBooksProvider().push(_ctx(db, items=swapped, total=TOTAL, prior=prior))
+        assert result.action == "updated"
+        assert qb.invoices[first.external_id]["Line"][0]["Description"].startswith("GAGNON, Luc")
+
+    def test_nothing_changed_touches_nothing(self, db, qb):
+        first, prior = self._first(db, qb)
+        result = QuickBooksProvider().push(_ctx(db, prior=prior))
+        assert result.action == "unchanged" and qb.updates == []
+
+    def test_a_payment_blocks_the_update(self, db, qb):
+        first, prior = self._first(db, qb)
+        qb.invoices[first.external_id]["Balance"] = 20.0  # 25.00 paid
         with pytest.raises(ProviderError) as e:
-            QuickBooksProvider().push(_ctx(db, items=more, total=5000, prior=(first.external_id, REALM)))
-        assert e.value.status == 409 and len(qb.invoices) == 1
+            QuickBooksProvider().push(_ctx(db, items=self.MORE, total=5000, prior=prior))
+        assert e.value.status == 409 and "payment or credit" in e.value.message
+        assert qb.updates == [] and len(qb.invoices[first.external_id]["Line"]) == 2
+
+    def test_a_fully_paid_invoice_is_blocked_too(self, db, qb):
+        first, prior = self._first(db, qb)
+        qb.invoices[first.external_id]["Balance"] = 0.0
+        with pytest.raises(ProviderError) as e:
+            QuickBooksProvider().push(_ctx(db, items=self.MORE, total=5000, prior=prior))
+        assert e.value.status == 409
+
+    def test_a_paid_invoice_with_nothing_to_change_is_fine(self, db, qb):
+        first, prior = self._first(db, qb)
+        qb.invoices[first.external_id]["Balance"] = 0.0
+        assert QuickBooksProvider().push(_ctx(db, prior=prior)).action == "unchanged"
+
+    def test_a_voided_invoice_is_blocked(self, db, qb):
+        first, prior = self._first(db, qb)
+        inv = qb.invoices[first.external_id]
+        inv["TotalAmt"], inv["Balance"], inv["Line"] = 0.0, 0.0, []
+        with pytest.raises(ProviderError) as e:
+            QuickBooksProvider().push(_ctx(db, prior=prior))
+        assert e.value.status == 409 and "voided" in e.value.message
+
+    def test_stale_token_is_retried_with_a_fresh_read(self, db, qb):
+        first, prior = self._first(db, qb)
+        qb.stale_once = lambda inv: None  # someone saved first; nothing else changed
+        result = QuickBooksProvider().push(_ctx(db, items=self.MORE, total=5000, prior=prior))
+        assert result.action == "updated" and len(qb.updates) == 1
+        assert qb.invoices[first.external_id]["TotalAmt"] == 50.0
+
+    def test_payment_landing_during_a_stale_retry_still_blocks(self, db, qb):
+        first, prior = self._first(db, qb)
+
+        def pay(inv):
+            inv["Balance"] = 0.0
+        qb.stale_once = pay
+        with pytest.raises(ProviderError) as e:
+            QuickBooksProvider().push(_ctx(db, items=self.MORE, total=5000, prior=prior))
+        assert e.value.status == 409 and qb.updates == []
+
+    def test_found_by_number_is_updated_too(self, db, qb):
+        first, _ = self._first(db, qb)  # nothing recorded: found through DocNumber
+        result = QuickBooksProvider().push(_ctx(db, items=self.MORE, total=5000))
+        assert result.action == "updated" and result.external_id == first.external_id
 
 
 class TestCustomer:
@@ -384,12 +487,22 @@ class TestRouter:
         assert second["invoice_id"] == first["invoice_id"] and len(qb.invoices) == 1
         assert db.get(ClubMeetInvite, (20, 1)).stripe_send_count == 2
 
-    def test_changed_total_is_a_409_and_records_nothing_new(self, db, qb, wired):
-        self._send(db)
+    def test_changed_total_updates_the_invoice_and_the_record(self, db, qb, wired):
+        first = self._send(db)
+        wired["items"] = ITEMS[:1]
+        again = self._send(db)
+        assert again["action"] == "updated" and again["invoice_id"] == first["invoice_id"]
+        assert len(qb.invoices) == 1 and qb.invoices[first["invoice_id"]]["TotalAmt"] == 25.0
+        row = db.get(ClubMeetInvite, (20, 1))
+        assert row.invoice_last_total_cents == 2500 and row.invoice_rev == 2 and row.stripe_send_count == 2
+
+    def test_a_paid_invoice_is_a_409_and_records_nothing_new(self, db, qb, wired):
+        first = self._send(db)
+        qb.invoices[first["invoice_id"]]["Balance"] = 0.0
         wired["items"] = ITEMS[:1]
         with pytest.raises(HTTPException) as e:
             self._send(db)
-        assert e.value.status_code == 409 and len(qb.invoices) == 1
+        assert e.value.status_code == 409 and len(qb.invoices[first["invoice_id"]]["Line"]) == 2
         row = db.get(ClubMeetInvite, (20, 1))
         assert row.invoice_last_total_cents == TOTAL and row.stripe_send_count == 1
 

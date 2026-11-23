@@ -67,6 +67,7 @@ class InvoiceContext:
 class PushResult:
     external_id: str                # the provider's own invoice id
     account: Optional[str] = None   # the provider account it lives in (QuickBooks realm)
+    action: str = "created"         # created | updated | unchanged
 
 
 class InvoiceProvider:

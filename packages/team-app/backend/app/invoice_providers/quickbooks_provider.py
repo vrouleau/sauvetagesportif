@@ -30,6 +30,9 @@ What a pushed invoice looks like (decisions in docs/QUICKBOOKS_PLAN.md):
   single service Item, tax-exempt, with the breakdown in the line description.
 - Idempotent: a re-push finds the invoice it already created (by the id we
   recorded, else by DocNumber) and does not create a second one.
+- If the club's entries changed since, that same invoice is updated (its lines
+  are replaced; it keeps its number) — unless QuickBooks shows a payment, a
+  credit or a void on it, in which case the push is refused (409).
 """
 from __future__ import annotations
 
@@ -47,6 +50,7 @@ from .base import InvoiceContext, InvoiceProvider, ProviderError, PushResult
 DEFAULT_ITEM_NAME = "Frais d'inscription"
 DEFAULT_TAX_CODE = "Exempt"
 NOT_FOUND = "610"  # QuickBooks error code: object not found
+STALE_OBJECT = "5010"  # QuickBooks error code: the invoice changed since we read it
 
 # (kind, realm, name) -> QuickBooks id. The Item and tax code are looked up
 # once per process and company, not once per invoice.
@@ -176,6 +180,66 @@ def _line(it: dict, lang: str, item_id: str, tax_id: Optional[str]) -> dict:
     }
 
 
+def _line_key(line: dict) -> tuple:
+    """What makes a sales line the same line: text, amount, quantity, unit price."""
+    d = line.get("SalesItemLineDetail") or {}
+    return ((line.get("Description") or "").strip(), round(float(line.get("Amount", 0)), 2),
+            round(float(d.get("Qty", 1)), 4), round(float(d.get("UnitPrice", 0)), 2))
+
+
+def _same_lines(invoice: dict, desired: list[dict]) -> bool:
+    """Whether the invoice already carries exactly these lines (its automatic
+    subtotal line is ignored), so a re-push with nothing changed touches nothing."""
+    sales = lambda lines: [_line_key(ln) for ln in lines if ln.get("DetailType") == "SalesItemLineDetail"]  # noqa: E731
+    return sales(invoice.get("Line", [])) == sales(desired)
+
+
+def _cents(value: Any) -> int:
+    return round(float(value or 0) * 100)
+
+
+def _refuse_if_settled(invoice: dict, number: str) -> None:
+    """Never rewrite an invoice somebody has started to settle.
+
+    A payment or credit lowers the Balance below the total; a voided invoice
+    has both at zero. Either way the books were touched after our push, so the
+    Société fixes it in QuickBooks (credit note or new invoice).
+    """
+    total, balance = _cents(invoice.get("TotalAmt")), _cents(invoice.get("Balance"))
+    if total == 0 and balance == 0:
+        raise ProviderError(f"Invoice {number} is voided (or zero) in QuickBooks; "
+                            f"it cannot be updated from here", 409)
+    if balance != total:
+        raise ProviderError(f"Invoice {number} already has a payment or credit in QuickBooks; "
+                            f"adjust it there instead", 409)
+
+
+def _sync_existing(db: Session, realm: str, number: str, invoice: dict, lines: list[dict]) -> PushResult:
+    """Bring an existing QuickBooks invoice in line with the club's current
+    entries: nothing if it already matches, else replace its lines.
+
+    The update is sparse (only `Line`), which replaces the whole line array and
+    keeps the DocNumber, date, customer and memo. If QuickBooks says the
+    invoice changed meanwhile (stale SyncToken) it is re-read and every check is
+    made again — a payment may have landed in between.
+    """
+    invoice_id = str(invoice["Id"])
+    for attempt in (1, 2):
+        if _same_lines(invoice, lines):
+            return PushResult(external_id=invoice_id, account=realm, action="unchanged")
+        _refuse_if_settled(invoice, number)
+        try:
+            qbo.api_request(db, "POST", "invoice", json_body={
+                "Id": invoice_id, "SyncToken": str(invoice["SyncToken"]), "sparse": True, "Line": lines,
+            })
+            return PushResult(external_id=invoice_id, account=realm, action="updated")
+        except ProviderError as e:
+            if e.code != STALE_OBJECT or attempt == 2:
+                raise
+        invoice = qbo.api_request(db, "GET", f"invoice/{invoice_id}")["Invoice"]
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
 def _find_existing(ctx: InvoiceContext, realm: str, number: str) -> Optional[dict]:
     """The invoice an earlier push created, if any: by the id we recorded, else
     by DocNumber (covers a crash between creating it and recording it)."""
@@ -213,19 +277,15 @@ class QuickBooksProvider(InvoiceProvider):
         _, realm = qbo.get_access_token(db)  # not connected -> ProviderError
         number = doc_number(ctx.invoice_no)
 
-        existing = _find_existing(ctx, realm, number)
-        if existing:
-            if round(float(existing.get("TotalAmt", 0)) * 100) != ctx.total_cents:
-                # Updating an invoice whose total changed is phase 4 (it needs
-                # the paid-invoice guard); refuse rather than leave two invoices.
-                raise ProviderError(
-                    f"Invoice {number} already exists in QuickBooks with a different total; "
-                    f"updating it is not supported yet", 409)
-            return PushResult(external_id=str(existing["Id"]), account=realm)
-
-        customer_id = _customer_id(db, ctx.club, realm)
         item_id = _item_id(db, realm)
         tax_id = _tax_code_id(db, realm)
+        lines = [_line(it, ctx.lang, item_id, tax_id) for it in ctx.items]
+
+        existing = _find_existing(ctx, realm, number)
+        if existing:
+            return _sync_existing(db, realm, number, existing, lines)
+
+        customer_id = _customer_id(db, ctx.club, realm)
 
         body: dict[str, Any] = {
             "CustomerRef": {"value": customer_id},
@@ -233,7 +293,7 @@ class QuickBooksProvider(InvoiceProvider):
             "TxnDate": date.today().isoformat(),
             "CustomerMemo": {"value": ctx.meet_name[:1000]},
             "PrivateNote": f"SauvetageTeam — {ctx.meet_name} — club {ctx.club.clubsid}",
-            "Line": [_line(it, ctx.lang, item_id, tax_id) for it in ctx.items],
+            "Line": lines,
         }
         email = (ctx.club.email or "").strip()
         if email:
