@@ -420,3 +420,16 @@ class TestStorage:
     def test_migration_0009_is_a_noop_on_a_fresh_install(self):
         from app.migrations.versions import m0009_invoice_provider_ids as m
         m.upgrade(create_engine("sqlite:///:memory:"))
+
+
+class TestErrorReporting:
+    def test_error_names_the_failing_call_and_logs_the_request(self, db, qb, caplog):
+        qb.fail_invoice = "failed to parse json object"
+        with caplog.at_level("WARNING", logger="quickbooks"):
+            with pytest.raises(ProviderError) as e:
+                QuickBooksProvider().push(_ctx(db))
+        assert e.value.message.startswith("QuickBooks POST invoice: ")
+        assert "failed to parse json object" in e.value.message
+        logged = " ".join(r.getMessage() for r in caplog.records)
+        assert "POST invoice" in logged and '"DocNumber": "2026-001-0020"' in logged
+        assert "tok" not in logged.replace("TotalAmt", "")  # the access token is never logged
