@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.30] - 2026-11-23
+
+### Other
+
+- Merge pull request #119 from vrouleau/feat/login-meet-registration-status (`0a69b1e`)
+- Show active meets and registration status on the login screen (`5130481`)
+
 ## [0.5.29] - 2026-11-22
 
 ### Other
