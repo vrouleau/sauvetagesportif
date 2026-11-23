@@ -586,8 +586,10 @@ export default function IndividualEntryPage({ role, clubId, refreshKey, onImport
   if (isClosed) {
     return (
       <div className="flex flex-col h-full overflow-hidden">
-        {/* Filter text box (still visible but page is blocked) */}
-        <div className="px-3 py-1.5 bg-white border-b border-gray-300 shrink-0">
+        {/* Filter text box (still visible but page is blocked). Printing the
+            club's entries stays available after closure — that's when coaches
+            need it most. */}
+        <div className="flex items-center px-3 py-1.5 bg-white border-b border-gray-300 shrink-0 gap-1">
           <input
             type="text"
             placeholder={tr.search}
@@ -595,6 +597,15 @@ export default function IndividualEntryPage({ role, clubId, refreshKey, onImport
             onChange={e => setFilterText(e.target.value)}
             className="border border-gray-300 px-2 py-1 rounded text-xs w-64"
           />
+          <div className="flex-1" />
+          {onPrint && (
+            <button
+              onClick={onPrint}
+              className="px-3 py-0.5 bg-gray-600 text-white text-xs rounded hover:bg-gray-700"
+            >
+              {tr.printEntries}
+            </button>
+          )}
         </div>
 
         <SplitPanel
