@@ -22,6 +22,13 @@ import { useLang } from '../i18n'
 
 const TURNSTILE_SITE_KEY = window.__TURNSTILE_SITE_KEY__ || ''
 
+// Meet chosen on the login screen (/self-invite?meet=ID). Sent as X-Meet-Id so
+// meet-info and the invite target that meet once several can be open at once.
+function meetHeaders() {
+  const id = new URLSearchParams(window.location.search).get('meet')
+  return id && /^\d+$/.test(id) ? { 'X-Meet-Id': id } : {}
+}
+
 export default function SelfInvite() {
   const { t, lang, toggle } = useLang()
   const [clubs, setClubs] = useState([])
@@ -37,13 +44,20 @@ export default function SelfInvite() {
   const [captchaToken, setCaptchaToken] = useState('')
   const turnstileRef = useRef(null)
   const widgetId = useRef(null)
+  const meetHdr = useRef(meetHeaders())
 
   useEffect(() => {
     fetch('/api/self-invite/clubs')
       .then(r => r.json())
       .then(data => setClubs(data))
       .catch(() => setError('Failed to load clubs'))
-    fetch('/api/meet-info')
+    // A stale ?meet= (meet no longer open → 404) falls back to the default meet.
+    fetch('/api/meet-info', { headers: meetHdr.current })
+      .then(r => {
+        if (r.ok) return r
+        meetHdr.current = {} // stale meet id: the invite must not target it either
+        return fetch('/api/meet-info')
+      })
       .then(r => r.json())
       .then(data => {
         setMeetName(data.meet_name || '')
@@ -95,7 +109,7 @@ export default function SelfInvite() {
     try {
       const res = await fetch('/api/self-invite', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...meetHdr.current },
         body: JSON.stringify({ club_id: Number(selectedClubId), email: email.trim(), lang, captcha_token: captchaToken }),
       })
       if (!res.ok) {

@@ -19,7 +19,8 @@ The club coach (team manager) registers athletes for the upcoming competition. T
 ### Via Self-Invite
 
 If you haven't received an invitation:
-1. Go to the login page and click **Request an Invitation**
+1. Go to the login page: under **Upcoming meets**, each meet shows its registration status. Click **Request an Invitation** next to a meet whose registration is open
+   (if the deadline has passed or registration isn't open yet, the link isn't offered and the page says so — contact the organizer)
 2. Select your club, confirm the email on file, click **Send Invitation**
 3. Check your email for the secure link
 
