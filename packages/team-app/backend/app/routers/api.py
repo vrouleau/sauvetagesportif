@@ -3190,7 +3190,36 @@ def invoice_provider_status(db: Session = Depends(get_db)):
         return {"provider": PROVIDER_NONE, "connected": False}
     org_cfg = _get_organizer_club_id(db)
     org_club = db.get(TeamClub, int(org_cfg)) if org_cfg else None
-    return {"provider": provider.name, **provider.status(db, org_club)}
+    return {"provider": provider.name, "supports_status": provider.supports_status,
+            "sends_invoice": provider.sends_invoice, **provider.status(db, org_club)}
+
+
+@router.get("/invoice-provider/statuses", dependencies=[Depends(require_organizer_or_admin)])
+def invoice_provider_statuses(request: Request, db: Session = Depends(get_db)):
+    """Payment state (paid / partial / open / voided / missing) of the current
+    meet's invoices already pushed to the provider, keyed by club id. Never an
+    error: when the provider can't be reached the page just shows nothing, with
+    the reason in `error`."""
+    from ..invoice_providers import ProviderError, get_provider
+    from ..models_team import ClubMeetInvite
+    provider = get_provider()
+    meetsid = resolve_meetsid(request, db)
+    if not provider or not provider.supports_status or not meetsid:
+        return {"statuses": {}}
+    rows = (
+        db.query(ClubMeetInvite)
+        .filter(ClubMeetInvite.meetsid == meetsid, ClubMeetInvite.invoice_provider == provider.name,
+                ClubMeetInvite.provider_invoice_id.isnot(None))
+        .all()
+    )
+    refs = {r.clubsid: (r.provider_invoice_id, r.provider_account) for r in rows}
+    if not refs:
+        return {"statuses": {}}
+    try:
+        found = provider.invoice_statuses(db, refs)
+    except ProviderError as e:
+        return {"statuses": {}, "error": e.message}
+    return {"statuses": {str(cid): st for cid, st in found.items()}}
 
 
 @router.post("/invoice-provider/connect", dependencies=[Depends(require_organizer_or_admin)])

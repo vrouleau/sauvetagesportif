@@ -74,6 +74,18 @@ class InvoiceProvider:
     """Base class. `name` is the INVOICE_PROVIDER value and the UI's key."""
 
     name: str = ""
+    # Whether the provider itself emails the invoice to the club (Stripe) or only
+    # creates it for the organizer to send (QuickBooks) — drives the wording of
+    # the batch result message.
+    sends_invoice: bool = True
+    # Whether `invoice_statuses` can report payment state.
+    supports_status: bool = False
+
+    def invoice_statuses(self, db: Session, refs: dict[int, tuple[str, Optional[str]]]) -> dict[int, dict]:
+        """Payment state of invoices already pushed: `{club_id: {...}}` from
+        `refs = {club_id: (provider invoice id, provider account)}`. Raises
+        ProviderError when the provider can't be reached."""
+        return {}
 
     def configured(self) -> bool:
         """Whether the server-side credentials (env vars) are present."""

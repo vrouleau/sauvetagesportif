@@ -1,6 +1,6 @@
 # QuickBooks Online as an invoice provider (alternative to Stripe)
 
-Status: phases 1-4 implemented and verified against an Intuit sandbox (provider abstraction, OAuth connection, invoice push, update-in-place with the paid/voided-invoice guard). Still to do: the fake-qbo integration service for the Docker tests, the optional paid-status read-back (phase 5), and checking the exempt tax code / income account with the Société's accountant. No "Société must be the organizer" guard exists: `INVOICE_PROVIDER` is the only switch, set per installation.
+Status: phases 1-4 implemented and verified against an Intuit sandbox (provider abstraction, OAuth connection, invoice push, update-in-place with the paid/voided-invoice guard). Phase 5 (paid-status read-back on the Organizer page) is done too. Still to do: the fake-qbo integration service for the Docker tests, and checking the exempt tax code / income account with the Société's accountant. No "Société must be the organizer" guard exists: `INVOICE_PROVIDER` is the only switch, set per installation.
 
 ## Goal
 

@@ -198,6 +198,17 @@ def _cents(value: Any) -> int:
     return round(float(value or 0) * 100)
 
 
+def invoice_state(total_cents: int, balance_cents: int) -> str:
+    """`voided` | `paid` | `partial` | `open` from an invoice's total and balance."""
+    if total_cents == 0 and balance_cents == 0:
+        return "voided"
+    if balance_cents <= 0:
+        return "paid"
+    if balance_cents < total_cents:
+        return "partial"
+    return "open"
+
+
 def _refuse_if_settled(invoice: dict, number: str) -> None:
     """Never rewrite an invoice somebody has started to settle.
 
@@ -205,11 +216,11 @@ def _refuse_if_settled(invoice: dict, number: str) -> None:
     has both at zero. Either way the books were touched after our push, so the
     Société fixes it in QuickBooks (credit note or new invoice).
     """
-    total, balance = _cents(invoice.get("TotalAmt")), _cents(invoice.get("Balance"))
-    if total == 0 and balance == 0:
+    state = invoice_state(_cents(invoice.get("TotalAmt")), _cents(invoice.get("Balance")))
+    if state == "voided":
         raise ProviderError(f"Invoice {number} is voided (or zero) in QuickBooks; "
                             f"it cannot be updated from here", 409)
-    if balance != total:
+    if state != "open":
         raise ProviderError(f"Invoice {number} already has a payment or credit in QuickBooks; "
                             f"adjust it there instead", 409)
 
@@ -255,8 +266,47 @@ def _find_existing(ctx: InvoiceContext, realm: str, number: str) -> Optional[dic
     return found[0] if found else None
 
 
+STATUS_CHUNK = 50  # invoice ids per query
+
+
 class QuickBooksProvider(InvoiceProvider):
     name = "quickbooks"
+    sends_invoice = False   # created only: the Société sends it from QuickBooks
+    supports_status = True
+
+    def invoice_statuses(self, db: Session, refs: dict[int, tuple[str, Optional[str]]]) -> dict[int, dict]:
+        """Payment state of the invoices we pushed, read back from QuickBooks.
+
+        One query per 50 invoices. Only invoices that live in the connected
+        company count (ids from another environment are ignored). An id QuickBooks
+        no longer returns was deleted there: `missing`.
+        """
+        _, realm = qbo.get_access_token(db)  # not connected -> ProviderError
+        wanted = {cid: str(iid) for cid, (iid, account) in refs.items() if iid and account == realm}
+        ids = sorted(set(wanted.values()))
+        found: dict[str, dict] = {}
+        for i in range(0, len(ids), STATUS_CHUNK):
+            id_list = ", ".join(f"'{_q(x)}'" for x in ids[i:i + STATUS_CHUNK])
+            sql = f"select Id, DocNumber, TotalAmt, Balance, DueDate from Invoice where Id in ({id_list})"
+            rows = (qbo.api_request(db, "GET", "query", params={"query": sql}).get("QueryResponse") or {}).get("Invoice", [])
+            found.update({str(r["Id"]): r for r in rows})
+
+        today = date.today().isoformat()
+        out: dict[int, dict] = {}
+        for cid, iid in wanted.items():
+            row = found.get(iid)
+            if not row:
+                out[cid] = {"state": "missing"}
+                continue
+            total, balance = _cents(row.get("TotalAmt")), _cents(row.get("Balance"))
+            state = invoice_state(total, balance)
+            due = row.get("DueDate")
+            out[cid] = {
+                "state": state, "total_cents": total, "balance_cents": balance,
+                "doc_number": row.get("DocNumber"), "due_date": due,
+                "overdue": bool(due and due < today and state in ("open", "partial")),
+            }
+        return out
 
     def configured(self) -> bool:
         return qbo.configured()

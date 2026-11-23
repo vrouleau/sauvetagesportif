@@ -50,6 +50,7 @@ class FakeQbo:
         self.reject_key = None  # reject any invoice body carrying this property
         self.require_tax = False  # reject invoice lines that carry no TaxCodeRef
         self.updates: list[dict] = []  # bodies of invoice updates (POST with an Id)
+        self.queries: list[str] = []   # every /query statement received
         self.stale_once = None  # callable(invoice): simulate someone else saving first
         self.urls: list[str] = []
         self._ids = iter(range(100, 10_000))
@@ -69,13 +70,17 @@ class FakeQbo:
 
         if request.method == "GET" and path == "query":
             sql = parse_qs(urlparse(str(request.url)).query)["query"][0]
-            m = re.fullmatch(r"select \* from (\w+)(?: where (\w+) = '(.*)')?", sql)
+            self.queries.append(sql)
+            m = re.fullmatch(r"select [\w\s,*]+ from (\w+)(?: where (\w+) (?:= '(.*)'|in \((.*)\)))?", sql)
             assert m, sql
-            entity, field, raw = m.groups()
+            entity, field, raw, id_list = m.groups()
             pool = {"Customer": self.customers, "Item": self.items, "Account": self.accounts,
                     "TaxCode": self.taxcodes, "Invoice": self.invoices}[entity]
             if field is None:  # no where clause: everything
                 hits = list(pool.values())
+            elif id_list is not None:  # where Id in ('1', '2')
+                wanted = set(re.findall(r"'([^']*)'", id_list))
+                hits = [r for r in pool.values() if str(r.get(field)) in wanted]
             else:
                 value = re.sub(r"\\(.)", r"\1", raw)  # undo \' and \\
                 hits = [r for r in pool.values() if r.get(field) == value and r.get("Active", True)]
@@ -660,3 +665,131 @@ class TestProbe:
         monkeypatch.setenv("QBO_ENVIRONMENT", "production")
         assert probe.main() == 2
         assert "sandbox" in capsys.readouterr().out and qb.log == []
+
+
+class TestStatuses:
+    """Reading payment state back from QuickBooks."""
+
+    def _pushed(self, db, qb, club_id=20, number="2026-001-0020"):
+        r = QuickBooksProvider().push(_ctx(db, club_id=club_id, invoice_no=number))
+        return r.external_id
+
+    def test_invoice_state(self):
+        from app.invoice_providers.quickbooks_provider import invoice_state
+        assert invoice_state(4500, 4500) == "open"
+        assert invoice_state(4500, 2000) == "partial"
+        assert invoice_state(4500, 0) == "paid"
+        assert invoice_state(0, 0) == "voided"
+
+    def test_each_state_is_reported(self, db, qb):
+        ids = {20: self._pushed(db, qb, 20, "2026-001-0020"), 30: self._pushed(db, qb, 30, "2026-001-0030"),
+               10: self._pushed(db, qb, 10, "2026-001-0010")}
+        qb.invoices[ids[30]]["Balance"] = 20.0   # part paid
+        qb.invoices[ids[10]]["Balance"] = 0.0    # paid
+        refs = {cid: (iid, REALM) for cid, iid in ids.items()}
+        refs[99] = ("424242", REALM)             # deleted in QuickBooks
+        out = QuickBooksProvider().invoice_statuses(db, refs)
+        assert out[20]["state"] == "open" and out[20]["balance_cents"] == TOTAL
+        assert out[30]["state"] == "partial" and out[30]["balance_cents"] == 2000
+        assert out[10]["state"] == "paid" and out[10]["total_cents"] == TOTAL
+        assert out[99] == {"state": "missing"}
+        assert out[20]["doc_number"] == "2026-001-0020"
+
+    def test_voided_invoice(self, db, qb):
+        iid = self._pushed(db, qb)
+        qb.invoices[iid].update(TotalAmt=0.0, Balance=0.0)
+        assert QuickBooksProvider().invoice_statuses(db, {20: (iid, REALM)})[20]["state"] == "voided"
+
+    def test_overdue_only_while_unpaid(self, db, qb):
+        a, b = self._pushed(db, qb, 20, "2026-001-0020"), self._pushed(db, qb, 30, "2026-001-0030")
+        qb.invoices[a]["DueDate"] = "2020-01-01"
+        qb.invoices[b]["DueDate"] = "2020-01-01"
+        qb.invoices[b]["Balance"] = 0.0
+        out = QuickBooksProvider().invoice_statuses(db, {20: (a, REALM), 30: (b, REALM)})
+        assert out[20]["overdue"] is True and out[30]["overdue"] is False
+
+    def test_not_yet_due_is_not_overdue(self, db, qb):
+        iid = self._pushed(db, qb)
+        qb.invoices[iid]["DueDate"] = "2999-01-01"
+        assert QuickBooksProvider().invoice_statuses(db, {20: (iid, REALM)})[20]["overdue"] is False
+
+    def test_invoices_of_another_company_are_ignored(self, db, qb):
+        iid = self._pushed(db, qb)
+        before = len(qb.queries)  # the push itself ran some
+        out = QuickBooksProvider().invoice_statuses(db, {20: (iid, "OTHER-REALM")})
+        assert out == {} and len(qb.queries) == before
+
+    def test_queries_are_chunked(self, db, qb):
+        refs = {}
+        for n in range(120):
+            qb.invoices[str(5000 + n)] = {"Id": str(5000 + n), "TotalAmt": 10.0, "Balance": 10.0, "DocNumber": f"X{n}"}
+            refs[1000 + n] = (str(5000 + n), REALM)
+        out = QuickBooksProvider().invoice_statuses(db, refs)
+        assert len(out) == 120 and all(v["state"] == "open" for v in out.values())
+        assert len([q for q in qb.queries if "from Invoice where Id in" in q]) == 3  # 50 + 50 + 20
+
+    def test_nothing_to_look_up_makes_no_call(self, db, qb):
+        assert QuickBooksProvider().invoice_statuses(db, {}) == {}
+        assert qb.log == []
+
+    def test_not_connected(self, db, qb):
+        db.delete(db.get(BsGlobal, qbo.CONN_KEY))
+        db.commit()
+        with pytest.raises(ProviderError):
+            QuickBooksProvider().invoice_statuses(db, {20: ("1", REALM)})
+
+    def test_stripe_has_no_status_support(self):
+        from app.invoice_providers.stripe_provider import StripeProvider
+        assert StripeProvider.supports_status is False and StripeProvider.sends_invoice is True
+        assert QuickBooksProvider.supports_status is True and QuickBooksProvider.sends_invoice is False
+
+
+class _ReqWithMeet:
+    headers = {}
+
+
+class TestStatusEndpoints:
+    @pytest.fixture
+    def wired(self, db, qb, monkeypatch):
+        monkeypatch.setenv("INVOICE_PROVIDER", "quickbooks")
+        _set_organizer_club_id(db, 10, meetsid=1)
+        db.commit()
+        monkeypatch.setattr(__import__("app.invoices", fromlist=["x"]), "_club_line_items",
+                            lambda *a, **k: ITEMS)
+
+    def test_provider_info_advertises_the_capabilities(self, db, qb, wired):
+        info = api.invoice_provider_status(db)
+        assert info["provider"] == "quickbooks" and info["supports_status"] is True
+        assert info["sends_invoice"] is False and info["connected"] is True
+
+    def test_statuses_for_the_current_meet_keyed_by_club(self, db, qb, wired):
+        sent = api.send_club_invoice(20, _ReqWithMeet(), {"lang": "fr"}, db)
+        qb.invoices[sent["invoice_id"]]["Balance"] = 0.0
+        out = api.invoice_provider_statuses(_ReqWithMeet(), db)
+        assert out["statuses"]["20"]["state"] == "paid" and "error" not in out
+
+    def test_clubs_never_pushed_are_absent(self, db, qb, wired):
+        assert api.invoice_provider_statuses(_ReqWithMeet(), db) == {"statuses": {}}
+        assert qb.queries == []
+
+    def test_rows_from_another_provider_or_meet_are_ignored(self, db, qb, wired):
+        db.add(ClubMeetInvite(clubsid=20, meetsid=1, invoice_provider="stripe", provider_invoice_id="in_1"))
+        db.add(TeamMeet(meetsid=2, name="Other", meetstate=0, registration_open=False))
+        db.commit()
+        db.add(ClubMeetInvite(clubsid=30, meetsid=2, invoice_provider="quickbooks",
+                              provider_invoice_id="77", provider_account=REALM))
+        db.commit()
+        assert api.invoice_provider_statuses(_ReqWithMeet(), db) == {"statuses": {}}
+
+    def test_an_unreachable_quickbooks_is_not_an_error_response(self, db, qb, wired):
+        api.send_club_invoice(20, _ReqWithMeet(), {"lang": "fr"}, db)
+        db.delete(db.get(BsGlobal, qbo.CONN_KEY))
+        db.commit()
+        out = api.invoice_provider_statuses(_ReqWithMeet(), db)
+        assert out["statuses"] == {} and "not connected" in out["error"].lower()
+
+    def test_no_provider(self, db, monkeypatch):
+        monkeypatch.delenv("INVOICE_PROVIDER", raising=False)
+        monkeypatch.delenv("STRIPE_API_KEY", raising=False)
+        assert api.invoice_provider_statuses(_ReqWithMeet(), db) == {"statuses": {}}
+        assert api.invoice_provider_status(db) == {"provider": "none", "connected": False}

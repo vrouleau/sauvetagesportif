@@ -30,6 +30,9 @@ export default function Organizer() {
   const [checked, setChecked] = useState({})
   // { provider: 'stripe'|'none'|…, connected } from GET /invoice-provider
   const [providerInfo, setProviderInfo] = useState(null)
+  // { [clubId]: { state: paid|partial|open|voided|missing, balance_cents, overdue } }
+  // read back from the provider (QuickBooks) for invoices already pushed
+  const [invoiceStatuses, setInvoiceStatuses] = useState({})
   const [msg, setMsg] = useState('')
   const [msgError, setMsgError] = useState(false)
   const [showImportConfirm, setShowImportConfirm] = useState(false)
@@ -68,6 +71,16 @@ export default function Organizer() {
       const r = await api.get('/invoice-provider')
       setProviderInfo(r.data)
     } catch { setProviderInfo({ provider: 'none', connected: false }) }
+  }
+
+  async function loadInvoiceStatuses(manual = false) {
+    try {
+      const r = await api.get('/invoice-provider/statuses')
+      setInvoiceStatuses(r.data.statuses || {})
+      if (manual) { setMsgError(!!r.data.error); setMsg(r.data.error || t.payments_refreshed) }
+    } catch (e) {
+      if (manual) { setMsgError(true); setMsg(errorReason(e)) }
+    }
   }
 
   async function connectProvider() {
@@ -278,9 +291,9 @@ export default function Organizer() {
 
   // Build a result message that names the clubs that failed and why, instead
   // of a bare error count that hides which club broke and the reason.
-  function summarizeSendResult(sent, sentLabel, failures) {
+  function summarizeSendResult(sent, sentLabel, failures, headline) {
     setMsgError(failures.length > 0)
-    let msg = `${sent} ${sentLabel}`
+    let msg = headline || `${sent} ${sentLabel}`
     if (failures.length) {
       const detail = failures.map(f => `${f.name} (${f.reason})`).join(', ')
       const errWord = lang === 'fr'
@@ -323,10 +336,14 @@ export default function Organizer() {
     setMsg(lang === 'fr' ? 'Envoi des factures...' : 'Sending invoices...')
     const sentIds = []
     const failures = []
+    const counts = { created: 0, updated: 0, unchanged: 0 }
     for (const id of ids) {
       try {
-        if (channel === 'provider') await api.post(`/clubs/${id}/invoice`, { lang })
-        else await api.post(`/clubs/${id}/send-invoice-email`, { lang })
+        if (channel === 'provider') {
+          const r = await api.post(`/clubs/${id}/invoice`, { lang })
+          const action = r?.data?.action
+          if (counts[action] !== undefined) counts[action]++
+        } else await api.post(`/clubs/${id}/send-invoice-email`, { lang })
         sentIds.push(id)
       } catch (e) {
         failures.push({ name: clubName(id), reason: errorReason(e) })
@@ -343,7 +360,12 @@ export default function Organizer() {
     }
     setChecked({})
     loadClubs()
-    setMsg(summarizeSendResult(sentIds.length, t.stripe_invoices_sent, failures))
+    if (channel === 'provider') loadInvoiceStatuses()
+    // A provider that only creates the invoice (QuickBooks) didn't "send" anything:
+    // say what happened to each one instead.
+    const headline = channel === 'provider' && providerInfo?.sends_invoice === false
+      ? t.invoice_actions(counts, providerName) : undefined
+    setMsg(summarizeSendResult(sentIds.length, t.stripe_invoices_sent, failures, headline))
   }
 
   async function downloadSelectedPdfZip() {
@@ -371,6 +393,11 @@ export default function Organizer() {
   // Before the registration deadline: invite mode. After: invoice mode, with
   // Download PDF / Send PDF (email) / Send to the provider side by side.
   const mode = !closurePassed ? 'invite' : 'invoice'
+
+  // Once invoicing starts, read back which pushed invoices have been paid.
+  useEffect(() => {
+    if (mode === 'invoice' && providerInfo?.supports_status && providerInfo.connected) loadInvoiceStatuses()
+  }, [mode, providerInfo])
 
   const hasEmail = c => !!(c.email && c.email.trim())
 
@@ -404,6 +431,23 @@ export default function Organizer() {
   const hasProvider = provider !== 'none'
   const providerName = hasProvider ? t[`${provider}_name`] || provider : ''
   const providerConnected = hasProvider && !!providerInfo?.connected
+
+  // Paid / partly paid / unpaid / voided / missing, from the provider's records.
+  function invoiceBadge(c) {
+    const st = invoiceStatuses[c.id]
+    if (!st) return null
+    const money = cents => formatMoney(cents, meetInfo?.currency || 'CAD', lang)
+    let text, cls
+    if (st.state === 'paid') { text = t.invoice_paid; cls = 'text-green-700 bg-green-100 border-green-300' }
+    else if (st.state === 'partial') { text = t.invoice_partial(money(st.balance_cents)); cls = 'text-amber-700 bg-amber-100 border-amber-300' }
+    else if (st.state === 'voided') { text = t.invoice_voided; cls = 'text-gray-600 bg-gray-100 border-gray-300' }
+    else if (st.state === 'missing') { text = t.invoice_missing(providerName); cls = 'text-red-700 bg-red-100 border-red-300' }
+    else { text = t.invoice_unpaid; cls = 'text-gray-700 bg-gray-100 border-gray-300' }
+    if (st.overdue) { text += ` — ${t.invoice_overdue}`; cls = 'text-red-700 bg-red-100 border-red-300' }
+    return (
+      <span className={`ml-1.5 border rounded px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap ${cls}`}>{text}</span>
+    )
+  }
 
   function statusText(c) {
     const parts = []
@@ -479,6 +523,12 @@ export default function Organizer() {
                 title={providerConnected ? undefined : t[`${provider}_connect_first`]}
                 className="text-white px-3 py-1 rounded text-xs disabled:opacity-50 bg-blue-600 hover:bg-blue-700">
                 {t[`send_${provider}_btn`]} {providerConnected && sendableCount > 0 && `(${sendableCount})`}
+              </button>
+            )}
+            {hasProvider && providerConnected && providerInfo?.supports_status && (
+              <button onClick={() => loadInvoiceStatuses(true)}
+                className="text-white px-3 py-1 rounded text-xs bg-gray-600 hover:bg-gray-700">
+                ↻ {t.refresh_payments_btn}
               </button>
             )}
           </>
@@ -573,6 +623,7 @@ export default function Organizer() {
                 <td className="px-2 py-1 text-gray-500 font-mono">{c.email ? c.pin : ''}</td>
                 <td className="px-2 py-1 text-gray-500">
                   {statusText(c)}
+                  {mode === 'invoice' && invoiceBadge(c)}
                   {c.incomplete_relay_count > 0 && (
                     <span className="ml-1.5 text-amber-700 bg-amber-100 border border-amber-300 rounded px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap">
                       {t.incomplete_relays_short(c.incomplete_relay_count)}
