@@ -427,9 +427,8 @@ def api_request(db: Session, method: str, path: str, *,
         # QuickBooks often omits which field it rejected, so say which call failed
         # and keep the exact request for the logs (failures only; it holds a
         # club's name/email, never a token).
-        log.warning("QuickBooks %s %s -> HTTP %s code=%s: %s | request body: %s",
-                    method, path, resp.status_code, code, message,
-                    json.dumps(json_body, ensure_ascii=False) if json_body is not None else None)
+        log.warning("QuickBooks %s %s -> HTTP %s code=%s: %s | request body as sent: %s",
+                    method, path, resp.status_code, code, message, content)
         raise ProviderError(f"QuickBooks {method} {path}: {message}",
                             502 if resp.status_code >= 500 else 400, code)
     return resp.json()

@@ -47,6 +47,7 @@ class FakeQbo:
         self.log: list[tuple[str, str]] = []
         self.raw: list[tuple[bytes, str]] = []  # (request body, content-type)
         self.fail_invoice = None
+        self.reject_key = None  # reject any invoice body carrying this property
         self._ids = iter(range(100, 10_000))
 
     def calls(self, method, path):
@@ -87,12 +88,17 @@ class FakeQbo:
             iid = str(next(self._ids))
             self.items[iid] = {"Id": iid, **body}
             return httpx.Response(200, json={"Item": self.items[iid]})
+        if request.method == "POST" and path == "invoice" and "operation=delete" in str(request.url):
+            self.invoices.pop(body["Id"], None)
+            return httpx.Response(200, json={"Invoice": {"Id": body["Id"], "status": "Deleted"}})
         if request.method == "POST" and path == "invoice":
+            if self.reject_key and self.reject_key in body:
+                return self._fault(400, "2010", "Request has invalid or unsupported property")
             if self.fail_invoice:
                 return self._fault(400, "6000", self.fail_invoice)
             iid = str(next(self._ids))
             total = round(sum(line["Amount"] for line in body["Line"]), 2)
-            self.invoices[iid] = {"Id": iid, "TotalAmt": total, **body}
+            self.invoices[iid] = {"Id": iid, "SyncToken": "0", "TotalAmt": total, **body}
             return httpx.Response(200, json={"Invoice": self.invoices[iid]})
         return httpx.Response(404)
 
@@ -472,3 +478,39 @@ class TestEncoding:
         monkeypatch.setattr(qbo, "_refresh", fake_refresh)
         qbo.api_request(db, "POST", "customer", json_body={"DisplayName": "X"})
         assert seen == ["Bearer tok", "Bearer fresh"] and refreshes == ["tok"]
+
+
+class TestProbe:
+    @pytest.fixture
+    def probe(self, db, qb, monkeypatch):
+        from app.invoice_providers import quickbooks_probe as probe
+        monkeypatch.setattr(probe, "SessionLocal", sessionmaker(bind=db.get_bind()))
+        db.add(QboCustomer(clubsid=20, realm_id=REALM, customer_id="58"))
+        db.commit()
+        return probe
+
+    def test_every_step_accepted_and_nothing_left_behind(self, probe, qb, capsys):
+        assert probe.main() == 0
+        assert "All steps accepted" in capsys.readouterr().out
+        assert qb.invoices == {}  # each probe invoice was deleted again
+
+    def test_names_the_first_step_that_fails(self, probe, qb, capsys):
+        qb.reject_key = "BillEmail"
+        assert probe.main() == 1
+        out = capsys.readouterr().out
+        assert "FAIL  step 7  + BillEmail" in out and "ok    step 6" in out
+        assert qb.invoices == {}
+
+    def test_steps_add_fields_cumulatively(self, probe):
+        minimal = probe.build_body(0, "58", "7", None)
+        assert set(minimal) == {"CustomerRef", "Line"}
+        assert "Description" not in minimal["Line"][0]
+        full = probe.build_body(len(probe.STEPS) - 1, "58", "7", "4")
+        assert {"DocNumber", "TxnDate", "CustomerMemo", "PrivateNote", "BillEmail"} <= set(full)
+        assert full["Line"][0]["SalesItemLineItemDetail"]["TaxCodeRef"] == {"value": "4"}
+        assert "é" in full["Line"][0]["Description"]
+
+    def test_refuses_outside_the_sandbox(self, probe, qb, monkeypatch, capsys):
+        monkeypatch.setenv("QBO_ENVIRONMENT", "production")
+        assert probe.main() == 2
+        assert "sandbox" in capsys.readouterr().out and qb.log == []
