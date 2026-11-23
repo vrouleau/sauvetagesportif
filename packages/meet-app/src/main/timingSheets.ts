@@ -197,7 +197,13 @@ const CHRONO_ROWS_HTML = `
  * Generate the HTML content for timing sheets (portrait, 3 strips/page).
  * Each strip has two judge time-entry rows.
  */
-export function generateTimingSheetsHtml(pages: TimingSheetPage[]): string {
+export function generateTimingSheetsHtml(heatPages: TimingSheetPage[]): string {
+  // Strips are cut with scissors and handed to lane judges, so heats don't need
+  // their own sheets: repack every strip, across heats, 3 per sheet.
+  const allStrips = heatPages.flatMap((p) => p.strips)
+  const pages: TimingSheetPage[] = []
+  for (let i = 0; i < allStrips.length; i += 3) pages.push({ strips: allStrips.slice(i, i + 3) })
+
   const pagesHtml = pages.map((page) => {
     const stripsHtml = page.strips.map((strip) => {
       // Barcode encodes lane with judge=1 (the strip covers both judges, barcode identifies the lane)
