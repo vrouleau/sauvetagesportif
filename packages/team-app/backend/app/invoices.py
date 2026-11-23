@@ -123,6 +123,10 @@ def _club_line_items(db: Session, club: TeamClub, meet_fees: dict[str, int],
     distributed deterministically so the split always sums back to the exact
     event fee — no revenue lost to rounding). No per-event detail is shown,
     only the athlete's individual/relay counts.
+
+    The meet's per-athlete fee (FEEPERSON) is NOT a separate summed line: it is
+    added to each athlete's own line and itemised in its description (the
+    Société de sauvetage wants a per-athlete breakdown).
     """
     meet_id = meetsid if meetsid is not None else get_active_meetsid(db)
 
@@ -200,19 +204,29 @@ def _club_line_items(db: Session, club: TeamClub, meet_fees: dict[str, int],
             mid: base + (1 if i < remainder else 0) for i, mid in enumerate(ids_sorted)
         }
 
+    # The per-athlete meet fee is never shown as one summed "Fee per athlete"
+    # line: it is folded into each athlete's own line (and itemised in its
+    # description) so the invoice reads as a breakdown per athlete.
+    meet_fees = dict(meet_fees or {})
+    athlete_fee = meet_fees.pop("ATHLETE", 0) or 0
+
     # Second pass: accumulate per-athlete totals and counts.
     athletes: dict[int, dict] = {}
+
+    def _athlete_entry(a: Member) -> dict:
+        return athletes.setdefault(a.membersid, {
+            "name": f"{a.lastname.upper()}, {a.firstname}",
+            "_sort": (a.lastname.lower(), a.firstname.lower()),
+            "individual_count": 0,
+            "relay_count": 0,
+            "total_cents": athlete_fee,
+        })
+
     for reg, ev, ath in rows:
+        entry = _athlete_entry(ath)  # every registered athlete owes the athlete fee
         fee = _event_fee(ev)
         if fee <= 0:
             continue
-        entry = athletes.setdefault(ath.membersid, {
-            "name": f"{ath.lastname.upper()}, {ath.firstname}",
-            "_sort": (ath.lastname.lower(), ath.firstname.lower()),
-            "individual_count": 0,
-            "relay_count": 0,
-            "total_cents": 0,
-        })
         if _relay_count(ev) == 1:
             entry["individual_count"] += 1
             entry["total_cents"] += fee
@@ -255,13 +269,7 @@ def _club_line_items(db: Session, club: TeamClub, meet_fees: dict[str, int],
             base, remainder = divmod(fee, n)
             split = {mid: base + (1 if i < remainder else 0) for i, mid in enumerate(ids_sorted)}
             for m in members:
-                entry = athletes.setdefault(m.membersid, {
-                    "name": f"{m.lastname.upper()}, {m.firstname}",
-                    "_sort": (m.lastname.lower(), m.firstname.lower()),
-                    "individual_count": 0,
-                    "relay_count": 0,
-                    "total_cents": 0,
-                })
+                entry = _athlete_entry(m)
                 entry["relay_count"] += 1
                 entry["total_cents"] += split[m.membersid]
 
@@ -270,6 +278,9 @@ def _club_line_items(db: Session, club: TeamClub, meet_fees: dict[str, int],
         if a["total_cents"] <= 0:
             continue
         parts = []
+        if athlete_fee:
+            label = "Athlete fee" if lang == "en" else "Frais d'athlète"
+            parts.append(f"{label} {_money(athlete_fee)}")
         if a["individual_count"]:
             if lang == "en":
                 parts.append(f"{a['individual_count']} individual")
@@ -296,13 +307,6 @@ def _club_line_items(db: Session, club: TeamClub, meet_fees: dict[str, int],
     # Meet-level fee lines
     meet_items: list[dict] = []
     if meet_fees:
-        athlete_count = (
-            db.query(Member.membersid)
-            .join(SwimResult, SwimResult.athleteid == Member.membersid)
-            .filter(SwimResult.meetsid == meet_id, Member.clubsid == club.clubsid)
-            .distinct()
-            .count()
-        )
         relay_event_count = (
             db.query(SwimEvent.swimeventid)
             .join(SwimResult, (SwimResult.swimeventid == SwimEvent.swimeventid) & (SwimResult.meetsid == SwimEvent.meetsid))
@@ -314,7 +318,6 @@ def _club_line_items(db: Session, club: TeamClub, meet_fees: dict[str, int],
         )
         qty_for = {
             "CLUB": 1,
-            "ATHLETE": athlete_count,
             "RELAY": relay_event_count,
             "TEAM": 1,
             "LATEFEE": 1,
