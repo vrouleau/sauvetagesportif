@@ -35,6 +35,7 @@ import time as _time
 
 from ..age_codes import age_group_code, relay_age_code, age_code_to_range
 from ..age_group_rules import resolve_matching_age
+from ..swimstyle_names import swimstyle_name_en
 from ..database import get_db
 from pydantic import BaseModel, Field, field_validator
 from ..models import (
@@ -894,6 +895,7 @@ def meet_info(request: Request, db: Session = Depends(get_db)):
         {
             "event_number": e.eventnumber,
             "style_name": e.swimstyle.name if e.swimstyle else "",
+            "style_name_en": swimstyle_name_en(e.swimstyleid, e.swimstyle.name) if e.swimstyle else "",
             "distance": e.swimstyle.distance if e.swimstyle else 0,
             "relay_count": e.swimstyle.relaycount if e.swimstyle else 1,
             "fee_cents": fee_dollars_to_cents(e.fee),
@@ -1686,7 +1688,7 @@ def list_sessions(request: Request, db: Session = Depends(get_db)):
                 "sessionId": s.swimsessionid,
                 "number": e.eventnumber or 0,
                 "nameFr": name,
-                "nameEn": name,
+                "nameEn": name if is_admin or e.roundname else swimstyle_name_en(e.swimstyleid, name),
                 "gender": "ALL" if e.gender == 0 else "M" if e.gender == 1 else "F" if e.gender == 2 else "X",
                 "distance": e.swimstyle.distance if e.swimstyle else 0,
                 "phase": "Eliminatoire" if e.round == 1 else "Finale" if e.round == 4 else "Finale directe",
@@ -2349,6 +2351,7 @@ def get_registration(athlete_id: int, request: Request, db: Session = Depends(ge
             styles[ev.swimstyleid] = {
                 "style_uid": ev.swimstyleid,
                 "style_name": style.name or "",
+                "style_name_en": swimstyle_name_en(ev.swimstyleid, style.name or ""),
                 "distance": style.distance or 0,
                 "relay_count": relay_count,
                 "categories": [],
@@ -3314,6 +3317,7 @@ def invoices_pdf_zip(data: dict, request: Request, db: Session = Depends(get_db)
     meetsid = resolve_meetsid(request, db)
     meet_fees = _meet_fees(db, meetsid)
     club_ids = data.get("club_ids", [])
+    lang = data.get("lang", "fr")
     if not club_ids:
         raise HTTPException(400, "No clubs selected")
 
@@ -3321,12 +3325,12 @@ def invoices_pdf_zip(data: dict, request: Request, db: Session = Depends(get_db)
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for cid in club_ids:
             try:
-                pdf = generate_invoice_pdf(db, cid, meetsid=meetsid)
+                pdf = generate_invoice_pdf(db, cid, meetsid=meetsid, lang=lang)
             except ValueError:
                 continue
             club = db.get(TeamClub, cid)
             name = club.name.replace(" ", "_") if club else f"club_{cid}"
-            total = items_total_cents(_club_line_items(db, club, meet_fees, meetsid=meetsid))
+            total = items_total_cents(_club_line_items(db, club, meet_fees, meetsid=meetsid, lang=lang))
             zf.writestr(f"invoice_{invoice_number(db, cid, meetsid, total)}_{name}.pdf", pdf)
 
     if buf.tell() == 0:
@@ -3337,7 +3341,7 @@ def invoices_pdf_zip(data: dict, request: Request, db: Session = Depends(get_db)
 
 
 @router.post("/clubs/{club_id}/invoice", dependencies=[Depends(require_organizer_or_admin)])
-def send_club_invoice(club_id: int, request: Request, db: Session = Depends(get_db)):
+def send_club_invoice(club_id: int, request: Request, data: dict | None = None, db: Session = Depends(get_db)):
     """Create and send a Stripe invoice for a club on the organizer's connected account."""
     import stripe
     stripe.api_key = os.environ.get("STRIPE_API_KEY")
@@ -3357,7 +3361,8 @@ def send_club_invoice(club_id: int, request: Request, db: Session = Depends(get_
         raise HTTPException(404, "Club not found")
 
     from ..invoices import _club_line_items, _meet_fees, _meet_name
-    items = _club_line_items(db, club, _meet_fees(db, meetsid), meetsid=meetsid)
+    lang = (data or {}).get("lang", "fr")
+    items = _club_line_items(db, club, _meet_fees(db, meetsid), meetsid=meetsid, lang=lang)
     if not items:
         raise HTTPException(400, "No billable items for this club")
 
@@ -3399,7 +3404,7 @@ def send_club_invoice(club_id: int, request: Request, db: Session = Depends(get_
         currency="cad",
         collection_method="send_invoice",
         days_until_due=30,
-        description=f"{meet_name} — Inscriptions",
+        description=f"{meet_name} — {'Registrations' if lang == 'en' else 'Inscriptions'}",
         custom_fields=custom_fields,
         metadata={"meetmanager_club_id": str(club.clubsid), "meetmanager_meet": meet_name,
                   "meetmanager_invoice_no": invoice_no},
@@ -3420,7 +3425,7 @@ def send_club_invoice(club_id: int, request: Request, db: Session = Depends(get_
         # Qty 1 with the unit price equal to the whole line total — that's why
         # "Frais par athlète" showed Qty 1 / CA$200 instead of Qty 4 / CA$50.
         # The product must live on the same connected account as the invoice.
-        line_desc = " — ".join(desc_parts) or "Inscription"
+        line_desc = " — ".join(desc_parts) or ("Registration" if lang == "en" else "Inscription")
         product = stripe.Product.create(name=line_desc[:250], stripe_account=acct)
         stripe.InvoiceItem.create(
             customer=customer.id,
@@ -3473,7 +3478,7 @@ def send_club_invoice_email(club_id: int, data: dict, request: Request, db: Sess
     if not to:
         raise HTTPException(400, "No email set for this club")
 
-    items = _club_line_items(db, club, _meet_fees(db, meetsid), meetsid=meetsid)
+    items = _club_line_items(db, club, _meet_fees(db, meetsid), meetsid=meetsid, lang=lang)
     if not items:
         raise HTTPException(400, "No billable items for this club")
     parties = _invoice_email_parties(request, db, meetsid)
@@ -3487,13 +3492,13 @@ def send_club_invoice_email(club_id: int, data: dict, request: Request, db: Sess
     meet_name = _meet_name(db, meetsid)
     total_cents = items_total_cents(items)
     invoice_no = invoice_number(db, club.clubsid, meetsid, total_cents)
-    pdf = render_invoice_pdf(club, items, meet_name, invoice_no)
+    pdf = render_invoice_pdf(club, items, meet_name, invoice_no, lang=lang)
     subject, html = build_invoice_email(
         lang=lang, meet_name=meet_name, club_name=club.name or "",
         org_club_name=parties["org_name"], org_email=parties["pay_to"], invoice_no=invoice_no,
         items=items, total_cents=total_cents, support_email=parties["support_contact"],
     )
-    pdf_name = f"facture_{invoice_no}.pdf"
+    pdf_name = f"{'invoice' if lang == 'en' else 'facture'}_{invoice_no}.pdf"
     send_email(to, subject, html, reply_to=parties["reply_to"] or None,
                from_name=parties["org_name"] or "SauvetageTeam",
                attachments=[(pdf_name, pdf)])
@@ -4480,6 +4485,7 @@ def _process_relay_event_age_group(
         event_group = {
             "eventId": ev.swimeventid,
             "eventName": style.name or "",
+            "eventNameEn": swimstyle_name_en(style.swimstyleid, style.name or ""),
             "swimstyleId": style.swimstyleid,
             "relaycount": style.relaycount or 4,
             "gender": gender_str,

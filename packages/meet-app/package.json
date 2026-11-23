@@ -40,6 +40,10 @@
         "to": "dsq-codes.json"
       },
       {
+        "from": "../../config/swimstyle-names.json",
+        "to": "swimstyle-names.json"
+      },
+      {
         "from": "../../config/splash-pg-schema.sql",
         "to": "splash-pg-schema.sql"
       },

@@ -1,0 +1,187 @@
+{
+  "$comment": "Swim style names by swimstyleid (pool 500-531, beach 601-624), French and English. name_fr matches the LENEX SWIMSTYLE@name in config/template_*.lxf; name_en is shown when the UI is in English. LENEX files always carry the French name (Splash expects it). Ids missing here fall back to the LENEX name. English names are drafts based on docs/ILS_COMPETITION_REFERENCE.md - to be reviewed. Read by meet-app (src/main/swimstyleNames.ts) and team-app (backend/app/swimstyle_names.py).",
+  "pool": {
+    "500": {
+      "name_fr": "50m Nage avec obstacles",
+      "name_en": "50m Obstacle Swim"
+    },
+    "501": {
+      "name_fr": "100m Nage avec obstacles",
+      "name_en": "100m Obstacle Swim"
+    },
+    "503": {
+      "name_fr": "200m Nage avec obstacles",
+      "name_en": "200m Obstacle Swim"
+    },
+    "504": {
+      "name_fr": "50m Portage du mannequin plein",
+      "name_en": "50m Manikin Carry"
+    },
+    "505": {
+      "name_fr": "100m Portage du mannequin plein",
+      "name_en": "100m Manikin Carry"
+    },
+    "506": {
+      "name_fr": "50m Portage du mannequin ½plein",
+      "name_en": "50m Manikin Carry (half-full)"
+    },
+    "508": {
+      "name_fr": "50m Portage du mannequin ½ plein + palmes",
+      "name_en": "50m Manikin Carry with Fins (half-full)"
+    },
+    "509": {
+      "name_fr": "100m Portage du mannequin plein + palmes",
+      "name_en": "100m Manikin Carry with Fins"
+    },
+    "510": {
+      "name_fr": "100m Remorquage mannequin ½ plein + palmes",
+      "name_en": "100m Manikin Tow with Fins (half-full)"
+    },
+    "511": {
+      "name_fr": "100m Remorquage du mannequin palmes",
+      "name_en": "100m Manikin Tow with Fins"
+    },
+    "513": {
+      "name_fr": "50m Remorquage mannequin ½ plein +palmes",
+      "name_en": "50m Manikin Tow with Fins (half-full)"
+    },
+    "514": {
+      "name_fr": "100m Sauveteur d'acier",
+      "name_en": "100m Super Lifesaver"
+    },
+    "515": {
+      "name_fr": "200m Sauveteur d'acier",
+      "name_en": "200m Super Lifesaver"
+    },
+    "521": {
+      "name_fr": "4m Lancer de précision",
+      "name_en": "4m Precision Throw"
+    },
+    "522": {
+      "name_fr": "7m Lancer de précision",
+      "name_en": "7m Precision Throw"
+    },
+    "523": {
+      "name_fr": "10m Lancer de la corde",
+      "name_en": "10m Line Throw"
+    },
+    "524": {
+      "name_fr": "12.5m Lancer de la corde",
+      "name_en": "12.5m Line Throw"
+    },
+    "526": {
+      "name_fr": "100m Sauvetage Combiné",
+      "name_en": "100m Rescue Medley"
+    },
+    "527": {
+      "name_fr": "4x50m Relais Sauvetage Combiné",
+      "name_en": "4x50m Medley Relay"
+    },
+    "528": {
+      "name_fr": "4x50m Relais obstacles",
+      "name_en": "4x50m Obstacle Relay"
+    },
+    "530": {
+      "name_fr": "SERC",
+      "name_en": "SERC"
+    },
+    "531": {
+      "name_fr": "4x25m Relais portage du mannequin",
+      "name_en": "4x25m Manikin Relay"
+    }
+  },
+  "beach": {
+    "601": {
+      "name_fr": "Drapeau Sur Plage",
+      "name_en": "Beach Flags"
+    },
+    "602": {
+      "name_fr": "Sprint Sur Plage 90m",
+      "name_en": "Beach Sprint 90m"
+    },
+    "603": {
+      "name_fr": "Surf Ski 800m",
+      "name_en": "Surf Ski 800m"
+    },
+    "604": {
+      "name_fr": "Relais Sprint  Sur Plage 4x90m",
+      "name_en": "Beach Sprint Relay 4x90m"
+    },
+    "605": {
+      "name_fr": "Aquaplane 200m",
+      "name_en": "Board Race 200m"
+    },
+    "606": {
+      "name_fr": "Aquaplane 400m",
+      "name_en": "Board Race 400m"
+    },
+    "607": {
+      "name_fr": "Aquaplane 600m",
+      "name_en": "Board Race 600m"
+    },
+    "608": {
+      "name_fr": "Course sur plage 500m",
+      "name_en": "Beach Run 500m"
+    },
+    "609": {
+      "name_fr": "Course sur plage 1000m",
+      "name_en": "Beach Run 1000m"
+    },
+    "610": {
+      "name_fr": "Course sur plage 1500m",
+      "name_en": "Beach Run 1500m"
+    },
+    "611": {
+      "name_fr": "Course sur plage 2000m",
+      "name_en": "Beach Run 2000m"
+    },
+    "612": {
+      "name_fr": "Course 100m-nage 100m-course 100m",
+      "name_en": "Run 100m-Swim 100m-Run 100m"
+    },
+    "613": {
+      "name_fr": "Course 100m-nage 300m-course 100m",
+      "name_en": "Run 100m-Swim 300m-Run 100m"
+    },
+    "614": {
+      "name_fr": "Nage dans les brisants 100m",
+      "name_en": "Surf Swim 100m"
+    },
+    "615": {
+      "name_fr": "Nage dans les brisants 200m",
+      "name_en": "Surf Swim 200m"
+    },
+    "616": {
+      "name_fr": "Nage dans les brisants 400m",
+      "name_en": "Surf Swim 400m"
+    },
+    "617": {
+      "name_fr": "Sauveteur océanique N100m, C500m, A200m, S50m",
+      "name_en": "Ironperson S100m, R500m, B200m, S50m"
+    },
+    "618": {
+      "name_fr": "Sauveteur océanique N200m, C1000m, A400m, S50m",
+      "name_en": "Ironperson S200m, R1000m, B400m, S50m"
+    },
+    "619": {
+      "name_fr": "Sauveteur océanique N400m, SK700m, A600m, S50m",
+      "name_en": "Ironperson S400m, SK700m, B600m, S50m"
+    },
+    "621": {
+      "name_fr": "Relais océanique N200m, C1000m, A400m, S50",
+      "name_en": "Ocean Relay S200m, R1000m, B400m, S50"
+    },
+    "622": {
+      "name_fr": "Relais océanique N400m, SK700m, A600m, S50m",
+      "name_en": "Ocean Relay S400m, SK700m, B600m, S50m"
+    },
+    "623": {
+      "name_fr": "Sauvetage avec aquaplane",
+      "name_en": "Board Rescue"
+    },
+    "624": {
+      "name_fr": "Sauvetage avec bouée tube",
+      "name_en": "Rescue Tube Rescue"
+    }
+  }
+}

@@ -48,6 +48,29 @@ MEET_FEE_LABELS = {
     "LSCMEETFEE": "Frais LSC",
 }
 
+MEET_FEE_LABELS_EN = {
+    "CLUB": "Club fee",
+    "ATHLETE": "Fee per athlete",
+    "RELAY": "Fee per relay",
+    "TEAM": "Team fee",
+    "LATEFEE": "Late entry",
+    "LSCMEETFEE": "LSC fee",
+}
+
+# Invoice PDF wording, per language.
+_PDF_TXT = {
+    "fr": {
+        "invoice": "FACTURE", "billed_to": "FACTURÉ À", "no": "N°", "date": "DATE",
+        "athlete": "ATHLÈTE", "detail": "DÉTAIL", "qty": "QTÉ", "unit": "P.U.",
+        "amount": "MONTANT", "total": "TOTAL", "meet_fallback": "Compétition",
+    },
+    "en": {
+        "invoice": "INVOICE", "billed_to": "BILLED TO", "no": "NO.", "date": "DATE",
+        "athlete": "ATHLETE", "detail": "DETAIL", "qty": "QTY", "unit": "UNIT",
+        "amount": "AMOUNT", "total": "TOTAL", "meet_fallback": "Meet",
+    },
+}
+
 
 def _meet_fees(db: Session, meetsid: int | None = None) -> dict[str, int]:
     """Read meet-level fees from MEETVALUES (Splash-compatible format).
@@ -92,7 +115,7 @@ def _meet_fees(db: Session, meetsid: int | None = None) -> dict[str, int]:
 
 
 def _club_line_items(db: Session, club: TeamClub, meet_fees: dict[str, int],
-                      meetsid: int | None = None) -> list[dict]:
+                      meetsid: int | None = None, lang: str = "fr") -> list[dict]:
     """Build one line item per athlete for a club.
 
     Individual event fees are summed onto the athlete's own line. Relay event
@@ -248,11 +271,15 @@ def _club_line_items(db: Session, club: TeamClub, meet_fees: dict[str, int],
             continue
         parts = []
         if a["individual_count"]:
-            parts.append(
-                f"{a['individual_count']} individuelle" + ("s" if a["individual_count"] > 1 else "")
-            )
+            if lang == "en":
+                parts.append(f"{a['individual_count']} individual")
+            else:
+                parts.append(
+                    f"{a['individual_count']} individuelle" + ("s" if a["individual_count"] > 1 else "")
+                )
         if a["relay_count"]:
-            parts.append(f"{a['relay_count']} relais")
+            parts.append(f"{a['relay_count']} relay" + ("s" if a["relay_count"] > 1 else "")
+                         if lang == "en" else f"{a['relay_count']} relais")
         event_items.append({
             "event_number": None,
             "event_name": a["name"],
@@ -301,7 +328,7 @@ def _club_line_items(db: Session, club: TeamClub, meet_fees: dict[str, int],
                 continue
             meet_items.append({
                 "event_number": None,
-                "event_name": MEET_FEE_LABELS.get(ftype, ftype),
+                "event_name": (MEET_FEE_LABELS_EN if lang == "en" else MEET_FEE_LABELS).get(ftype, ftype),
                 "description": "",
                 "qty": qty,
                 "unit_cents": cents,
@@ -388,20 +415,21 @@ def items_total_cents(items: list[dict]) -> int:
     return sum(it["unit_cents"] * it["qty"] for it in items)
 
 
-def generate_invoice_pdf(db: Session, club_id: int, meetsid: int | None = None) -> bytes:
+def generate_invoice_pdf(db: Session, club_id: int, meetsid: int | None = None, lang: str = "fr") -> bytes:
     """Generate a PDF invoice for a single club."""
     club = db.get(TeamClub, club_id)
     if not club:
         raise ValueError(f"Club {club_id} not found")
-    items = _club_line_items(db, club, _meet_fees(db, meetsid), meetsid=meetsid)
+    items = _club_line_items(db, club, _meet_fees(db, meetsid), meetsid=meetsid, lang=lang)
     if not items:
         raise ValueError("No billable items for this club")
     _meetsid = meetsid if meetsid is not None else get_active_meetsid(db)
     invoice_no = invoice_number(db, club.clubsid, _meetsid, items_total_cents(items))
-    return render_invoice_pdf(club, items, _meet_name(db, meetsid), invoice_no)
+    return render_invoice_pdf(club, items, _meet_name(db, meetsid), invoice_no, lang=lang)
 
 
-def render_invoice_pdf(club: TeamClub, items: list[dict], meet_name: str, invoice_no: str) -> bytes:
+def render_invoice_pdf(club: TeamClub, items: list[dict], meet_name: str, invoice_no: str,
+                       lang: str = "fr") -> bytes:
     """Render an invoice PDF from pre-computed line items."""
     from reportlab.lib import colors
     from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
@@ -411,6 +439,7 @@ def render_invoice_pdf(club: TeamClub, items: list[dict], meet_name: str, invoic
     from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
     issue_date = date.today()
+    tt = _PDF_TXT.get(lang, _PDF_TXT["fr"])
 
     _BRAND = colors.HexColor("#1e3a8a")
     _BAND = colors.HexColor("#eef2ff")
@@ -432,7 +461,7 @@ def render_invoice_pdf(club: TeamClub, items: list[dict], meet_name: str, invoic
     flow = []
 
     # Header
-    head = Table([[Paragraph(meet_name or "Compétition", h_meet), Paragraph("FACTURE / INVOICE", h_inv)]],
+    head = Table([[Paragraph(meet_name or tt["meet_fallback"], h_meet), Paragraph(tt["invoice"], h_inv)]],
                  colWidths=[4.0*inch, 3.0*inch])
     head.setStyle(TableStyle([("VALIGN", (0,0), (-1,-1), "MIDDLE"), ("BOTTOMPADDING", (0,0), (-1,-1), 8)]))
     flow.append(head)
@@ -441,20 +470,20 @@ def render_invoice_pdf(club: TeamClub, items: list[dict], meet_name: str, invoic
     flow.append(Spacer(1, 14))
 
     # Bill-to
-    bill_to = [Paragraph("FACTURÉ À / BILLED TO", label), Paragraph(f"<b>{club.name}</b>", body_b)]
+    bill_to = [Paragraph(tt["billed_to"], label), Paragraph(f"<b>{club.name}</b>", body_b)]
     if club.email:
         bill_to.append(Paragraph(club.email, body))
-    meta = [Paragraph("N° / NO.", label), Paragraph(invoice_no, body), Spacer(1,4),
-            Paragraph("DATE", label), Paragraph(issue_date.strftime("%Y-%m-%d"), body)]
+    meta = [Paragraph(tt["no"], label), Paragraph(invoice_no, body), Spacer(1,4),
+            Paragraph(tt["date"], label), Paragraph(issue_date.strftime("%Y-%m-%d"), body)]
     meta_block = Table([[bill_to, meta]], colWidths=[4.5*inch, 2.5*inch])
     meta_block.setStyle(TableStyle([("VALIGN", (0,0), (-1,-1), "TOP"), ("LEFTPADDING", (0,0), (-1,-1), 0)]))
     flow.append(meta_block)
     flow.append(Spacer(1, 18))
 
     # Line items table
-    header_row = [Paragraph("<b>#</b>", cell), Paragraph("<b>ATHLÈTE / ATHLETE</b>", cell),
-                  Paragraph("<b>DÉTAIL</b>", cell), Paragraph("<b>QTÉ</b>", cell_r),
-                  Paragraph("<b>P.U.</b>", cell_r), Paragraph("<b>MONTANT</b>", cell_r)]
+    header_row = [Paragraph("<b>#</b>", cell), Paragraph(f"<b>{tt['athlete']}</b>", cell),
+                  Paragraph(f"<b>{tt['detail']}</b>", cell), Paragraph(f"<b>{tt['qty']}</b>", cell_r),
+                  Paragraph(f"<b>{tt['unit']}</b>", cell_r), Paragraph(f"<b>{tt['amount']}</b>", cell_r)]
     data = [header_row]
     subtotal = 0
     for it in items:
@@ -485,7 +514,7 @@ def render_invoice_pdf(club: TeamClub, items: list[dict], meet_name: str, invoic
 
     # Total
     totals = Table([
-        ["", Paragraph("<b>TOTAL</b>", body_b), Paragraph(f"<b>{_money(subtotal)}</b>", cell_r)],
+        ["", Paragraph(f"<b>{tt['total']}</b>", body_b), Paragraph(f"<b>{_money(subtotal)}</b>", cell_r)],
     ], colWidths=[4.5*inch, 1.6*inch, 1.2*inch])
     totals.setStyle(TableStyle([("LINEABOVE", (1,0), (-1,0), 1.0, _BRAND),
                                 ("TOPPADDING", (0,0), (-1,-1), 6), ("ALIGN", (-1,0), (-1,-1), "RIGHT")]))

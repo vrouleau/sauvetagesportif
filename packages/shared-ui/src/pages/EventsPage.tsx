@@ -36,6 +36,7 @@ import { CSS } from '@dnd-kit/utilities'
 import type { Session, CompetitionEvent, AgeGroup, SwimStyle } from '../data/api'
 import { useApi } from '../context/ApiContext'
 import { useLang } from '../context/LangContext'
+import { eventDisplayName } from '../logic/eventName'
 import { buildEventGroups, findEventGroup, sameShape, findSiblingAgeGroup } from '../logic/eventGroups'
 import { toDateInput, toSplashDate, normalizeDuration, toTimeInput } from '../logic/dateFormat'
 
@@ -1281,6 +1282,7 @@ function SortableEventItem({
   onContextMenuGroup: (e: MouseEvent, group: AgeGroup) => void
   t: ReturnType<typeof useLang>['t']
 }) {
+  const { lang } = useLang()
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: `event-${event.id}`,
   })
@@ -1343,7 +1345,7 @@ function SortableEventItem({
               ? t.events.youthGenderLabel(event.gender)
               : t.events.genderLabel(event.gender)
           },{' '}
-          {event.nameEn}
+          {eventDisplayName(event, lang)}
           {event.maxEntries != null && (
             <span className="ml-1 text-orange-600 text-[10px]">[max:{event.maxEntries}]</span>
           )}
@@ -1548,7 +1550,7 @@ function PropertiesPanel({ selected, sessions, onUpdateSession, onUpdateEvent, o
 // ─── Age Group Properties Panel (editable) ───────────────────────────────────
 
 function AgeGroupPropertiesPanel({ group, event, sessions, onMoveAgeGroup }: { group: AgeGroup; event: CompetitionEvent; sessions: Session[]; onMoveAgeGroup: (group: AgeGroup, sourceEvent: CompetitionEvent, targetRootEventId: number) => void }) {
-  const { t } = useLang()
+  const { t, lang } = useLang()
   const api = useApi()
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const [numHeats, setNumHeats] = useState(group.numHeats)
@@ -1580,7 +1582,7 @@ function AgeGroupPropertiesPanel({ group, event, sessions, onMoveAgeGroup }: { g
     const target = moveCandidates.find((g) => g.rootEvent.id === moveTargetId)
     if (!target) return
     const groupLabel = group.name || ageRangeLabel(t, group.minAge, group.maxAge, t.events.genderLabel(group.gender))
-    const eventLabel = `${target.rootEvent.number}. ${target.rootEvent.nameFr}` +
+    const eventLabel = `${target.rootEvent.number}. ${eventDisplayName(target.rootEvent, lang)}` +
       (target.events.length > 1 ? ` (${target.events.map((e) => t.events.phaseLabel(e.phase)).join(' + ')})` : '')
     if (!window.confirm(t.events.props.moveConfirm(groupLabel, eventLabel))) return
     onMoveAgeGroup(group, event, moveTargetId)
@@ -1595,7 +1597,7 @@ function AgeGroupPropertiesPanel({ group, event, sessions, onMoveAgeGroup }: { g
   }
 
   const gLabel = t.events.genderLabel(event.gender)
-  const headerTitle = `${t.events.props.general} - ${event.number}. ${gLabel}, ${event.nameFr}, ${t.events.phaseLabel(event.phase)}`
+  const headerTitle = `${t.events.props.general} - ${event.number}. ${gLabel}, ${eventDisplayName(event, lang)}, ${t.events.phaseLabel(event.phase)}`
 
   function SectionHeader({ title }: { title: string }) {
     const isCollapsed = collapsed.has(title)
@@ -1645,7 +1647,7 @@ function AgeGroupPropertiesPanel({ group, event, sessions, onMoveAgeGroup }: { g
                       <option value="">{t.events.props.moveNoTarget}</option>
                       {moveCandidates.map(({ rootEvent, sessionNumber, events }) => (
                         <option key={rootEvent.id} value={rootEvent.id}>
-                          {sessionNumber}.{rootEvent.number} — {rootEvent.nameFr}
+                          {sessionNumber}.{rootEvent.number} — {eventDisplayName(rootEvent, lang)}
                           {events.length > 1 ? ` (${events.map((e) => t.events.phaseLabel(e.phase)).join(' + ')})` : ''}
                         </option>
                       ))}
@@ -1818,7 +1820,7 @@ function PausePropertiesPanel({ event, onUpdate }: { event: CompetitionEvent; on
 // ─── Event Properties Panel (editable, Splash-style) ──────────────────────────
 
 function EventPropertiesPanel({ event, onUpdate }: { event: CompetitionEvent; onUpdate: (data: Record<string, unknown>) => void }) {
-  const { t } = useLang()
+  const { t, lang } = useLang()
   const api = useApi()
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const [evNumber, setEvNumber] = useState(event.number)
@@ -1886,7 +1888,7 @@ function EventPropertiesPanel({ event, onUpdate }: { event: CompetitionEvent; on
   const encodeGender = (v: string) => (v === 'ALL' ? 0 : v === 'M' ? 1 : v === 'F' ? 2 : 3)
 
   const gLabel = t.events.genderLabel(event.gender)
-  const headerTitle = `${event.number}. ${gLabel}, ${event.nameFr}`
+  const headerTitle = `${event.number}. ${gLabel}, ${eventDisplayName(event, lang)}`
 
   return (
     <div className="text-xs">

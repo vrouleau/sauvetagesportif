@@ -18,6 +18,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useLang } from '../context/LangContext'
+import { eventDisplayName } from '../logic/eventName'
 import { useRegistrationApi } from '../context/RegistrationApiContext'
 import type { RelayPageData, RelayEventGroup, RelayTeam, EligibleAthlete, Club } from '../data/api'
 import { isAgeCodeAllowedOnTeam, wouldMissNativeAnchor } from '../logic/relayRules'
@@ -51,6 +52,7 @@ interface ErrorToast {
 interface FlatRelayEvent {
   eventId: number
   eventName: string
+  eventNameEn?: string
   swimstyleId: number
   relaycount: number
   gender: 'M' | 'F' | 'X'
@@ -109,7 +111,7 @@ function RelayEventCard({
   onCreateTeam: (eventId: number) => void
   onDeleteTeam: (team: RelayTeam) => void
 }) {
-  const { t } = useLang()
+  const { t, lang } = useLang()
   const [creating, setCreating] = useState(false)
 
   const handleAddTeam = useCallback(async () => {
@@ -128,7 +130,7 @@ function RelayEventCard({
       {/* Event header */}
       <div className="flex items-center justify-between mb-2">
         <h4 className="text-sm font-medium text-gray-800">
-          #{event.eventNumber} — {event.eventName}
+          #{event.eventNumber} — {eventDisplayName({ nameFr: event.eventName, nameEn: event.eventNameEn }, lang)}
           {event.ageCodes.length > 0 && (
             <span className="text-gray-500 font-normal"> ({event.ageCodes.join(', ')})</span>
           )}
@@ -682,6 +684,7 @@ export default function RelayEntryPage({ role, clubId, refreshKey, onPrint }: Re
           eventMap.set(ev.eventId, {
             eventId: ev.eventId,
             eventName: ev.eventName,
+            eventNameEn: ev.eventNameEn,
             swimstyleId: ev.swimstyleId,
             relaycount: ev.relaycount,
             gender: ev.gender,

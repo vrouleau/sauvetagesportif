@@ -20,6 +20,7 @@ import React, { useState, useRef, useEffect } from 'react'
 import { type HeatListEvent, type HeatListSession, type Heat, type LaneEntry } from '../data/mockData'
 import { useLang } from '@shared/context/LangContext'
 import { parseLooseTimeInput } from '@shared/logic/timeFormat'
+import { eventDisplayName } from '@shared/logic/eventName'
 
 interface HeatState {
   [heatId: number]: LaneEntry[]
@@ -936,7 +937,7 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
       return
     }
 
-    const result = await api.generateSheets(sessionId)
+    const result = await api.generateSheets(sessionId, lang)
     if (!result.ok) {
       window.alert(`Erreur: ${result.error}`)
       return
@@ -1430,7 +1431,7 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
                                 <span>
                                   <span className="font-medium">{ev.number}.</span>{' '}
                                   {t.heats.genderLabel(ev.gender ?? '')},{' '}
-                                  {ev.nameFr}
+                                  {eventDisplayName(ev, lang)}
                                 </span>
                               )}
                             </td>
@@ -1520,7 +1521,7 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
               <div>
                 <span className="font-semibold text-gray-800">
                   {selectedEvent!.number}. {t.heats.genderLabel(selectedEvent!.gender ?? '')},{' '}
-                  {selectedEvent!.nameFr},{' '}
+                  {eventDisplayName(selectedEvent!, lang)},{' '}
                   {selectedEvent!.phase}
                 </span>
                 <span className="ml-3 text-gray-500">

@@ -21,6 +21,7 @@ import { useLang } from '../context/LangContext'
 import type { RegistrationData, RegistrationStyle } from '../data/api'
 import { formatEntryTime as msToTime, parseEntryTime as parseTime } from '../logic/timeFormat'
 import { addMonthsIso } from '../logic/dateFormat'
+import { eventDisplayName } from '../logic/eventName'
 import { filterCategoriesAroundSuggestion, computeAvailableCategories } from '../logic/ageGroupCode'
 import TimeInput from './TimeInput'
 import HelpTip from './HelpTip'
@@ -106,7 +107,7 @@ export default function RegistrationPanel({
   onUpdateEntryTime,
   onSetHC,
 }: RegistrationPanelProps) {
-  const { t } = useLang()
+  const { t, lang } = useLang()
   const tr = t.registration
 
   const { individual_events, suggested_age_code, meet_course, meet_type } = data
@@ -267,7 +268,7 @@ export default function RegistrationPanel({
                         }}
                       />
                     </td>
-                    <td className="border border-gray-300 px-2 py-0.5">{style.style_name}</td>
+                    <td className="border border-gray-300 px-2 py-0.5">{eventDisplayName({ nameFr: style.style_name, nameEn: style.style_name_en }, lang)}</td>
                     {showBestTimes && <BestTimeCells style={style} />}
                     {!isBeach && (
                       <td className="border border-gray-300 px-2 py-0.5">

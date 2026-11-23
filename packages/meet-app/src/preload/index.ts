@@ -267,8 +267,8 @@ const api = {
       ipcRenderer.invoke('timing:generate-blank-sheets', pageCount),
     markError: (scanId: number, notes: string) =>
       ipcRenderer.invoke('timing:mark-error', scanId, notes),
-    generateSheets: (sessionId: number) =>
-      ipcRenderer.invoke('timing:generate-sheets', sessionId),
+    generateSheets: (sessionId: number, lang?: string) =>
+      ipcRenderer.invoke('timing:generate-sheets', sessionId, lang),
     generatePositionSheets: (sessionId: number) =>
       ipcRenderer.invoke('timing:generate-position-sheets', sessionId),
     getGeminiKey: () =>

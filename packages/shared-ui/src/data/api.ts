@@ -207,6 +207,8 @@ export interface RelayTeam {
 export interface RelayEventGroup {
   eventId: number
   eventName: string
+  /** English name; shown when the UI is English, falls back to `eventName`. */
+  eventNameEn?: string
   swimstyleId: number
   relaycount: number        // number of positions per team (typically 4)
   gender: 'M' | 'F' | 'X'
@@ -271,6 +273,8 @@ export interface RegistrationCategory {
 export interface RegistrationStyle {
   style_uid: string
   style_name: string
+  /** English name; shown when the UI is English, falls back to `style_name`. */
+  style_name_en?: string
   best_time_lcm_ms: number | null
   best_time_scm_ms: number | null
   /** Date (YYYY-MM-DD) and origin of each best time — team-app only, for the

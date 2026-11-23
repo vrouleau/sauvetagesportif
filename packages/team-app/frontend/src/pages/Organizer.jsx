@@ -311,7 +311,7 @@ export default function Organizer() {
     const failures = []
     for (const id of ids) {
       try {
-        if (channel === 'stripe') await api.post(`/clubs/${id}/invoice`, {})
+        if (channel === 'stripe') await api.post(`/clubs/${id}/invoice`, { lang })
         else await api.post(`/clubs/${id}/send-invoice-email`, { lang })
         sentIds.push(id)
       } catch (e) {
@@ -340,7 +340,7 @@ export default function Organizer() {
       const res = await fetch('/api/invoices/pdf-zip', {
         method: 'POST',
         headers: headers({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ club_ids: ids })
+        body: JSON.stringify({ club_ids: ids, lang })
       })
       if (!res.ok) throw new Error(`${res.status}`)
       const blob = await res.blob()
@@ -774,7 +774,7 @@ function FeeSummary({ meetInfo, t, lang }) {
             <div>
               <div className="font-sans font-semibold text-gray-600 mb-0.5">{t.fee_per_event}</div>
               {eventFees.map((e, i) => (
-                <div key={i}>{e.event_number != null ? `#${String(e.event_number).padStart(3,' ')}` : '   '}  {(e.style_name||'').slice(0,40).padEnd(40,' ')}{formatMoney(e.fee_cents, currency, lang)}</div>
+                <div key={i}>{e.event_number != null ? `#${String(e.event_number).padStart(3,' ')}` : '   '}  {((lang === 'en' && e.style_name_en) || e.style_name || '').slice(0,40).padEnd(40,' ')}{formatMoney(e.fee_cents, currency, lang)}</div>
               ))}
             </div>
           )}
