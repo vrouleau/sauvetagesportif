@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.32] - 2026-11-23
+
+### 🔧 Chores
+
+- fold per-athlete fee into each athlete's line, no summed line (`dcfd2a7`)
+
+### Other
+
+- Merge pull request #130 from vrouleau/feat/invoice-per-athlete-breakdown (`e297704`)
+- Merge pull request #128 from vrouleau/fix/112-english-swimstyle-names (`93402a9`)
+- English swim style names across entry tabs, reports, invoices and printouts (`00975de`)
+
 ## [0.5.31] - 2026-11-23
 
 ### 🐛 Bug Fixes
