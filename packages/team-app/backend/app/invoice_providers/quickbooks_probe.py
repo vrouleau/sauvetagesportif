@@ -64,8 +64,8 @@ def build_body(step: int, customer_id: str, item_id: str, tax_id: str | None) ->
         detail.update({"Qty": 1, "UnitPrice": 50.0})
     if tax_id:
         detail["TaxCodeRef"] = {"value": tax_id}
-    line: dict[str, Any] = {"DetailType": "SalesItemLineItemDetail", "Amount": 50.0,
-                            "SalesItemLineItemDetail": detail}
+    line: dict[str, Any] = {"DetailType": "SalesItemLineDetail", "Amount": 50.0,
+                            "SalesItemLineDetail": detail}
     if "desc" in fields:
         line["Description"] = fields.pop("desc")
     body: dict[str, Any] = {"CustomerRef": {"value": customer_id}, "Line": [line]}

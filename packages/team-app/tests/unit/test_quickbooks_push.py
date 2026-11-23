@@ -101,7 +101,7 @@ class FakeQbo:
             self.invoices.pop(body["Id"], None)
             return httpx.Response(200, json={"Invoice": {"Id": body["Id"], "status": "Deleted"}})
         if request.method == "POST" and path == "invoice":
-            if self.require_tax and any("TaxCodeRef" not in ln["SalesItemLineItemDetail"] for ln in body["Line"]):
+            if self.require_tax and any("TaxCodeRef" not in ln["SalesItemLineDetail"] for ln in body["Line"]):
                 return self._fault(400, "2010", "Request has invalid or unsupported property")
             if self.reject_key and self.reject_key in body:
                 return self._fault(400, "2010", "Request has invalid or unsupported property")
@@ -187,10 +187,10 @@ class TestCreate:
         l1, l2 = inv["Line"]
         assert l1["Description"] == "TREMBLAY, Anne — Frais d'athlète $5.00, 2 individuelles"
         assert l1["Amount"] == 25.0
-        d1 = l1["SalesItemLineItemDetail"]
+        d1 = l1["SalesItemLineDetail"]
         assert d1["ItemRef"] == {"value": "7"} and d1["TaxCodeRef"] == {"value": "4"}
         assert (d1["Qty"], d1["UnitPrice"]) == (1, 25.0)
-        d2 = l2["SalesItemLineItemDetail"]
+        d2 = l2["SalesItemLineDetail"]
         assert (d2["Qty"], d2["UnitPrice"], l2["Amount"]) == (2, 10.0, 20.0)
         # the customer: ':' is not allowed in a QuickBooks name
         cust = qb.customers[inv["CustomerRef"]["value"]]
@@ -320,7 +320,7 @@ class TestSetup:
         monkeypatch.setenv("QBO_ITEM_NAME", "Meet fees")
         result = QuickBooksProvider().push(_ctx(db))
         line = qb.invoices[result.external_id]["Line"][0]
-        assert line["SalesItemLineItemDetail"]["ItemRef"] == {"value": "8"}
+        assert line["SalesItemLineDetail"]["ItemRef"] == {"value": "8"}
 
     def test_item_and_tax_lookups_are_cached(self, db, qb):
         QuickBooksProvider().push(_ctx(db))
@@ -339,14 +339,14 @@ class TestSetup:
         qb.taxcodes["5"] = {"Id": "5", "Name": "Exonéré"}
         monkeypatch.setenv("QBO_TAX_CODE", "Exonéré")
         result = QuickBooksProvider().push(_ctx(db))
-        detail = qb.invoices[result.external_id]["Line"][0]["SalesItemLineItemDetail"]
+        detail = qb.invoices[result.external_id]["Line"][0]["SalesItemLineDetail"]
         assert detail["TaxCodeRef"] == {"value": "5"}
 
     def test_tax_code_none_omits_it(self, db, qb, monkeypatch):
         qb.taxcodes.clear()
         monkeypatch.setenv("QBO_TAX_CODE", "none")
         result = QuickBooksProvider().push(_ctx(db))
-        detail = qb.invoices[result.external_id]["Line"][0]["SalesItemLineItemDetail"]
+        detail = qb.invoices[result.external_id]["Line"][0]["SalesItemLineDetail"]
         assert "TaxCodeRef" not in detail
 
 
@@ -540,7 +540,7 @@ class TestProbe:
         assert "Description" not in minimal["Line"][0]
         full = probe.build_body(len(probe.STEPS) - 1, "58", "7", "4")
         assert {"DocNumber", "TxnDate", "CustomerMemo", "PrivateNote", "BillEmail"} <= set(full)
-        assert full["Line"][0]["SalesItemLineItemDetail"]["TaxCodeRef"] == {"value": "4"}
+        assert full["Line"][0]["SalesItemLineDetail"]["TaxCodeRef"] == {"value": "4"}
         assert "é" in full["Line"][0]["Description"]
 
     def test_refuses_outside_the_sandbox(self, probe, qb, monkeypatch, capsys):

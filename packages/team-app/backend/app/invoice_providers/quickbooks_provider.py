@@ -169,10 +169,10 @@ def _line(it: dict, lang: str, item_id: str, tax_id: Optional[str]) -> dict:
     if tax_id:
         detail["TaxCodeRef"] = {"value": tax_id}
     return {
-        "DetailType": "SalesItemLineItemDetail",
+        "DetailType": "SalesItemLineDetail",
         "Amount": round(it["unit_cents"] * it["qty"] / 100, 2),
         "Description": desc[:4000],
-        "SalesItemLineItemDetail": detail,
+        "SalesItemLineDetail": detail,
     }
 
 
