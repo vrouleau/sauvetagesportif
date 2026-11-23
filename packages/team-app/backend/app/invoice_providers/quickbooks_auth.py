@@ -403,12 +403,19 @@ def api_request(db: Session, method: str, path: str, *,
     url = f"{api_base()}/v3/company/{realm}/{path.lstrip('/')}"
     query = {"minorversion": MINOR_VERSION, **(params or {})}
     resp = None
+    # The body is sent ASCII-only (accents and dashes as \uXXXX escapes) with a
+    # bare application/json type: QuickBooks answered "failed to parse json
+    # object" to raw UTF-8 text (club names, "—"), and escapes are valid JSON
+    # whatever charset it assumes.
+    content = json.dumps(json_body) if json_body is not None else None
     for attempt in (1, 2):
+        # rebuilt each pass: a 401 retry carries the refreshed token
+        headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+        if content is not None:
+            headers["Content-Type"] = "application/json"
         try:
             with _client() as c:
-                resp = c.request(method, url, params=query, json=json_body, headers={
-                    "Authorization": f"Bearer {token}", "Accept": "application/json",
-                })
+                resp = c.request(method, url, params=query, content=content, headers=headers)
         except httpx.HTTPError as e:
             raise ProviderError(f"Could not reach QuickBooks: {e.__class__.__name__}", 502)
         if resp.status_code == 401 and attempt == 1:

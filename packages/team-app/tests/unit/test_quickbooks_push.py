@@ -45,6 +45,7 @@ class FakeQbo:
         self.taxcodes = {"4": {"Id": "4", "Name": "Exempt"}}
         self.invoices = {}
         self.log: list[tuple[str, str]] = []
+        self.raw: list[tuple[bytes, str]] = []  # (request body, content-type)
         self.fail_invoice = None
         self._ids = iter(range(100, 10_000))
 
@@ -57,6 +58,7 @@ class FakeQbo:
     def handler(self, request: httpx.Request) -> httpx.Response:
         path = urlparse(str(request.url)).path.split(f"/v3/company/{REALM}/", 1)[-1]
         self.log.append((request.method, path))
+        self.raw.append((request.content, request.headers.get("content-type", "")))
         body = json.loads(request.content) if request.content else None
 
         if request.method == "GET" and path == "query":
@@ -433,3 +435,40 @@ class TestErrorReporting:
         logged = " ".join(r.getMessage() for r in caplog.records)
         assert "POST invoice" in logged and '"DocNumber": "2026-001-0020"' in logged
         assert "tok" not in logged.replace("TotalAmt", "")  # the access token is never logged
+
+
+class TestEncoding:
+    def test_body_is_ascii_json_even_with_accents_and_dashes(self, db, qb):
+        items = [{"event_number": None, "event_name": "ALVES PEREIRA NETO, Néocles",
+                  "description": "Frais d'athlète — 2 relais", "qty": 1, "unit_cents": 5000}]
+        db.get(TeamClub, 20).name = "Société Équipe"
+        db.commit()
+        result = QuickBooksProvider().push(_ctx(db, items=items, total=5000))
+        posted = [(raw, ct) for raw, ct in qb.raw if raw and b"DocNumber" in raw]
+        assert posted, "the invoice POST was not captured"
+        raw, content_type = posted[0]
+        assert raw.isascii() and content_type == "application/json"
+        # ...and it still round-trips to the exact text
+        line = qb.invoices[result.external_id]["Line"][0]
+        assert line["Description"] == "ALVES PEREIRA NETO, Néocles — Frais d'athlète — 2 relais"
+        assert qb.customers[qb.invoices[result.external_id]["CustomerRef"]["value"]]["DisplayName"] == "Société Équipe"
+
+    def test_retry_after_401_uses_the_refreshed_token(self, db, qb, monkeypatch):
+        seen = []
+
+        def first_call_is_401(request):
+            seen.append(request.headers.get("authorization"))
+            if len(seen) == 1:
+                return httpx.Response(401, json={})
+            return qb.handler(request)
+
+        refreshes = []
+
+        def fake_refresh(*args, **kwargs):
+            refreshes.append(kwargs.get("rejected"))
+            return type("Conn", (), {"access_token": "fresh"})()
+
+        monkeypatch.setattr(qbo, "_transport", httpx.MockTransport(first_call_is_401))
+        monkeypatch.setattr(qbo, "_refresh", fake_refresh)
+        qbo.api_request(db, "POST", "customer", json_body={"DisplayName": "X"})
+        assert seen == ["Bearer tok", "Bearer fresh"] and refreshes == ["tok"]
