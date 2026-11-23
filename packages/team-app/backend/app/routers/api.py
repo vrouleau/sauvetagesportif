@@ -1325,6 +1325,52 @@ def self_invite_clubs(db: Session = Depends(get_db)):
     return [{"id": c.clubsid, "name": c.name} for c in clubs]
 
 
+@router.get("/self-invite/meets")
+def self_invite_meets(db: Session = Depends(get_db)):
+    """Public: active (non-archived) meets and their registration status, for
+    the login screen — so coaches can see why "Request an invitation" isn't
+    offered (deadline passed, registration not open) instead of the link just
+    vanishing.
+
+    `closure_date` is the raw "YYYY-MM-DD" deadline; the frontend decides
+    "deadline passed" against the end of that day in the viewer's local time,
+    same as Login/SelfInvite/Organizer already do (the server runs in UTC).
+    Empty placeholder meets (no name and no events — the post-reset state)
+    are skipped.
+    """
+    meets = (
+        db.query(TeamMeet)
+        .filter((TeamMeet.meetstate == None) | (TeamMeet.meetstate != 3))  # noqa: E711
+        .order_by(TeamMeet.mindate, TeamMeet.meetsid)
+        .all()
+    )
+    result = []
+    for m in meets:
+        event_count = db.query(SwimEvent).filter(SwimEvent.meetsid == m.meetsid).count()
+        name = _get_meet_config(db, m.meetsid, "meet_name") or m.name
+        if not name and event_count == 0:
+            continue
+        start = m.mindate
+        if start is None:
+            first = (
+                db.query(SwimSession.startdate)
+                .filter(SwimSession.meetsid == m.meetsid, SwimSession.startdate != None)  # noqa: E711
+                .order_by(SwimSession.startdate)
+                .first()
+            )
+            start = first[0] if first else None
+        result.append({
+            "meet_id": m.meetsid,
+            "name": name or "",
+            "place": m.place or "",
+            "start_date": start.strftime("%Y-%m-%d") if start else None,
+            "meet_type": m.meet_type,
+            "registration_open": bool(m.registration_open),
+            "closure_date": _get_closure_date(db, meetsid=m.meetsid),
+        })
+    return result
+
+
 @router.post("/self-invite")
 def self_invite(data: dict, request: Request, db: Session = Depends(get_db)):
     """Public: a club requests its own invitation email."""

@@ -22,21 +22,36 @@ import { useLang } from '../i18n'
 import api from '../api'
 import { selectMeet } from '../authMeet'
 
+// Registration status of one meet, as shown on the login screen.
+// Deadline = end of that day in local time (a bare "YYYY-MM-DD" parses as
+// midnight UTC, which would close the evening before in Quebec).
+export function meetRegistrationStatus(meet, now = new Date()) {
+  if (!meet.registration_open) return 'not_open'
+  if (meet.closure_date && now > new Date(meet.closure_date + 'T23:59:59')) return 'deadline_passed'
+  return 'open'
+}
+
+function formatDate(iso, lang) {
+  if (!iso) return ''
+  const d = new Date(iso + 'T12:00:00')
+  if (isNaN(d)) return iso
+  return d.toLocaleDateString(lang === 'fr' ? 'fr-CA' : 'en-CA', { year: 'numeric', month: 'long', day: 'numeric' })
+}
+
 export default function Login({ onLogin }) {
   const [pin, setPin] = useState('')
   const [error, setError] = useState('')
-  const [closed, setClosed] = useState(false)
+  const [meets, setMeets] = useState(null) // null = loading / unavailable
   const { t, lang, toggle } = useLang()
 
   useEffect(() => {
-    fetch('/api/meet-info')
-      .then(r => r.json())
-      .then(data => {
-        // End of the deadline day in local time (a bare "YYYY-MM-DD" parses as midnight UTC).
-        if (data.closure_date && new Date() > new Date(data.closure_date + 'T23:59:59')) setClosed(true)
-      })
-      .catch(() => {})
+    fetch('/api/self-invite/meets')
+      .then(r => (r.ok ? r.json() : Promise.reject(r.status)))
+      .then(data => setMeets(Array.isArray(data) ? data : []))
+      .catch(() => setMeets(null))
   }, [])
+
+  const anyOpen = (meets || []).some(m => meetRegistrationStatus(m) === 'open')
 
   async function submit(e) {
     e.preventDefault()
@@ -77,11 +92,62 @@ export default function Login({ onLogin }) {
           <button type="submit" className="w-full px-4 py-2 bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 border border-blue-700 rounded">
             {t.login_btn}
           </button>
-          {/* Self-invite only makes sense while registrations are open; the
-              results link stays visible after the deadline — that's when
-              people actually want results. */}
+          {/* Active meets and their registration status. Self-invite is
+              offered per meet only while its registration is open; when none
+              is, say so instead of silently hiding the link (coaches were
+              left wondering where "Demander une invitation" went). */}
+          {meets && (
+            <div className="mt-5 border-t border-gray-200 pt-4" data-testid="login-meets">
+              <p className="font-semibold text-gray-700 mb-2">{t.login_meets_title}</p>
+              {meets.length === 0 ? (
+                <p className="text-gray-500">{t.login_meets_none}</p>
+              ) : (
+                <ul className="space-y-2">
+                  {meets.map(m => {
+                    const status = meetRegistrationStatus(m)
+                    const where = [formatDate(m.start_date, lang), m.place].filter(Boolean).join(' · ')
+                    return (
+                      <li key={m.meet_id} className="border border-gray-200 rounded p-2" data-status={status}>
+                        <div className="font-medium text-gray-800 text-pretty">{m.name}</div>
+                        {where && <div className="text-gray-500">{where}</div>}
+                        <div className="mt-1 flex flex-col items-start gap-1">
+                          {status === 'open' && (
+                            <span className="text-green-700">
+                              {m.closure_date
+                                ? `${t.login_meet_open_until} ${formatDate(m.closure_date, lang)}`
+                                : t.login_meet_open}
+                            </span>
+                          )}
+                          {status === 'deadline_passed' && (
+                            <span className="text-red-600">
+                              {t.login_meet_deadline_passed} {formatDate(m.closure_date, lang)}
+                            </span>
+                          )}
+                          {status === 'not_open' && (
+                            <span className="text-gray-500">{t.login_meet_not_open}</span>
+                          )}
+                          {status === 'open' && (
+                            <Link to={`/self-invite?meet=${m.meet_id}`}
+                                  className="text-blue-600 font-medium hover:underline">
+                              → 
+                              {t.self_invite_title}
+                            </Link>
+                          )}
+                        </div>
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
+              {meets.length > 0 && !anyOpen && (
+                <p className="mt-2 text-gray-600 text-pretty">{t.login_meets_no_open}</p>
+              )}
+            </div>
+          )}
+
           <div className="mt-4 text-center">
-            {!closed && (
+            {/* Fallback if the meet list couldn't load: keep the old plain link. */}
+            {meets === null && (
               <>
                 <Link to="/self-invite" className="text-xs text-gray-500 hover:underline">
                   {t.self_invite_title}

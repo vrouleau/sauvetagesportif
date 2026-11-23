@@ -738,6 +738,18 @@ class TestSelfInvite:
             assert "id" in c
             assert "name" in c
 
+    def test_self_invite_meets_lists_open_meet_publicly(self, uploaded):
+        """Login screen's meet list: public, no auth, the open meet is in it
+        with its registration status fields."""
+        r = requests.get(f"{BASE_URL}/api/self-invite/meets", timeout=5)
+        r.raise_for_status()
+        meets = r.json()
+        assert isinstance(meets, list) and meets
+        assert any(m["registration_open"] for m in meets)
+        for m in meets:
+            assert set(m) == {"meet_id", "name", "place", "start_date", "meet_type",
+                              "registration_open", "closure_date"}
+
     def test_self_invite_requires_club_id(self):
         r = requests.post(f"{BASE_URL}/api/self-invite",
                           json={"email": "x@x.com"}, timeout=5)

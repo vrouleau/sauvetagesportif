@@ -19,7 +19,8 @@ Le responsable d'équipe (coach) inscrit les athlètes de son club pour la comp�
 ### Par auto-invitation
 
 Si vous n'avez pas reçu d'invitation :
-1. Aller sur la page de connexion et cliquer **Demander une invitation**
+1. Aller sur la page de connexion : sous **Compétitions à venir**, chaque compétition affiche l'état de ses inscriptions. Cliquer **Demander une invitation** à côté d'une compétition dont les inscriptions sont ouvertes
+   (si la date limite est passée ou que les inscriptions ne sont pas encore ouvertes, le lien n'est pas offert et la page l'indique — contacter l'organisateur)
 2. Sélectionner votre club, confirmer le courriel, cliquer **Envoyer l'invitation**
 3. Vérifier votre courriel pour le lien sécurisé
 

@@ -188,6 +188,7 @@ Coach best times are written only at meet close, never on registration:
 | `GET /api/sessions` | Sessions + events + age groups (for EventsPage) | Public |
 | `GET /api/swim-styles` | Swimstyles for the current meet's type only (for dropdown) — see catalog note above | Public |
 | `GET /api/meet-info` | Meet metadata | Public |
+| `GET /api/self-invite/meets` | Active (non-archived) meets with `registration_open` + `closure_date` — login screen lists them with their registration status and offers self-invite (`/self-invite?meet=ID`, sent as `X-Meet-Id`) only for meets still open; says so when none is | Public |
 | `GET /api/events` | Flat event list | Public |
 | `POST /api/auth` | PIN authentication | Public |
 | `POST /api/upload/meet` | Upload meet .lxf (event structure) | Organizer/Admin |
@@ -316,7 +317,7 @@ Full data flow between meet-app and team-app:
 
 **Meet editor fields in LXF:** every field of the meet editor travels in both directions, mapped by `config/lenex-meet-fields.json` (see `config/CLAUDE.md`): standard LENEX the way Splash writes it (MEET attributes, POOL, FACILITY, QUALIFY, CONTACT, FEES) and the hidden `.meetvalues` entry for the seeding/heat settings. Both exports write it (`export._add_meet_element`, closure date → `deadline`, `meet_currency` on FEEs); a structure upload applies the file's fields and takes its deadline as the closure date; a meet created from a template takes the template's fields (not its deadline) as defaults.
 
-**Empty meet state:** After reset (or fresh install), the meet has no events. Self-invite page shows "no meet planned" when empty. Admin or organizer uploads a new meet .lxf to start the next cycle.
+**Empty meet state:** After reset (or fresh install), the meet has no events. Self-invite page shows "no meet planned" when empty; the login screen's meet list skips the nameless/eventless stub and says no meet is planned. Admin or organizer uploads a new meet .lxf to start the next cycle.
 
 ## In-App Documentation
 
