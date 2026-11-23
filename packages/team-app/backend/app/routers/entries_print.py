@@ -39,6 +39,7 @@ from ..database import get_db
 from ..meet_config import resolve_meetsid, _get_meet_config, _get_meet_type
 from ..models import BsGlobal, SwimEvent, SwimResult
 from ..models_team import Member, Relay, RelayPos, TeamClub
+from ..swimstyle_names import swimstyle_name_en
 from .api import _resolve_role
 
 router = APIRouter(prefix="/api/print")
@@ -98,10 +99,13 @@ def _fmt_time(ms: int | None) -> str:
     return f"{minutes}:{seconds:02d}.{cs:02d}" if minutes else f"{seconds}.{cs:02d}"
 
 
-def _event_label(ev: SwimEvent | None, txt: dict, fallback: str = "") -> str:
+def _event_label(ev: SwimEvent | None, txt: dict, fallback: str = "", lang: str = "fr") -> str:
     if ev is None:
         return fallback
-    name = (ev.swimstyle.name if ev.swimstyle else "") or ev.roundname or fallback
+    style_name = ev.swimstyle.name if ev.swimstyle else ""
+    if style_name and lang == "en":
+        style_name = swimstyle_name_en(ev.swimstyleid, style_name)
+    name = style_name or ev.roundname or fallback
     gender = txt["gender"].get(ev.gender or 0, "")
     num = f"#{ev.eventnumber} " if ev.eventnumber else ""
     return f"{num}{name}" + (f" — {gender}" if gender else "")
@@ -284,7 +288,7 @@ def build_entries_html(db: Session, meetsid: int | None, lang: str = "fr",
                         head = ""
                     time_td = "" if is_beach else f'<td class="time">{_fmt_time(reg.entrytime)}</td>'
                     parts.append(
-                        f'<tr{cls}>{head}<td>{escape(_event_label(reg.event, txt, str(reg.swimeventid)))}</td>'
+                        f'<tr{cls}>{head}<td>{escape(_event_label(reg.event, txt, str(reg.swimeventid), lang))}</td>'
                         f'<td>{escape(reg.age_code or "")}</td>{time_td}</tr>'
                     )
                 parts.append("</tbody>")
@@ -314,7 +318,7 @@ def build_entries_html(db: Session, meetsid: int | None, lang: str = "fr",
                 ) or "—"
                 fallback = f"#{r.eventnumb}" if r.eventnumb else ""
                 parts.append(
-                    f'<tr class="first"><td>{escape(_event_label(ev, txt, fallback))}</td>'
+                    f'<tr class="first"><td>{escape(_event_label(ev, txt, fallback, lang))}</td>'
                     f'<td>{escape(_age_label(r.minage, r.maxage))}</td>'
                     f'<td>{team}</td><td>{member_list}</td></tr>'
                 )

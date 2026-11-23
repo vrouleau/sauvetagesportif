@@ -671,7 +671,7 @@ export async function getHeatListSessions(injectedDb?: ReturnType<typeof getLoca
       id: e.swimeventid,
       number: e.eventnumber ?? 0,
       nameFr: name,
-      nameEn: name,
+      nameEn: isAdm ? name : swimstyleNameEn(e.swimstyleid, name),
       gender: decodeGender(e.gender),
       distance: e.distance ?? 0,
       maxEntries: e.maxentries ?? null,
@@ -781,7 +781,7 @@ export async function getSessions(injectedDb?: ReturnType<typeof getLocalDb>): P
     const name = isAdm ? (e.comment || 'Pause') : eventName(e.stylename, e.stroke)
     evMap.get(e.swimsessionid)!.push({
       id: e.swimeventid, sessionId: e.swimsessionid, number: e.eventnumber ?? 0,
-      nameFr: name, nameEn: name,
+      nameFr: name, nameEn: isAdm ? name : swimstyleNameEn(e.swimstyleid, name),
       gender: decodeGender(e.gender), distance: e.distance ?? 0,
       phase: decodePhase(e.round),
       isAdmin: isAdm,
@@ -1753,6 +1753,7 @@ export function deleteAthlete(athleteId: number, injectedDb?: ReturnType<typeof 
 // ── Local SQLite schema — imported from schema.ts to avoid circular dependency ──
 
 import { runSchemaInit } from './schema'
+import { swimstyleNameEn } from './swimstyleNames'
 export { runSchemaInit }
 
 // ── Heat generation ───────────────────────────────────────────────────────────
@@ -3644,6 +3645,7 @@ export interface EntryByEventRow {
   eventId: number
   eventNumber: number
   eventName: string
+  eventNameEn?: string
   phase: 'Finale' | 'Eliminatoire' | 'Finale directe'
   gender: number
   ageMin: number
@@ -3674,6 +3676,7 @@ export function getEntriesByEvent(selectedEventIds: number[]): EntryByEventRow[]
       SELECT e.swimeventid AS eventId,
              e.eventnumber AS eventNumber,
              ss.name AS eventName,
+             e.swimstyleid AS swimstyleId,
              e.round,
              e.gender,
              ag.agemin AS ageMin,
@@ -3698,8 +3701,10 @@ export function getEntriesByEvent(selectedEventIds: number[]): EntryByEventRow[]
       LEFT JOIN agegroup ag2 ON r.agegroupid = ag2.agegroupid
       WHERE r.swimeventid IN (${clause})
       ORDER BY LOWER(a.lastname), LOWER(a.firstname)
-    `).all(...params) as Array<Omit<EntryByEventRow, 'phase' | 'isRelay'> & { round: number | null; isRelay: number }>
-    rows.push(...individualRows.map(r => ({ ...r, isRelay: !!r.isRelay })))
+    `).all(...params) as Array<Omit<EntryByEventRow, 'phase' | 'isRelay'> & { round: number | null; isRelay: number; swimstyleId: number | null }>
+    rows.push(...individualRows.map(({ swimstyleId, ...r }) => ({
+      ...r, eventNameEn: swimstyleNameEn(swimstyleId, r.eventName), isRelay: !!r.isRelay,
+    })))
   }
 
   if (relayEventIds.length > 0) {
@@ -3709,6 +3714,7 @@ export function getEntriesByEvent(selectedEventIds: number[]): EntryByEventRow[]
              e.swimeventid AS eventId,
              e.eventnumber AS eventNumber,
              ss.name AS eventName,
+             e.swimstyleid AS swimstyleId,
              e.round,
              e.gender,
              ag.agemin AS ageMin,
@@ -3729,7 +3735,7 @@ export function getEntriesByEvent(selectedEventIds: number[]): EntryByEventRow[]
       WHERE r.swimeventid IN (${clause})
       ORDER BY COALESCE(c.name, c.code, ''), r.relayid
     `).all(...params) as Array<{
-      relayId: number; eventId: number; eventNumber: number; eventName: string; round: number | null
+      relayId: number; eventId: number; eventNumber: number; eventName: string; swimstyleId: number | null; round: number | null
       gender: number; ageMin: number; ageMax: number; teamName: string | null
       clubName: string; clubCode: string; entryTime: number | null; ageGroupName: string
     }>
@@ -3754,7 +3760,8 @@ export function getEntriesByEvent(selectedEventIds: number[]): EntryByEventRow[]
     for (const r of relayRows) {
       const teamName = r.teamName || membersByRelay.get(r.relayId)?.join('/') || `Team ${r.relayId}`
       rows.push({
-        eventId: r.eventId, eventNumber: r.eventNumber, eventName: r.eventName, round: r.round,
+        eventId: r.eventId, eventNumber: r.eventNumber, eventName: r.eventName,
+        eventNameEn: swimstyleNameEn(r.swimstyleId, r.eventName), round: r.round,
         gender: r.gender, ageMin: r.ageMin, ageMax: r.ageMax,
         lastName: teamName, firstName: '', birthdate: null,
         clubName: r.clubName, clubCode: r.clubCode, entryTime: r.entryTime,

@@ -18,6 +18,8 @@
 
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { msToDisplay as msToDisplayShared } from '@shared/logic/timeFormat'
+import { useLang } from '@shared/context/LangContext'
+import { eventDisplayName } from '@shared/logic/eventName'
 import type { HeatListSession, HeatListEvent, Session, AgeGroup } from '../data/mockData'
 
 // Local aliases matching the IPC return shapes (structurally compatible)
@@ -65,22 +67,37 @@ interface ReportEventSection {
  * into a Prelim + Final pair, reports need this to tell the two sections apart.
  * Omitted for single-round (Timed Final) events since there's no ambiguity.
  */
+/** Language of the report being generated (set from the UI language on each render). */
+let reportLang: 'fr' | 'en' = 'fr'
+const tx = (fr: string, en: string): string => (reportLang === 'en' ? en : fr)
+
 function phaseTag(phase: 'Finale' | 'Eliminatoire' | 'Finale directe'): string {
-  if (phase === 'Eliminatoire') return '&nbsp;(&Eacute;lim.)'
-  if (phase === 'Finale') return '&nbsp;(Finale)'
+  if (phase === 'Eliminatoire') return tx('&nbsp;(&Eacute;lim.)', '&nbsp;(Prelim.)')
+  if (phase === 'Finale') return tx('&nbsp;(Finale)', '&nbsp;(Final)')
   return ''
 }
 
 type ReportType = 'heatList' | 'startList' | 'combinedResults' | 'beachNumbers' | 'entriesByEvent' | 'pointStandings' | 'resultsList'
 
-const REPORT_LABELS: Record<ReportType, string> = {
-  heatList: 'Liste des Séries',
-  startList: 'Fiche de Départs',
-  entriesByEvent: 'Liste des inscriptions par épreuves',
-  resultsList: 'Liste des Résultats',
-  combinedResults: 'Résultat Combiné',
-  pointStandings: 'Classement au points',
-  beachNumbers: 'Identifiants plage',
+const REPORT_LABELS: Record<'fr' | 'en', Record<ReportType, string>> = {
+  fr: {
+    heatList: 'Liste des Séries',
+    startList: 'Fiche de Départs',
+    entriesByEvent: 'Liste des inscriptions par épreuves',
+    resultsList: 'Liste des Résultats',
+    combinedResults: 'Résultat Combiné',
+    pointStandings: 'Classement au points',
+    beachNumbers: 'Identifiants plage',
+  },
+  en: {
+    heatList: 'Heat List',
+    startList: 'Start Sheet',
+    entriesByEvent: 'Entries by Event',
+    resultsList: 'Results List',
+    combinedResults: 'Combined Results',
+    pointStandings: 'Point Standings',
+    beachNumbers: 'Beach Numbers',
+  },
 }
 
 // ── HTML generator ────────────────────────────────────────────────────────────
@@ -94,16 +111,16 @@ function esc(s: string): string {
 }
 
 function formatAgeRange(minAge: number, maxAge: number | null): string {
-  if (maxAge == null || maxAge < 0) return `${minAge} ans et plus`
-  return `${minAge} - ${maxAge} ans`
+  if (maxAge == null || maxAge < 0) return tx(`${minAge} ans et plus`, `${minAge} years and over`)
+  return tx(`${minAge} - ${maxAge} ans`, `${minAge} - ${maxAge} years`)
 }
 
 function genderPrefix(gender: 'M' | 'F' | 'X' | 'ALL', minAge: number): string {
   const adult = minAge >= 15
-  if (gender === 'ALL') return 'Tous'
-  if (gender === 'X') return adult ? 'Mixte' : 'Tous'
-  if (gender === 'F') return adult ? 'Dames' : 'Filles'
-  return adult ? 'Messieurs' : 'Garçons'
+  if (gender === 'ALL') return tx('Tous', 'All')
+  if (gender === 'X') return adult ? tx('Mixte', 'Mixed') : tx('Tous', 'All')
+  if (gender === 'F') return adult ? tx('Dames', 'Women') : tx('Filles', 'Girls')
+  return adult ? tx('Messieurs', 'Men') : tx('Garçons', 'Boys')
 }
 
 function computeAge(birthYear: number, meetYear: number): number {
@@ -124,7 +141,7 @@ function buildPdfHeaderInfo(meetInfo: MeetInfo, sections: ReportEventSection[]):
     ? `${dates[0]} - ${dates[dates.length - 1]}`
     : (dates[0] ?? '')
   return {
-    line1: meetInfo.name || 'Compétition',
+    line1: meetInfo.name || tx('Compétition', 'Meet'),
     line2: `${meetInfo.city}${dateRange ? ', ' + dateRange : ''}`,
     today: new Date().toLocaleDateString('fr-CA'),
   }
@@ -153,7 +170,7 @@ function generatePdfHtml(
 <tr valign="top">
   <td width="25%">Epreuve ${s.eventNumber}${phaseTag(s.phase)}<br>${dateTimeStr}</td>
   <td width="50%" align="center">${centerName}<br><br></td>
-  <td width="25%" align="right">${ageRange}<br>Liste des s&eacute;ries</td>
+  <td width="25%" align="right">${ageRange}<br>${tx('Liste des s&eacute;ries', 'Heat list')}</td>
 </tr>
 </table>
 <hr class="ev-rule">
@@ -169,7 +186,7 @@ function generatePdfHtml(
       if (heat.entries.length === 0) continue
       const sorted = [...heat.entries].sort((a, b) => a.lane - b.lane)
       html += `<div class="hb">
-<div class="hl">S&eacute;rie&nbsp;${heat.number}&nbsp;de&nbsp;${totalHeats}</div>
+<div class="hl">${tx('S&eacute;rie', 'Heat')}&nbsp;${heat.number}&nbsp;${tx('de', 'of')}&nbsp;${totalHeats}</div>
 <table width="100%" cellspacing="0" cellpadding="0" border="0">
 ${sorted.map(e => {
   const age = computeAge(e.birthYear, meetYear)
@@ -443,13 +460,13 @@ function generateStartListPdfHtml(
       if (ev.heats.length > 0) {
         html += `<table width="100%" cellspacing="0" cellpadding="1" border="0" class="sl-heats">
 <tr class="sl-hdr">
-  <td width="7%"><em class="f8">S&eacute;rie</em></td>
-  <td width="28%"><em class="f8">Nom</em></td>
+  <td width="7%"><em class="f8">${tx('S&eacute;rie', 'Heat')}</em></td>
+  <td width="28%"><em class="f8">${tx('Nom', 'Name')}</em></td>
   <td width="5%"><em class="f8">Age</em></td>
   <td width="9%"><em class="f8">Club</em></td>
   <td width="12%" align="right"><em class="f8">Inscr.</em></td>
-  <td width="20%" align="right"><em class="f8">Temps 1</em></td>
-  <td width="19%" align="right"><em class="f8">Temps 2</em></td>
+  <td width="20%" align="right"><em class="f8">${tx('Temps 1', 'Time 1')}</em></td>
+  <td width="19%" align="right"><em class="f8">${tx('Temps 2', 'Time 2')}</em></td>
 </tr>
 `
         for (const h of ev.heats) {
@@ -509,7 +526,7 @@ function buildStartListPageHeader(
   return `<div class="sl-page-hdr">
 <table width="100%" cellspacing="0" cellpadding="2" border="0">
 <tr>
-  <td width="35%">Fiche de d&eacute;parts</td>
+  <td width="35%">${tx('Fiche de d&eacute;parts', 'Start sheet')}</td>
   <td width="30%" align="center"><b style="font-size:12pt">Couloir ${lane}</b></td>
   <td width="35%" align="right">Page ${pageNum} / ${totalPages}</td>
 </tr>
@@ -608,7 +625,7 @@ ${categoriesHtml}
 
 function buildCombinedResultsPdfHeaderInfo(meetInfo: MeetInfo): PdfHeaderInfo {
   return {
-    line1: meetInfo.name || 'Compétition',
+    line1: meetInfo.name || tx('Compétition', 'Meet'),
     line2: meetInfo.city || '',
     today: new Date().toLocaleDateString('fr-CA'),
   }
@@ -667,8 +684,8 @@ ${html}
 
 function buildBeachNumbersPdfHeaderInfo(meetInfo: MeetInfo): PdfHeaderInfo {
   return {
-    line1: meetInfo.name || 'Compétition',
-    line2: meetInfo.city ? `${meetInfo.city} — Identifiants plage` : 'Identifiants plage',
+    line1: meetInfo.name || tx('Compétition', 'Meet'),
+    line2: meetInfo.city ? `${meetInfo.city} — ${REPORT_LABELS[reportLang].beachNumbers}` : REPORT_LABELS[reportLang].beachNumbers,
     today: new Date().toLocaleDateString('fr-CA'),
   }
 }
@@ -679,6 +696,7 @@ interface EntryByEventReportRow {
   eventId: number
   eventNumber: number
   eventName: string
+  eventNameEn?: string
   phase: 'Finale' | 'Eliminatoire' | 'Finale directe'
   gender: number
   ageMin: number
@@ -705,7 +723,7 @@ function decodeGenderNum(g: number): 'M' | 'F' | 'X' | 'ALL' {
   return 'X'
 }
 
-function generateEntriesByEventPdfHtml(rows: EntryByEventReportRow[], isBeach: boolean): string {
+function generateEntriesByEventPdfHtml(rows: EntryByEventReportRow[], isBeach: boolean, lang: 'fr' | 'en'): string {
   // Group rows by event
   const events = new Map<number, { eventNumber: number; eventName: string; phase: 'Finale' | 'Eliminatoire' | 'Finale directe'; gender: number; ageMin: number; ageMax: number; entries: EntryByEventReportRow[] }>()
 
@@ -713,7 +731,7 @@ function generateEntriesByEventPdfHtml(rows: EntryByEventReportRow[], isBeach: b
     if (!events.has(row.eventId)) {
       events.set(row.eventId, {
         eventNumber: row.eventNumber,
-        eventName: row.eventName,
+        eventName: eventDisplayName({ nameFr: row.eventName, nameEn: row.eventNameEn }, lang),
         phase: row.phase,
         gender: row.gender,
         ageMin: row.ageMin,
@@ -749,11 +767,11 @@ function generateEntriesByEventPdfHtml(rows: EntryByEventReportRow[], isBeach: b
 <tr class="entry-hdr">
   <td width="3%" align="right"><em class="f8">#</em></td>
   ${isBeach ? '<td width="8%"><em class="f8">No.</em></td>' : ''}
-  <td width="${isBeach ? '29' : '37'}%"><em class="f8">Nom</em></td>
+  <td width="${isBeach ? '29' : '37'}%"><em class="f8">${tx('Nom', 'Name')}</em></td>
   <td width="5%"><em class="f8">Age</em></td>
   <td width="10%"><em class="f8">Cat.</em></td>
   <td width="25%"><em class="f8">Club</em></td>
-  ${!isBeach ? '<td width="15%" align="right"><em class="f8">Temps inscr.</em></td>' : ''}
+  ${!isBeach ? `<td width="15%" align="right"><em class="f8">${tx('Temps inscr.', 'Entry time')}</em></td>` : ''}
 </tr>
 `
 
@@ -813,8 +831,8 @@ function parseBirthYearEntry(bd: string | number | null): number {
 
 function buildEntriesByEventPdfHeaderInfo(meetInfo: MeetInfo): PdfHeaderInfo {
   return {
-    line1: meetInfo.name || 'Compétition',
-    line2: meetInfo.city ? `${meetInfo.city} — Liste des inscriptions par épreuves` : 'Liste des inscriptions par épreuves',
+    line1: meetInfo.name || tx('Compétition', 'Meet'),
+    line2: meetInfo.city ? `${meetInfo.city} — ${REPORT_LABELS[reportLang].entriesByEvent}` : REPORT_LABELS[reportLang].entriesByEvent,
     today: new Date().toLocaleDateString('fr-CA'),
   }
 }
@@ -872,7 +890,7 @@ ${rows}</table>
 
 function generatePointStandingsPdfHtml(data: PointStandingsData): string {
   if (!data.groups || data.groups.length === 0) {
-    return `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body><p>Aucun résultat disponible.</p></body></html>`
+    return `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body><p>${tx('Aucun résultat disponible.', 'No results available.')}</p></body></html>`
   }
 
   const body = data.groups.map(generatePointStandingsGroupHtml).join('\n')
@@ -899,7 +917,7 @@ ${body}
 
 function buildPointStandingsPdfHeaderInfo(meetInfo: MeetInfo): PdfHeaderInfo {
   return {
-    line1: meetInfo.name || 'Compétition',
+    line1: meetInfo.name || tx('Compétition', 'Meet'),
     line2: meetInfo.city ? `${meetInfo.city} — Classement au points` : 'Classement au points',
     today: new Date().toLocaleDateString('fr-CA'),
   }
@@ -962,7 +980,7 @@ function generateResultsListPdfHtml(
 <tr valign="top">
   <td width="25%">Epreuve ${s.eventNumber}${phaseTag(s.phase)}<br>${dateTimeStr}</td>
   <td width="50%" align="center">${centerName}<br><br></td>
-  <td width="25%" align="right">${ageRange}<br>Liste des r&eacute;sultats</td>
+  <td width="25%" align="right">${ageRange}<br>${tx('Liste des r&eacute;sultats', 'Results list')}</td>
 </tr>
 </table>
 <hr class="ev-rule">
@@ -975,11 +993,11 @@ function generateResultsListPdfHtml(
 
     html += `<table width="100%" cellspacing="0" cellpadding="1" border="0" class="res-table">
 <tr class="res-hdr">
-  <td width="5%" align="right"><em class="f8">Rang</em></td>
+  <td width="5%" align="right"><em class="f8">${tx('Rang', 'Rank')}</em></td>
   <td width="6%"><em class="f8">AN</em></td>
-  <td width="39%"><em class="f8">Nom</em></td>
+  <td width="39%"><em class="f8">${tx('Nom', 'Name')}</em></td>
   <td width="30%"><em class="f8">Club</em></td>
-  <td width="20%" align="right"><em class="f8">${isBeach ? 'Position' : 'Temps'}</em></td>
+  <td width="20%" align="right"><em class="f8">${isBeach ? 'Position' : tx('Temps', 'Time')}</em></td>
 </tr>
 </table>
 `
@@ -1031,8 +1049,8 @@ ${html}
 
 function buildResultsListPdfHeaderInfo(meetInfo: MeetInfo): PdfHeaderInfo {
   return {
-    line1: meetInfo.name || 'Compétition',
-    line2: meetInfo.city ? `${meetInfo.city} — Liste des résultats` : 'Liste des résultats',
+    line1: meetInfo.name || tx('Compétition', 'Meet'),
+    line2: meetInfo.city ? `${meetInfo.city} — ${REPORT_LABELS[reportLang].resultsList}` : REPORT_LABELS[reportLang].resultsList,
     today: new Date().toLocaleDateString('fr-CA'),
   }
 }
@@ -1106,7 +1124,7 @@ function generateHeatListHtml(
 <tr valign=top>
 <td width=25%>Epreuve ${s.eventNumber}${phaseTag(s.phase)}<br>${dateTimeStr}</td>
 <td align=center width=50%>${centerName}<br><br></td>
-<td align=right width=25%>${ageRange}<br>Liste des s&eacute;ries</td>
+<td align=right width=25%>${ageRange}<br>${tx('Liste des s&eacute;ries', 'Heat list')}</td>
 </tr>
 </table>
 ${HR}
@@ -1128,7 +1146,7 @@ ${HR}
       if (heat.entries.length === 0) continue
 
       html += `<table width=100% border=0 cellspacing=0 cellpadding=0>
-<tr valign=top><td width=100%><u>S&eacute;rie ${heat.number} de ${totalHeats}</u></td><td width=2%></td></tr>
+<tr valign=top><td width=100%><u>${tx('S&eacute;rie', 'Heat')} ${heat.number} ${tx('de', 'of')} ${totalHeats}</u></td><td width=2%></td></tr>
 </table>\n`
 
       const sorted = [...heat.entries].sort((a, b) => a.lane - b.lane)
@@ -1228,6 +1246,8 @@ ${forExport ? '' : '</div>'}
 // ── ReportPage ─────────────────────────────────────────────────────────────────
 
 export default function ReportPage({ refreshKey = 0, meetType = 'POOL' }: { refreshKey?: number; meetType?: string }) {
+  const { lang } = useLang()
+  reportLang = lang
   const [heatSessions, setHeatSessions]   = useState<HeatListSessionRow[]>([])
   const [fullSessions, setFullSessions]   = useState<SessionRow[]>([])
   const [meetInfo, setMeetInfo]           = useState<MeetInfo>({ name: '', city: '', nation: '' })
@@ -1294,8 +1314,8 @@ export default function ReportPage({ refreshKey = 0, meetType = 'POOL' }: { refr
           id: e.id,
           sessionId: s.id,
           label: e.number
-            ? `${e.number}. ${e.nameFr}${e.scheduledTime ? ' ' + e.scheduledTime : ''}`
-            : e.nameFr,
+            ? `${e.number}. ${eventDisplayName(e, lang)}${e.scheduledTime ? ' ' + e.scheduledTime : ''}`
+            : eventDisplayName(e, lang),
           isAdmin: e.isAdmin ?? false,
         })
       }
@@ -1400,7 +1420,7 @@ export default function ReportPage({ refreshKey = 0, meetType = 'POOL' }: { refr
         sections.push({
           eventId: ev.id,
           eventNumber: ev.number,
-          eventName: ev.nameFr,
+          eventName: eventDisplayName(ev, lang),
           phase: ev.phase,
           gender: ev.gender,
           ageMin: ag?.minAge ?? 0,
@@ -1436,7 +1456,7 @@ export default function ReportPage({ refreshKey = 0, meetType = 'POOL' }: { refr
       if (eventIds.length === 0) return
       const rows = await dbApi()?.getEntriesByEvent(eventIds) as EntryByEventReportRow[] | undefined
       const isBeach = meetType === 'BEACH'
-      pdf = generateEntriesByEventPdfHtml(rows ?? [], isBeach)
+      pdf = generateEntriesByEventPdfHtml(rows ?? [], isBeach, lang)
       exported = '' // No HTML export
       hdrInfo = buildEntriesByEventPdfHeaderInfo(meetInfo)
     } else if (reportType === 'pointStandings') {
@@ -1445,7 +1465,7 @@ export default function ReportPage({ refreshKey = 0, meetType = 'POOL' }: { refr
       if (eventIds.length === 0) return
       const data = await dbApi()?.getPointStandings(eventIds) as PointStandingsData | undefined
       if (!data || data.groups.length === 0) {
-        alert('Aucune donnée de classement aux points disponible. Vérifiez que des résultats existent pour les épreuves sélectionnées.')
+        alert(tx('Aucune donnée de classement aux points disponible. Vérifiez que des résultats existent pour les épreuves sélectionnées.', 'No point standings data available. Check that results exist for the selected events.'))
         return
       }
       pdf = generatePointStandingsPdfHtml(data)
@@ -1466,7 +1486,7 @@ export default function ReportPage({ refreshKey = 0, meetType = 'POOL' }: { refr
       if (eventIds.length === 0) return
       const categories = await dbApi()?.getCombinedResults(eventIds) as CombinedResultCategory[] | undefined
       if (!categories || categories.length === 0) {
-        alert('Aucun résultat combiné disponible. Vérifiez que des résultats existent pour les épreuves sélectionnées.')
+        alert(tx('Aucun résultat combiné disponible. Vérifiez que des résultats existent pour les épreuves sélectionnées.', 'No combined results available. Check that results exist for the selected events.'))
         return
       }
       pdf = generateCombinedResultsPdfHtml(categories)
@@ -1524,13 +1544,13 @@ export default function ReportPage({ refreshKey = 0, meetType = 'POOL' }: { refr
 
   async function handleSavePdf() {
     if (!pdfHtml || !pdfHeaderInfo) return
-    const r = await reportApi()?.savePdf(pdfHtml, pdfHeaderInfo, REPORT_LABELS[reportType])
+    const r = await reportApi()?.savePdf(pdfHtml, pdfHeaderInfo, REPORT_LABELS[lang][reportType])
     if (r && !r.ok && !r.canceled) alert(`Erreur PDF: ${r.error}`)
   }
 
   async function handleSaveHtml() {
     if (!exportHtml) return
-    const r = await reportApi()?.saveHtml(exportHtml, REPORT_LABELS[reportType])
+    const r = await reportApi()?.saveHtml(exportHtml, REPORT_LABELS[lang][reportType])
     if (r && !r.ok && !r.canceled) alert(`Erreur HTML: ${r.error}`)
   }
 
@@ -1549,14 +1569,14 @@ export default function ReportPage({ refreshKey = 0, meetType = 'POOL' }: { refr
           value={reportType}
           onChange={e => setReportType(e.target.value as ReportType)}
         >
-          <option value="heatList">Liste des Séries</option>
-          <option value="startList">Fiche de Départs</option>
-          <option value="entriesByEvent">Liste des inscriptions par épreuves</option>
-          <option value="resultsList">Liste des Résultats</option>
-          <option value="combinedResults">Résultat Combiné</option>
-          <option value="pointStandings">Classement au points</option>
+          <option value="heatList">{REPORT_LABELS[lang].heatList}</option>
+          <option value="startList">{REPORT_LABELS[lang].startList}</option>
+          <option value="entriesByEvent">{REPORT_LABELS[lang].entriesByEvent}</option>
+          <option value="resultsList">{REPORT_LABELS[lang].resultsList}</option>
+          <option value="combinedResults">{REPORT_LABELS[lang].combinedResults}</option>
+          <option value="pointStandings">{REPORT_LABELS[lang].pointStandings}</option>
           {meetType === 'BEACH' && (
-            <option value="beachNumbers">Identifiants plage</option>
+            <option value="beachNumbers">{REPORT_LABELS[lang].beachNumbers}</option>
           )}
         </select>
         <button
@@ -1564,7 +1584,7 @@ export default function ReportPage({ refreshKey = 0, meetType = 'POOL' }: { refr
           disabled={(selectedEventIds.size === 0 && reportType !== 'beachNumbers') || loading || generating}
           className="px-3 py-0.5 h-6 text-xs bg-blue-600 text-white border border-blue-700 hover:bg-blue-700 disabled:opacity-40"
         >
-          {generating ? 'Génération…' : 'Générer'}
+          {generating ? tx('Génération…', 'Generating…') : tx('Générer', 'Generate')}
         </button>
       </div>
 
@@ -1574,14 +1594,14 @@ export default function ReportPage({ refreshKey = 0, meetType = 'POOL' }: { refr
         {/* ── Left: cascade session/event selector ── */}
         <div className="w-72 border-r border-gray-300 bg-white flex flex-col shrink-0">
           <div className="px-2 py-1 text-xs font-semibold text-gray-500 bg-gray-50 border-b border-gray-200">
-            Sessions / Épreuves
+            {tx('Sessions / Épreuves', 'Sessions / Events')}
           </div>
           <div className="flex-1 overflow-y-auto text-xs">
             {loading && (
               <div className="p-3 text-gray-400 italic">Chargement…</div>
             )}
             {!loading && flatItems.length === 0 && (
-              <div className="p-3 text-gray-400 italic">Aucune donnée</div>
+              <div className="p-3 text-gray-400 italic">{tx('Aucune donnée', 'No data')}</div>
             )}
             {flatItems.map((item, idx) => {
               const isSession = item.type === 'session'
@@ -1624,7 +1644,9 @@ export default function ReportPage({ refreshKey = 0, meetType = 'POOL' }: { refr
           </div>
           {/* Selection summary */}
           <div className="px-2 py-1 text-xs text-gray-500 border-t border-gray-200 bg-gray-50">
-            {selectedEventIds.size} épreuve{selectedEventIds.size !== 1 ? 's' : ''} sélectionnée{selectedEventIds.size !== 1 ? 's' : ''}
+            {lang === 'en'
+              ? `${selectedEventIds.size} event${selectedEventIds.size !== 1 ? 's' : ''} selected`
+              : `${selectedEventIds.size} épreuve${selectedEventIds.size !== 1 ? 's' : ''} sélectionnée${selectedEventIds.size !== 1 ? 's' : ''}`}
           </div>
         </div>
 
@@ -1660,12 +1682,12 @@ export default function ReportPage({ refreshKey = 0, meetType = 'POOL' }: { refr
           <div className="flex-1 overflow-hidden bg-gray-500 relative">
             {!hasPreview && (
               <div className="flex items-center justify-center h-full text-gray-300 text-sm italic">
-                Sélectionnez des épreuves et cliquez sur <span className="mx-1 px-2 bg-gray-600 rounded">Générer</span>
+                {tx('Sélectionnez des épreuves et cliquez sur', 'Select events and click')} <span className="mx-1 px-2 bg-gray-600 rounded">{tx('Générer', 'Generate')}</span>
               </div>
             )}
             {generating && (
               <div className="absolute inset-0 flex items-center justify-center bg-gray-700/70 z-10">
-                <span className="text-white text-sm">Génération de l'aperçu…</span>
+                <span className="text-white text-sm">{tx("Génération de l'aperçu…", 'Generating preview…')}</span>
               </div>
             )}
             {previewUrl && (
@@ -1673,7 +1695,7 @@ export default function ReportPage({ refreshKey = 0, meetType = 'POOL' }: { refr
                 ref={iframeRef}
                 src={previewUrl}
                 className="w-full h-full border-0"
-                title="Aperçu du rapport"
+                title={tx('Aperçu du rapport', 'Report preview')}
               />
             )}
           </div>

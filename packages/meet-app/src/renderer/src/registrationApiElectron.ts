@@ -184,6 +184,7 @@ export const registrationApiElectron: RegistrationAPI = {
           styleMap.set(styleUid, {
             style_uid: styleUid,
             style_name: event.nameFr || event.nameEn || `${event.distance}m`,
+            style_name_en: event.nameEn || undefined,
             best_time_lcm_ms: null,
             best_time_scm_ms: null,
             relay_count: relayCount,

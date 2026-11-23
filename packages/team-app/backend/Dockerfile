@@ -10,6 +10,7 @@ COPY config/age-group-rules.json .
 COPY config/swimstyle-ranges.json .
 COPY config/lenex-meet-fields.json .
 COPY config/dsq-codes.json .
+COPY config/swimstyle-names.json .
 COPY config/template_pool.lxf ./templates/template_pool.lxf
 COPY config/template_beach.lxf ./templates/template_beach.lxf
 RUN chmod +x docker-entrypoint.sh && \

@@ -17,6 +17,7 @@
 // along with Sauvetage Sportif. If not, see <https://www.gnu.org/licenses/>.
 
 import { roundToLenex } from './rounds'
+import { swimstyleNameEn } from './swimstyleNames'
 import { courseToName } from './courses'
 import { SPLASH_DSQ_NO_OPTIONS, dsqAppliesTo } from './dsqCodes'
 import { app, BrowserWindow, shell, ipcMain, dialog, nativeImage, Menu, session } from 'electron'
@@ -607,7 +608,7 @@ ipcMain.handle('db:get-relay-page-data', (_event, clubId?: number) => {
   const ageCategoryMap = new Map<string, {
     ageCode: string; ageMin: number; ageMax: number | null
     events: Array<{
-      eventId: number; eventName: string; swimstyleId: number
+      eventId: number; eventName: string; eventNameEn: string; swimstyleId: number
       relaycount: number; gender: 'M' | 'F' | 'X'; eventNumber: number
       agegroupid: number
     }>
@@ -630,9 +631,11 @@ ipcMain.handle('db:get-relay-page-data', (_event, clubId?: number) => {
     const category = ageCategoryMap.get(ageCode)!
     // Avoid duplicates (same event in same category)
     if (!category.events.some(e => e.eventId === ev.swimeventid)) {
+      const frName = ev.stylename || `${ev.distance}m Relay`
       category.events.push({
         eventId: ev.swimeventid,
-        eventName: ev.stylename || `${ev.distance}m Relay`,
+        eventName: frName,
+        eventNameEn: swimstyleNameEn(ev.swimstyleid, frName),
         swimstyleId: ev.swimstyleid,
         relaycount: ev.relaycount,
         gender: decodeRelayGender(ev.eventgender),
@@ -654,6 +657,7 @@ ipcMain.handle('db:get-relay-page-data', (_event, clubId?: number) => {
         .map(e => ({
           eventId: e.eventId,
           eventName: e.eventName,
+          eventNameEn: e.eventNameEn,
           swimstyleId: e.swimstyleId,
           relaycount: e.relaycount,
           gender: e.gender,
@@ -1867,12 +1871,12 @@ ipcMain.handle('timing:set-gemini-key', (_event, freeKey: string | null, paidKey
   return { ok: true }
 })
 
-ipcMain.handle('timing:generate-sheets', async (_event, sessionId: number) => {
+ipcMain.handle('timing:generate-sheets', async (_event, sessionId: number, lang?: string) => {
   try {
     const db = getLocalDb()
     // Get all heats for the session
     const heats = db.prepare(`
-      SELECT e.eventnumber, e.swimeventid, h.heatnumber, h.heatid,
+      SELECT e.eventnumber, e.swimeventid, e.swimstyleid, h.heatnumber, h.heatid,
              ss.name as stylename, ss.distance
       FROM heat h
       JOIN swimevent e ON h.swimeventid = e.swimeventid
@@ -1880,7 +1884,7 @@ ipcMain.handle('timing:generate-sheets', async (_event, sessionId: number) => {
       WHERE e.swimsessionid = ?
       ORDER BY e.eventnumber, h.heatnumber
     `).all(sessionId) as Array<{
-      eventnumber: number; swimeventid: number; heatnumber: number; heatid: number
+      eventnumber: number; swimeventid: number; swimstyleid: number | null; heatnumber: number; heatid: number
       stylename: string; distance: number
     }>
 
@@ -1908,9 +1912,11 @@ ipcMain.handle('timing:generate-sheets', async (_event, sessionId: number) => {
       const laneNumbers = [...new Set(entries.map((e) => e.lane))]
       if (laneNumbers.length === 0) continue // skip heats with no seeded lanes
       // Style names usually already carry the distance ("50m Portage…", "4x50m Relais…")
-      const eventName = isBeachTS || /^\d/.test(heat.stylename)
-        ? heat.stylename
-        : `${heat.distance}m ${heat.stylename}`
+      // Event name follows the UI language; the printed labels stay French (the OCR prompts read them)
+      const styleName = lang === 'en' ? swimstyleNameEn(heat.swimstyleid, heat.stylename) : heat.stylename
+      const eventName = isBeachTS || /^\d/.test(styleName)
+        ? styleName
+        : `${heat.distance}m ${styleName}`
 
       const athleteNames = new Map<number, string>()
       const clubCodes = new Map<number, string>()
