@@ -1095,6 +1095,11 @@ def list_clubs(request: Request, db: Session = Depends(get_db)):
         item["total_fees_cents"] = sum(it["unit_cents"] * it["qty"] for it in items)
         if role in ("admin", "organizer"):
             item["email"] = c.email or ""
+        # A club's PIN is its whole identity (role + club), so only the admin
+        # ever sees it: an organizer who could read the others' PINs could log in
+        # as any club, including one that organizes another open meet. The
+        # organizer hands PINs out with the one-time links (`send-pin`).
+        if role == "admin":
             item["pin"] = c.pin
         result.append(item)
     return result

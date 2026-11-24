@@ -194,6 +194,7 @@ Coach best times are written only at meet close, never on registration:
 | `GET /api/self-invite/meets` | Active (non-archived) meets with `registration_open` + `closure_date` — login screen lists them with their registration status and offers self-invite (`/self-invite?meet=ID`, sent as `X-Meet-Id`) only for meets still open; says so when none is | Public |
 | `GET /api/events` | Flat event list | Public |
 | `POST /api/auth` | PIN authentication | Public |
+| `GET /api/clubs` | Club list with fees/counts; `email` for organizer/admin, **`pin` for the admin only** (a PIN is a club's whole identity — an organizer who could read the others' would be able to log in as any club; organizers send PINs via one-time `send-pin` links) | Public / role-filtered |
 | `POST /api/upload/meet` | Upload meet .lxf (event structure) | Organizer/Admin |
 | `POST /api/upload/entries` | Upload entries/results .lxf (clubs + athletes + best times) | Admin |
 | `POST /api/admin/new-meet` | Create new meet from template (pool/beach) | Organizer/Admin |

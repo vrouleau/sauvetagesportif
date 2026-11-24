@@ -554,7 +554,6 @@ export default function Organizer() {
               </th>
               <th className="px-2 py-1.5 border-b border-gray-300 text-left font-medium">{t.club}</th>
               <th className="px-2 py-1.5 border-b border-gray-300 text-left font-medium">Email</th>
-              <th className="px-2 py-1.5 border-b border-gray-300 text-left font-medium">{t.pin}</th>
               <th className="px-2 py-1.5 border-b border-gray-300 text-left font-medium">{t.status}</th>
             </tr>
           </thead>
@@ -579,7 +578,6 @@ export default function Organizer() {
                 </td>
                 <td className="px-2 py-1">{c.name}</td>
                 <td className="px-2 py-1 text-gray-500">{c.email || <span className="text-red-400 italic">{lang === 'fr' ? 'aucun' : 'none'}</span>}</td>
-                <td className="px-2 py-1 text-gray-500 font-mono">{c.email ? c.pin : ''}</td>
                 <td className="px-2 py-1 text-gray-500">
                   {statusText(c)}
                   {c.incomplete_relay_count > 0 && (
