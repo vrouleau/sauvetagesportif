@@ -30,9 +30,6 @@ export default function Organizer() {
   const [checked, setChecked] = useState({})
   // { provider: 'stripe'|'none'|…, connected } from GET /invoice-provider
   const [providerInfo, setProviderInfo] = useState(null)
-  // { [clubId]: { state: paid|partial|open|voided|missing, balance_cents, overdue } }
-  // read back from the provider (QuickBooks) for invoices already pushed
-  const [invoiceStatuses, setInvoiceStatuses] = useState({})
   const [msg, setMsg] = useState('')
   const [msgError, setMsgError] = useState(false)
   const [showImportConfirm, setShowImportConfirm] = useState(false)
@@ -71,16 +68,6 @@ export default function Organizer() {
       const r = await api.get('/invoice-provider')
       setProviderInfo(r.data)
     } catch { setProviderInfo({ provider: 'none', connected: false }) }
-  }
-
-  async function loadInvoiceStatuses(manual = false) {
-    try {
-      const r = await api.get('/invoice-provider/statuses')
-      setInvoiceStatuses(r.data.statuses || {})
-      if (manual) { setMsgError(!!r.data.error); setMsg(r.data.error || t.payments_refreshed) }
-    } catch (e) {
-      if (manual) { setMsgError(true); setMsg(errorReason(e)) }
-    }
   }
 
   async function connectProvider() {
@@ -394,11 +381,6 @@ export default function Organizer() {
   // Download PDF / Send PDF (email) / Send to the provider side by side.
   const mode = !closurePassed ? 'invite' : 'invoice'
 
-  // Once invoicing starts, read back which pushed invoices have been paid.
-  useEffect(() => {
-    if (mode === 'invoice' && providerInfo?.supports_status && providerInfo.connected) loadInvoiceStatuses()
-  }, [mode, providerInfo])
-
   const hasEmail = c => !!(c.email && c.email.trim())
 
   // Whether a club's checkbox is usable in the current mode. Greys out rows
@@ -431,23 +413,6 @@ export default function Organizer() {
   const hasProvider = provider !== 'none'
   const providerName = hasProvider ? t[`${provider}_name`] || provider : ''
   const providerConnected = hasProvider && !!providerInfo?.connected
-
-  // Paid / partly paid / unpaid / voided / missing, from the provider's records.
-  function invoiceBadge(c) {
-    const st = invoiceStatuses[c.id]
-    if (!st) return null
-    const money = cents => formatMoney(cents, meetInfo?.currency || 'CAD', lang)
-    let text, cls
-    if (st.state === 'paid') { text = t.invoice_paid; cls = 'text-green-700 bg-green-100 border-green-300' }
-    else if (st.state === 'partial') { text = t.invoice_partial(money(st.balance_cents)); cls = 'text-amber-700 bg-amber-100 border-amber-300' }
-    else if (st.state === 'voided') { text = t.invoice_voided; cls = 'text-gray-600 bg-gray-100 border-gray-300' }
-    else if (st.state === 'missing') { text = t.invoice_missing(providerName); cls = 'text-red-700 bg-red-100 border-red-300' }
-    else { text = t.invoice_unpaid; cls = 'text-gray-700 bg-gray-100 border-gray-300' }
-    if (st.overdue) { text += ` — ${t.invoice_overdue}`; cls = 'text-red-700 bg-red-100 border-red-300' }
-    return (
-      <span className={`ml-1.5 border rounded px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap ${cls}`}>{text}</span>
-    )
-  }
 
   function statusText(c) {
     const parts = []
@@ -523,12 +488,6 @@ export default function Organizer() {
                 title={providerConnected ? undefined : t[`${provider}_connect_first`]}
                 className="text-white px-3 py-1 rounded text-xs disabled:opacity-50 bg-blue-600 hover:bg-blue-700">
                 {t[`send_${provider}_btn`]} {providerConnected && sendableCount > 0 && `(${sendableCount})`}
-              </button>
-            )}
-            {hasProvider && providerConnected && providerInfo?.supports_status && (
-              <button onClick={() => loadInvoiceStatuses(true)}
-                className="text-white px-3 py-1 rounded text-xs bg-gray-600 hover:bg-gray-700">
-                ↻ {t.refresh_payments_btn}
               </button>
             )}
           </>
@@ -623,7 +582,6 @@ export default function Organizer() {
                 <td className="px-2 py-1 text-gray-500 font-mono">{c.email ? c.pin : ''}</td>
                 <td className="px-2 py-1 text-gray-500">
                   {statusText(c)}
-                  {mode === 'invoice' && invoiceBadge(c)}
                   {c.incomplete_relay_count > 0 && (
                     <span className="ml-1.5 text-amber-700 bg-amber-100 border border-amber-300 rounded px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap">
                       {t.incomplete_relays_short(c.incomplete_relay_count)}

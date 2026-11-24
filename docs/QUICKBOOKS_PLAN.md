@@ -1,6 +1,6 @@
 # QuickBooks Online as an invoice provider (alternative to Stripe)
 
-Status: phases 1-4 implemented and verified against an Intuit sandbox (provider abstraction, OAuth connection, invoice push, update-in-place with the paid/voided-invoice guard). Phase 5 (paid-status read-back on the Organizer page) is done too. Still to do: the fake-qbo integration service for the Docker tests, and checking the exempt tax code / income account with the Société's accountant. No "Société must be the organizer" guard exists: `INVOICE_PROVIDER` is the only switch, set per installation.
+Status: phases 1-4 implemented and verified against an Intuit sandbox (provider abstraction, OAuth connection, invoice push, update-in-place with the paid/voided-invoice guard). Phase 5 (paid-status read-back on the Organizer page) was built then **removed**: accounting stays in QuickBooks, the app only reads an invoice's balance to refuse updating a settled one. Still to do: the fake-qbo integration service for the Docker tests, and checking the exempt tax code / income account with the Société's accountant. No "Société must be the organizer" guard exists: `INVOICE_PROVIDER` is the only switch, set per installation.
 
 ## Goal
 
@@ -75,7 +75,7 @@ Idea (not in v1; accountant input needed — see `docs/QUICKBOOKS_COMPTABLE_FR.m
 2. OAuth connection, encrypted token storage, admin connect UI.
 3. Push (customer, invoice, idempotency, migration, Organizer UI).
 4. Revisions (update same invoice) + paid-invoice guard.
-5. Optional: read back paid/balance status for the Organizer list.
+5. ~~Read back paid/balance status for the Organizer list~~ — dropped (accounting is done in QuickBooks, not here).
 
 ## Dev/test setup
 - Intuit developer account → sandbox company (Canada if offered) → app with `com.intuit.quickbooks.accounting` scope; development keys, `QBO_ENVIRONMENT=sandbox`.
