@@ -3273,21 +3273,24 @@ def stripe_connect_start(db: Session = Depends(get_db)):
 
 @router.get("/stripe/status", dependencies=[Depends(require_organizer_or_admin)])
 def stripe_connect_status(db: Session = Depends(get_db)):
+    """`configured` = a STRIPE_API_KEY is set on the server; the Organizer page
+    shows no Stripe button at all without it. `connected` = the organizer club's
+    Stripe account can take charges."""
     import stripe
+    api_key = os.environ.get("STRIPE_API_KEY")
+    configured = bool(api_key)
     org_cfg = _get_organizer_club_id(db)
     if not org_cfg:
-        return {"connected": False}
+        return {"configured": configured, "connected": False}
     club = db.get(TeamClub, int(org_cfg))
-    if not club or not club.stripe_account_id:
-        return {"connected": False}
-    stripe.api_key = os.environ.get("STRIPE_API_KEY")
-    if not stripe.api_key:
-        return {"connected": False}
+    if not club or not club.stripe_account_id or not configured:
+        return {"configured": configured, "connected": False}
+    stripe.api_key = api_key
     try:
         acct = stripe.Account.retrieve(club.stripe_account_id)
-        return {"connected": acct.charges_enabled, "account_id": club.stripe_account_id}
+        return {"configured": configured, "connected": acct.charges_enabled, "account_id": club.stripe_account_id}
     except Exception:
-        return {"connected": False}
+        return {"configured": configured, "connected": False}
 
 
 @router.post("/stripe/disconnect", dependencies=[Depends(require_organizer_or_admin)])
