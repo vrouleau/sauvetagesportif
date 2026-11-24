@@ -107,10 +107,20 @@ Once the registration deadline has passed, select clubs in the Invitation tab (c
 | **Download PDF** | Downloads a ZIP with one PDF invoice per selected club |
 | **Send PDF** | Emails each club its invoice (PDF attached) with instructions to pay by **Interac e-Transfer** to the organizer club's email, putting the invoice number in the message/memo field. Replies go to the organizer. |
 | **Send Stripe** | Sends a Stripe invoice (clubs pay by card). Only enabled when Stripe is connected. |
+| **Export QuickBooks** | Downloads a ZIP of CSV files for **QuickBooks Online** (customers + invoices, same lines and numbers as the PDFs). Nothing is sent or connected: whoever keeps the books imports them under *Settings → Import data*. A short how-to is inside the ZIP. |
 
 Both send buttons ask for confirmation first ("Do you want to send X invoices now?"). Clubs without an email can only get a PDF download. The **Status** column shows how many times each club was sent an invoice (`2× sent`), by email or Stripe.
 
 After **Send PDF**, the organizer club receives **one summary email** listing every invoice the platform just sent in its name (club, email, invoice number, total).
+
+### Export to QuickBooks
+
+**Export QuickBooks** opens a small form, then downloads `quickbooks-import.zip`:
+
+- the **product/service** every line is booked against (default *Frais d'inscription*) and the company's **exempt tax code** — type them exactly as they appear in the QuickBooks that will import the file;
+- the **payment delay** in days (the due date is today + that many days).
+
+The ZIP holds `1-customers.csv` (one customer per club), `2-invoices.csv` (one row per athlete line; split into several files when there are more than 100 invoices, QuickBooks' limit) and a `README.txt`. In QuickBooks: *Settings → Import data → Customers*, then *Invoices*, picking the date format `dd/MM/yyyy`. Skip the customers file for clubs that already exist as customers. Importing is a one-way copy: if a club changes its entries afterwards, correct that invoice in QuickBooks.
 
 ### Invoice numbers
 

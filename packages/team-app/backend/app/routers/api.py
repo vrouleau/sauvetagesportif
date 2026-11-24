@@ -3340,6 +3340,59 @@ def invoices_pdf_zip(data: dict, request: Request, db: Session = Depends(get_db)
                     headers={"Content-Disposition": 'attachment; filename="invoices.zip"'})
 
 
+@router.post("/invoices/quickbooks-export", dependencies=[Depends(require_organizer_or_admin)])
+def invoices_quickbooks_export(data: dict, request: Request, db: Session = Depends(get_db)):
+    """ZIP of QuickBooks Online import files (customers + invoices CSV, split to
+    Intuit's 100-invoice limit, and a how-to) for the selected clubs. Same lines
+    and invoice numbers as the PDFs. Nothing is recorded as "sent": downloading
+    files is like downloading the PDFs."""
+    import zipfile
+    from datetime import date as _date
+    from io import BytesIO
+    from ..invoices import _club_line_items, _meet_fees, _meet_name, invoice_number, items_total_cents
+    from ..quickbooks_export import (DEFAULT_DUE_DAYS, DEFAULT_ITEM_NAME, DEFAULT_TAX_CODE,
+                                     ExportEntry, ExportOptions, build_files)
+
+    club_ids = data.get("club_ids", [])
+    if not club_ids:
+        raise HTTPException(400, "No clubs selected")
+    lang = "en" if data.get("lang") == "en" else "fr"
+    try:
+        due_days = max(0, min(365, int(data.get("due_days", DEFAULT_DUE_DAYS))))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "due_days must be a number")
+    options = ExportOptions(
+        item_name=str(data.get("item_name") or DEFAULT_ITEM_NAME).strip()[:100],
+        tax_code=str(data.get("tax_code") or DEFAULT_TAX_CODE).strip()[:100],
+        due_days=due_days,
+    )
+
+    meetsid = resolve_meetsid(request, db)
+    meet_fees = _meet_fees(db, meetsid)
+    entries = []
+    for cid in club_ids:
+        club = db.get(TeamClub, cid)
+        if not club:
+            continue
+        items = _club_line_items(db, club, meet_fees, meetsid=meetsid, lang=lang)
+        if not items:
+            continue
+        entries.append(ExportEntry(
+            name=club.name, email=club.email or "",
+            invoice_no=invoice_number(db, cid, meetsid, items_total_cents(items)), items=items))
+    try:
+        files = build_files(entries, _meet_name(db, meetsid), _date.today(), options, lang)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    buf = BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name, content in files.items():
+            zf.writestr(name, content)
+    return Response(content=buf.getvalue(), media_type="application/zip",
+                    headers={"Content-Disposition": 'attachment; filename="quickbooks-import.zip"'})
+
+
 @router.post("/clubs/{club_id}/invoice", dependencies=[Depends(require_organizer_or_admin)])
 def send_club_invoice(club_id: int, request: Request, data: dict | None = None, db: Session = Depends(get_db)):
     """Create and send a Stripe invoice for a club on the organizer's connected account."""

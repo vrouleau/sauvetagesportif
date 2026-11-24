@@ -23,6 +23,7 @@ import { newSwimstylesDetail, confirmNewSwimstyles } from '../newSwimstylesConfi
 import { refreshAuth } from '../authMeet'
 import { notResultsFileMessage, beachResultsMessage, meetMismatchDetail, confirmMeetMismatch } from '../lxfImportGuards'
 import { openPrintEntries } from '../printEntries'
+import QuickBooksExport from '../components/QuickBooksExport'
 
 export default function Organizer() {
   const [meetInfo, setMeetInfo] = useState(null)
@@ -443,6 +444,8 @@ export default function Organizer() {
               className="text-white px-3 py-1 rounded text-xs disabled:opacity-50 bg-gray-600 hover:bg-gray-700">
               {t.download_pdf_btn} {checkedCount > 0 && `(${checkedCount})`}
             </button>
+            <QuickBooksExport clubIds={selectedActionableIds()}
+              onMessage={(m, isError) => { setMsgError(isError); setMsg(m) }} />
             <button onClick={() => sendSelectedInvoices('email')} disabled={!sendableCount}
               className="text-white px-3 py-1 rounded text-xs disabled:opacity-50 bg-teal-600 hover:bg-teal-700">
               {t.send_pdf_btn} {sendableCount > 0 && `(${sendableCount})`}
