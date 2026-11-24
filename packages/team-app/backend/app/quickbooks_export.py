@@ -47,12 +47,13 @@ DEFAULT_ITEM_NAME = "Frais d'inscription"
 DEFAULT_TAX_CODE = "Exempt"
 DEFAULT_DUE_DAYS = 30
 
-# Column headers of Intuit's sample invoice file. The import wizard also lets
-# the user map columns by hand, so a different spelling is not fatal.
+# Column headers of Intuit's own sample invoice file (the Canadian multi-currency
+# one, checked against a real download), in its order. The import wizard maps
+# columns by header text, so these are kept exactly.
 INVOICE_HEADERS = [
     "*InvoiceNo", "*Customer", "*InvoiceDate", "*DueDate", "Terms", "Location", "Memo",
     "Item(Product/Service)", "ItemDescription", "ItemQuantity", "ItemRate", "*ItemAmount",
-    "*ItemTaxCode", "ItemTaxAmount", "Service Date",
+    "*ItemTaxCode", "ItemTaxAmount", "Currency", "Note to customer",
 ]
 CUSTOMER_HEADERS = ["Name", "Company", "Email"]
 
@@ -130,18 +131,27 @@ def line_description(item: dict, lang: str = "fr") -> str:
 
 def invoice_rows(entry: ExportEntry, meet_name: str, today: date, options: ExportOptions,
                  lang: str = "fr") -> list[list[str]]:
-    """The CSV rows of one invoice: the header fields repeat on every line."""
+    """The CSV rows of one invoice, laid out like Intuit's sample: the invoice
+    number on every line, but the customer, dates and memo only on the first one
+    (later lines, with no customer, continue the invoice above)."""
     due = today + timedelta(days=max(0, options.due_days))
     customer = customer_name(entry.name)
+    number = doc_number(entry.invoice_no)
     rows = []
-    for it in entry.items:
+    for i, it in enumerate(entry.items):
         qty, unit = it["qty"], it["unit_cents"]
+        first = i == 0
         rows.append([
-            doc_number(entry.invoice_no), customer, _date(today), _date(due), "", "",
-            _clean(meet_name)[:1000],
+            number,
+            customer if first else "",
+            _date(today) if first else "",
+            _date(due) if first else "",
+            "", "",                                           # Terms, Location
+            _clean(meet_name)[:1000] if first else "",        # Memo
             _clean(options.item_name) or DEFAULT_ITEM_NAME, line_description(it, lang),
             str(qty), _money(unit), _money(qty * unit),
-            _clean(options.tax_code), "", "",
+            _clean(options.tax_code), "",                     # ItemTaxCode, ItemTaxAmount
+            "", "",                                           # Currency (company default), Note to customer
         ])
     return rows
 

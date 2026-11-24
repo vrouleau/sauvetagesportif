@@ -39,16 +39,27 @@ def entry(name="Club d'Alma", no="2026-012-0045", items=ITEMS, email="alma@x.ca"
 
 
 class TestInvoiceRows:
-    def test_one_row_per_line_with_the_invoice_fields_repeated(self):
+    def test_the_headers_are_intuits_own_sample_headers(self):
+        assert qx.INVOICE_HEADERS == [
+            "*InvoiceNo", "*Customer", "*InvoiceDate", "*DueDate", "Terms", "Location", "Memo",
+            "Item(Product/Service)", "ItemDescription", "ItemQuantity", "ItemRate", "*ItemAmount",
+            "*ItemTaxCode", "ItemTaxAmount", "Currency", "Note to customer"]
+
+    def test_one_row_per_line_header_fields_on_the_first_line_only(self):
         rows = qx.invoice_rows(entry(), "Meet <1>", TODAY, qx.ExportOptions())
-        assert len(rows) == 3
+        assert len(rows) == 3 and all(len(r) == len(qx.INVOICE_HEADERS) for r in rows)
         first = dict(zip(qx.INVOICE_HEADERS, rows[0]))
         assert first["*InvoiceNo"] == "2026-012-0045" and first["*Customer"] == "Club d'Alma"
         assert first["*InvoiceDate"] == "24/11/2026" and first["*DueDate"] == "24/12/2026"
         assert first["Memo"] == "Meet <1>"
         assert first["Item(Product/Service)"] == "Frais d'inscription"
         assert first["*ItemTaxCode"] == "Exempt"
-        assert all(r[0] == "2026-012-0045" for r in rows)
+        # like Intuit's sample: later lines carry the invoice number and the item fields only
+        for r in rows[1:]:
+            line = dict(zip(qx.INVOICE_HEADERS, r))
+            assert line["*InvoiceNo"] == "2026-012-0045"
+            assert [line[h] for h in ("*Customer", "*InvoiceDate", "*DueDate", "Memo")] == ["", "", "", ""]
+            assert line["*ItemTaxCode"] == "Exempt" and line["Item(Product/Service)"] == "Frais d'inscription"
 
     def test_amounts_are_quantity_times_rate(self):
         rows = qx.invoice_rows(entry(), "M", TODAY, qx.ExportOptions())
@@ -184,7 +195,7 @@ class TestEndpoint:
         resp = api.invoices_quickbooks_export({"club_ids": [10, 20]}, _Req(), db)
         files = _zip(resp)
         rows = _read(files["2-invoices.csv"])[1:]
-        assert {r[1] for r in rows} == {"Club A"}                       # Club B has nothing to bill
+        assert {r[1] for r in rows} == {"Club A", ""}                   # Club B has nothing to bill
         assert rows[0][0] == invoice_number(db, 10, 1, items_total_cents(ITEMS))
         assert resp.headers["content-disposition"].endswith('"quickbooks-import.zip"')
 
