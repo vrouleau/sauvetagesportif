@@ -23,6 +23,7 @@ import { newSwimstylesDetail, confirmNewSwimstyles } from '../newSwimstylesConfi
 import { refreshAuth } from '../authMeet'
 import { notResultsFileMessage, beachResultsMessage, meetMismatchDetail, confirmMeetMismatch } from '../lxfImportGuards'
 import { openPrintEntries } from '../printEntries'
+import QuickBooksExport from '../components/QuickBooksExport'
 
 export default function Organizer() {
   const [meetInfo, setMeetInfo] = useState(null)
@@ -54,7 +55,7 @@ export default function Organizer() {
     try {
       const r = await api.get('/stripe/status')
       setStripeStatus(r.data)
-    } catch { setStripeStatus({ connected: false }) }
+    } catch { setStripeStatus({ configured: false, connected: false }) }
   }
 
   async function connectStripe() {
@@ -383,7 +384,9 @@ export default function Organizer() {
   // becomes non-selectable.
   const checkedCount = selectableClubs.filter(c => checked[c.id]).length
   const sendableCount = selectableClubs.filter(c => checked[c.id] && hasEmail(c)).length
-  const stripeConnected = !!stripeStatus?.connected
+  // No STRIPE_API_KEY on the server (or status not loaded yet): no Stripe buttons at all.
+  const stripeConfigured = !!stripeStatus?.configured
+  const stripeConnected = stripeConfigured && !!stripeStatus?.connected
 
   function statusText(c) {
     const parts = []
@@ -413,7 +416,7 @@ export default function Organizer() {
         <div className="flex-1" />
         {/* Stripe status (passive indicator only — the connect/disconnect
             control lives in the actions bar below) */}
-        {stripeStatus?.connected && (
+        {stripeConnected && (
           <span className="text-xs text-green-700">✓ Stripe</span>
         )}
         {/* Closure date */}
@@ -443,15 +446,19 @@ export default function Organizer() {
               className="text-white px-3 py-1 rounded text-xs disabled:opacity-50 bg-gray-600 hover:bg-gray-700">
               {t.download_pdf_btn} {checkedCount > 0 && `(${checkedCount})`}
             </button>
+            <QuickBooksExport clubIds={selectedActionableIds()}
+              onMessage={(m, isError) => { setMsgError(isError); setMsg(m) }} />
             <button onClick={() => sendSelectedInvoices('email')} disabled={!sendableCount}
               className="text-white px-3 py-1 rounded text-xs disabled:opacity-50 bg-teal-600 hover:bg-teal-700">
               {t.send_pdf_btn} {sendableCount > 0 && `(${sendableCount})`}
             </button>
-            <button onClick={() => sendSelectedInvoices('stripe')} disabled={!stripeConnected || !sendableCount}
-              title={stripeConnected ? undefined : t.stripe_connect_first}
-              className="text-white px-3 py-1 rounded text-xs disabled:opacity-50 bg-blue-600 hover:bg-blue-700">
-              {t.send_stripe_btn} {stripeConnected && sendableCount > 0 && `(${sendableCount})`}
-            </button>
+            {stripeConfigured && (
+              <button onClick={() => sendSelectedInvoices('stripe')} disabled={!stripeConnected || !sendableCount}
+                title={stripeConnected ? undefined : t.stripe_connect_first}
+                className="text-white px-3 py-1 rounded text-xs disabled:opacity-50 bg-blue-600 hover:bg-blue-700">
+                {t.send_stripe_btn} {stripeConnected && sendableCount > 0 && `(${sendableCount})`}
+              </button>
+            )}
           </>
         )}
         <div className="w-px h-4 bg-gray-300" />
@@ -473,20 +480,24 @@ export default function Organizer() {
           className="px-3 py-1 bg-gray-500 text-white text-xs rounded hover:bg-gray-600">
           {lang === 'fr' ? 'Fermer sans résultats' : 'Close without results'}
         </button>
-        <div className="w-px h-4 bg-gray-300" />
-        {/* Single Stripe toggle: connect when disconnected, disconnect when
-            connected — replaces the old ambiguous "Disconnect" link and the
-            separate connect link that used to sit in the toolbar. */}
-        {stripeStatus?.connected ? (
-          <button onClick={disconnectStripe}
-            className="px-3 py-1 bg-red-600 text-white text-xs rounded hover:bg-red-700">
-            {t.stripe_disconnect_btn}
-          </button>
-        ) : (
-          <button onClick={connectStripe}
-            className="px-3 py-1 bg-purple-600 text-white text-xs rounded hover:bg-purple-700">
-            {t.stripe_connect_btn}
-          </button>
+        {stripeConfigured && (
+          <>
+            <div className="w-px h-4 bg-gray-300" />
+            {/* Single Stripe toggle: connect when disconnected, disconnect when
+                connected — replaces the old ambiguous "Disconnect" link and the
+                separate connect link that used to sit in the toolbar. */}
+            {stripeConnected ? (
+              <button onClick={disconnectStripe}
+                className="px-3 py-1 bg-red-600 text-white text-xs rounded hover:bg-red-700">
+                {t.stripe_disconnect_btn}
+              </button>
+            ) : (
+              <button onClick={connectStripe}
+                className="px-3 py-1 bg-purple-600 text-white text-xs rounded hover:bg-purple-700">
+                {t.stripe_connect_btn}
+              </button>
+            )}
+          </>
         )}
         <div className="flex-1" />
         {msg && <span className={`text-xs max-w-xl truncate ${msgError ? 'text-red-600' : 'text-green-700'}`} title={msg}>{msg}</span>}

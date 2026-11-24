@@ -3273,21 +3273,24 @@ def stripe_connect_start(db: Session = Depends(get_db)):
 
 @router.get("/stripe/status", dependencies=[Depends(require_organizer_or_admin)])
 def stripe_connect_status(db: Session = Depends(get_db)):
+    """`configured` = a STRIPE_API_KEY is set on the server; the Organizer page
+    shows no Stripe button at all without it. `connected` = the organizer club's
+    Stripe account can take charges."""
     import stripe
+    api_key = os.environ.get("STRIPE_API_KEY")
+    configured = bool(api_key)
     org_cfg = _get_organizer_club_id(db)
     if not org_cfg:
-        return {"connected": False}
+        return {"configured": configured, "connected": False}
     club = db.get(TeamClub, int(org_cfg))
-    if not club or not club.stripe_account_id:
-        return {"connected": False}
-    stripe.api_key = os.environ.get("STRIPE_API_KEY")
-    if not stripe.api_key:
-        return {"connected": False}
+    if not club or not club.stripe_account_id or not configured:
+        return {"configured": configured, "connected": False}
+    stripe.api_key = api_key
     try:
         acct = stripe.Account.retrieve(club.stripe_account_id)
-        return {"connected": acct.charges_enabled, "account_id": club.stripe_account_id}
+        return {"configured": configured, "connected": acct.charges_enabled, "account_id": club.stripe_account_id}
     except Exception:
-        return {"connected": False}
+        return {"configured": configured, "connected": False}
 
 
 @router.post("/stripe/disconnect", dependencies=[Depends(require_organizer_or_admin)])
@@ -3338,6 +3341,88 @@ def invoices_pdf_zip(data: dict, request: Request, db: Session = Depends(get_db)
     buf.seek(0)
     return Response(content=buf.getvalue(), media_type="application/zip",
                     headers={"Content-Disposition": 'attachment; filename="invoices.zip"'})
+
+
+def _qb_export_key(db: Session, meetsid: int | None) -> str:
+    """bsglobal key of the QuickBooks export options: one set per organizer club
+    (it is that club's QuickBooks that imports the files), or one for the
+    installation when the meet has no organizer club. App-level, not meet-scoped,
+    so closing a meet never clears it — the next meet starts with the same form."""
+    org = _get_organizer_club_id(db, meetsid) if meetsid else None
+    return f"qb_export_options:{org}" if org else "qb_export_options"
+
+
+def _qb_export_saved_options(db: Session, meetsid: int | None):
+    import json
+    from ..quickbooks_export import options_from
+    try:
+        raw = json.loads(_get_config(db, _qb_export_key(db, meetsid)) or "{}")
+    except ValueError:
+        raw = {}
+    try:
+        return options_from(raw)
+    except ValueError:
+        return options_from({})
+
+
+@router.get("/invoices/quickbooks-export/options", dependencies=[Depends(require_organizer_or_admin)])
+def quickbooks_export_options(request: Request, db: Session = Depends(get_db)):
+    """The form's remembered values (the defaults until the first export)."""
+    from dataclasses import asdict
+    return asdict(_qb_export_saved_options(db, resolve_meetsid(request, db)))
+
+
+@router.post("/invoices/quickbooks-export", dependencies=[Depends(require_organizer_or_admin)])
+def invoices_quickbooks_export(data: dict, request: Request, db: Session = Depends(get_db)):
+    """ZIP of QuickBooks Online import files (customers + invoices CSV, split to
+    Intuit's 100-invoice limit, and a how-to) for the selected clubs. Same lines
+    and invoice numbers as the PDFs. Nothing is recorded as "sent": downloading
+    files is like downloading the PDFs. The options used are remembered for the
+    organizer club's next export (and next meet)."""
+    import json
+    import zipfile
+    from dataclasses import asdict
+    from datetime import date as _date
+    from io import BytesIO
+    from ..invoices import _club_line_items, _meet_fees, _meet_name, invoice_number, items_total_cents
+    from ..quickbooks_export import ExportEntry, build_files, options_from
+
+    club_ids = data.get("club_ids", [])
+    if not club_ids:
+        raise HTTPException(400, "No clubs selected")
+    lang = "en" if data.get("lang") == "en" else "fr"
+    meetsid = resolve_meetsid(request, db)
+    try:  # a field the request leaves out keeps what was remembered
+        options = options_from(data, _qb_export_saved_options(db, meetsid))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    meet_fees = _meet_fees(db, meetsid)
+    entries = []
+    for cid in club_ids:
+        club = db.get(TeamClub, cid)
+        if not club:
+            continue
+        items = _club_line_items(db, club, meet_fees, meetsid=meetsid, lang=lang)
+        if not items:
+            continue
+        entries.append(ExportEntry(
+            name=club.name, email=club.email or "",
+            invoice_no=invoice_number(db, cid, meetsid, items_total_cents(items)), items=items))
+    try:
+        files = build_files(entries, _meet_name(db, meetsid), _date.today(), options, lang)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    _set_config(db, _qb_export_key(db, meetsid), json.dumps(asdict(options)))
+    db.commit()
+
+    buf = BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name, content in files.items():
+            zf.writestr(name, content)
+    return Response(content=buf.getvalue(), media_type="application/zip",
+                    headers={"Content-Disposition": 'attachment; filename="quickbooks-import.zip"'})
 
 
 @router.post("/clubs/{club_id}/invoice", dependencies=[Depends(require_organizer_or_admin)])
