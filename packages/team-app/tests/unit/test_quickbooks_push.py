@@ -61,8 +61,9 @@ class FakeQbo:
 
     def __init__(self):
         self.customers = {}
-        self.items = {"7": {"Id": "7", "Name": "Frais d'inscription"}}
-        self.accounts = {"30": {"Id": "30", "Name": "Revenus - Inscriptions"}}
+        self.items = {"7": {"Id": "7", "Name": "Frais d'inscription", "Type": "Service"}}
+        self.accounts = {"30": {"Id": "30", "Name": "Revenus - Inscriptions", "AccountType": "Income"},
+                         "31": {"Id": "31", "Name": "Banque", "AccountType": "Bank"}}
         self.taxcodes = {"4": {"Id": "4", "Name": "Exempt"}}
         self.invoices = {}
         self.log: list[tuple[str, str]] = []
@@ -134,6 +135,14 @@ class FakeQbo:
         if request.method == "GET" and path == "query":
             sql = parse_qs(urlparse(str(request.url)).query)["query"][0]
             self.queries.append(sql)
+            # the settings dropdowns: a list of active entries, optionally of one kind
+            lst = re.fullmatch(r"select (\w+) from (\w+) where Active = true(?: and (\w+) = '(.*)')? maxresults \d+", sql)
+            if lst:
+                col, entity, field, value = lst.groups()
+                pool = {"Item": self.items, "Account": self.accounts, "TaxCode": self.taxcodes}[entity]
+                hits = [{col: r[col]} for r in pool.values()
+                        if r.get("Active", True) and (field is None or r.get(field) == value)]
+                return httpx.Response(200, json={"QueryResponse": {entity: hits} if hits else {}})
             m = re.fullmatch(r"select [\w\s,*]+ from (\w+)(?: where (\w+) (?:= '(.*)'|in \((.*)\)))?", sql)
             assert m, sql
             entity, field, raw, id_list = m.groups()
@@ -203,8 +212,7 @@ class FakeQbo:
 
 @pytest.fixture(autouse=True)
 def _env(monkeypatch):
-    for k in ("INVOICE_PROVIDER", "QBO_ENVIRONMENT", "QBO_ITEM_NAME", "QBO_INCOME_ACCOUNT",
-              "QBO_TAX_CODE", "QBO_API_BASE", "QBO_TOKEN_URL"):
+    for k in ("INVOICE_PROVIDER", "QBO_ENVIRONMENT", "QBO_API_BASE", "QBO_TOKEN_URL"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setenv("SECRET_KEY", "test-secret-key")
     monkeypatch.setenv("QBO_CLIENT_ID", "cid")
@@ -230,9 +238,10 @@ def db(tmp_path):
     s.add(TeamClub(clubsid=30, name="Club B", pin="333333", email=""))
     s.commit()
     now = time.time()
+    # the connection belongs to the organizer club (10), as in the app
     qbo.save_connection(s, qbo.Connection(
         realm_id=REALM, access_token="tok", access_expires_at=now + 3000, refresh_token="rt",
-        refresh_expires_at=now + 90 * 86400, environment="sandbox", refreshed_at=now))
+        refresh_expires_at=now + 90 * 86400, environment="sandbox", refreshed_at=now), owner=10)
     yield s
     s.close()
     engine.dispose()
@@ -291,7 +300,7 @@ class TestCreate:
         assert "PrimaryEmailAddr" not in qb.customers[inv["CustomerRef"]["value"]]
 
     def test_not_connected(self, db, qb):
-        db.delete(db.get(BsGlobal, qbo.CONN_KEY))
+        db.delete(db.get(BsGlobal, f"{qbo.CONN_KEY}:10"))
         db.commit()
         with pytest.raises(ProviderError):
             QuickBooksProvider().push(_ctx(db))
@@ -469,11 +478,11 @@ class TestSetup:
         qb.items.clear()
         with pytest.raises(ProviderError) as e:
             QuickBooksProvider().push(_ctx(db))
-        assert "QBO_INCOME_ACCOUNT" in e.value.message and not qb.invoices
+        assert "income account" in e.value.message and not qb.invoices
 
     def test_missing_item_is_created_under_the_configured_account(self, db, qb, monkeypatch):
         qb.items.clear()
-        monkeypatch.setenv("QBO_INCOME_ACCOUNT", "Revenus - Inscriptions")
+        qbo.save_settings(db, 10, {"income_account": "Revenus - Inscriptions"})
         QuickBooksProvider().push(_ctx(db))
         item = [i for i in qb.items.values()][0]
         assert item["Name"] == "Frais d'inscription" and item["Type"] == "Service"
@@ -481,14 +490,14 @@ class TestSetup:
 
     def test_unknown_income_account(self, db, qb, monkeypatch):
         qb.items.clear()
-        monkeypatch.setenv("QBO_INCOME_ACCOUNT", "Nope")
+        qbo.save_settings(db, 10, {"income_account": "Nope"})
         with pytest.raises(ProviderError) as e:
             QuickBooksProvider().push(_ctx(db))
         assert "Nope" in e.value.message
 
     def test_item_name_override(self, db, qb, monkeypatch):
         qb.items["8"] = {"Id": "8", "Name": "Meet fees"}
-        monkeypatch.setenv("QBO_ITEM_NAME", "Meet fees")
+        qbo.save_settings(db, 10, {"item_name": "Meet fees"})
         result = QuickBooksProvider().push(_ctx(db))
         line = qb.invoices[result.external_id]["Line"][0]
         assert line["SalesItemLineDetail"]["ItemRef"] == {"value": "8"}
@@ -504,18 +513,18 @@ class TestSetup:
         qb.taxcodes.clear()
         with pytest.raises(ProviderError) as e:
             QuickBooksProvider().push(_ctx(db))
-        assert "QBO_TAX_CODE" in e.value.message and not qb.invoices
+        assert "tax code" in e.value.message and not qb.invoices
 
     def test_tax_code_name_override(self, db, qb, monkeypatch):
         qb.taxcodes["5"] = {"Id": "5", "Name": "Exonéré"}
-        monkeypatch.setenv("QBO_TAX_CODE", "Exonéré")
+        qbo.save_settings(db, 10, {"tax_code": "Exonéré"})
         result = QuickBooksProvider().push(_ctx(db))
         detail = qb.invoices[result.external_id]["Line"][0]["SalesItemLineDetail"]
         assert detail["TaxCodeRef"] == {"value": "5"}
 
     def test_tax_code_none_omits_it(self, db, qb, monkeypatch):
         qb.taxcodes.clear()
-        monkeypatch.setenv("QBO_TAX_CODE", "none")
+        qbo.save_settings(db, 10, {"tax_code": "none"})
         result = QuickBooksProvider().push(_ctx(db))
         detail = qb.invoices[result.external_id]["Line"][0]["SalesItemLineDetail"]
         assert "TaxCodeRef" not in detail
@@ -668,7 +677,7 @@ class TestEncoding:
 
         monkeypatch.setattr(qbo, "_transport", httpx.MockTransport(first_call_is_401))
         monkeypatch.setattr(qbo, "_refresh", fake_refresh)
-        qbo.api_request(db, "POST", "customer", json_body={"DisplayName": "X"})
+        qbo.api_request(db, "POST", "customer", owner=10, json_body={"DisplayName": "X"})
         assert seen == ["Bearer tok", "Bearer fresh"] and refreshes == ["tok"]
 
 
@@ -686,7 +695,7 @@ class TestProbe:
         out = capsys.readouterr().out
         assert "country CA" in out and "tax codes in this company: 'Exempt' (id 4)" in out
         assert "ok    minimal, as the app sends it" in out and "All steps accepted" in out
-        assert "QBO_TAX_CODE" not in out
+        assert "QuickBooks settings" not in out
         assert qb.invoices == {}  # each probe invoice was deleted again
 
     def test_finds_that_the_company_needs_a_tax_code(self, probe, qb, capsys):
@@ -695,7 +704,7 @@ class TestProbe:
         out = capsys.readouterr().out
         assert "FAIL  minimal, as the app sends it" in out
         assert "ok    minimal + tax code 'Exempt' (id 4)" in out
-        assert "==> this company needs a tax code on each line: set QBO_TAX_CODE=Exempt" in out
+        assert "==> this company needs a tax code on each line: choose the tax code 'Exempt' in the QuickBooks settings" in out
         assert "All steps accepted" in out and qb.invoices == {}
 
     def test_names_the_first_field_step_that_fails(self, probe, qb, capsys):
@@ -711,8 +720,8 @@ class TestProbe:
         assert "not in our fields" in capsys.readouterr().out
 
     def test_a_none_query_parameter_is_dropped(self, db, qb):
-        qbo.api_request(db, "GET", "companyinfo/1", params={"minorversion": None})
-        qbo.api_request(db, "GET", "companyinfo/1")
+        qbo.api_request(db, "GET", "companyinfo/1", owner=10, params={"minorversion": None})
+        qbo.api_request(db, "GET", "companyinfo/1", owner=10)
         assert "minorversion" not in qb.urls[-2] and "minorversion=75" in qb.urls[-1]
 
     def test_steps_add_fields_cumulatively(self, probe):
@@ -782,7 +791,7 @@ class TestFakeIsAsStrictAsQuickBooks:
     """Guard the guard: the fake must keep refusing what real QuickBooks refused."""
 
     def _post(self, db, qb, body, path="invoice"):
-        return qbo.api_request(db, "POST", path, json_body=body)
+        return qbo.api_request(db, "POST", path, owner=10, json_body=body)
 
     def _line(self, **over):
         line = {"DetailType": "SalesItemLineDetail", "Amount": 1.0,
@@ -882,7 +891,7 @@ class TestRealShapes:
                  "time": "2026-11-23T14:28:19.345-08:00"}
         monkeypatch.setattr(qbo, "_transport", httpx.MockTransport(lambda request: httpx.Response(400, json=fault)))
         with pytest.raises(ProviderError) as e:
-            qbo.api_request(db, "POST", "invoice", json_body={"Id": "1"})
+            qbo.api_request(db, "POST", "invoice", owner=10, json_body={"Id": "1"})
         assert e.value.code == "5010" and "Craig Carlson" in e.value.message and e.value.status == 400
 
 
@@ -948,8 +957,44 @@ class TestProviderRoutes:
         _set_organizer_club_id(db, 10, meetsid=1)
         db.commit()
         assert api.invoice_provider_disconnect(db) == {"ok": True}
-        assert db.get(BsGlobal, qbo.CONN_KEY) is None
+        assert db.get(BsGlobal, f"{qbo.CONN_KEY}:10") is None
         assert api.invoice_provider_status(db)["connected"] is False
+
+    def test_connecting_needs_an_email_to_notify(self, db, qb, monkeypatch):
+        monkeypatch.setenv("INVOICE_PROVIDER", "quickbooks")
+        db.get(TeamClub, 10).email = ""
+        _set_organizer_club_id(db, 10, meetsid=1)
+        db.commit()
+        with pytest.raises(HTTPException) as e:
+            api.invoice_provider_connect(db)
+        assert e.value.status_code == 400 and "email" in e.value.detail.lower()
+
+    def test_disconnect_notifies_the_club(self, db, qb, monkeypatch):
+        monkeypatch.setenv("INVOICE_PROVIDER", "quickbooks")
+        _set_organizer_club_id(db, 10, meetsid=1)
+        db.commit()
+        sent = []
+        monkeypatch.setattr("app.emailing.send_email", lambda to, subject, html, **kw: sent.append((to, subject)))
+        api.invoice_provider_disconnect(db)
+        assert sent == [("soc@x.ca", "QuickBooks déconnecté / QuickBooks disconnected")]
+        sent.clear()
+        api.invoice_provider_disconnect(db)       # nothing left to disconnect: nothing to announce
+        assert sent == []
+
+    def test_settings_are_validated_against_the_companys_own_lists(self, db, qb, monkeypatch):
+        monkeypatch.setenv("INVOICE_PROVIDER", "quickbooks")
+        _set_organizer_club_id(db, 10, meetsid=1)
+        db.commit()
+        opts = api.invoice_provider_settings_options(db)
+        assert "Exempt" in opts["tax_codes"] and opts["income_accounts"] == ["Revenus - Inscriptions"]  # no bank account
+        assert opts["items"] == ["Frais d'inscription"]
+        saved = api.invoice_provider_save_settings({"tax_code": "Exempt", "income_account": "Revenus - Inscriptions",
+                                                    "item_name": "Frais d'inscription"}, db)
+        assert saved["tax_code"] == "Exempt"
+        assert api.invoice_provider_status(db)["settings"]["income_account"] == "Revenus - Inscriptions"
+        with pytest.raises(HTTPException) as e:
+            api.invoice_provider_save_settings({"tax_code": "Made up"}, db)
+        assert e.value.status_code == 400
 
     def test_disconnect_without_a_provider(self, db, monkeypatch):
         monkeypatch.delenv("INVOICE_PROVIDER", raising=False)

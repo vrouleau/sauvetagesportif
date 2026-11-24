@@ -73,10 +73,10 @@ def build_body(step: int, customer_id: str, item_id: str, tax_id: str | None) ->
     return body
 
 
-def _post_and_delete(db, body: dict[str, Any], params: dict | None = None) -> None:
+def _post_and_delete(db, body: dict[str, Any], params: dict | None = None, owner: int = qbo.INSTALLATION) -> None:
     """POST the invoice; if QuickBooks takes it, delete it again. Raises ProviderError."""
-    inv = qbo.api_request(db, "POST", "invoice", params=params, json_body=body)["Invoice"]
-    qbo.api_request(db, "POST", "invoice", params={"operation": "delete"},
+    inv = qbo.api_request(db, "POST", "invoice", owner=owner, params=params, json_body=body)["Invoice"]
+    qbo.api_request(db, "POST", "invoice", owner=owner, params={"operation": "delete"},
                     json_body={"Id": inv["Id"], "SyncToken": inv["SyncToken"]})
 
 
@@ -94,13 +94,29 @@ def _variants(customer_id: str, item_id: str, tax_codes: list[dict]):
         yield f"minimal + tax code '{tc.get('Name')}' (id {tc.get('Id')})", base(str(tc["Id"])), None, str(tc["Id"])
 
 
-def main() -> int:
+def _pick_owner(db, argv: list[str]) -> int | None:
+    """The club whose connection to probe: `--club ID`, else the only connected one."""
+    if "--club" in argv:
+        try:
+            return int(argv[argv.index("--club") + 1])
+        except (IndexError, ValueError):
+            return None
+    owners = qbo.owners_with_connection(db)
+    return owners[0] if len(owners) == 1 else None
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
     if qbo.environment() != "sandbox":
         print("Refusing: this probe creates (and deletes) invoices, so it only runs against the sandbox.")
         return 2
     db = SessionLocal()
     try:
-        conn = qbo.load_connection(db)
+        owner = _pick_owner(db, argv)
+        if owner is None:
+            print("Several clubs are connected (or none): say which one with --club <club id>.")
+            return 2
+        conn = qbo.load_connection(db, owner)
         if not conn or conn.needs_reconnect:
             print("QuickBooks is not connected.")
             return 2
@@ -108,9 +124,9 @@ def main() -> int:
         if not row:
             print("No QuickBooks customer is mapped yet: push one invoice first so a customer exists.")
             return 2
-        item_id = qp._item_id(db, conn.realm_id)
-        info = qbo.api_request(db, "GET", f"companyinfo/{conn.realm_id}").get("CompanyInfo") or {}
-        codes = (qbo.api_request(db, "GET", "query", params={"query": "select * from TaxCode"})
+        item_id = qp._item_id(db, conn.realm_id, owner)
+        info = qbo.api_request(db, "GET", f"companyinfo/{conn.realm_id}", owner=owner).get("CompanyInfo") or {}
+        codes = (qbo.api_request(db, "GET", "query", owner=owner, params={"query": "select * from TaxCode"})
                  .get("QueryResponse") or {}).get("TaxCode", [])
         print(f"company {conn.realm_id} '{info.get('CompanyName')}', country {info.get('Country')}, "
               f"customer {row.customer_id}, item {item_id}")
@@ -121,7 +137,7 @@ def main() -> int:
         accepted = None
         for label, body, params, tax in _variants(row.customer_id, item_id, codes):
             try:
-                _post_and_delete(db, body, params)
+                _post_and_delete(db, body, params, owner)
             except ProviderError as e:
                 print(f"FAIL  {label}")
                 print(f"      {e.message}")
@@ -134,13 +150,13 @@ def main() -> int:
             return 1
         if working_tax:
             name = next((c.get("Name") for c in codes if str(c.get("Id")) == working_tax), working_tax)
-            print(f"==> this company needs a tax code on each line: set QBO_TAX_CODE={name}")
+            print(f"==> this company needs a tax code on each line: choose the tax code '{name}' in the QuickBooks settings")
 
         # 2. With that settled, add our real fields one at a time.
         for i, (label, _) in enumerate(STEPS):
             body = build_body(i, row.customer_id, item_id, working_tax)
             try:
-                _post_and_delete(db, body)
+                _post_and_delete(db, body, None, owner)
             except ProviderError as e:
                 print(f"FAIL  step {i}  {label}")
                 print(f"      {e.message}")

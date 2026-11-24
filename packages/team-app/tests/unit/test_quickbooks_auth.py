@@ -24,6 +24,7 @@ from sqlalchemy.orm import sessionmaker
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "backend"))
 
 from app.models import Base, BsGlobal
+from app.models_team import TeamClub
 from app import models_team, models_live, models_serc  # noqa: F401 — register tables
 from app.database import get_db
 from app.invoice_providers import (
@@ -136,7 +137,7 @@ class TestConsent:
         assert q["client_id"] == "cid" and q["response_type"] == "code"
         assert q["scope"] == "com.intuit.quickbooks.accounting"
         assert q["redirect_uri"] == "http://localhost:8001/api/quickbooks/callback"
-        assert qbo.consume_state(db, q["state"]) is True
+        assert qbo.consume_state(db, q["state"]) == qbo.INSTALLATION
 
     def test_redirect_uri_follows_env(self, db, monkeypatch):
         monkeypatch.setenv("APP_BASE_URL", "https://team.example.org/")
@@ -152,22 +153,24 @@ class TestConsent:
 
     def test_state_is_single_use(self, db):
         state = parse_qs(urlparse(qbo.begin_connect(db)).query)["state"][0]
-        assert qbo.consume_state(db, state) is True
-        assert qbo.consume_state(db, state) is False
+        assert qbo.consume_state(db, state) == qbo.INSTALLATION
+        assert qbo.consume_state(db, state) is None
 
-    def test_wrong_state_is_rejected_and_burns_the_real_one(self, db):
+    def test_wrong_state_is_rejected_and_leaves_real_ones_alone(self, db):
+        # each connect attempt has its own state, so a stranger guessing can't
+        # burn somebody else's pending connect
         state = parse_qs(urlparse(qbo.begin_connect(db)).query)["state"][0]
-        assert qbo.consume_state(db, "forged") is False
-        assert qbo.consume_state(db, state) is False
+        assert qbo.consume_state(db, "forged") is None
+        assert qbo.consume_state(db, state) == qbo.INSTALLATION
 
     def test_expired_state(self, db, monkeypatch):
         state = parse_qs(urlparse(qbo.begin_connect(db)).query)["state"][0]
         real = time.time()
         monkeypatch.setattr(qbo.time, "time", lambda: real + qbo.STATE_TTL_SECONDS + 1)
-        assert qbo.consume_state(db, state) is False
+        assert qbo.consume_state(db, state) is None
 
     def test_no_state_issued(self, db):
-        assert qbo.consume_state(db, "anything") is False
+        assert qbo.consume_state(db, "anything") is None
 
 
 class TestExchangeAndStorage:
@@ -392,8 +395,11 @@ class TestProvider:
         assert QuickBooksProvider().status(db, None) == {"connected": False, "reconnect_required": False}
 
     def test_connect_start_returns_the_consent_url(self, db):
-        out = QuickBooksProvider().connect_start(db, org_club=None)
+        club = TeamClub(clubsid=10, name="Org", pin="111111", email="o@x.ca")
+        out = QuickBooksProvider().connect_start(db, org_club=club)
         assert out["url"].startswith("https://appcenter.intuit.com/connect/oauth2?")
+        state = parse_qs(urlparse(out["url"]).query)["state"][0]
+        assert qbo.consume_state(db, state) == 10
 
 
 class TestCallbackRoute:
@@ -509,10 +515,10 @@ class TestStoredConnectionIsDefensive:
         assert qbo.load_connection(db) is None
 
     def test_malformed_state_value_is_refused(self, db):
-        db.add(BsGlobal(name=qbo.STATE_KEY, data="no-separator"))
+        db.add(BsGlobal(name=qbo.STATE_PREFIX + "no-separator", data="no-separator"))
         db.commit()
-        assert qbo.consume_state(db, "no-separator") is False
-        assert db.get(BsGlobal, qbo.STATE_KEY) is None  # and it is gone
+        assert qbo.consume_state(db, "no-separator") is None
+        assert db.get(BsGlobal, qbo.STATE_PREFIX + "no-separator") is None  # and it is gone
 
 
 class TestNetworkFailures:
@@ -568,3 +574,135 @@ class TestEnvironmentSwitch:
         monkeypatch.setenv("QBO_REVOKE_URL", "http://fake/revoke")
         assert (qbo._url("auth"), qbo._url("token"), qbo._url("revoke")) == \
             ("http://fake/auth", "http://fake/token", "http://fake/revoke")
+
+
+class TestPerClub:
+    """Each club connects its own company; nothing leaks between them."""
+
+    def _tokens(self, realm="R", access="a", refresh="r"):
+        now = time.time()
+        return qbo.Connection(realm_id=realm, access_token=access, access_expires_at=now + 3000,
+                              refresh_token=refresh, refresh_expires_at=now + 90 * 86400,
+                              environment="sandbox", refreshed_at=now)
+
+    def test_connections_are_stored_apart(self, db):
+        qbo.save_connection(db, self._tokens("R10"), owner=10)
+        qbo.save_connection(db, self._tokens("R20"), owner=20)
+        assert qbo.load_connection(db, 10).realm_id == "R10"
+        assert qbo.load_connection(db, 20).realm_id == "R20"
+        assert qbo.load_connection(db) is None            # the installation slot is separate
+        assert qbo.get_access_token(db, 20)[1] == "R20"
+        assert qbo.owners_with_connection(db) == [10, 20]
+
+    def test_status_and_disconnect_touch_only_that_club(self, db):
+        qbo.save_connection(db, self._tokens("R10"), owner=10)
+        qbo.save_connection(db, self._tokens("R20"), owner=20)
+        qbo.disconnect(db, 10)
+        assert qbo.status(db, 10)["connected"] is False
+        assert qbo.status(db, 20)["connected"] is True
+
+    def test_a_state_remembers_whose_connect_it_was(self, db):
+        a = parse_qs(urlparse(qbo.begin_connect(db, 10)).query)["state"][0]
+        b = parse_qs(urlparse(qbo.begin_connect(db, 20)).query)["state"][0]
+        assert a != b
+        assert qbo.consume_state(db, b) == 20      # two clubs connecting at once don't collide
+        assert qbo.consume_state(db, a) == 10
+
+    def test_expired_states_are_purged(self, db, monkeypatch):
+        qbo.begin_connect(db, 10)
+        real = time.time()
+        monkeypatch.setattr(qbo.time, "time", lambda: real + qbo.STATE_TTL_SECONDS + 1)
+        qbo.begin_connect(db, 20)
+        assert db.query(BsGlobal).filter(BsGlobal.name.like(qbo.STATE_PREFIX + "%")).count() == 1
+
+    def test_settings_are_per_club_and_default_empty(self, db):
+        assert qbo.load_settings(db, 10) == {"tax_code": "", "income_account": "", "item_name": ""}
+        qbo.save_settings(db, 10, {"tax_code": "Exempt", "income_account": "Revenus", "item_name": "Frais"})
+        assert qbo.load_settings(db, 10)["tax_code"] == "Exempt"
+        assert qbo.load_settings(db, 20)["tax_code"] == ""
+
+    def test_settings_survive_a_disconnect_but_not_a_different_company(self, db, intuit):
+        qbo.save_connection(db, self._tokens("OLD"), owner=10)
+        qbo.save_settings(db, 10, {"tax_code": "Exempt"})
+        qbo.disconnect(db, 10)
+        assert qbo.load_settings(db, 10)["tax_code"] == "Exempt"      # same company later: nothing to redo
+        qbo.save_connection(db, self._tokens("OLD"), owner=10)
+        qbo.begin_connect(db, 10)
+        qbo.exchange_code(db, "code", "NEW", 10)                      # a different company
+        assert qbo.load_settings(db, 10)["tax_code"] == ""
+        assert qbo.load_connection(db, 10).realm_id == "NEW"
+
+    def test_keepalive_all_refreshes_every_idle_connection(self, db, intuit):
+        old = self._tokens("R10", refresh="r10")
+        old.refreshed_at = time.time() - qbo.KEEPALIVE_AFTER_SECONDS - 10
+        qbo.save_connection(db, old, owner=10)
+        fresh = self._tokens("R20", refresh="r20")
+        qbo.save_connection(db, fresh, owner=20)
+        assert qbo.keepalive_all(db) == 1
+        assert qbo.load_connection(db, 20).refresh_token == "r20"     # recently used: left alone
+
+
+class TestConnectionNotices:
+    """A club hears about every change to the books its invoices go to."""
+
+    @pytest.fixture
+    def client(self, engine, intuit, monkeypatch):
+        monkeypatch.setenv("INVOICE_PROVIDER", "quickbooks")
+        Session = sessionmaker(bind=engine)
+        s = Session()
+        s.add(TeamClub(clubsid=10, name="Club <Alma>", pin="111111", email="alma@x.ca"))
+        s.commit()
+        s.close()
+        app = FastAPI()
+        app.include_router(qbo_router)
+
+        def _get_db():
+            d = Session()
+            try:
+                yield d
+            finally:
+                d.close()
+        app.dependency_overrides[get_db] = _get_db
+        self.Session = Session
+        self.sent = []
+        monkeypatch.setattr("app.emailing.send_email", lambda to, subject, html, **kw: self.sent.append((to, subject, html)))
+        return TestClient(app, follow_redirects=False)
+
+    def _connect(self, client, realm, owner=10):
+        s = self.Session()
+        state = parse_qs(urlparse(qbo.begin_connect(s, owner)).query)["state"][0]
+        s.close()
+        return client.get("/api/quickbooks/callback", params={"code": "c", "state": state, "realmId": realm})
+
+    def test_the_connection_belongs_to_the_club_that_asked(self, client):
+        self._connect(client, "55")
+        s = self.Session()
+        assert qbo.load_connection(s, 10).realm_id == "55" and qbo.load_connection(s) is None
+        s.close()
+
+    def test_first_connection_notifies_the_club(self, client):
+        self._connect(client, "55")
+        assert len(self.sent) == 1
+        to, subject, html = self.sent[0]
+        assert to == "alma@x.ca" and "connecté" in subject
+        assert "&lt;Alma&gt;" in html and "<Alma>" not in html     # names are escaped
+
+    def test_reconnecting_the_same_company_is_quiet(self, client):
+        self._connect(client, "55")
+        self._connect(client, "55")
+        assert len(self.sent) == 1
+
+    def test_switching_to_another_company_notifies_again(self, client):
+        self._connect(client, "55")
+        self._connect(client, "99")
+        assert len(self.sent) == 2 and "remplacé" in self.sent[1][1]
+
+    def test_a_mail_outage_does_not_undo_the_connection(self, client, monkeypatch):
+        def boom(*a, **k):
+            raise RuntimeError("resend down")
+        monkeypatch.setattr("app.emailing.send_email", boom)
+        r = self._connect(client, "55")
+        assert r.headers["location"] == "/organizer?quickbooks=success"
+        s = self.Session()
+        assert qbo.load_connection(s, 10) is not None
+        s.close()

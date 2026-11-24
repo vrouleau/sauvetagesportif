@@ -36,7 +36,6 @@ What a pushed invoice looks like (decisions in docs/QUICKBOOKS_PLAN.md):
 """
 from __future__ import annotations
 
-import os
 import re
 from datetime import date
 from typing import Any, Optional
@@ -62,9 +61,9 @@ def _q(value: str) -> str:
     return value.replace("\\", "\\\\").replace("'", "\\'")
 
 
-def _query(db: Session, entity: str, field: str, value: str) -> list[dict]:
+def _query(db: Session, entity: str, field: str, value: str, owner: int = qbo.INSTALLATION) -> list[dict]:
     sql = f"select * from {entity} where {field} = '{_q(value)}'"
-    out = qbo.api_request(db, "GET", "query", params={"query": sql})
+    out = qbo.api_request(db, "GET", "query", owner=owner, params={"query": sql})
     return (out.get("QueryResponse") or {}).get(entity, [])
 
 
@@ -83,11 +82,11 @@ def _display_name(club: TeamClub) -> str:
     return name or f"Club {club.clubsid}"
 
 
-def _customer_id(db: Session, club: TeamClub, realm: str) -> str:
+def _customer_id(db: Session, club: TeamClub, realm: str, owner: int = qbo.INSTALLATION) -> str:
     row = db.get(QboCustomer, (club.clubsid, realm))
     if row:
         try:
-            cust = qbo.api_request(db, "GET", f"customer/{row.customer_id}").get("Customer") or {}
+            cust = qbo.api_request(db, "GET", f"customer/{row.customer_id}", owner=owner).get("Customer") or {}
             if cust.get("Active", True):
                 return row.customer_id
         except ProviderError as e:
@@ -96,7 +95,7 @@ def _customer_id(db: Session, club: TeamClub, realm: str) -> str:
         # deleted or deactivated in QuickBooks: resolve again below
 
     name = _display_name(club)
-    found = _query(db, "Customer", "DisplayName", name)
+    found = _query(db, "Customer", "DisplayName", name, owner)
     if found:
         customer_id = str(found[0]["Id"])
     else:
@@ -104,7 +103,7 @@ def _customer_id(db: Session, club: TeamClub, realm: str) -> str:
         email = (club.email or "").strip()
         if email:
             body["PrimaryEmailAddr"] = {"Address": email}
-        customer_id = str(qbo.api_request(db, "POST", "customer", json_body=body)["Customer"]["Id"])
+        customer_id = str(qbo.api_request(db, "POST", "customer", owner=owner, json_body=body)["Customer"]["Id"])
 
     if row:
         row.customer_id = customer_id
@@ -114,24 +113,28 @@ def _customer_id(db: Session, club: TeamClub, realm: str) -> str:
     return customer_id
 
 
-def _item_id(db: Session, realm: str) -> str:
-    name = (os.environ.get("QBO_ITEM_NAME") or "").strip() or DEFAULT_ITEM_NAME
+def _item_id(db: Session, realm: str, owner: int = qbo.INSTALLATION) -> str:
+    """The service Item every line is billed against, from the owner's settings
+    (default name `Frais d'inscription`). When it does not exist yet it is created
+    under the owner's chosen income account — if none was chosen, say so."""
+    settings = qbo.load_settings(db, owner)
+    name = settings["item_name"] or DEFAULT_ITEM_NAME
     key = ("item", realm, name)
     if _lookup_cache.get(key):
         return _lookup_cache[key]
-    found = _query(db, "Item", "Name", name)
+    found = _query(db, "Item", "Name", name, owner)
     if found:
         item_id = str(found[0]["Id"])
     else:
-        account_name = (os.environ.get("QBO_INCOME_ACCOUNT") or "").strip()
+        account_name = settings["income_account"]
         if not account_name:
             raise ProviderError(
-                f"QuickBooks item '{name}' not found: create it in QuickBooks (a Service item "
-                f"linked to the income account), or set QBO_INCOME_ACCOUNT so it can be created", 400)
-        accounts = _query(db, "Account", "Name", account_name)
+                f"QuickBooks item '{name}' not found: pick an existing item or an income account "
+                f"(so the item can be created) in the QuickBooks settings", 400)
+        accounts = _query(db, "Account", "Name", account_name, owner)
         if not accounts:
             raise ProviderError(f"QuickBooks income account '{account_name}' not found", 400)
-        item_id = str(qbo.api_request(db, "POST", "item", json_body={
+        item_id = str(qbo.api_request(db, "POST", "item", owner=owner, json_body={
             "Name": name, "Type": "Service",
             "IncomeAccountRef": {"value": str(accounts[0]["Id"])},
         })["Item"]["Id"])
@@ -139,19 +142,20 @@ def _item_id(db: Session, realm: str) -> str:
     return item_id
 
 
-def _tax_code_id(db: Session, realm: str) -> Optional[str]:
-    """The exempt tax code every line carries; None when QBO_TAX_CODE=none."""
-    name = (os.environ.get("QBO_TAX_CODE") or "").strip() or DEFAULT_TAX_CODE
+def _tax_code_id(db: Session, realm: str, owner: int = qbo.INSTALLATION) -> Optional[str]:
+    """The exempt tax code every line carries, from the owner's settings
+    (default `Exempt`); None when they chose `none` (a company without taxes)."""
+    name = qbo.load_settings(db, owner)["tax_code"] or DEFAULT_TAX_CODE
     if name.lower() == "none":
         return None
     key = ("tax", realm, name)
     if _lookup_cache.get(key):
         return _lookup_cache[key]
-    found = _query(db, "TaxCode", "Name", name)
+    found = _query(db, "TaxCode", "Name", name, owner)
     if not found:
         raise ProviderError(
-            f"QuickBooks tax code '{name}' not found: set QBO_TAX_CODE to the exact name of the "
-            f"exempt tax code in the company file, or to 'none' if it does not track taxes", 400)
+            f"QuickBooks tax code '{name}' not found: pick the exempt tax code of the company in "
+            f"the QuickBooks settings, or 'none' if it does not track taxes", 400)
     _lookup_cache[key] = str(found[0]["Id"])
     return _lookup_cache[key]
 
@@ -225,7 +229,8 @@ def _refuse_if_settled(invoice: dict, number: str) -> None:
                             f"adjust it there instead", 409)
 
 
-def _sync_existing(db: Session, realm: str, number: str, invoice: dict, lines: list[dict]) -> PushResult:
+def _sync_existing(db: Session, realm: str, number: str, invoice: dict, lines: list[dict],
+                   owner: int = qbo.INSTALLATION) -> PushResult:
     """Bring an existing QuickBooks invoice in line with the club's current
     entries: nothing if it already matches, else replace its lines.
 
@@ -240,64 +245,104 @@ def _sync_existing(db: Session, realm: str, number: str, invoice: dict, lines: l
             return PushResult(external_id=invoice_id, account=realm, action="unchanged")
         _refuse_if_settled(invoice, number)
         try:
-            qbo.api_request(db, "POST", "invoice", json_body={
+            qbo.api_request(db, "POST", "invoice", owner=owner, json_body={
                 "Id": invoice_id, "SyncToken": str(invoice["SyncToken"]), "sparse": True, "Line": lines,
             })
             return PushResult(external_id=invoice_id, account=realm, action="updated")
         except ProviderError as e:
             if e.code != STALE_OBJECT or attempt == 2:
                 raise
-        invoice = qbo.api_request(db, "GET", f"invoice/{invoice_id}")["Invoice"]
+        invoice = qbo.api_request(db, "GET", f"invoice/{invoice_id}", owner=owner)["Invoice"]
     raise AssertionError("unreachable")  # pragma: no cover
 
 
 def _find_existing(ctx: InvoiceContext, realm: str, number: str) -> Optional[dict]:
     """The invoice an earlier push created, if any: by the id we recorded, else
     by DocNumber (covers a crash between creating it and recording it)."""
-    db = ctx.db
+    db, owner = ctx.db, ctx.org_club.clubsid
     if ctx.prior_external_id and ctx.prior_account == realm:
         try:
-            return qbo.api_request(db, "GET", f"invoice/{ctx.prior_external_id}").get("Invoice")
+            return qbo.api_request(db, "GET", f"invoice/{ctx.prior_external_id}", owner=owner).get("Invoice")
         except ProviderError as e:
             if e.code != NOT_FOUND:
                 raise
             # deleted in QuickBooks: fall through and look by number
-    found = _query(db, "Invoice", "DocNumber", number)
+    found = _query(db, "Invoice", "DocNumber", number, owner)
     return found[0] if found else None
+
+
+def _names(db: Session, owner: int, entity: str, where: str = "", field: str = "Name") -> list[str]:
+    """Names of a QuickBooks list (active entries only), for the settings dropdowns."""
+    sql = f"select {field} from {entity} where Active = true{where} maxresults 1000"
+    rows = (qbo.api_request(db, "GET", "query", owner=owner, params={"query": sql})
+            .get("QueryResponse") or {}).get(entity, [])
+    return sorted({str(r[field]) for r in rows if r.get(field)}, key=str.lower)
 
 
 class QuickBooksProvider(InvoiceProvider):
     name = "quickbooks"
-    sends_invoice = False   # created only: the Société sends it from QuickBooks
+    sends_invoice = False   # created only: the club sends it from its own QuickBooks
+    has_settings = True
 
     def configured(self) -> bool:
         return qbo.configured()
 
+    # Everything below acts on the connection of the *organizer club*.
+
     def status(self, db: Session, org_club: Optional[TeamClub]) -> dict:
-        if not qbo.configured():
+        if not qbo.configured() or not org_club:
             return {"connected": False, "reconnect_required": False}
-        return qbo.status(db)
+        return {**qbo.status(db, org_club.clubsid), "settings": qbo.load_settings(db, org_club.clubsid)}
 
     def connect_start(self, db: Session, org_club: TeamClub) -> dict:
-        return {"url": qbo.begin_connect(db)}
+        return {"url": qbo.begin_connect(db, org_club.clubsid)}
 
     def disconnect(self, db: Session, org_club: TeamClub) -> None:
-        qbo.disconnect(db)
+        qbo.disconnect(db, org_club.clubsid)
+
+    def settings_options(self, db: Session, org_club: TeamClub) -> dict:
+        """What the organizer can choose from, read from their own QuickBooks:
+        tax codes, income accounts and service items."""
+        owner = org_club.clubsid
+        return {
+            "tax_codes": _names(db, owner, "TaxCode"),
+            "income_accounts": _names(db, owner, "Account", " and AccountType = 'Income'"),
+            "items": _names(db, owner, "Item", " and Type = 'Service'"),
+        }
+
+    def save_settings(self, db: Session, org_club: TeamClub, values: dict) -> dict:
+        """Store the chosen tax code / income account / item, each checked against
+        the company's own lists so a typo or a stale name can't reach an invoice."""
+        owner = org_club.clubsid
+        options = self.settings_options(db, org_club)
+        clean = {f: str(values.get(f) or "").strip() for f in qbo.SETTING_FIELDS}
+        allowed = {
+            "tax_code": options["tax_codes"] + ["none"],
+            "income_account": options["income_accounts"],
+            "item_name": options["items"],
+        }
+        for field, value in clean.items():
+            # item_name may name an item that does not exist yet (created under the income account)
+            if value and field != "item_name" and value not in allowed[field]:
+                raise ProviderError(f"'{value}' is not one of this QuickBooks company's choices for {field}", 400)
+        saved = qbo.save_settings(db, owner, clean)
+        _lookup_cache.clear()
+        return saved
 
     def push(self, ctx: InvoiceContext) -> PushResult:
-        db = ctx.db
-        _, realm = qbo.get_access_token(db)  # not connected -> ProviderError
+        db, owner = ctx.db, ctx.org_club.clubsid
+        _, realm = qbo.get_access_token(db, owner)  # not connected -> ProviderError
         number = doc_number(ctx.invoice_no)
 
-        item_id = _item_id(db, realm)
-        tax_id = _tax_code_id(db, realm)
+        item_id = _item_id(db, realm, owner)
+        tax_id = _tax_code_id(db, realm, owner)
         lines = [_line(it, ctx.lang, item_id, tax_id) for it in ctx.items]
 
         existing = _find_existing(ctx, realm, number)
         if existing:
-            return _sync_existing(db, realm, number, existing, lines)
+            return _sync_existing(db, realm, number, existing, lines, owner)
 
-        customer_id = _customer_id(db, ctx.club, realm)
+        customer_id = _customer_id(db, ctx.club, realm, owner)
 
         body: dict[str, Any] = {
             "CustomerRef": {"value": customer_id},
@@ -309,6 +354,6 @@ class QuickBooksProvider(InvoiceProvider):
         }
         email = (ctx.club.email or "").strip()
         if email:
-            body["BillEmail"] = {"Address": email}  # for the Société's later send; nothing is sent now
-        out = qbo.api_request(db, "POST", "invoice", json_body=body)
+            body["BillEmail"] = {"Address": email}  # for the organizer's later send; nothing is sent now
+        out = qbo.api_request(db, "POST", "invoice", owner=owner, json_body=body)
         return PushResult(external_id=str(out["Invoice"]["Id"]), account=realm)

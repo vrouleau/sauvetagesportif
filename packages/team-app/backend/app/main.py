@@ -146,7 +146,7 @@ async def startup():
 
 
 async def _quickbooks_keepalive_loop():
-    """Every 6 h, refresh an idle QuickBooks connection so its refresh token
+    """Every 6 h, refresh every club's idle QuickBooks connection so its refresh token
     (100-day rolling window) never lapses between meets. Does nothing unless
     INVOICE_PROVIDER=quickbooks and a connection exists."""
     import asyncio
@@ -159,7 +159,7 @@ async def _quickbooks_keepalive_loop():
             def _run():
                 db = SessionLocal()
                 try:
-                    return quickbooks_auth.keepalive(db)
+                    return quickbooks_auth.keepalive_all(db)
                 finally:
                     db.close()
             try:

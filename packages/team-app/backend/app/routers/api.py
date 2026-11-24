@@ -1123,6 +1123,12 @@ def delete_club(club_id: int, db: Session = Depends(get_db)):
         db.query(SwimResult).filter(SwimResult.athleteid.in_(athlete_ids)).delete(synchronize_session=False)
     db.query(Member).filter(Member.clubsid == club_id).delete(synchronize_session=False)
     db.query(SecretLink).filter(SecretLink.club_id == club_id).delete(synchronize_session=False)
+    try:  # a deleted club must not leave a live QuickBooks token behind
+        from ..invoice_providers import quickbooks_auth as _qbo
+        _qbo.disconnect(db, club_id)
+        _qbo.clear_settings(db, club_id)
+    except Exception:  # noqa: BLE001 — never block the delete on Intuit being unreachable
+        pass
     db.query(TeamClub).filter(TeamClub.clubsid == club_id).delete(synchronize_session=False)
     db.commit()
     return {"deleted": True, "athletes_deleted": len(athlete_ids)}
@@ -3204,8 +3210,13 @@ def invoice_provider_connect(db: Session = Depends(get_db)):
     provider = get_provider()
     if not provider:
         raise HTTPException(400, "No invoice provider configured")
+    org_club = _provider_org_club(db)
+    if provider.has_settings and not (org_club.email or "").strip():
+        # Every change to a club's books is announced by email, so there has to be someone to tell.
+        raise HTTPException(400, "Set the club's email address before connecting QuickBooks "
+                                 "(it is notified whenever the connection changes)")
     try:
-        return provider.connect_start(db, _provider_org_club(db))
+        return provider.connect_start(db, org_club)
     except ProviderError as e:
         raise HTTPException(e.status, e.message)
 
@@ -3216,8 +3227,45 @@ def invoice_provider_disconnect(db: Session = Depends(get_db)):
     provider = get_provider()
     if not provider:
         raise HTTPException(400, "No invoice provider configured")
-    provider.disconnect(db, _provider_org_club(db))
+    org_club = _provider_org_club(db)
+    notify_company = None
+    if provider.has_settings:
+        from ..invoice_providers import quickbooks_auth as _qbo
+        before = _qbo.load_connection(db, org_club.clubsid)
+        notify_company = before.company_name if before else None
+        had_connection = before is not None
+    provider.disconnect(db, org_club)
+    if provider.has_settings and had_connection:
+        from .quickbooks import _notify
+        _notify(db, org_club.clubsid, "disconnected", notify_company)
     return {"ok": True}
+
+
+@router.get("/invoice-provider/settings/options", dependencies=[Depends(require_organizer_or_admin)])
+def invoice_provider_settings_options(db: Session = Depends(get_db)):
+    """The tax codes, income accounts and items of the organizer club's own
+    QuickBooks company, for the settings dropdowns."""
+    from ..invoice_providers import ProviderError, get_provider
+    provider = get_provider()
+    if not provider or not provider.has_settings:
+        raise HTTPException(400, "The active invoice provider has no settings")
+    try:
+        return provider.settings_options(db, _provider_org_club(db))
+    except ProviderError as e:
+        raise HTTPException(e.status, e.message)
+
+
+@router.put("/invoice-provider/settings", dependencies=[Depends(require_organizer_or_admin)])
+def invoice_provider_save_settings(data: dict, db: Session = Depends(get_db)):
+    """Save the organizer club's invoice settings `{tax_code, income_account, item_name}`."""
+    from ..invoice_providers import ProviderError, get_provider
+    provider = get_provider()
+    if not provider or not provider.has_settings:
+        raise HTTPException(400, "The active invoice provider has no settings")
+    try:
+        return provider.save_settings(db, _provider_org_club(db), data)
+    except ProviderError as e:
+        raise HTTPException(e.status, e.message)
 
 
 # ---------------------------------------------------------------------------

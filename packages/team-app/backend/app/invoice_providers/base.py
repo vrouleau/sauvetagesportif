@@ -78,6 +78,8 @@ class InvoiceProvider:
     # creates it for the organizer to send (QuickBooks) — drives the wording of
     # the batch result message.
     sends_invoice: bool = True
+    # Whether the organizer picks invoice settings (tax code, account, item).
+    has_settings: bool = False
     def configured(self) -> bool:
         """Whether the server-side credentials (env vars) are present."""
         raise NotImplementedError

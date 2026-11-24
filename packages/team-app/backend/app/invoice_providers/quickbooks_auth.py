@@ -19,9 +19,12 @@
 """QuickBooks Online: OAuth2 connection, encrypted token storage and the thin
 HTTP client every QuickBooks call goes through.
 
-One QuickBooks company per installation (the Société's), connected once by an
-admin/organizer through Intuit's consent page. Nothing here is Stripe-style
-"connected accounts per organizer club".
+One QuickBooks connection per *club* (the "owner"): whichever club organizes a
+meet connects its own QuickBooks company through Intuit's consent page, and the
+invoices of that meet are created there. Owner `0` is the installation-level
+slot (diagnostics and tests); the app itself always acts as the organizer club.
+The Intuit app (QBO_CLIENT_ID/SECRET) is one and shared: each club authorizes it
+for its own company.
 
 Token handling, the parts that bite:
 - Access tokens last ~1 h; they are refreshed lazily before use (`get_access_token`).
@@ -37,8 +40,10 @@ Token handling, the parts that bite:
 - Only an `invalid_grant` answer marks the connection as needing a reconnect;
   network errors and 5xx never do.
 
-Everything is stored in `bsglobal` (key `qbo_connection`), Fernet-encrypted
-with a key derived from SECRET_KEY (see secret_box). `status()` never touches
+Each connection is stored in `bsglobal` (key `qbo_connection:<club id>`), Fernet-
+encrypted with a key derived from SECRET_KEY (see secret_box); the per-club
+invoice settings (tax code, income account, item) sit beside it, unencrypted
+(`qbo_settings:<club id>` — names, not secrets). `status()` never touches
 the network. Restoring an older database backup brings back an already-rotated
 refresh token: the connection then reports "reconnect required".
 """
@@ -69,7 +74,9 @@ SCOPE = "com.intuit.quickbooks.accounting"
 MINOR_VERSION = 75
 
 CONN_KEY = "qbo_connection"
-STATE_KEY = "qbo_oauth_state"
+SETTINGS_KEY = "qbo_settings"
+STATE_PREFIX = "qbo_oauth_state:"
+INSTALLATION = 0   # the owner id of the installation-level slot (no club)
 STATE_TTL_SECONDS = 600
 ACCESS_SKEW_SECONDS = 120            # refresh this long before the access token expires
 KEEPALIVE_AFTER_SECONDS = 7 * 86400  # refresh an idle connection at least this often
@@ -141,6 +148,11 @@ def _client() -> httpx.Client:
 # Stored connection
 # ---------------------------------------------------------------------------
 
+def _key(base: str, owner: int) -> str:
+    """bsglobal key of an owner's record: the bare name for the installation slot."""
+    return base if owner == INSTALLATION else f"{base}:{owner}"
+
+
 @dataclass
 class Connection:
     realm_id: str
@@ -154,8 +166,8 @@ class Connection:
     needs_reconnect: bool = False
 
 
-def load_connection(db: Session) -> Optional[Connection]:
-    raw = _get_config(db, CONN_KEY)
+def load_connection(db: Session, owner: int = INSTALLATION) -> Optional[Connection]:
+    raw = _get_config(db, _key(CONN_KEY, owner))
     if not raw:
         return None
     plain = decrypt_text(raw)
@@ -167,8 +179,8 @@ def load_connection(db: Session) -> Optional[Connection]:
         return None
 
 
-def save_connection(db: Session, conn: Connection) -> None:
-    _set_config(db, CONN_KEY, encrypt_text(json.dumps(asdict(conn))))
+def save_connection(db: Session, conn: Connection, owner: int = INSTALLATION) -> None:
+    _set_config(db, _key(CONN_KEY, owner), encrypt_text(json.dumps(asdict(conn))))
     db.commit()
 
 
@@ -179,9 +191,9 @@ def _usable(conn: Optional[Connection]) -> bool:
     )
 
 
-def status(db: Session) -> dict:
+def status(db: Session, owner: int = INSTALLATION) -> dict:
     """Connection state for the UI. Local only — no call to Intuit."""
-    conn = load_connection(db)
+    conn = load_connection(db, owner)
     if not conn or conn.environment != environment():
         return {"connected": False, "reconnect_required": False, "environment": environment()}
     reconnect = conn.needs_reconnect or conn.refresh_expires_at <= time.time()
@@ -198,12 +210,13 @@ def status(db: Session) -> dict:
 # Connect / callback / disconnect
 # ---------------------------------------------------------------------------
 
-def begin_connect(db: Session) -> str:
-    """Store a one-time `state` and return Intuit's consent-page URL."""
+def begin_connect(db: Session, owner: int = INSTALLATION) -> str:
+    """Store a one-time `state` for this owner and return Intuit's consent-page URL."""
     if not configured():
         raise ProviderError("QBO_CLIENT_ID / QBO_CLIENT_SECRET not configured", 500)
+    _purge_states(db)
     nonce = secrets.token_urlsafe(24)
-    _set_config(db, STATE_KEY, f"{nonce}|{time.time() + STATE_TTL_SECONDS}")
+    _set_config(db, STATE_PREFIX + nonce, f"{time.time() + STATE_TTL_SECONDS}|{owner}")
     db.commit()
     return _url("auth") + "?" + urlencode({
         "client_id": client_id(),
@@ -214,24 +227,41 @@ def begin_connect(db: Session) -> str:
     })
 
 
-def consume_state(db: Session, state: str) -> bool:
-    """True once for the state `begin_connect` issued, if still fresh.
+def _purge_states(db: Session) -> None:
+    """Drop the connect attempts nobody came back from."""
+    now = time.time()
+    for row in db.query(BsGlobal).filter(BsGlobal.name.like(STATE_PREFIX + "%")).all():
+        try:
+            if float((row.data or "").partition("|")[0]) <= now:
+                db.delete(row)
+        except ValueError:
+            db.delete(row)
+    db.commit()
+
+
+def consume_state(db: Session, state: str) -> Optional[int]:
+    """The owner the `state` was issued for — once, if still fresh — else None.
 
     The callback is a browser redirect carrying no app credentials, so this
-    one-time, server-side state is what ties it to a connect the user started.
+    one-time, server-side state is what ties it to a connect a club's organizer
+    started (and tells it which club the connection belongs to). Each connect
+    attempt has its own state, so two clubs connecting at once don't collide.
     """
-    cfg = db.get(BsGlobal, STATE_KEY)
-    if not cfg or not cfg.data or not state:
-        return False
+    if not state:
+        return None
+    cfg = db.get(BsGlobal, STATE_PREFIX + state)
+    if not cfg or not cfg.data:
+        return None
     raw = cfg.data
-    db.delete(cfg)  # single use, whether or not it matches
+    db.delete(cfg)  # single use
     db.commit()
-    nonce, _, expires = raw.partition("|")
+    expires, _, owner = raw.partition("|")
     try:
-        fresh = float(expires) > time.time()
+        if float(expires) <= time.time():
+            return None
+        return int(owner)
     except ValueError:
-        return False
-    return fresh and secrets.compare_digest(nonce, state)
+        return None
 
 
 def _token_request(data: dict[str, str]) -> dict[str, Any]:
@@ -268,8 +298,11 @@ def _apply_tokens(conn: Connection, tok: dict[str, Any]) -> None:
     conn.needs_reconnect = False
 
 
-def exchange_code(db: Session, code: str, realm_id: str) -> Connection:
-    """Callback step: trade the authorization code for tokens and store them."""
+def exchange_code(db: Session, code: str, realm_id: str, owner: int = INSTALLATION) -> Connection:
+    """Callback step: trade the authorization code for tokens and store them.
+
+    Connecting to a *different* company than before drops the owner's invoice
+    settings: they name things that exist only in the old company file."""
     tok = _token_request({
         "grant_type": "authorization_code", "code": code, "redirect_uri": redirect_uri(),
     })
@@ -278,19 +311,23 @@ def exchange_code(db: Session, code: str, realm_id: str) -> Connection:
         refresh_expires_at=0, environment=environment(), refreshed_at=0,
     )
     _apply_tokens(conn, tok)
-    save_connection(db, conn)
+    previous = load_connection(db, owner)
+    if previous and previous.realm_id != conn.realm_id:
+        clear_settings(db, owner)
+    save_connection(db, conn, owner)
     try:  # cosmetic: show the company's name in the UI
-        info = api_request(db, "GET", f"companyinfo/{conn.realm_id}")
+        info = api_request(db, "GET", f"companyinfo/{conn.realm_id}", owner=owner)
         conn.company_name = (info.get("CompanyInfo") or {}).get("CompanyName")
-        save_connection(db, conn)
+        save_connection(db, conn, owner)
     except ProviderError:
         log.warning("QuickBooks connected, but the company name lookup failed", exc_info=True)
     return conn
 
 
-def disconnect(db: Session) -> None:
-    """Revoke at Intuit (best effort) and forget the connection."""
-    conn = load_connection(db)
+def disconnect(db: Session, owner: int = INSTALLATION) -> None:
+    """Revoke at Intuit (best effort) and forget the owner's connection. Their
+    invoice settings stay, so reconnecting the same company needs only consent."""
+    conn = load_connection(db, owner)
     if conn and conn.refresh_token and configured():
         try:
             with _client() as c:
@@ -299,10 +336,47 @@ def disconnect(db: Session) -> None:
                        headers={"Accept": "application/json"})
         except httpx.HTTPError:
             log.warning("QuickBooks token revoke failed; connection removed locally anyway")
-    cfg = db.get(BsGlobal, CONN_KEY)
+    cfg = db.get(BsGlobal, _key(CONN_KEY, owner))
     if cfg:
         db.delete(cfg)
         db.commit()
+
+
+# ---------------------------------------------------------------------------
+# Per-owner invoice settings (which tax code / income account / item to use)
+# ---------------------------------------------------------------------------
+
+SETTING_FIELDS = ("tax_code", "income_account", "item_name")
+
+
+def load_settings(db: Session, owner: int = INSTALLATION) -> dict[str, str]:
+    """`{tax_code, income_account, item_name}`; a field is "" until chosen."""
+    try:
+        raw = json.loads(_get_config(db, _key(SETTINGS_KEY, owner)) or "{}")
+    except ValueError:
+        raw = {}
+    return {f: str(raw.get(f) or "").strip() for f in SETTING_FIELDS}
+
+
+def save_settings(db: Session, owner: int, values: dict[str, str]) -> dict[str, str]:
+    clean = {f: str(values.get(f) or "").strip() for f in SETTING_FIELDS}
+    _set_config(db, _key(SETTINGS_KEY, owner), json.dumps(clean))
+    db.commit()
+    return clean
+
+
+def clear_settings(db: Session, owner: int) -> None:
+    cfg = db.get(BsGlobal, _key(SETTINGS_KEY, owner))
+    if cfg:
+        db.delete(cfg)
+        db.commit()
+
+
+def owners_with_connection(db: Session) -> list[int]:
+    """Every owner that has a stored connection (for the keepalive)."""
+    keys = [k for (k,) in db.query(BsGlobal.name).filter(
+        (BsGlobal.name == CONN_KEY) | BsGlobal.name.like(CONN_KEY + ":%")).all()]
+    return sorted(INSTALLATION if k == CONN_KEY else int(k.rpartition(":")[2]) for k in keys)
 
 
 # ---------------------------------------------------------------------------
@@ -315,7 +389,8 @@ def _fresh_session(db: Session) -> Session:
     return sessionmaker(bind=db.get_bind())()
 
 
-def _refresh(db: Session, *, rejected: Optional[str] = None, force: bool = False) -> Connection:
+def _refresh(db: Session, owner: int = INSTALLATION, *, rejected: Optional[str] = None,
+             force: bool = False) -> Connection:
     """Refresh under the lock; a no-op when another caller already did.
 
     `rejected`: an access token Intuit just answered 401 to — refresh only if
@@ -324,7 +399,7 @@ def _refresh(db: Session, *, rejected: Optional[str] = None, force: bool = False
     with _refresh_lock:
         s = _fresh_session(db)
         try:
-            conn = load_connection(s)
+            conn = load_connection(s, owner)
             if not _usable(conn):
                 raise ProviderError("QuickBooks is not connected", 400)
             if force:
@@ -341,38 +416,44 @@ def _refresh(db: Session, *, rejected: Optional[str] = None, force: bool = False
             except ProviderError as e:
                 if e.status == 401:  # invalid_grant: only a reconnect can fix this
                     conn.needs_reconnect = True
-                    save_connection(s, conn)
+                    save_connection(s, conn, owner)
                     raise ProviderError("QuickBooks connection expired — reconnect", 400)
                 raise
             _apply_tokens(conn, tok)
-            save_connection(s, conn)  # persist the rotated refresh token first
+            save_connection(s, conn, owner)  # persist the rotated refresh token first
             return conn
         finally:
             s.close()
 
 
-def get_access_token(db: Session) -> tuple[str, str]:
-    """`(access_token, realm_id)`, refreshing first if it is about to expire."""
-    conn = load_connection(db)
+def get_access_token(db: Session, owner: int = INSTALLATION) -> tuple[str, str]:
+    """`(access_token, realm_id)` of the owner's company, refreshing first if it
+    is about to expire."""
+    conn = load_connection(db, owner)
     if not _usable(conn):
         raise ProviderError("QuickBooks is not connected", 400)
     if conn.access_expires_at - ACCESS_SKEW_SECONDS <= time.time():
-        conn = _refresh(db)
+        conn = _refresh(db, owner)
     return conn.access_token, conn.realm_id
 
 
-def keepalive(db: Session) -> bool:
+def keepalive(db: Session, owner: int = INSTALLATION) -> bool:
     """Refresh an idle connection so its refresh token never lapses.
     True if it refreshed. Never raises."""
     try:
-        conn = load_connection(db)
+        conn = load_connection(db, owner)
         if not _usable(conn) or time.time() - conn.refreshed_at < KEEPALIVE_AFTER_SECONDS:
             return False
-        _refresh(db, force=True)
+        _refresh(db, owner, force=True)
         return True
     except ProviderError:
-        log.warning("QuickBooks keepalive refresh failed", exc_info=True)
+        log.warning("QuickBooks keepalive refresh failed (owner %s)", owner, exc_info=True)
         return False
+
+
+def keepalive_all(db: Session) -> int:
+    """`keepalive` for every club's connection; how many refreshed."""
+    return sum(1 for owner in owners_with_connection(db) if keepalive(db, owner))
 
 
 # ---------------------------------------------------------------------------
@@ -391,15 +472,15 @@ def _fault(resp: httpx.Response) -> tuple[str, Optional[str]]:
     return f"HTTP {resp.status_code}", None
 
 
-def api_request(db: Session, method: str, path: str, *,
+def api_request(db: Session, method: str, path: str, *, owner: int = INSTALLATION,
                 params: Optional[dict] = None, json_body: Optional[dict] = None) -> dict:
-    """Call `/v3/company/{realm}/{path}` as the connected company.
+    """Call `/v3/company/{realm}/{path}` as the owner's connected company.
 
     Refreshes the token first when needed, and once more on a 401 (revoked or
     rotated elsewhere). Errors become ProviderError: 400 for a refusal, 502
     when QuickBooks or the network failed.
     """
-    token, realm = get_access_token(db)
+    token, realm = get_access_token(db, owner)
     url = f"{api_base()}/v3/company/{realm}/{path.lstrip('/')}"
     # a None value drops that query parameter (the probe tries "no minorversion")
     query = {k: v for k, v in {"minorversion": MINOR_VERSION, **(params or {})}.items() if v is not None}
@@ -420,7 +501,7 @@ def api_request(db: Session, method: str, path: str, *,
         except httpx.HTTPError as e:
             raise ProviderError(f"Could not reach QuickBooks: {e.__class__.__name__}", 502)
         if resp.status_code == 401 and attempt == 1:
-            token = _refresh(db, rejected=token).access_token
+            token = _refresh(db, owner, rejected=token).access_token
             continue
         break
     if resp.status_code >= 400:

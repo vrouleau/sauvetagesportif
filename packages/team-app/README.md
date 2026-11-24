@@ -123,9 +123,8 @@ python -m pytest tests/ -v
 | `RESEND_API_KEY` | No | Resend.com API key for email delivery |
 | `RESEND_FROM_EMAIL` | No | Sender email address |
 | `INVOICE_PROVIDER` | No | Active invoice provider (`stripe` or `quickbooks`); unset = Stripe when `STRIPE_API_KEY` is set |
-| `QBO_CLIENT_ID` / `QBO_CLIENT_SECRET` | With QuickBooks | Intuit app keys (Development keys for the sandbox) |
+| `QBO_CLIENT_ID` / `QBO_CLIENT_SECRET` | With QuickBooks | Intuit app keys (Development keys for the sandbox) — one app, shared: each organizer club authorizes it for its own QuickBooks company. The tax code, income account and item are chosen per club in the Organizer page (QuickBooks settings), not in the environment |
 | `QBO_ENVIRONMENT` | No | `sandbox` (default) or `production` |
-| `QBO_ITEM_NAME` / `QBO_INCOME_ACCOUNT` / `QBO_TAX_CODE` | No | QuickBooks invoice setup: service Item name (default `Frais d'inscription`; created under `QBO_INCOME_ACCOUNT` if missing), exempt tax code name (default `Exempt`, `none` to omit) |
 | `QBO_REDIRECT_URI` | No | OAuth redirect URI as registered in the Intuit app; default `APP_BASE_URL` + `/api/quickbooks/callback` |
 | `STRIPE_API_KEY` | No | Stripe secret key for invoicing |
 | `BEST_TIME_MAX_AGE_MONTHS` | No | Expiry window for best times (default: 18) |

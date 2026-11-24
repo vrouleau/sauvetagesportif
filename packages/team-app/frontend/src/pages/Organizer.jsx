@@ -23,6 +23,7 @@ import { newSwimstylesDetail, confirmNewSwimstyles } from '../newSwimstylesConfi
 import { refreshAuth } from '../authMeet'
 import { notResultsFileMessage, beachResultsMessage, meetMismatchDetail, confirmMeetMismatch } from '../lxfImportGuards'
 import { openPrintEntries } from '../printEntries'
+import QuickBooksSettings from '../components/QuickBooksSettings'
 
 export default function Organizer() {
   const [meetInfo, setMeetInfo] = useState(null)
@@ -516,6 +517,10 @@ export default function Organizer() {
             <div className="w-px h-4 bg-gray-300" />
             {/* Single provider toggle: connect when disconnected, disconnect
                 when connected. */}
+            {providerConnected && providerInfo?.settings && (
+              <QuickBooksSettings settings={providerInfo.settings}
+                onSaved={settings => setProviderInfo(p => ({ ...p, settings }))} />
+            )}
             {providerConnected ? (
               <button onClick={disconnectProvider}
                 className="px-3 py-1 bg-red-600 text-white text-xs rounded hover:bg-red-700">

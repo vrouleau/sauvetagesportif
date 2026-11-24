@@ -16,7 +16,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with Sauvetage Sportif. If not, see <https://www.gnu.org/licenses/>.
 
-"""QuickBooks OAuth callback.
+"""QuickBooks OAuth callback (it also tells the club when its connection changes).
 
 The only QuickBooks route that is not behind require_organizer_or_admin: Intuit
 sends the user's browser here after the consent page, and a browser redirect
@@ -52,6 +52,27 @@ def _back(result: str, reason: Optional[str] = None) -> RedirectResponse:
     return RedirectResponse(f"/organizer?{urlencode(query)}", status_code=303)
 
 
+def _notify(db: Session, owner: int, event: str, company: Optional[str]) -> None:
+    """Tell the club (or the installation's support address) that its QuickBooks
+    connection changed. Best effort: the connection itself is already stored."""
+    import os
+    from datetime import datetime, timezone
+    from ..emailing import build_quickbooks_notice, send_email
+    from ..models_team import TeamClub
+    club = db.get(TeamClub, owner) if owner else None
+    to = ((club.email if club else "") or "").strip() or os.environ.get("SUPPORT_EMAIL", "").strip()
+    if not to:
+        log.warning("QuickBooks %s for owner %s: nobody to notify", event, owner)
+        return
+    subject, html = build_quickbooks_notice(
+        club_name=club.name if club else "SauvetageTeam", event=event, company=company,
+        when=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"))
+    try:
+        send_email(to, subject, html)
+    except Exception:  # noqa: BLE001 — a mail outage must not undo a connection
+        log.warning("QuickBooks %s notice to owner %s could not be sent", event, owner, exc_info=True)
+
+
 @router.get("/quickbooks/callback")
 def quickbooks_callback(
     code: Optional[str] = None,
@@ -63,15 +84,21 @@ def quickbooks_callback(
     if selected_provider_name() != "quickbooks":
         return _back("error", "not_enabled")
     # Consume the state first so it is single-use even when the user declined.
-    if not qbo.consume_state(db, state or ""):
+    # It also says which club's connection this is.
+    owner = qbo.consume_state(db, state or "")
+    if owner is None:
         return _back("error", "state")
     if error:
         return _back("error", "denied")
     if not code or not realmId:
         return _back("error", "invalid")
+    previous = qbo.load_connection(db, owner)
     try:
-        qbo.exchange_code(db, code, realmId)
+        conn = qbo.exchange_code(db, code, realmId, owner)
     except ProviderError:
         log.warning("QuickBooks code exchange failed", exc_info=True)
         return _back("error", "token")
+    # A club must hear about it whenever its books change hands.
+    if previous is None or previous.realm_id != conn.realm_id:
+        _notify(db, owner, "connected" if previous is None else "changed", conn.company_name)
     return _back("success")

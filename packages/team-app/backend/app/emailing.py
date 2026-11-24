@@ -91,6 +91,38 @@ def send_email(to: str, subject: str, html: str, *, reply_to: str | None = None,
         raise HTTPException(502, f"Resend error: {resp.text}")
 
 
+def build_quickbooks_notice(*, club_name: str, event: str, company: str | None, when: str) -> tuple[str, str]:
+    """`(subject, html)` of the notice a club gets when its QuickBooks connection
+    changes. `event`: `connected` | `changed` (a different company than before) |
+    `disconnected`. Bilingual, since a notice must be readable by whoever opens it.
+    The company name comes from QuickBooks, so it is escaped."""
+    import html as _html
+    club, comp = _html.escape(club_name), _html.escape(company or "?")
+    fr = {
+        "connected": f"Le compte QuickBooks <b>{comp}</b> a été connecté à votre club.",
+        "changed": f"Le compte QuickBooks de votre club a été remplacé par <b>{comp}</b>.",
+        "disconnected": "Le compte QuickBooks de votre club a été déconnecté.",
+    }[event]
+    en = {
+        "connected": f"The QuickBooks company <b>{comp}</b> was connected to your club.",
+        "changed": f"Your club's QuickBooks company was replaced by <b>{comp}</b>.",
+        "disconnected": "Your club's QuickBooks company was disconnected.",
+    }[event]
+    subject = {
+        "connected": "QuickBooks connecté / QuickBooks connected",
+        "changed": "QuickBooks : compte remplacé / QuickBooks company replaced",
+        "disconnected": "QuickBooks déconnecté / QuickBooks disconnected",
+    }[event]
+    body = (
+        f"<p><b>{club}</b> — {_html.escape(when)}</p>"
+        f"<p>{fr}</p><p>Les factures des compétitions que votre club organise seront créées dans ce compte. "
+        f"Si ce n'est pas vous, communiquez avec l'administrateur sans tarder.</p><hr>"
+        f"<p>{en}</p><p>Invoices for meets your club organizes will be created in that company. "
+        f"If this was not you, contact the administrator right away.</p>"
+    )
+    return subject, body
+
+
 def build_footer(lang: str, *, is_organizer: bool, org_club_name: str, org_email: str,
                  no_reply: bool = True) -> str:
     """Contact footer: organizer contact (non-organizer recipients) + support.
