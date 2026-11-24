@@ -117,7 +117,7 @@ After **Send PDF**, the organizer club receives **one summary email** listing ev
 
 **Export QuickBooks** opens a small form, then downloads `quickbooks-import.zip`:
 
-- the **product/service** every line is booked against (default *Frais d'inscription*) and the company's **exempt tax code** — type them exactly as they appear in the QuickBooks that will import the file;
+- the **product/service** every line is booked against (default *Frais d'inscription*) and the company's **exempt tax code** — type them exactly as they appear in the QuickBooks that will import the file. They are **remembered for your club**: the form comes back filled in for your next export and your next meet;
 - the **payment delay** in days (the due date is today + that many days).
 
 The ZIP holds `1-customers.csv` (one customer per club), `2-invoices.csv` (one row per athlete line; split into several files when there are more than 100 invoices, QuickBooks' limit) and a `README.txt`. In QuickBooks: *Settings → Import data → Customers*, then *Invoices*, picking the date format `dd/MM/yyyy`. Skip the customers file for clubs that already exist as customers. Importing is a one-way copy: if a club changes its entries afterwards, correct that invoice in QuickBooks.

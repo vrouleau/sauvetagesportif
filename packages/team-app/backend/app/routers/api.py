@@ -3340,34 +3340,60 @@ def invoices_pdf_zip(data: dict, request: Request, db: Session = Depends(get_db)
                     headers={"Content-Disposition": 'attachment; filename="invoices.zip"'})
 
 
+def _qb_export_key(db: Session, meetsid: int | None) -> str:
+    """bsglobal key of the QuickBooks export options: one set per organizer club
+    (it is that club's QuickBooks that imports the files), or one for the
+    installation when the meet has no organizer club. App-level, not meet-scoped,
+    so closing a meet never clears it — the next meet starts with the same form."""
+    org = _get_organizer_club_id(db, meetsid) if meetsid else None
+    return f"qb_export_options:{org}" if org else "qb_export_options"
+
+
+def _qb_export_saved_options(db: Session, meetsid: int | None):
+    import json
+    from ..quickbooks_export import options_from
+    try:
+        raw = json.loads(_get_config(db, _qb_export_key(db, meetsid)) or "{}")
+    except ValueError:
+        raw = {}
+    try:
+        return options_from(raw)
+    except ValueError:
+        return options_from({})
+
+
+@router.get("/invoices/quickbooks-export/options", dependencies=[Depends(require_organizer_or_admin)])
+def quickbooks_export_options(request: Request, db: Session = Depends(get_db)):
+    """The form's remembered values (the defaults until the first export)."""
+    from dataclasses import asdict
+    return asdict(_qb_export_saved_options(db, resolve_meetsid(request, db)))
+
+
 @router.post("/invoices/quickbooks-export", dependencies=[Depends(require_organizer_or_admin)])
 def invoices_quickbooks_export(data: dict, request: Request, db: Session = Depends(get_db)):
     """ZIP of QuickBooks Online import files (customers + invoices CSV, split to
     Intuit's 100-invoice limit, and a how-to) for the selected clubs. Same lines
     and invoice numbers as the PDFs. Nothing is recorded as "sent": downloading
-    files is like downloading the PDFs."""
+    files is like downloading the PDFs. The options used are remembered for the
+    organizer club's next export (and next meet)."""
+    import json
     import zipfile
+    from dataclasses import asdict
     from datetime import date as _date
     from io import BytesIO
     from ..invoices import _club_line_items, _meet_fees, _meet_name, invoice_number, items_total_cents
-    from ..quickbooks_export import (DEFAULT_DUE_DAYS, DEFAULT_ITEM_NAME, DEFAULT_TAX_CODE,
-                                     ExportEntry, ExportOptions, build_files)
+    from ..quickbooks_export import ExportEntry, build_files, options_from
 
     club_ids = data.get("club_ids", [])
     if not club_ids:
         raise HTTPException(400, "No clubs selected")
     lang = "en" if data.get("lang") == "en" else "fr"
-    try:
-        due_days = max(0, min(365, int(data.get("due_days", DEFAULT_DUE_DAYS))))
-    except (TypeError, ValueError):
-        raise HTTPException(400, "due_days must be a number")
-    options = ExportOptions(
-        item_name=str(data.get("item_name") or DEFAULT_ITEM_NAME).strip()[:100],
-        tax_code=str(data.get("tax_code") or DEFAULT_TAX_CODE).strip()[:100],
-        due_days=due_days,
-    )
-
     meetsid = resolve_meetsid(request, db)
+    try:  # a field the request leaves out keeps what was remembered
+        options = options_from(data, _qb_export_saved_options(db, meetsid))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
     meet_fees = _meet_fees(db, meetsid)
     entries = []
     for cid in club_ids:
@@ -3384,6 +3410,9 @@ def invoices_quickbooks_export(data: dict, request: Request, db: Session = Depen
         files = build_files(entries, _meet_name(db, meetsid), _date.today(), options, lang)
     except ValueError as e:
         raise HTTPException(400, str(e))
+
+    _set_config(db, _qb_export_key(db, meetsid), json.dumps(asdict(options)))
+    db.commit()
 
     buf = BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:

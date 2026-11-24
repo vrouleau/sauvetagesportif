@@ -117,7 +117,7 @@ Après **Envoyer PDF**, le club organisateur reçoit **un seul courriel récapit
 
 **Exporter QuickBooks** ouvre un petit formulaire, puis télécharge `quickbooks-import.zip` :
 
-- le **produit/service** auquel chaque ligne est imputée (par défaut *Frais d'inscription*) et le **code de taxe exonéré** de l'entreprise — écrivez-les exactement comme dans le QuickBooks qui importera le fichier ;
+- le **produit/service** auquel chaque ligne est imputée (par défaut *Frais d'inscription*) et le **code de taxe exonéré** de l'entreprise — écrivez-les exactement comme dans le QuickBooks qui importera le fichier. Ils sont **retenus pour votre club** : le formulaire revient rempli pour votre prochaine exportation et votre prochaine compétition ;
 - le **délai de paiement** en jours (l'échéance est la date du jour + ce nombre de jours).
 
 Le ZIP contient `1-customers.csv` (un client par club), `2-invoices.csv` (une ligne par athlète ; réparti en plusieurs fichiers au-delà de 100 factures, la limite de QuickBooks) et un `README.txt`. Dans QuickBooks : *Paramètres → Importer des données → Clients*, puis *Factures*, en choisissant le format de date `dd/MM/yyyy`. Sautez le fichier des clients pour les clubs déjà clients. L'import est une copie à sens unique : si un club modifie ses inscriptions ensuite, corrigez cette facture dans QuickBooks.

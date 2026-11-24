@@ -64,6 +64,23 @@ class ExportOptions:
     due_days: int = DEFAULT_DUE_DAYS     # due date = invoice date + this many days
 
 
+def options_from(raw: dict | None, base: ExportOptions | None = None) -> ExportOptions:
+    """ExportOptions from a loose dict (a request, or what was stored): a missing
+    or blank field keeps `base` (default: the defaults); due_days is clamped to
+    0..365. Raises ValueError when due_days is not a number."""
+    base = base or ExportOptions()
+    raw = raw or {}
+    item = str(raw.get("item_name") or "").strip()[:100] or base.item_name
+    tax = str(raw.get("tax_code") or "").strip()[:100] or base.tax_code
+    days = base.due_days
+    if raw.get("due_days") not in (None, ""):
+        try:
+            days = max(0, min(365, int(raw["due_days"])))
+        except (TypeError, ValueError):
+            raise ValueError("due_days must be a number")
+    return ExportOptions(item_name=item, tax_code=tax, due_days=days)
+
+
 @dataclass
 class ExportEntry:
     """One club's invoice, ready to export."""

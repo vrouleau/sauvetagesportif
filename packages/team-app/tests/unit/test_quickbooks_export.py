@@ -210,3 +210,73 @@ class TestEndpoint:
         with pytest.raises(HTTPException) as e:
             api.invoices_quickbooks_export({"club_ids": [10], "due_days": "soon"}, _Req(), db)
         assert e.value.status_code == 400
+
+
+class TestOptionsFrom:
+    def test_blank_or_missing_fields_keep_the_base(self):
+        base = qx.ExportOptions(item_name="Fees", tax_code="Zero", due_days=10)
+        assert qx.options_from({"item_name": "  ", "tax_code": None}, base) == base
+        assert qx.options_from(None, base) == base
+
+    def test_values_override_and_due_days_is_clamped(self):
+        o = qx.options_from({"item_name": "X", "tax_code": "Y", "due_days": "400"})
+        assert (o.item_name, o.tax_code, o.due_days) == ("X", "Y", 365)
+        assert qx.options_from({"due_days": -5}).due_days == 0
+
+    def test_due_days_must_be_a_number(self):
+        with pytest.raises(ValueError):
+            qx.options_from({"due_days": "soon"})
+
+
+class TestRememberedOptions:
+    """The form's values live on the server, per organizer club, and outlive the meet."""
+
+    def _export(self, db, **body):
+        return api.invoices_quickbooks_export({"club_ids": [10], **body}, _Req(), db)
+
+    def test_defaults_until_the_first_export(self, db, items):
+        assert api.quickbooks_export_options(_Req(), db) == {
+            "item_name": "Frais d'inscription", "tax_code": "Exempt", "due_days": 30}
+
+    def test_an_export_remembers_what_it_used(self, db, items):
+        self._export(db, item_name="Meet fees", tax_code="Exonéré", due_days=15)
+        assert api.quickbooks_export_options(_Req(), db) == {
+            "item_name": "Meet fees", "tax_code": "Exonéré", "due_days": 15}
+
+    def test_a_field_left_out_keeps_the_remembered_value(self, db, items):
+        self._export(db, item_name="Meet fees", tax_code="Exonéré", due_days=15)
+        files = _zip(self._export(db, due_days=45))
+        r = dict(zip(qx.INVOICE_HEADERS, _read(files["2-invoices.csv"])[1]))
+        assert r["Item(Product/Service)"] == "Meet fees" and r["*ItemTaxCode"] == "Exonéré"
+        assert api.quickbooks_export_options(_Req(), db)["due_days"] == 45
+
+    def test_a_failed_export_remembers_nothing(self, db, items):
+        with pytest.raises(HTTPException):
+            api.invoices_quickbooks_export({"club_ids": [20], "item_name": "Nope"}, _Req(), db)  # nothing to bill
+        assert api.quickbooks_export_options(_Req(), db)["item_name"] == "Frais d'inscription"
+
+    def test_each_organizer_club_has_its_own(self, db, items):
+        from app.meet_config import _set_organizer_club_id
+        _set_organizer_club_id(db, 10, meetsid=1)
+        db.commit()
+        self._export(db, item_name="Club A fees")
+        assert api.quickbooks_export_options(_Req(), db)["item_name"] == "Club A fees"
+        _set_organizer_club_id(db, 20, meetsid=1)         # another club organizes the next meet
+        db.commit()
+        assert api.quickbooks_export_options(_Req(), db)["item_name"] == "Frais d'inscription"
+        _set_organizer_club_id(db, 10, meetsid=1)         # ...and when the first one organizes again
+        db.commit()
+        assert api.quickbooks_export_options(_Req(), db)["item_name"] == "Club A fees"
+
+    def test_closing_the_meet_keeps_them(self, db, items):
+        self._export(db, item_name="Meet fees", due_days=20)
+        api._reset_for_next_meet(db, 1)
+        db.commit()
+        assert api.quickbooks_export_options(_Req(), db) == {
+            "item_name": "Meet fees", "tax_code": "Exempt", "due_days": 20}
+
+    def test_garbage_in_storage_falls_back_to_the_defaults(self, db, items):
+        from app.meet_config import _set_config
+        _set_config(db, "qb_export_options", "{not json")
+        db.commit()
+        assert api.quickbooks_export_options(_Req(), db)["tax_code"] == "Exempt"

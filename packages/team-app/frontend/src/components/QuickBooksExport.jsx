@@ -18,33 +18,31 @@
 
 import { useState } from 'react'
 import { useLang } from '../i18n'
-import { headers } from '../api'
+import api, { headers } from '../api'
 
-const STORE = 'qbExportOptions'
 const DEFAULTS = { item_name: "Frais d'inscription", tax_code: 'Exempt', due_days: 30 }
-
-// Per-viewer convenience only: the page works the same when storage is blocked.
-function loadOptions() {
-  try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(STORE) || '{}') } } catch { return { ...DEFAULTS } }
-}
-function saveOptions(o) {
-  try { localStorage.setItem(STORE, JSON.stringify(o)) } catch { /* ignore */ }
-}
 
 // "Export for QuickBooks": a ZIP of CSV files (customers + invoices) that
 // QuickBooks Online imports under Settings > Import data. The three fields are
 // what the importing company must match: the product/service every line is
-// booked against, its exempt tax code (exact name) and the payment delay.
+// booked against, its exempt tax code (exact name) and the payment delay. They
+// are remembered on the server for the organizer club (an export saves what it
+// used), so the next meet — from any browser — starts with the same form.
 export default function QuickBooksExport({ clubIds, onMessage }) {
   const { t, lang } = useLang()
   const [open, setOpen] = useState(false)
-  const [opts, setOpts] = useState(loadOptions)
+  const [opts, setOpts] = useState(DEFAULTS)
   const [busy, setBusy] = useState(false)
 
   const set = (k, v) => setOpts(o => ({ ...o, [k]: v }))
 
+  async function toggle() {
+    if (open) { setOpen(false); return }
+    try { setOpts({ ...DEFAULTS, ...(await api.get('/invoices/quickbooks-export/options')).data }) } catch { /* keep what is shown */ }
+    setOpen(true)
+  }
+
   async function run() {
-    saveOptions(opts)
     setBusy(true)
     onMessage(t.qbx_generating, false)
     try {
@@ -77,7 +75,7 @@ export default function QuickBooksExport({ clubIds, onMessage }) {
 
   return (
     <span className="relative inline-flex flex-col">
-      <button onClick={() => setOpen(o => !o)} disabled={!clubIds.length}
+      <button onClick={toggle} disabled={!clubIds.length}
         className="text-white px-3 py-1 rounded text-xs disabled:opacity-50 bg-purple-600 hover:bg-purple-700">
         {t.qbx_btn} {clubIds.length > 0 && `(${clubIds.length})`}
       </button>
