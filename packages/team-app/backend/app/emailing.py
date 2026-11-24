@@ -30,6 +30,8 @@ from html import escape
 
 from fastapi import HTTPException
 
+from .i18n import t, tn
+
 
 def from_header(from_name: str | None = None) -> str:
     """The From header: RESEND_FROM_EMAIL's address (must be on a domain
@@ -99,30 +101,19 @@ def build_footer(lang: str, *, is_organizer: bool, org_club_name: str, org_email
     Reply-To to the organizer.
     """
     support_email = os.environ.get("SUPPORT_EMAIL", "")
-    fr = lang == "fr"
     footer = ""
     lines = []
     if not is_organizer and org_email:
-        lines.append(
-            (f"Pour toute question sur la compétition, contactez l'organisateur ({org_club_name}) : "
-             if fr else
-             f"If you have questions about the meet, contact the organizer ({org_club_name}): ")
-            + f"<a href=\"mailto:{org_email}\">{org_email}</a>")
+        lines.append(t("email.footer.organizer_contact", lang, org=org_club_name)
+                     + f"<a href=\"mailto:{org_email}\">{org_email}</a>")
     if support_email:
-        if is_organizer:
-            prefix = ("Pour toute question, contactez le support : " if fr
-                      else "If you have questions, contact support: ")
-        else:
-            prefix = ("Pour de l'aide avec le portail d'inscription, contactez le support : " if fr
-                      else "For help with the registration portal, contact support: ")
+        prefix = t("email.footer.support_organizer" if is_organizer
+                   else "email.footer.support_portal", lang)
         lines.append(prefix + f"<a href=\"mailto:{support_email}\">{support_email}</a>")
     if lines:
         footer += "<p>" + "<br>".join(lines) + "</p>"
     if no_reply:
-        footer += ("<p style=\"font-size:11px;color:#888\">Ce courriel est envoyé automatiquement. "
-                   "Veuillez ne pas répondre à ce courriel.</p>" if fr else
-                   "<p style=\"font-size:11px;color:#888\">This is an automated message. "
-                   "Please do not reply to this email.</p>")
+        footer += t("email.footer.no_reply", lang)
     return ("<hr style=\"margin-top:20px\">" + footer) if footer else ""
 
 
@@ -147,11 +138,10 @@ def build_invoice_email(*, lang: str, meet_name: str, club_name: str, org_club_n
     Table-based layout with inline styles only — most email clients strip
     <style> blocks and ignore flex/grid.
     """
-    fr = lang == "fr"
     e = escape
     total = _money(total_cents)
     if support_email:
-        org_html = ("l'équipe de soutien SauvetageTeam" if fr else "the SauvetageTeam support team")
+        org_html = t("email.invoice.support_team", lang)
         contact_email = support_email
     else:
         org_html = f"<strong>{e(org_club_name)}</strong>" if org_club_name else ""
@@ -163,8 +153,7 @@ def build_invoice_email(*, lang: str, meet_name: str, club_name: str, org_club_n
     num = (f"<strong style=\"font-family:monospace;font-size:15px;white-space:nowrap\">"
            f"{e(invoice_no)}</strong>")
 
-    subject = (f"Facture {invoice_no} — {meet_name}" if fr
-               else f"Invoice {invoice_no} — {meet_name}")
+    subject = t("email.invoice.subject", lang, no=invoice_no, meet=meet_name)
 
     td = "padding:8px 10px;border-bottom:1px solid #e5e7eb;font-size:13px;vertical-align:top"
     th = f"padding:8px 10px;background:{_BRAND};color:#fff;font-size:12px;text-align:left"
@@ -181,49 +170,25 @@ def build_invoice_email(*, lang: str, meet_name: str, club_name: str, org_club_n
             f"<td style=\"{td};text-align:right;white-space:nowrap\">{_money(line_total)}</td>"
             f"</tr>")
 
-    if fr:
-        greeting = (f"<p>Bonjour,</p><p>Voici la facture des inscriptions de <strong>{e(club_name)}</strong> "
-                    f"à la compétition <strong>{e(meet_name)}</strong>"
-                    + (f", organisée par <strong>{e(org_club_name)}</strong>" if org_club_name else "")
-                    + ". La facture PDF est jointe à ce courriel.</p>")
-        h_items, h_detail, h_amount = "Athlète / frais", "Détail", "Montant"
-        pay_title = "Comment payer par virement Interac"
-        steps = [
-            "Dans votre application bancaire, choisissez <strong>Virement Interac</strong>.",
-            f"Destinataire : <strong>{e(org_email)}</strong>" if org_email else
-            "Destinataire : le courriel de l'organisateur.",
-            f"Montant : <strong>{total}</strong>",
-            "Le destinataire n'utilise <strong>pas le dépôt automatique</strong> : ajoutez cette question de sécurité<br>"
-            "Question : <strong>Quel est le numéro de facture?</strong><br>"
-            f"Réponse : {num}",
-            f"Dans le champ <strong>message / mémo</strong>, inscrivez uniquement le numéro de facture : {num}",
-        ]
-        memo_note = "Le numéro de facture dans le mémo nous permet d'associer votre paiement à votre club."
-        contact = ("Pour toute question, veuillez communiquer avec "
-                   + " à ".join(p for p in (org_html, org_mail_html) if p) + ".") if org_html or org_mail_html else ""
-        lbl_inv, lbl_total = "N° de facture", "Total à payer"
-    else:
-        greeting = (f"<p>Hello,</p><p>Here is the registration invoice for <strong>{e(club_name)}</strong> "
-                    f"for <strong>{e(meet_name)}</strong>"
-                    + (f", organized by <strong>{e(org_club_name)}</strong>" if org_club_name else "")
-                    + ". The PDF invoice is attached to this email.</p>")
-        h_items, h_detail, h_amount = "Athlete / fee", "Detail", "Amount"
-        pay_title = "How to pay by Interac e-Transfer"
-        steps = [
-            "In your banking app, choose <strong>Interac e-Transfer</strong>.",
-            f"Recipient: <strong>{e(org_email)}</strong>" if org_email else
-            "Recipient: the organizer's email.",
-            f"Amount: <strong>{total}</strong>",
-            "The recipient does <strong>not use Autodeposit</strong>: add this security question<br>"
-            "Question: <strong>What is the invoice number?</strong><br>"
-            f"Answer: {num}",
-            f"In the <strong>message / memo</strong> field, enter only the invoice number: {num}",
-        ]
-        memo_note = "The invoice number in the memo lets us match your payment to your club."
-        contact = ("Please contact "
-                   + " at ".join(p for p in (org_html, org_mail_html) if p)
-                   + " if you have any questions.") if org_html or org_mail_html else ""
-        lbl_inv, lbl_total = "Invoice no.", "Total due"
+    organized_by = t("email.invoice.organized_by", lang, org=e(org_club_name)) if org_club_name else ""
+    greeting = t("email.invoice.greeting", lang, club=e(club_name), meet=e(meet_name),
+                 organized_by=organized_by)
+    h_items, h_detail, h_amount = (t(f"email.invoice.{k}", lang)
+                                   for k in ("h_items", "h_detail", "h_amount"))
+    pay_title = t("email.invoice.pay_title", lang)
+    steps = [
+        t("email.invoice.step_bank", lang),
+        t("email.invoice.step_recipient", lang, email=e(org_email)) if org_email
+        else t("email.invoice.step_recipient_none", lang),
+        t("email.invoice.step_amount", lang, total=total),
+        t("email.invoice.step_autodeposit", lang, num=num),
+        t("email.invoice.step_memo", lang, num=num),
+    ]
+    memo_note = t("email.invoice.memo_note", lang)
+    contact = (t("email.invoice.contact", lang,
+                 who=t("email.invoice.contact_join", lang).join(p for p in (org_html, org_mail_html) if p))
+               if org_html or org_mail_html else "")
+    lbl_inv, lbl_total = t("email.invoice.lbl_invoice", lang), t("email.invoice.lbl_total", lang)
 
     steps_html = "".join(f"<li style=\"margin:4px 0\">{s}</li>" for s in steps)
     # Organizer contact is in the body (`contact`); the footer keeps only the
@@ -242,7 +207,7 @@ def build_invoice_email(*, lang: str, meet_name: str, club_name: str, org_club_n
 <table role="presentation" width="600" cellpadding="0" cellspacing="0"
        style="max-width:600px;width:100%;background:#ffffff;border-radius:8px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827">
   <tr><td style="background:{_BRAND};padding:18px 24px;color:#fff">
-    <div style="font-size:12px;opacity:.85;letter-spacing:.05em">{'FACTURE' if fr else 'INVOICE'}</div>
+    <div style="font-size:12px;opacity:.85;letter-spacing:.05em">{t('email.invoice.banner', lang)}</div>
     <div style="font-size:20px;font-weight:bold;margin-top:2px">{e(meet_name)}</div>
   </td></tr>
   <tr><td style="padding:20px 24px 4px 24px;font-size:14px;line-height:1.5">{greeting}</td></tr>
@@ -265,7 +230,7 @@ def build_invoice_email(*, lang: str, meet_name: str, club_name: str, org_club_n
       <tr><th style="{th}">{h_items}</th><th style="{th}">{h_detail}</th><th style="{th};text-align:right">{h_amount}</th></tr>
       {''.join(rows)}
       <tr>
-        <td style="padding:10px;font-weight:bold;font-size:14px" colspan="2">TOTAL</td>
+        <td style="padding:10px;font-weight:bold;font-size:14px" colspan="2">{t('email.invoice.total', lang)}</td>
         <td style="padding:10px;font-weight:bold;font-size:14px;text-align:right;border-top:2px solid {_BRAND}">{total}</td>
       </tr>
     </table>
@@ -298,35 +263,15 @@ def build_organizer_invoice_summary(*, lang: str, meet_name: str, org_club_name:
     `org_email` is the Interac recipient named in the clubs' instructions.
     `invoices`: [{club_name, club_email, invoice_no, total_cents}, ...]
     """
-    fr = lang == "fr"
     e = escape
-    pay_to = e(org_email) if org_email else ("le courriel de l'organisateur" if fr else "the organizer's email")
+    pay_to = e(org_email) if org_email else t("email.summary.pay_to_none", lang)
     n = len(invoices)
     grand = _money(sum(i["total_cents"] for i in invoices))
-    if fr:
-        subject = f"SauvetageTeam a envoyé {n} facture{'s' if n > 1 else ''} — {meet_name}"
-        behalf = f", au nom de <strong>{e(org_club_name)}</strong>," if org_club_name else ""
-        intro = (f"<p>Bonjour,</p><p>SauvetageTeam vient d'envoyer par courriel{behalf} "
-                 f"{n} facture{'s' if n > 1 else ''} "
-                 f"pour la compétition <strong>{e(meet_name)}</strong> :</p>")
-        heads = ("Club", "Courriel", "N° de facture", "Total")
-        note = ("Chaque club a reçu sa facture PDF et les instructions pour payer par virement Interac "
-                f"à <strong>{pay_to}</strong>, avec le numéro de facture dans le champ message / mémo. "
-                "Sans dépôt automatique : pour déposer un virement, répondez à la question de sécurité "
-                "« Quel est le numéro de facture? » avec le numéro de facture du club (tableau ci-dessus). "
-                "Leurs réponses vous seront adressées.")
-    else:
-        subject = f"SauvetageTeam sent {n} invoice{'s' if n > 1 else ''} — {meet_name}"
-        behalf = f", on behalf of <strong>{e(org_club_name)}</strong>," if org_club_name else ""
-        intro = (f"<p>Hello,</p><p>SauvetageTeam just emailed{behalf} "
-                 f"{n} invoice{'s' if n > 1 else ''} "
-                 f"for <strong>{e(meet_name)}</strong>:</p>")
-        heads = ("Club", "Email", "Invoice no.", "Total")
-        note = ("Each club received its PDF invoice and instructions to pay by Interac e-Transfer to "
-                f"<strong>{pay_to}</strong>, with the invoice number in the message / memo field. "
-                "No Autodeposit: to deposit a transfer, answer the security question "
-                "\"What is the invoice number?\" with that club's invoice number (table above). "
-                "Replies will come to you.")
+    subject = tn("email.summary.subject", n, lang, meet=meet_name)
+    behalf = t("email.summary.behalf", lang, org=e(org_club_name)) if org_club_name else ""
+    intro = tn("email.summary.intro", n, lang, behalf=behalf, meet=e(meet_name))
+    heads = tuple(t(f"email.summary.{k}", lang) for k in ("h_club", "h_email", "h_invoice", "h_total"))
+    note = t("email.summary.note", lang, pay_to=pay_to)
     th = f"padding:6px 10px;background:{_BRAND};color:#fff;font-size:12px;text-align:left"
     td = "padding:6px 10px;border-bottom:1px solid #e5e7eb;font-size:13px"
     head = "".join(f"<th style=\"{th}{';text-align:right' if i == 3 else ''}\">{h}</th>"
@@ -336,7 +281,7 @@ def build_organizer_invoice_summary(*, lang: str, meet_name: str, org_club_name:
         f"<td style=\"{td};font-family:monospace\">{e(i['invoice_no'])}</td>"
         f"<td style=\"{td};text-align:right\">{_money(i['total_cents'])}</td></tr>"
         for i in invoices)
-    total_row = (f"<tr><td colspan=\"3\" style=\"padding:8px 10px;font-weight:bold\">TOTAL</td>"
+    total_row = (f"<tr><td colspan=\"3\" style=\"padding:8px 10px;font-weight:bold\">{t('email.summary.total', lang)}</td>"
                  f"<td style=\"padding:8px 10px;font-weight:bold;text-align:right\">{grand}</td></tr>")
     html = (f"<div style=\"font-family:Arial,Helvetica,sans-serif;color:#111827;font-size:14px;line-height:1.5\">"
             f"{intro}<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" "
