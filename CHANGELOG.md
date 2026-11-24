@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.6.0] - 2026-11-24
+
+### Other
+
+- Merge pull request #133 from vrouleau/refactor/backend-i18n-129 (`f877ef7`)
+- Backend i18n: move printouts, invitation email and QuickBooks README to the catalogues (`7be6819`)
+- Backend i18n: locale catalogues + t()/tn(); migrate invoices and emails (`c0e1166`)
+- Merge pull request #132 from vrouleau/claude/peaceful-dirac-848s0o (`79ccda9`)
+- Hide the Stripe buttons when no Stripe key is configured (`b116c6a`)
+- QuickBooks export: match Intuit's sample invoice file exactly (`4183b53`)
+- Remember the QuickBooks export form for the organizer club's next meet (`45a13d7`)
+- Export invoices as QuickBooks Online import files (`ae50dd1`)
+
 ## [0.5.32] - 2026-11-23
 
 ### 🔧 Chores
