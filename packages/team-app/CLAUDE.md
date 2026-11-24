@@ -272,6 +272,7 @@ backend/app/
   export.py             — LENEX export (registrations + Gemini key transport; session names + pause events included; SERC events/relays excluded — meet-app has no notion of them)
   invoices.py           — Invoice line items, deterministic invoice numbers (YEAR-MEET-CLUB[-Rn]), PDF renderer
   emailing.py           — Resend transport, shared email footer, invoice + organizer-summary email templates
+  i18n.py               — Backend translations: `t(key, lang, **params)` / `tn(key, n, lang)` over `locales/{fr,en}.json` (flat keys, same keys in both — `tests/unit/test_i18n.py` enforces it). New user-facing backend text goes in the catalogues, never in an inline `lang == "en"` branch. Whole blocks (judge sheets, print labels) are read with `Section(prefix)[lang]` / `tree()`; the invitation, invoice and organizer-summary emails are built in `emailing.py`, the QuickBooks README in `quickbooks_export.py` — all from the catalogues. Frontends keep their own catalogues (`i18n.ts`, `i18n.jsx`); nothing is shared with the backend
   age_codes.py          — Age-group bounds <-> category codes (age_group_code strict / relay_age_code lenient, age_code_to_range)
   lxf_io.py             — Reading uploaded .lxf zips: read_lef_xml (the .lef, parsed with defusedxml — used by every LXF import), read_lxf_entry (another entry, e.g. the hidden .meetvalues)
   seed.py               — Entries .lxf parser (clubs/athletes/HANDICAP into members table)

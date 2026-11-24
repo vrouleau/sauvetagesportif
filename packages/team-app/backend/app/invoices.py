@@ -37,39 +37,15 @@ from .models import (
 )
 from .models_team import TeamClub, Member, Relay, RelayPos, ClubMeetInvite, Meet as TeamMeet
 from .meet_config import get_active_meetsid, _get_meet_config, read_meetvalues
+from .i18n import t, tn
 
 
-MEET_FEE_LABELS = {
-    "CLUB": "Frais de club",
-    "ATHLETE": "Frais par athlète",
-    "RELAY": "Frais par relais",
-    "TEAM": "Frais d'équipe",
-    "LATEFEE": "Inscription tardive",
-    "LSCMEETFEE": "Frais LSC",
-}
-
-MEET_FEE_LABELS_EN = {
-    "CLUB": "Club fee",
-    "ATHLETE": "Fee per athlete",
-    "RELAY": "Fee per relay",
-    "TEAM": "Team fee",
-    "LATEFEE": "Late entry",
-    "LSCMEETFEE": "LSC fee",
-}
-
-# Invoice PDF wording, per language.
-_PDF_TXT = {
-    "fr": {
-        "invoice": "FACTURE", "billed_to": "FACTURÉ À", "no": "N°", "date": "DATE",
-        "athlete": "ATHLÈTE", "detail": "DÉTAIL", "qty": "QTÉ", "unit": "P.U.",
-        "amount": "MONTANT", "total": "TOTAL", "meet_fallback": "Compétition",
-    },
-    "en": {
-        "invoice": "INVOICE", "billed_to": "BILLED TO", "no": "NO.", "date": "DATE",
-        "athlete": "ATHLETE", "detail": "DETAIL", "qty": "QTY", "unit": "UNIT",
-        "amount": "AMOUNT", "total": "TOTAL", "meet_fallback": "Meet",
-    },
-}
+def fee_label(ftype: str, lang: str) -> str:
+    """Invoice line name for a meet-level fee type (the type itself if unlabelled)."""
+    try:
+        return t(f"invoice.fee.{ftype}", lang)
+    except KeyError:
+        return ftype
 
 
 def _meet_fees(db: Session, meetsid: int | None = None) -> dict[str, int]:
@@ -279,18 +255,11 @@ def _club_line_items(db: Session, club: TeamClub, meet_fees: dict[str, int],
             continue
         parts = []
         if athlete_fee:
-            label = "Athlete fee" if lang == "en" else "Frais d'athlète"
-            parts.append(f"{label} {_money(athlete_fee)}")
+            parts.append(f"{t('invoice.line.athlete_fee', lang)} {_money(athlete_fee)}")
         if a["individual_count"]:
-            if lang == "en":
-                parts.append(f"{a['individual_count']} individual")
-            else:
-                parts.append(
-                    f"{a['individual_count']} individuelle" + ("s" if a["individual_count"] > 1 else "")
-                )
+            parts.append(tn("invoice.line.individual", a["individual_count"], lang))
         if a["relay_count"]:
-            parts.append(f"{a['relay_count']} relay" + ("s" if a["relay_count"] > 1 else "")
-                         if lang == "en" else f"{a['relay_count']} relais")
+            parts.append(tn("invoice.line.relay", a["relay_count"], lang))
         event_items.append({
             "event_number": None,
             "event_name": a["name"],
@@ -331,7 +300,7 @@ def _club_line_items(db: Session, club: TeamClub, meet_fees: dict[str, int],
                 continue
             meet_items.append({
                 "event_number": None,
-                "event_name": (MEET_FEE_LABELS_EN if lang == "en" else MEET_FEE_LABELS).get(ftype, ftype),
+                "event_name": fee_label(ftype, lang),
                 "description": "",
                 "qty": qty,
                 "unit_cents": cents,
@@ -442,7 +411,9 @@ def render_invoice_pdf(club: TeamClub, items: list[dict], meet_name: str, invoic
     from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
     issue_date = date.today()
-    tt = _PDF_TXT.get(lang, _PDF_TXT["fr"])
+    tt = {k: t(f"invoice.pdf.{k}", lang) for k in
+          ("invoice", "billed_to", "no", "date", "athlete", "detail", "qty", "unit",
+           "amount", "total", "meet_fallback")}
 
     _BRAND = colors.HexColor("#1e3a8a")
     _BAND = colors.HexColor("#eef2ff")

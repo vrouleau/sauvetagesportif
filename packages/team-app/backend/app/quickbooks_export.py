@@ -40,6 +40,8 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Iterable, Sequence
 
+from .i18n import t
+
 MAX_INVOICES_PER_FILE = 100   # Intuit's limit per import
 MAX_ROWS_PER_FILE = 1000      # Intuit's limit per spreadsheet
 
@@ -126,7 +128,7 @@ def line_description(item: dict, lang: str = "fr") -> str:
         parts.append(item["event_name"])
     if item.get("description"):
         parts.append(item["description"])
-    return _clean(" - ".join(parts)) or ("Registration" if lang == "en" else "Inscription")
+    return _clean(" - ".join(parts)) or t("invoice.line_fallback", lang)
 
 
 def invoice_rows(entry: ExportEntry, meet_name: str, today: date, options: ExportOptions,
@@ -206,31 +208,5 @@ def build_files(entries: Sequence[ExportEntry], meet_name: str, today: date,
 
 
 def readme(n_invoices: int, n_files: int, options: ExportOptions, lang: str = "fr") -> str:
-    if lang == "en":
-        return (
-            f"QuickBooks Online import - {n_invoices} invoice(s) in {n_files} file(s)\r\n\r\n"
-            "1. Settings > Import data > Customers: upload 1-customers.csv.\r\n"
-            "   Skip this step for clubs that already exist as customers (QuickBooks cannot\r\n"
-            "   import a name that already exists, and the invoice must use the exact same name).\r\n"
-            f"2. Make sure the product/service \"{options.item_name}\" exists (create it once, linked to\r\n"
-            "   your income account).\r\n"
-            "3. Settings > Import data > Invoices: upload each 2-invoices*.csv file, map the columns\r\n"
-            f"   if asked, pick the date format dd/MM/yyyy. The tax code on every line is\r\n"
-            f"   \"{options.tax_code}\": it must be the exact name of your exempt tax code.\r\n\r\n"
-            "Importing the same invoice number twice is refused or duplicated: if a club changes its\r\n"
-            "entries afterwards, correct that invoice in QuickBooks.\r\n"
-        )
-    return (
-        f"Import QuickBooks Online - {n_invoices} facture(s) dans {n_files} fichier(s)\r\n\r\n"
-        "1. Paramètres > Importer des données > Clients : téléversez 1-customers.csv.\r\n"
-        "   Sautez cette étape pour les clubs déjà clients (QuickBooks ne peut pas importer un nom\r\n"
-        "   qui existe déjà, et la facture doit porter exactement le même nom).\r\n"
-        f"2. Vérifiez que le produit/service \"{options.item_name}\" existe (à créer une fois, lié à\r\n"
-        "   votre compte de revenus).\r\n"
-        "3. Paramètres > Importer des données > Factures : téléversez chaque fichier 2-invoices*.csv,\r\n"
-        "   associez les colonnes au besoin, choisissez le format de date jj/MM/aaaa (dd/MM/yyyy).\r\n"
-        f"   Le code de taxe de chaque ligne est \"{options.tax_code}\" : ce doit être le nom exact\r\n"
-        "   de votre code de taxe exonéré.\r\n\r\n"
-        "Importer deux fois le même numéro de facture est refusé ou crée un doublon : si un club\r\n"
-        "modifie ses inscriptions ensuite, corrigez cette facture dans QuickBooks.\r\n"
-    )
+    return t("quickbooks.readme", lang, n_invoices=n_invoices, n_files=n_files,
+             item_name=options.item_name, tax_code=options.tax_code)
