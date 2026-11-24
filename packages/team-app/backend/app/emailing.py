@@ -117,6 +117,25 @@ def build_footer(lang: str, *, is_organizer: bool, org_club_name: str, org_email
     return ("<hr style=\"margin-top:20px\">" + footer) if footer else ""
 
 
+def build_invite_email(*, lang: str, is_organizer: bool, meet_name: str, club_name: str,
+                       org_club_name: str, closure_date: str | None, secret_url: str,
+                       base_url: str, manual_url: str, footer: str) -> tuple[str, str]:
+    """Return (subject, html) for the club invitation (PIN link + how to proceed).
+
+    The organizer gets its own text: it organizes the meet and invites the
+    teams, it doesn't register athletes like a team does. `footer` is
+    `build_footer(...)`, appended last.
+    """
+    kind = "org" if is_organizer else "team"
+    deadline = t(f"email.invite.{kind}.deadline", lang, date=closure_date) if closure_date else ""
+    organized_by = (t("email.invite.team.organized_by", lang, org=org_club_name)
+                    if org_club_name and not is_organizer else "")
+    html = t(f"email.invite.{kind}.body", lang, meet=meet_name, club=club_name,
+             organized_by=organized_by, deadline=deadline, secret_url=secret_url,
+             base_url=base_url, manual_url=manual_url)
+    return t(f"email.invite.{kind}.subject", lang, meet=meet_name), html + footer
+
+
 def _money(cents: int) -> str:
     return f"${cents / 100:,.2f}"
 

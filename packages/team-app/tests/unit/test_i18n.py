@@ -99,3 +99,27 @@ def test_tn_plural_rule():
 def test_missing_key_raises():
     with pytest.raises(KeyError):
         i18n.t("no.such.key", "fr")
+
+
+def test_tree_rebuilds_nested_dicts_and_lists():
+    overall = i18n.Section("serc_print.overall")["en"]
+    assert isinstance(overall["bullets"], list) and len(overall["bullets"]) == 3
+    assert set(overall["criteria"]) == {"assessment", "control", "communication", "search", "teamwork"}
+    assert i18n.Section("entries_print")["fr"]["gender"] == {"men": "Hommes", "women": "Femmes", "mixed": "Mixte"}
+
+
+def test_tree_has_the_same_shape_in_every_language():
+    def shape(node):
+        if isinstance(node, dict):
+            return {k: shape(v) for k, v in node.items()}
+        if isinstance(node, list):
+            return [shape(v) for v in node]
+        return None
+    for prefix in ("entries_print", "serc_print.victim", "serc_print.overall", "serc_print.bystander",
+                   "serc_print.labels", "serc_print.draw_list", "serc_print.results_report"):
+        assert shape(i18n.tree(prefix, "fr")) == shape(i18n.tree(prefix, "en")), prefix
+
+
+def test_tree_unknown_prefix_raises():
+    with pytest.raises(KeyError):
+        i18n.tree("no.such.prefix", "fr")

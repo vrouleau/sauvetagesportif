@@ -36,6 +36,7 @@ from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session, joinedload
 
 from ..database import get_db
+from ..i18n import Section
 from ..meet_config import resolve_meetsid, _get_meet_config, _get_meet_type
 from ..models import BsGlobal, SwimEvent, SwimResult
 from ..models_team import Member, Relay, RelayPos, TeamClub
@@ -44,50 +45,11 @@ from .api import _resolve_role
 
 router = APIRouter(prefix="/api/print")
 
-_TXT = {
-    "fr": {
-        "title": "Inscriptions",
-        "individual": "Inscriptions individuelles",
-        "relays": "Inscriptions relais",
-        "athlete": "Athlète",
-        "born": "Né(e)",
-        "event": "Épreuve",
-        "category": "Catégorie",
-        "entry_time": "Temps d'inscription",
-        "team": "Équipe",
-        "members": "Membres",
-        "no_entries": "Aucune inscription.",
-        "no_individual": "Aucune inscription individuelle.",
-        "no_relays": "Aucune inscription relais.",
-        "athletes": "athlète(s)",
-        "entries": "inscription(s)",
-        "teams": "équipe(s)",
-        "printed": "Imprimé le",
-        "print": "Imprimer",
-        "gender": {1: "Hommes", 2: "Femmes", 3: "Mixte"},
-    },
-    "en": {
-        "title": "Entries",
-        "individual": "Individual entries",
-        "relays": "Relay entries",
-        "athlete": "Athlete",
-        "born": "Born",
-        "event": "Event",
-        "category": "Category",
-        "entry_time": "Entry time",
-        "team": "Team",
-        "members": "Members",
-        "no_entries": "No entries.",
-        "no_individual": "No individual entries.",
-        "no_relays": "No relay entries.",
-        "athletes": "athlete(s)",
-        "entries": "entry(ies)",
-        "teams": "team(s)",
-        "printed": "Printed",
-        "print": "Print",
-        "gender": {1: "Men", 2: "Women", 3: "Mixed"},
-    },
-}
+_TXT = Section("entries_print")
+
+
+# swimevent.gender code -> catalogue key under entries_print.gender (0 = All: no label)
+_GENDER_KEYS = {1: "men", 2: "women", 3: "mixed"}
 
 
 def _fmt_time(ms: int | None) -> str:
@@ -106,7 +68,7 @@ def _event_label(ev: SwimEvent | None, txt: dict, fallback: str = "", lang: str 
     if style_name and lang == "en":
         style_name = swimstyle_name_en(ev.swimstyleid, style_name)
     name = style_name or ev.roundname or fallback
-    gender = txt["gender"].get(ev.gender or 0, "")
+    gender = txt["gender"].get(_GENDER_KEYS.get(ev.gender or 0), "")
     num = f"#{ev.eventnumber} " if ev.eventnumber else ""
     return f"{num}{name}" + (f" — {gender}" if gender else "")
 
@@ -136,7 +98,7 @@ def build_entries_html(db: Session, meetsid: int | None, lang: str = "fr",
                        club_id: int | None = None, section: str = "all") -> str:
     """`club_id` restricts the report to one club; `section` to the individual
     or the relay entries ("all" = both)."""
-    txt = _TXT.get(lang, _TXT["fr"])
+    txt = _TXT[lang]
     show_indiv = section in ("all", "individual")
     show_relays = section in ("all", "relays")
     title = {"individual": txt["individual"], "relays": txt["relays"]}.get(section, txt["title"])

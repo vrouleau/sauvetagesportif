@@ -27,6 +27,11 @@ code calls ``t("invoice.pdf.total", lang)`` instead of branching on ``lang``.
   else ``key_other`` (French and English both treat 0 as singular here, as the
   invoice wording always has); ``{n}`` is filled in.
 
+* ``tree(prefix, lang)`` / ``Section(prefix)[lang]`` — the keys under ``prefix.``
+  rebuilt as nested dicts (all-digit keys ``0, 1, …`` become a list), for
+  printouts that carry a whole block of text — judge sheets, report labels.
+  Values are returned as-is, not ``format``-ted.
+
 An unknown language falls back to French, the app's default. A missing key
 raises ``KeyError`` rather than printing a blank into an invoice.
 """
@@ -61,3 +66,44 @@ def t(key: str, lang: str = DEFAULT_LANG, **params) -> str:
 
 def tn(key: str, n: int, lang: str = DEFAULT_LANG, **params) -> str:
     return t(f"{key}_{'one' if n <= 1 else 'other'}", lang, n=n, **params)
+
+
+@lru_cache(maxsize=None)
+def tree(prefix: str, lang: str = DEFAULT_LANG):
+    """Nested view of every catalogue key under ``prefix.`` (see module docstring)."""
+    root: dict = {}
+    start = prefix + "."
+    for key, text in catalogue(lang).items():
+        if not key.startswith(start):
+            continue
+        parts = key[len(start):].split(".")
+        node = root
+        for part in parts[:-1]:
+            node = node.setdefault(part, {})
+        node[parts[-1]] = text
+    if not root:
+        raise KeyError(prefix)
+    return _listify(root)
+
+
+def _listify(node):
+    if not isinstance(node, dict):
+        return node
+    node = {k: _listify(v) for k, v in node.items()}
+    if node and all(k.isdigit() for k in node):
+        return [node[k] for k in sorted(node, key=int)]
+    return node
+
+
+class Section:
+    """``SECTION[lang]`` -> the nested texts of one block, per language.
+
+    Lets a module keep its ``LABELS[lang]["title"]`` call sites while the
+    wording lives in the catalogues.
+    """
+
+    def __init__(self, prefix: str):
+        self.prefix = prefix
+
+    def __getitem__(self, lang: str):
+        return tree(self.prefix, lang)
