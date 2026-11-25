@@ -4669,3 +4669,81 @@ class TestInvoiceEmail:
         assert mail["to"] == [self.COACH_EMAIL]
         assert mail["reply_to"] == self.ORG_EMAIL
         assert org["name"] in mail["from"]
+
+
+class TestMoveAgeGroupMerge:
+    """PUT /age-groups/{id}/move into an event that already has the same
+    bracket must merge into it, not leave two identical age groups."""
+
+    def _sessions(self):
+        r = requests.get(f"{BASE_URL}/api/sessions", timeout=10)
+        r.raise_for_status()
+        return r.json()
+
+    def _event(self, event_id):
+        for s in self._sessions():
+            for ev in s["events"]:
+                if ev["id"] == event_id:
+                    return ev
+        raise AssertionError(f"event {event_id} not found")
+
+    def _new_event(self, admin_headers, session_id, style_id, number):
+        r = requests.post(f"{BASE_URL}/api/events", headers=admin_headers, timeout=10,
+                          json={"sessionId": session_id, "number": number, "gender": "F",
+                                "phase": "Finale directe", "swimstyleId": style_id})
+        assert r.status_code == 200, r.text
+        return r.json()["id"]
+
+    def _new_group(self, admin_headers, event_id, name, min_age, max_age):
+        r = requests.post(f"{BASE_URL}/api/age-groups", headers=admin_headers, timeout=10,
+                          json={"eventId": event_id, "name": name, "minAge": min_age,
+                                "maxAge": max_age, "gender": "F"})
+        assert r.status_code == 200, r.text
+        return r.json()["id"]
+
+    def _move(self, admin_headers, group_id, target_event_id):
+        return requests.put(f"{BASE_URL}/api/age-groups/{group_id}/move", headers=admin_headers,
+                            json={"targetEventId": target_event_id}, timeout=10)
+
+    def _setup(self, uploaded, admin_headers):
+        session = self._sessions()[0]
+        style_id = next(ev["swimstyleId"] for ev in session["events"]
+                        if not ev["isAdmin"] and ev.get("swimstyleId"))
+        base = 9000
+        src = self._new_event(admin_headers, session["id"], style_id, base + 1)
+        dst = self._new_event(admin_headers, session["id"], style_id, base + 2)
+        return src, dst
+
+    def _cleanup(self, admin_headers, *event_ids):
+        for eid in event_ids:
+            requests.delete(f"{BASE_URL}/api/events/{eid}", headers=admin_headers, timeout=10)
+
+    def test_merges_into_identical_bracket(self, uploaded, admin_headers):
+        src, dst = self._setup(uploaded, admin_headers)
+        try:
+            moving = self._new_group(admin_headers, src, "19+", 19, -1)
+            twin = self._new_group(admin_headers, dst, "19+", 19, 99)  # 99 == Open == -1
+
+            r = self._move(admin_headers, moving, dst)
+            assert r.status_code == 200, r.text
+            assert r.json().get("merged") is True
+
+            assert [g["id"] for g in self._event(dst)["ageGroups"]] == [twin]
+            assert self._event(src)["ageGroups"] == []
+        finally:
+            self._cleanup(admin_headers, src, dst)
+
+    def test_moves_when_no_identical_bracket(self, uploaded, admin_headers):
+        src, dst = self._setup(uploaded, admin_headers)
+        try:
+            moving = self._new_group(admin_headers, src, "19+", 19, -1)
+            other = self._new_group(admin_headers, dst, "15-18", 15, 18)
+
+            r = self._move(admin_headers, moving, dst)
+            assert r.status_code == 200, r.text
+            assert not r.json().get("merged")
+
+            assert {g["id"] for g in self._event(dst)["ageGroups"]} == {moving, other}
+            assert self._event(src)["ageGroups"] == []
+        finally:
+            self._cleanup(admin_headers, src, dst)
