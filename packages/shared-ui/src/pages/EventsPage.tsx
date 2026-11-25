@@ -635,7 +635,7 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
         minAge,
         maxAge,
         gender: targetEvent.gender,
-        numHeats: 1,
+        numHeats: targetEvent.phase === 'Finale' ? 2 : 1,
         ranking: t.events.defaultRanking,
         countForMedalStats: true,
         usedForCombined: false,
@@ -927,6 +927,33 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
     }
   }
 
+  // Persist an age-group edit, then mirror it into the tree and the selection so the
+  // properties panel never shows (or later re-saves) a stale value.
+  async function handleUpdateAgeGroup(groupId: number, eventId: number, data: Record<string, unknown>, local: Partial<AgeGroup>) {
+    try {
+      await api.updateAgeGroup(groupId, data)
+    } catch (err) {
+      console.error('[EventsPage] updateAgeGroup failed', groupId, data, err)
+      window.alert('Erreur lors de la mise à jour de la catégorie')
+      return
+    }
+    setLocalSessions((prev) =>
+      prev.map((s) => ({
+        ...s,
+        events: s.events.map((e) => e.id === eventId
+          ? { ...e, ageGroups: e.ageGroups.map((g) => g.id === groupId ? { ...g, ...local } : g) }
+          : e),
+      }))
+    )
+    if (selected.type === 'agegroup' && selected.group.id === groupId) {
+      setSelected({
+        type: 'agegroup',
+        group: { ...selected.group, ...local },
+        event: { ...selected.event, ageGroups: selected.event.ageGroups.map((g) => g.id === groupId ? { ...g, ...local } : g) },
+      })
+    }
+  }
+
   // Moves an age group between two "event groups" of the same swim style — a
   // plain Finale directe is a group of one, a Prelim+Final split is a group of
   // two (see logic/eventGroups.ts). When the source is split, its Prelim and
@@ -1194,7 +1221,7 @@ export default function EventsPage({ refreshKey = 0 }: { refreshKey?: number }) 
 
         {/* ── Right: properties panel ── */}
         <div className="flex-1 overflow-y-auto bg-white">
-          <PropertiesPanel selected={selected} sessions={localSessions} onUpdateSession={handleUpdateSession} onUpdateEvent={handleUpdateEvent} onMoveAgeGroup={handleMoveAgeGroup} onMeetNameChange={setMeetName} configVersion={configVersion} />
+          <PropertiesPanel selected={selected} sessions={localSessions} onUpdateSession={handleUpdateSession} onUpdateEvent={handleUpdateEvent} onMoveAgeGroup={handleMoveAgeGroup} onUpdateAgeGroup={handleUpdateAgeGroup} onMeetNameChange={setMeetName} configVersion={configVersion} />
         </div>
       </div>
 
@@ -1525,7 +1552,7 @@ function ContextMenu({
 
 // ─── Properties Panel ─────────────────────────────────────────────────────────
 
-function PropertiesPanel({ selected, sessions, onUpdateSession, onUpdateEvent, onMoveAgeGroup, onMeetNameChange, configVersion }: { selected: SelectedItem; sessions: Session[]; onUpdateSession: (sessionId: number, data: Record<string, unknown>) => void; onUpdateEvent: (eventId: number, sessionId: number, data: Record<string, unknown>) => void; onMoveAgeGroup: (group: AgeGroup, sourceEvent: CompetitionEvent, targetRootEventId: number) => void; onMeetNameChange: (name: string) => void; configVersion: number }) {
+function PropertiesPanel({ selected, sessions, onUpdateSession, onUpdateEvent, onMoveAgeGroup, onUpdateAgeGroup, onMeetNameChange, configVersion }: { selected: SelectedItem; sessions: Session[]; onUpdateSession: (sessionId: number, data: Record<string, unknown>) => void; onUpdateEvent: (eventId: number, sessionId: number, data: Record<string, unknown>) => void; onMoveAgeGroup: (group: AgeGroup, sourceEvent: CompetitionEvent, targetRootEventId: number) => void; onUpdateAgeGroup: (groupId: number, eventId: number, data: Record<string, unknown>, local: Partial<AgeGroup>) => void; onMeetNameChange: (name: string) => void; configVersion: number }) {
   if (selected.type === 'competition') {
     return <CompetitionPropertiesPanel key={configVersion} onMeetNameChange={onMeetNameChange} />
   }
@@ -1544,14 +1571,13 @@ function PropertiesPanel({ selected, sessions, onUpdateSession, onUpdateEvent, o
 
   // Age group
   const { group, event } = selected as { group: AgeGroup; event: CompetitionEvent }
-  return <AgeGroupPropertiesPanel group={group} event={event} sessions={sessions} onMoveAgeGroup={onMoveAgeGroup} />
+  return <AgeGroupPropertiesPanel group={group} event={event} sessions={sessions} onMoveAgeGroup={onMoveAgeGroup} onUpdateAgeGroup={onUpdateAgeGroup} />
 }
 
 // ─── Age Group Properties Panel (editable) ───────────────────────────────────
 
-function AgeGroupPropertiesPanel({ group, event, sessions, onMoveAgeGroup }: { group: AgeGroup; event: CompetitionEvent; sessions: Session[]; onMoveAgeGroup: (group: AgeGroup, sourceEvent: CompetitionEvent, targetRootEventId: number) => void }) {
+function AgeGroupPropertiesPanel({ group, event, sessions, onMoveAgeGroup, onUpdateAgeGroup }: { group: AgeGroup; event: CompetitionEvent; sessions: Session[]; onMoveAgeGroup: (group: AgeGroup, sourceEvent: CompetitionEvent, targetRootEventId: number) => void; onUpdateAgeGroup: (groupId: number, eventId: number, data: Record<string, unknown>, local: Partial<AgeGroup>) => void }) {
   const { t, lang } = useLang()
-  const api = useApi()
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const [numHeats, setNumHeats] = useState(group.numHeats)
   const [moveTargetId, setMoveTargetId] = useState<number | ''>('')
@@ -1663,40 +1689,28 @@ function AgeGroupPropertiesPanel({ group, event, sessions, onMoveAgeGroup }: { g
                   </td>
                 </tr>
               )}
-              <tr className="border-b border-gray-100 hover:bg-gray-50">
-                <td className="px-4 py-0.5 text-gray-600 w-64">{t.events.props.numHeats}</td>
-                <td className="px-2 py-0.5">
-                  <input
-                    type="number"
-                    min={1}
-                    max={26}
-                    className="w-16 border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
-                    value={numHeats}
-                    onChange={(e) => setNumHeats(Math.max(1, Math.min(26, parseInt(e.target.value, 10) || 1)))}
-                    onBlur={() => {
-                      if (numHeats !== group.numHeats) {
-                        api.updateAgeGroup(group.id, { heatcount: numHeats } as unknown as Record<string, unknown>)
-                      }
-                    }}
-                  />
-                </td>
-              </tr>
-              <tr className="border-b border-gray-100 hover:bg-gray-50">
-                <td className="px-4 py-0.5 text-gray-600 w-64">{t.events.props.seedMethod}</td>
-                <td className="px-2 py-0.5">
-                  <select
-                    className="border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
-                    value={group.finalSeedType ?? 0}
-                    onChange={(e) => {
-                      const v = Number(e.target.value)
-                      api.updateAgeGroup(group.id, { finalseedtype: v } as unknown as Record<string, unknown>)
-                    }}
-                  >
-                    <option value={0}>{t.events.props.seedMethodCircle}</option>
-                    <option value={1}>{t.events.props.seedMethodPyramid}</option>
-                  </select>
-                </td>
-              </tr>
+              {/* Number of finals (A, B, C…) — only meaningful on a Final; Splash hides it on
+                  prelims and direct finals. Seeding method is meet-level, not per age group. */}
+              {event.phase === 'Finale' && (
+                <tr className="border-b border-gray-100 hover:bg-gray-50">
+                  <td className="px-4 py-0.5 text-gray-600 w-64">{t.events.props.numHeats}</td>
+                  <td className="px-2 py-0.5">
+                    <input
+                      type="number"
+                      min={1}
+                      max={26}
+                      className="w-16 border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
+                      value={numHeats}
+                      onChange={(e) => setNumHeats(Math.max(1, Math.min(26, parseInt(e.target.value, 10) || 1)))}
+                      onBlur={() => {
+                        if (numHeats !== group.numHeats) {
+                          onUpdateAgeGroup(group.id, event.id, { heatcount: numHeats }, { numHeats })
+                        }
+                      }}
+                    />
+                  </td>
+                </tr>
+              )}
             </>
           )}
 

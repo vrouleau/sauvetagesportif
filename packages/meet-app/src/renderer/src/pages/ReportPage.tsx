@@ -157,7 +157,7 @@ function generatePdfHtml(
   function buildEventHtml(s: ReportEventSection): string {
     const totalHeats = s.heats.length
     const prefix = genderPrefix(s.gender, s.ageMin)
-    const centerName = s.gender === 'X' || s.gender === 'ALL'
+    const centerName = s.gender === 'X'
       ? esc(s.eventName)
       : `${esc(prefix)},&nbsp;${esc(s.eventName)}`
     const ageRange = esc(formatAgeRange(s.ageMin, s.ageMax))
@@ -442,7 +442,7 @@ function generateStartListPdfHtml(
 
       const ev = events[i]
       const prefix = genderPrefix(ev.gender, ev.ageMin)
-      const evLabel = ev.gender === 'X' || ev.gender === 'ALL'
+      const evLabel = ev.gender === 'X'
         ? esc(ev.eventName)
         : `${esc(prefix)}, ${esc(ev.eventName)}`
       const ageRange = esc(formatAgeRange(ev.ageMin, ev.ageMax))
@@ -748,7 +748,7 @@ function generateEntriesByEventPdfHtml(rows: EntryByEventReportRow[], isBeach: b
   for (const [, ev] of events) {
     const gender = decodeGenderNum(ev.gender)
     const prefix = genderPrefix(gender, ev.ageMin)
-    const centerName = gender === 'X' || gender === 'ALL'
+    const centerName = gender === 'X'
       ? esc(ev.eventName ?? '')
       : `${esc(prefix)}, ${esc(ev.eventName ?? '')}`
     const ageRange = esc(formatAgeRange(ev.ageMin, ev.ageMax))
@@ -971,7 +971,7 @@ function generateResultsListPdfHtml(
     }
 
     const prefix = genderPrefix(s.gender, overallMin)
-    const centerName = (s.gender === 'X' || s.gender === 'ALL') ? esc(s.eventName) : `${esc(prefix)},&nbsp;${esc(s.eventName)}`
+    const centerName = (s.gender === 'X') ? esc(s.eventName) : `${esc(prefix)},&nbsp;${esc(s.eventName)}`
     const ageRange = esc(formatAgeRange(overallMin, overallMax))
     const dateTimeStr = s.sessionDate ? esc(`${s.sessionDate} - ${s.scheduledTime}`) : esc(s.scheduledTime)
 
@@ -1072,7 +1072,7 @@ function generateHeatListHtml(
 
   function tocLink(s: ReportEventSection, i: number): string {
     const prefix = genderPrefix(s.gender, s.ageMin)
-    const fullName = s.gender === 'X' || s.gender === 'ALL'
+    const fullName = s.gender === 'X'
       ? `${esc(s.eventName)}`
       : `${esc(prefix)},&nbsp;${esc(s.eventName)}`
     const age = esc(formatAgeRange(s.ageMin, s.ageMax))
@@ -1102,7 +1102,7 @@ function generateHeatListHtml(
   function buildEventHtml(s: ReportEventSection, idx: number): string {
     const totalHeats = s.heats.length
     const prefix = genderPrefix(s.gender, s.ageMin)
-    const centerName = s.gender === 'X' || s.gender === 'ALL'
+    const centerName = s.gender === 'X'
       ? esc(s.eventName)
       : `${esc(prefix)}, ${esc(s.eventName)}`
     const ageRange = esc(formatAgeRange(s.ageMin, s.ageMax))
@@ -1416,15 +1416,20 @@ export default function ReportPage({ refreshKey = 0, meetType = 'POOL' }: { refr
         if (ev.isAdmin) continue
         if (!selectedEventIds.has(ev.id)) continue
         const ags = ageGroupMap.get(ev.id) ?? []
-        const ag = ags[0]
+        // Span of ALL the event's age groups (a Masters event can have 7 five-year groups):
+        // youngest minimum to oldest maximum, open-ended if any group has no upper limit.
+        const ageMin = ags.length ? Math.min(...ags.map(a => a.minAge ?? 0)) : 0
+        const ageMax = !ags.length || ags.some(a => a.maxAge == null || a.maxAge < 0 || a.maxAge >= 99)
+          ? null
+          : Math.max(...ags.map(a => a.maxAge ?? 0))
         sections.push({
           eventId: ev.id,
           eventNumber: ev.number,
           eventName: eventDisplayName(ev, lang),
           phase: ev.phase,
           gender: ev.gender,
-          ageMin: ag?.minAge ?? 0,
-          ageMax: ag?.maxAge ?? null,
+          ageMin,
+          ageMax,
           sessionDate: sDate,
           scheduledTime: ev.scheduledTime ?? '',
           heats: ev.heats,

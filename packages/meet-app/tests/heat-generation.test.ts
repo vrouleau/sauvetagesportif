@@ -206,10 +206,10 @@ describe.each(BACKENDS)('Heat generation [%s]', (kind) => {
 
   // ── Pyramid seeding tests ───────────────────────────────────────────────────
 
-  describe('pyramid seeding (finalseedtype=1)', () => {
+  describe('pyramid seeding (meet-level SEEDMETHOD=1)', () => {
     it('places fastest swimmers in the last heat', async () => {
       setLanes(1, 8)
-      db.prepare('UPDATE agegroup SET finalseedtype=1 WHERE agegroupid=1').run()
+      setMeetValues('SEEDMETHOD=I;1')
       addEntries(1, 1, 16) // 16 entries → 2 heats
 
       await generateHeats(1, undefined, db)
@@ -229,8 +229,7 @@ describe.each(BACKENDS)('Heat generation [%s]', (kind) => {
 
     it('fills heats from last to first', async () => {
       setLanes(1, 4)
-      setMeetValues('MINPERHEAT=I;0')
-      db.prepare('UPDATE agegroup SET finalseedtype=1 WHERE agegroupid=1').run()
+      setMeetValues('MINPERHEAT=I;0\r\nSEEDMETHOD=I;1')
       addEntries(1, 1, 10) // 10 entries, 4 lanes → 3 heats
 
       await generateHeats(1, undefined, db)
@@ -249,10 +248,10 @@ describe.each(BACKENDS)('Heat generation [%s]', (kind) => {
 
   // ── Straight seeding tests ──────────────────────────────────────────────────
 
-  describe('straight seeding (finalseedtype=2)', () => {
+  describe('straight seeding (meet-level SEEDMETHOD=2)', () => {
     it('places fastest swimmers in heat 1', async () => {
       setLanes(1, 8)
-      db.prepare('UPDATE agegroup SET finalseedtype=2 WHERE agegroupid=1').run()
+      setMeetValues('SEEDMETHOD=I;2')
       addEntries(1, 1, 16)
 
       await generateHeats(1, undefined, db)
@@ -666,15 +665,15 @@ describe.each(BACKENDS)('Heat generation [%s]', (kind) => {
       expect(heats).toHaveLength(1)
     })
 
-    it('respects heatcount minimum from age group', async () => {
+    it('ignores agegroup.heatcount (number of finals, not a heat floor) and agegroup.finalseedtype (Splash lane order, not a seeding method)', async () => {
       setLanes(1, 8)
-      db.prepare('UPDATE agegroup SET heatcount=3 WHERE agegroupid=1').run()
-      addEntries(1, 1, 8) // 8 entries, 8 lanes → normally 1 heat, but heatcount=3
+      // Splash writes finalseedtype=1 ("by swum time") and heatcount=3 on a touched age group
+      db.prepare('UPDATE agegroup SET heatcount=3, finalseedtype=1 WHERE agegroupid=1').run()
+      addEntries(1, 1, 8) // 8 entries, 8 lanes → exactly 1 heat
 
       await generateHeats(1, undefined, db)
 
-      const heats = getHeats(1)
-      expect(heats.length).toBeGreaterThanOrEqual(3)
+      expect(getHeats(1)).toHaveLength(1)
     })
 
     it('handles meet-level SEEDMETHOD=1 (pyramid) override', async () => {
