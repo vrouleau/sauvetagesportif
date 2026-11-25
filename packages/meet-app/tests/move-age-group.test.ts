@@ -72,6 +72,24 @@ describe('moveAgeGroup', () => {
     }
   })
 
+  it('merges into an identical age group already in the target event instead of duplicating it', () => {
+    const { db, cleanup } = createTestDb()
+    try {
+      seedSplitEvent(db)
+      db.exec(`INSERT INTO agegroup (agegroupid, swimeventid, name, agemin, agemax, gender, sortcode) VALUES (30, 2, '19+', 19, 99, 2, 1)`)
+
+      moveAgeGroup(20, 2, db)
+
+      expect(db.prepare('SELECT agegroupid FROM agegroup WHERE agegroupid=20').get()).toBeUndefined()
+      const r = db.prepare('SELECT swimeventid, agegroupid, heatid FROM swimresult WHERE swimresultid=2').get() as
+        { swimeventid: number; agegroupid: number; heatid: number | null }
+      expect(r).toEqual({ swimeventid: 2, agegroupid: 30, heatid: null })
+      expect((db.prepare('SELECT COUNT(*) c FROM agegroup WHERE swimeventid=2').get() as { c: number }).c).toBe(1)
+    } finally {
+      cleanup()
+    }
+  })
+
   it('rejects moving to an event of a different swim style', async () => {
     const { db, cleanup } = createTestDb()
     try {
