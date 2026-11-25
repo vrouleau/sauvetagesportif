@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.6.1] - 2026-11-25
+
+### 🔧 Chores
+
+- show sex for all-gender events, age range spans every age group (`75ecb5f`)
+
+### Other
+
+- Merge pull request #136 from vrouleau/fix/team-app-move-age-group-merge (`efd559a`)
+- team-app tests: moving an age group merges into an identical bracket (`661e0db`)
+- team-app: merge a moved age group into an identical bracket in the target event (`94865d5`)
+- Revert "team-app: merge a moved age group into an identical bracket in the target event" (`ffe4df3`)
+- team-app: merge a moved age group into an identical bracket in the target event (`cd3934d`)
+- Merge pull request #135 from vrouleau/fix/move-age-group-merge (`1d79637`)
+- Move age group: merge into an identical bracket already in the target event (`456a333`)
+- Merge pull request #134 from vrouleau/claude/happy-archimedes-p214rp (`82e94ea`)
+- Heat settings: per-age-group finals qualification, align heatcount/finalseedtype with Splash (`e844e01`)
+- Add audit notes on heatcount and finalseedtype age-group settings (`e324d3f`)
+
 ## [0.6.0] - 2026-11-24
 
 ### Other
