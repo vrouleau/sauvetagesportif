@@ -1650,7 +1650,26 @@ export async function moveAgeGroup(agegroupId: number, targetEventId: number, in
     throw new Error('Cannot move: some heats for this age group are already validated. Invalidate them first.')
   }
 
+  // Same bracket already in the target (e.g. a women's event's 15-18 moved into
+  // the "All" event that already has its own 15-18)? Merge into it instead of
+  // leaving two identical age groups side by side.
+  const norm = (v: number | null) => (v == null || v < 0 || v >= 99 ? -1 : v)
+  const moving = db.prepare(`SELECT agemin, agemax FROM agegroup WHERE agegroupid=?`).get(agegroupId) as
+    { agemin: number | null; agemax: number | null }
+  const twin = (db.prepare(`SELECT agegroupid, agemin, agemax FROM agegroup WHERE swimeventid=? ORDER BY sortcode, agegroupid`).all(targetEventId) as
+    { agegroupid: number; agemin: number | null; agemax: number | null }[])
+    .find(t => norm(t.agemin) === norm(moving.agemin) && norm(t.agemax) === norm(moving.agemax))
+
   const move = db.transaction(() => {
+    if (twin) {
+      // Entries join the existing age group; the emptied one is dropped.
+      db.prepare(`
+        UPDATE swimresult SET heatid=NULL, lane=NULL, swimeventid=?, agegroupid=?
+        WHERE swimeventid=? AND agegroupid=?
+      `).run(targetEventId, twin.agegroupid, sourceEventId, agegroupId)
+      db.prepare(`DELETE FROM agegroup WHERE agegroupid=?`).run(agegroupId)
+      return
+    }
     // Unseed affected entries — heats are per-event, so existing heat/lane
     // assignments in the source event don't carry over to the target event.
     db.prepare(`
