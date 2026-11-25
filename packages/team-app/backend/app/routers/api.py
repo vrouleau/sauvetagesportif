@@ -2160,6 +2160,21 @@ def move_age_group(agegroup_id: int, request: Request, data: dict = Body(default
             db.rollback()
             raise HTTPException(409, "Cannot move: an athlete is already registered for this age bracket on the target event")
 
+    # The target already has this bracket (e.g. a women's 15-18 moved into the
+    # "All" event that has its own 15-18)? Merge into it rather than leaving two
+    # identical age groups side by side: the entries moved above are matched by
+    # age code, so the twin covers them and this group is simply dropped.
+    for twin in db.query(AgeGroup).filter(
+        AgeGroup.meetsid == meetsid, AgeGroup.swimeventid == target_event_id
+    ).all():
+        if age_group_code(twin.agemin, twin.agemax) != age_code:
+            continue
+        if ag.gender in (GENDER_M, GENDER_F) and twin.gender in (GENDER_M, GENDER_F) and ag.gender != twin.gender:
+            continue
+        db.delete(ag)
+        db.commit()
+        return {"ok": True, "movedRegistrations": len(matching_ids), "merged": True}
+
     from sqlalchemy import func
     max_sort = db.query(func.max(AgeGroup.sortcode)).filter(
         AgeGroup.meetsid == meetsid, AgeGroup.swimeventid == target_event_id
