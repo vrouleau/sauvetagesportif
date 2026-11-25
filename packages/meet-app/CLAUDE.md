@@ -365,7 +365,7 @@ Splash reads our rows as-is on a shared Postgres database, so meet-app stores ev
 
 Heats: Splash's Results module crashes on a heat `racestatus` it doesn't use (meet-app used to write `4`) and on a NULL `heat.agegroupid`. meet-app stores what Splash stores: seeded = `2` (`HEAT_SEEDED`), validated = `5`, and every heat gets an age group (`fillHeatAgeGroups`: its members' lowest, else the event's first — meet-app itself never reads it). LXF import/new meet/reset keep Splash's own `bsglobal` keys (`clearMeetBsglobal`) — without `BSAPPLICATION`/DDL versions Splash refuses the database ("contains wrong data").
 
-### Seeding methods (`agegroup.finalseedtype` or `MEETVALUES.SEEDMETHOD`)
+### Seeding methods (`MEETVALUES.SEEDMETHOD`, meet-level only)
 - `0` = Circle seeding (FINA prelims — round-robin across heats)
 - `1` = Pyramid seeding (fastest in last heat — timed finals)
 - `2` = Straight seeding (fastest in heat 1)
@@ -385,9 +385,9 @@ Heats: Splash's Results module crashes on a heat `racestatus` it doesn't use (me
 | `QUALICOURSE` | I | 0=all courses, 1=same course only |
 
 ### Per-age-group overrides (agegroup table)
-- `finalseedtype` — overrides SEEDMETHOD
 - `fastheatcount` — overrides FASTHEATCOUNT
-- `heatcount` — minimum number of heats
+- `heatcount` — **number of finals (A, B, C…) on a FIN event only** (Splash hides it elsewhere; per age group; shown only on Finals in the UI; reset to 1 when an event stops being a FIN). Not a heat floor — `generateHeats` ignores it
+- `finalseedtype` — **Splash's "Sort order lanes in finals"** (confirmed against a Splash `.mdb`: 1 = by swum time, 3 = paranatation points; empty = default). NOT a heat seeding method — `generateHeats` ignores it, the UI has no control for it; we just carry the value through.
 
 ### Lane assignment
 Default: center-out (e.g., 5,6,4,7,3,8,2,1 for 8 lanes starting at 1).

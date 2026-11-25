@@ -79,9 +79,6 @@ const fr = {
       // Controls the seeding method used whenever heats are (re)generated for this age group —
       // not specifically how A/B finals get seeded (a separate mechanism), hence no "(finales)"
       // in the label, which was misleading.
-      seedMethod: 'Méthode de répartition',
-      seedMethodCircle: 'Circulaire (répartition uniforme)',
-      seedMethodPyramid: 'Pyramidale (rapides en dernière série)',
       moveToEvent: "Déplacer vers une autre épreuve",
       moveButton: 'Déplacer',
       moveNoTarget: '— choisir —',
@@ -434,9 +431,6 @@ const en = {
       designation: 'Designation',
       value: 'Value',
       numHeats: 'Number of heats',
-      seedMethod: 'Seeding method',
-      seedMethodCircle: 'Circle (even distribution)',
-      seedMethodPyramid: 'Pyramid (fastest in last heat)',
       moveToEvent: 'Move to another event',
       moveButton: 'Move',
       moveNoTarget: '— choose —',

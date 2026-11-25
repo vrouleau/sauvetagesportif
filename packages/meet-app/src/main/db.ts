@@ -17,6 +17,7 @@
 // along with Sauvetage Sportif. If not, see <https://www.gnu.org/licenses/>.
 
 import { assignLateBeachNumber } from './beachNumber'
+import { planQualification, FINAL_LETTERS } from './finalQualification'
 import { ROUND, phaseOfRound, roundFromPhase, roundFromRequest } from './rounds'
 import { COURSE, courseFromRequest, courseToName } from './courses'
 import { resolveMatchingAge, getSeasonYear } from './ageGroupRules'
@@ -1863,8 +1864,15 @@ export async function generateHeats(eventId?: number, sessionId?: number, inject
 
     // Get age groups for this event
     const ageGroups = db.prepare(`
-      SELECT agegroupid, heatcount, finalseedtype, fastheatcount FROM agegroup WHERE swimeventid=? ORDER BY sortcode
-    `).all(evId) as Array<{ agegroupid: number; heatcount: number | null; finalseedtype: number | null; fastheatcount: number | null }>
+      SELECT agegroupid, fastheatcount FROM agegroup WHERE swimeventid=? ORDER BY sortcode
+    `).all(evId) as Array<{ agegroupid: number; fastheatcount: number | null }>
+
+    // Heat distribution is meet-level only (MEETVALUES.SEEDMETHOD). agegroup.finalseedtype is
+    // Splash's "sort order lanes in finals" (1 = by swum time, 3 = paranatation points), NOT a
+    // seeding method, and agegroup.heatcount is the number of finals (A, B, C...) on a FIN event,
+    // not a minimum number of heats — neither is read here.
+    const seedType = globalSeedMethod
+    const minHeats = 1
 
     // Skip events that have any validated heats (racestatus = 5)
     const validatedCount = (db.prepare(
@@ -1884,9 +1892,7 @@ export async function generateHeats(eventId?: number, sessionId?: number, inject
     // Determine groups to process
     if (combineAgeGroups || ageGroups.length === 0) {
       // Combine all entries into one pool
-      const seedType = ageGroups.length > 0 ? (ageGroups[0].finalseedtype ?? globalSeedMethod) : globalSeedMethod
       const fastCount = ageGroups.length > 0 ? (ageGroups[0].fastheatcount ?? globalFastHeatCount) : globalFastHeatCount
-      const minHeats = ageGroups.length > 0 ? (ageGroups[0].heatcount ?? 1) : 1
 
       const entries = loadEntries(db, evId, null, seedBonusLast, seedExhLast, seedLateLast, qualiFrom, qualiTo, qualiCourse, eventCourse, isRelayEvent)
       if (entries.length > 0) {
@@ -1904,9 +1910,7 @@ export async function generateHeats(eventId?: number, sessionId?: number, inject
 
       if (!hasAgAssigned) {
         // Entries don't have agegroupid set — treat as combined (use first age group's config)
-        const seedType = ageGroups[0].finalseedtype ?? globalSeedMethod
         const fastCount = ageGroups[0].fastheatcount ?? globalFastHeatCount
-        const minHeats = ageGroups[0].heatcount ?? 1
 
         const entries = loadEntries(db, evId, null, seedBonusLast, seedExhLast, seedLateLast, qualiFrom, qualiTo, qualiCourse, eventCourse, isRelayEvent)
         if (entries.length > 0) {
@@ -1917,9 +1921,7 @@ export async function generateHeats(eventId?: number, sessionId?: number, inject
       } else {
         // Process each age group separately
         for (const ag of ageGroups) {
-          const seedType = ag.finalseedtype ?? globalSeedMethod
           const fastCount = ag.fastheatcount ?? globalFastHeatCount
-          const minHeats = ag.heatcount ?? 1
 
           const entries = loadEntries(db, evId, ag.agegroupid, seedBonusLast, seedExhLast, seedLateLast, qualiFrom, qualiTo, qualiCourse, eventCourse, isRelayEvent)
           if (entries.length > 0) {
@@ -2630,6 +2632,12 @@ export async function updateEvent(eventId: number, data: EventUpdate, injectedDb
   if (round === ROUND.TIM) {
     db.prepare(`UPDATE agegroup SET useformedals='T', useforscoring='T' WHERE swimeventid=?`).run(eventId)
   }
+  // heatcount is "number of finals" (A, B, C...) and only means something on a FIN event
+  // (Splash hides it everywhere else). Reset it when an event stops being one — e.g. a
+  // direct final that becomes a prelim — so no stale value lingers on a hidden field.
+  if (round !== undefined && round !== null && round !== ROUND.FIN) {
+    db.prepare(`UPDATE agegroup SET heatcount=1 WHERE swimeventid=?`).run(eventId)
+  }
 
   // Regenerate combined events when relevant fields change
   if (data.gender !== undefined || data.swimstyleid !== undefined) {
@@ -2746,11 +2754,13 @@ export interface FinalEventRow {
   sessionName: string
   prelimEventId: number
   laneCount: number
-  heatCount: number          // from agegroup.heatcount (number of final heats: A, B, C...)
+  heatCount: number          // highest agegroup.heatcount among the final's age groups (number of finals: A, B, C...)
   finalOrder: number         // 0=fast-to-slow (A=fastest, swum last), 1=slow-to-fast (A=slowest, swum first)
   qualByPlace: number | null
   /** Summary counts of current qualification state */
-  counts: Record<string, number>  // e.g. { A: 8, B: 8, R: 2 }
+  counts: Record<string, number>  // e.g. { A: 8, B: 8, R: 2 } (all age groups together)
+  /** True when some age group has more swimmers in one final than it holds (lanes / beach capacity) */
+  hasOverflow: boolean
 }
 
 export interface FinalCandidateRow {
@@ -2767,11 +2777,17 @@ export interface FinalCandidateRow {
   qualCode: string | null     // 'A' | 'B' | 'R' | null
   noAdvance: boolean
   finalFix: boolean
+  /** The swimmer's age group on the PRELIM — qualification is computed per age group */
+  ageGroupId: number | null
+  /** Number of finals (A, B, C…) of this swimmer's age group — that age group's heatcount on the Final */
+  finalHeatCount: number
+  /** Time shared across a final boundary (e.g. two swimmers for the last A place): needs a manual decision */
+  tied: boolean
 }
 
 /** Get all final events (round = ROUND.FIN) with their linked prelim event info */
-export function getFinalEvents(): FinalEventRow[] {
-  const db = getLocalDb()
+export function getFinalEvents(injectedDb?: ReturnType<typeof getLocalDb>): FinalEventRow[] {
+  const db = injectedDb ?? getLocalDb()
 
   const rows = db.prepare(`
     SELECT e.swimeventid, e.eventnumber, e.gender, e.preveventid, e.finalorder,
@@ -2793,9 +2809,9 @@ export function getFinalEvents(): FinalEventRow[] {
     relaycount: number | null
   }>
 
-  // Get heatcount from the first age group of each final event
+  // Highest heatcount among the final's age groups (each age group has its own number of finals)
   const heatCountStmt = db.prepare(`
-    SELECT heatcount FROM agegroup WHERE swimeventid = ? ORDER BY sortcode LIMIT 1
+    SELECT MAX(heatcount) AS heatcount FROM agegroup WHERE swimeventid = ?
   `)
 
   // Get qualification counts for each final event (grouped by qualcode letter)
@@ -2822,6 +2838,14 @@ export function getFinalEvents(): FinalEventRow[] {
     }
 
     const laneCount = (r.lanemax ?? 8) - (r.lanemin ?? 1) + 1
+    // Overflow is per (age group, final): two age groups each holding a full A are fine
+    const slots = finalSlotsPerHeat(db, r.swimeventid)
+    const perGroup = db.prepare(
+      isRelay
+        ? `SELECT agegroupid, qualcode, COUNT(*) AS cnt FROM relay WHERE swimeventid = ? AND qualcode IS NOT NULL AND qualcode <> '' GROUP BY agegroupid, qualcode`
+        : `SELECT agegroupid, qualcode, COUNT(*) AS cnt FROM swimresult WHERE swimeventid = ? AND qualcode IS NOT NULL GROUP BY agegroupid, qualcode`
+    ).all(r.swimeventid) as Array<{ agegroupid: number | null; qualcode: string; cnt: number }>
+    const hasOverflow = perGroup.some(g => g.qualcode !== 'R' && g.qualcode !== 'W' && Number(g.cnt) > slots)
     const meetTypeRowF = db.prepare(`SELECT data FROM bsglobal WHERE name = 'MEET_TYPE'`).get() as { data: string } | undefined
     const isBeachF = (meetTypeRowF?.data || 'POOL').toUpperCase() === 'BEACH'
     return {
@@ -2840,13 +2864,78 @@ export function getFinalEvents(): FinalEventRow[] {
       finalOrder: r.finalorder ?? 0,
       qualByPlace: r.qualbyplace,
       counts,
+      hasOverflow,
     }
   })
 }
 
-/** Get all candidates for a final event (prelim finishers ranked by time) */
-export function getFinalCandidates(finalEventId: number): FinalCandidateRow[] {
-  const db = getLocalDb()
+/** Swimmers/teams one final (A, B, C…) holds: session lanes for pool, event capacity for beach. */
+function finalSlotsPerHeat(db: ReturnType<typeof getLocalDb>, finalEventId: number): number {
+  const meetTypeRow = db.prepare(`SELECT data FROM bsglobal WHERE name = 'MEET_TYPE'`).get() as { data: string } | undefined
+  if ((meetTypeRow?.data || 'POOL').toUpperCase() === 'BEACH') {
+    const styleRow = db.prepare(`
+      SELECT e.maxentries, ss.distance FROM swimevent e
+      JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid
+      WHERE e.swimeventid = ?
+    `).get(finalEventId) as { maxentries: number | null; distance: number | null } | undefined
+    return styleRow?.maxentries ?? styleRow?.distance ?? 16
+  }
+  const evInfo = db.prepare(`
+    SELECT s.lanemin, s.lanemax FROM swimevent e
+    JOIN swimsession s ON e.swimsessionid = s.swimsessionid
+    WHERE e.swimeventid = ?
+  `).get(finalEventId) as { lanemin: number | null; lanemax: number | null } | undefined
+  return (evInfo?.lanemax ?? 8) - (evInfo?.lanemin ?? 1) + 1
+}
+
+/** The Final's own age group matching a prelim age group (same agemin/agemax; agegroup rows
+ *  are duplicated per event), falling back to the Final's first age group. No row is created. */
+function lookupFinalAgeGroup(
+  db: ReturnType<typeof getLocalDb>,
+  finalEventId: number,
+  prelimAgegroupId: number | null,
+): { agegroupid: number; heatcount: number | null } | undefined {
+  if (prelimAgegroupId != null) {
+    const prelimAg = db.prepare(`SELECT agemin, agemax FROM agegroup WHERE agegroupid = ?`).get(prelimAgegroupId) as
+      { agemin: number | null; agemax: number | null } | undefined
+    if (prelimAg) {
+      const matched = db.prepare(
+        `SELECT agegroupid, heatcount FROM agegroup WHERE swimeventid = ? AND agemin IS ? AND agemax IS ? ORDER BY sortcode LIMIT 1`
+      ).get(finalEventId, prelimAg.agemin, prelimAg.agemax) as { agegroupid: number; heatcount: number | null } | undefined
+      if (matched) return matched
+    }
+  }
+  return db.prepare(
+    `SELECT agegroupid, heatcount FROM agegroup WHERE swimeventid = ? ORDER BY sortcode LIMIT 1`
+  ).get(finalEventId) as { agegroupid: number; heatcount: number | null } | undefined
+}
+
+/** Fills prelimRank / finalHeatCount / tied on candidates already ordered by age group then time.
+ *  Qualification is per age group: each ranks on its own and has its own number of finals. */
+function applyAgeGroupRanking(
+  db: ReturnType<typeof getLocalDb>,
+  finalEventId: number,
+  rows: FinalCandidateRow[],
+): FinalCandidateRow[] {
+  const slots = finalSlotsPerHeat(db, finalEventId)
+  const groups = new Map<number | null, FinalCandidateRow[]>()
+  for (const r of rows) {
+    if (!groups.has(r.ageGroupId)) groups.set(r.ageGroupId, [])
+    groups.get(r.ageGroupId)!.push(r)
+  }
+  for (const [agId, members] of groups) {
+    const heatCount = lookupFinalAgeGroup(db, finalEventId, agId)?.heatcount ?? 1
+    const eligible = members.filter(m => !m.resultStatus && m.prelimTimeMs != null)
+    const plan = planQualification(eligible.map(m => m.prelimTimeMs), slots, heatCount)
+    members.forEach(m => { m.finalHeatCount = heatCount })
+    eligible.forEach((m, i) => { m.prelimRank = i + 1; m.tied = plan[i].tied })
+  }
+  return rows
+}
+
+/** Get all candidates for a final event (prelim finishers ranked by time within their age group) */
+export function getFinalCandidates(finalEventId: number, injectedDb?: ReturnType<typeof getLocalDb>): FinalCandidateRow[] {
+  const db = injectedDb ?? getLocalDb()
   const meetTypeRow3 = db.prepare(`SELECT data FROM bsglobal WHERE name = 'MEET_TYPE'`).get() as { data: string } | undefined
   const isBeachMeet3 = (meetTypeRow3?.data || 'POOL').toUpperCase() === 'BEACH'
 
@@ -2874,6 +2963,7 @@ export function getFinalCandidates(finalEventId: number): FinalCandidateRow[] {
     LEFT JOIN agegroup ag ON r.agegroupid = ag.agegroupid
     WHERE r.swimeventid = ?
     ORDER BY
+      COALESCE(ag.sortcode, 0),
       CASE WHEN r.resultstatus IS NOT NULL AND r.resultstatus > 0 THEN 1 ELSE 0 END,
       CASE WHEN r.swimtime IS NULL THEN 1 ELSE 0 END,
       r.swimtime ASC
@@ -2901,11 +2991,9 @@ export function getFinalCandidates(finalEventId: number): FinalCandidateRow[] {
     })
   }
 
-  // Build ranked list
-  let rank = 0
-  return prelimResults.map(r => {
+  // Build the list (ranked per age group afterwards)
+  const individualRows: FinalCandidateRow[] = prelimResults.map(r => {
     const status = decodeResultStatus(r.resultstatus)
-    if (!status && r.swimtime != null) rank++
     const qual = qualMap.get(r.athleteid)
     return {
       swimresultId: r.swimresultid,
@@ -2916,13 +3004,17 @@ export function getFinalCandidates(finalEventId: number): FinalCandidateRow[] {
       ageGroupName: r.agegroupname ?? '',
       prelimTime: isBeachMeet3 && r.swimtime != null ? String(Math.round(r.swimtime / 1000)) : (msToDisplay(r.swimtime) ?? null),
       prelimTimeMs: r.swimtime,
-      prelimRank: status ? 0 : (r.swimtime != null ? rank : 0),
+      prelimRank: 0,
       resultStatus: status,
       qualCode: qual?.qualCode ?? null,
       noAdvance: qual?.noAdvance ?? false,
       finalFix: qual?.finalFix ?? false,
+      ageGroupId: r.agegroupid,
+      finalHeatCount: 1,
+      tied: false,
     }
   })
+  return applyAgeGroupRanking(db, finalEventId, individualRows)
 }
 
 /** getFinalCandidates() relay branch — relay teams live in `relay`/`relayposition`,
@@ -2936,7 +3028,7 @@ function getFinalCandidatesRelay(
   isBeachMeet: boolean,
 ): FinalCandidateRow[] {
   const prelimTeams = db.prepare(`
-    SELECT r.relayid, r.clubid, r.teamnumber, r.name AS teamname, r.swimtime, r.resultstatus,
+    SELECT r.relayid, r.clubid, r.teamnumber, r.name AS teamname, r.swimtime, r.resultstatus, r.agegroupid,
            c.code AS clubcode,
            COALESCE(NULLIF(ag.name, ''), CASE WHEN ag.agemin IS NOT NULL THEN CAST(ag.agemin AS TEXT) || '-' || CASE WHEN ag.agemax IS NULL OR ag.agemax < 0 OR ag.agemax >= 99 THEN '+' ELSE CAST(ag.agemax AS TEXT) END END, '???') AS agegroupname
     FROM relay r
@@ -2944,12 +3036,13 @@ function getFinalCandidatesRelay(
     LEFT JOIN agegroup ag ON r.agegroupid = ag.agegroupid
     WHERE r.swimeventid = ?
     ORDER BY
+      COALESCE(ag.sortcode, 0),
       CASE WHEN r.resultstatus IS NOT NULL AND r.resultstatus > 0 THEN 1 ELSE 0 END,
       CASE WHEN r.swimtime IS NULL THEN 1 ELSE 0 END,
       r.swimtime ASC
   `).all(prelimEventId) as Array<{
     relayid: number; clubid: number | null; teamnumber: number | null; teamname: string | null
-    swimtime: number | null; resultstatus: number | null
+    swimtime: number | null; resultstatus: number | null; agegroupid: number | null
     clubcode: string | null; agegroupname: string | null
   }>
 
@@ -2987,10 +3080,8 @@ function getFinalCandidatesRelay(
     })
   }
 
-  let rank = 0
-  return prelimTeams.map(t => {
+  const relayRows: FinalCandidateRow[] = prelimTeams.map(t => {
     const status = decodeResultStatus(t.resultstatus)
-    if (!status && t.swimtime != null) rank++
     const qual = qualMap.get(`${t.clubid}:${t.teamnumber}`)
     const teamName = t.teamname || membersByRelay.get(t.relayid)?.join('/') || ''
     return {
@@ -3002,13 +3093,17 @@ function getFinalCandidatesRelay(
       ageGroupName: t.agegroupname ?? '',
       prelimTime: isBeachMeet && t.swimtime != null ? String(Math.round(t.swimtime / 1000)) : (msToDisplay(t.swimtime) ?? null),
       prelimTimeMs: t.swimtime,
-      prelimRank: status ? 0 : (t.swimtime != null ? rank : 0),
+      prelimRank: 0,
       resultStatus: status,
       qualCode: qual?.qualCode ?? null,
       noAdvance: qual?.noAdvance ?? false,
       finalFix: qual?.finalFix ?? false,
+      ageGroupId: t.agegroupid,
+      finalHeatCount: 1,
+      tied: false,
     }
   })
+  return applyAgeGroupRanking(db, finalEventId, relayRows)
 }
 
 /** Resolve the final event's own agegroup matching the prelim's category (agegroup
@@ -3042,7 +3137,7 @@ function resolveFinalAgeGroupId(
   if (!prelimAg) return null
 
   // Final event has no agegroup rows at all — create one from the prelim's category
-  const newId = nextId('agegroup', 'agegroupid')
+  const newId = nextId('agegroup', 'agegroupid', db)
   db.prepare(
     `INSERT INTO agegroup (agegroupid, swimeventid, name, agemin, agemax, gender, heatcount, sortcode,
        useformedals, useforscoring, allofficial, agebytotal, forceprelim, seedwithtsonly)
@@ -3057,8 +3152,9 @@ export function setQualification(
   athleteId: number,
   qualCode: string | null,
   noAdvance: boolean = false,
+  injectedDb?: ReturnType<typeof getLocalDb>,
 ): void {
-  const db = getLocalDb()
+  const db = injectedDb ?? getLocalDb()
 
   if (eventIsRelay(db, finalEventId)) {
     setQualificationRelay(db, finalEventId, athleteId, qualCode, noAdvance)
@@ -3119,7 +3215,7 @@ export function setQualification(
 
     const agegroupId = resolveFinalAgeGroupId(db, finalEventId, prelimAgId)
 
-    const id = nextId('swimresult', 'swimresultid')
+    const id = nextId('swimresult', 'swimresultid', db)
     db.prepare(
       `INSERT INTO swimresult (swimresultid, athleteid, swimeventid, entrytime, qualcode, noadvance, agegroupid, usetimetype)
        VALUES (?, ?, ?, ?, ?, ?, ?, 0)`
@@ -3156,7 +3252,7 @@ function setQualificationRelay(
 
   const agegroupId = resolveFinalAgeGroupId(db, finalEventId, prelim.agegroupid)
 
-  const relayId = nextId('relay', 'relayid')
+  const relayId = nextId('relay', 'relayid', db)
   db.prepare(
     `INSERT INTO relay (relayid, clubid, swimeventid, agegroupid, teamnumber, name, entrytime, qualcode, noadvance, usetimetype)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`
@@ -3174,78 +3270,57 @@ function setQualificationRelay(
   }
 }
 
-/** Auto-qualify top N athletes into Final A, next N into Final B, etc. based on heatcount, plus 2 reserves */
-export function autoQualify(finalEventId: number): { counts: Record<string, number> } {
-  const db = getLocalDb()
+/**
+ * Auto-qualify, **per age group** (as Splash does): each age group's swimmers are ranked on their
+ * own, the fastest `lanes` go to A, the next `lanes` to B, … up to that age group's own
+ * `heatcount` finals, then 2 reserves. A time shared across a boundary (e.g. two swimmers tied
+ * for the last A place) is left unqualified and counted in `ties` for the organizer to decide.
+ */
+export function autoQualify(
+  finalEventId: number,
+  injectedDb?: ReturnType<typeof getLocalDb>,
+): { counts: Record<string, number>; ties: number } {
+  const db = injectedDb ?? getLocalDb()
 
-  // Check if beach meet
-  const meetTypeRow4 = db.prepare(`SELECT data FROM bsglobal WHERE name = 'MEET_TYPE'`).get() as { data: string } | undefined
-  const isBeachMeet4 = (meetTypeRow4?.data || 'POOL').toUpperCase() === 'BEACH'
-
-  // Get lane count and heat count from event + age group
-  const evInfo = db.prepare(`
-    SELECT s.lanemin, s.lanemax, e.qualbyplace
-    FROM swimevent e
-    JOIN swimsession s ON e.swimsessionid = s.swimsessionid
-    WHERE e.swimeventid = ?
-  `).get(finalEventId) as { lanemin: number | null; lanemax: number | null; qualbyplace: number | null } | undefined
-
-  const hcRow = db.prepare(
-    `SELECT heatcount FROM agegroup WHERE swimeventid = ? ORDER BY sortcode LIMIT 1`
-  ).get(finalEventId) as { heatcount: number | null } | undefined
-
-  // For beach: capacity per heat comes from swimstyle.distance
-  let slotsPerHeat: number
-  if (isBeachMeet4) {
-    const styleRow = db.prepare(`
-      SELECT e.maxentries, ss.distance FROM swimevent e
-      JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid
-      WHERE e.swimeventid = ?
-    `).get(finalEventId) as { maxentries: number | null; distance: number | null } | undefined
-    slotsPerHeat = styleRow?.maxentries ?? styleRow?.distance ?? 16
-  } else {
-    slotsPerHeat = (evInfo?.lanemax ?? 8) - (evInfo?.lanemin ?? 1) + 1
-  }
-
-  const heatCount = hcRow?.heatcount ?? 1
+  const slotsPerHeat = finalSlotsPerHeat(db, finalEventId)
   const reserveCount = 2
 
-  // Heat labels: A, B, C, D, ...
-  const HEAT_LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
-
-  // Get candidates sorted by prelim time
-  const candidates = getFinalCandidates(finalEventId)
-  const eligible = candidates.filter(c => !c.resultStatus && c.prelimTimeMs != null)
+  // Candidates come ordered by age group then time; only ranked finishers qualify
+  const candidates = getFinalCandidates(finalEventId, db)
+  const groups = new Map<number | null, FinalCandidateRow[]>()
+  for (const c of candidates) {
+    if (c.resultStatus || c.prelimTimeMs == null) continue
+    if (!groups.has(c.ageGroupId)) groups.set(c.ageGroupId, [])
+    groups.get(c.ageGroupId)!.push(c)
+  }
 
   const counts: Record<string, number> = {}
+  let ties = 0
 
-  const updateOrCreate = db.transaction(() => {
-    for (let i = 0; i < eligible.length; i++) {
-      const c = eligible[i]
-      let qualCode: string | null = null
-
-      const heatIndex = Math.floor(i / slotsPerHeat)
-      if (heatIndex < heatCount) {
-        qualCode = HEAT_LETTERS[heatIndex]
-        counts[qualCode] = (counts[qualCode] ?? 0) + 1
-      } else if (i < heatCount * slotsPerHeat + reserveCount) {
-        qualCode = 'R'
-        counts['R'] = (counts['R'] ?? 0) + 1
-      } else {
-        break // remaining athletes get no qualification
-      }
-
-      setQualification(finalEventId, c.athleteId, qualCode, false)
+  const run = db.transaction(() => {
+    for (const members of groups.values()) {
+      const heatCount = members[0].finalHeatCount
+      const plan = planQualification(members.map(m => m.prelimTimeMs), slotsPerHeat, heatCount, reserveCount)
+      members.forEach((m, i) => {
+        const { code, tied } = plan[i]
+        if (tied) ties++
+        if (code) {
+          counts[code] = (counts[code] ?? 0) + 1
+          setQualification(finalEventId, m.athleteId, code, false, db)
+        } else if (m.qualCode) {
+          // A tie, or no longer within the finals (e.g. heatcount lowered): clear the stale code
+          setQualification(finalEventId, m.athleteId, null, m.noAdvance, db)
+        }
+      })
     }
   })
-
-  updateOrCreate()
-  return { counts }
+  run()
+  return { counts, ties }
 }
 
 /** Clear final heats (delete heats, reset lane assignments) but keep qualcode */
-export function clearFinalSeeding(finalEventId: number): void {
-  const db = getLocalDb()
+export function clearFinalSeeding(finalEventId: number, injectedDb?: ReturnType<typeof getLocalDb>): void {
+  const db = injectedDb ?? getLocalDb()
   db.prepare(`DELETE FROM heat WHERE swimeventid = ?`).run(finalEventId)
   if (eventIsRelay(db, finalEventId)) {
     db.prepare(`UPDATE relay SET heatid = NULL, lane = NULL WHERE swimeventid = ?`).run(finalEventId)
@@ -3255,8 +3330,11 @@ export function clearFinalSeeding(finalEventId: number): void {
 }
 
 /** Seed finals: create heats from qualified athletes using pyramid seeding (center-out) */
-export function seedFinals(finalEventId: number): { ok: boolean; heatsCreated: number; assigned: number; overflow: number } {
-  const db = getLocalDb()
+export function seedFinals(
+  finalEventId: number,
+  injectedDb?: ReturnType<typeof getLocalDb>,
+): { ok: boolean; heatsCreated: number; assigned: number; overflow: number } {
+  const db = injectedDb ?? getLocalDb()
 
   // Check if beach meet
   const meetTypeRow5 = db.prepare(`SELECT data FROM bsglobal WHERE name = 'MEET_TYPE'`).get() as { data: string } | undefined
@@ -3289,87 +3367,79 @@ export function seedFinals(finalEventId: number): { ok: boolean; heatsCreated: n
     capacity = laneCount
   }
 
-  // Get heat count from age group
-  const hcRow = db.prepare(
-    `SELECT heatcount FROM agegroup WHERE swimeventid = ? ORDER BY sortcode LIMIT 1`
-  ).get(finalEventId) as { heatcount: number | null } | undefined
-  const heatCount = hcRow?.heatcount ?? 1
-
   const isRelay = eventIsRelay(db, finalEventId)
 
   // Clear existing heats
-  clearFinalSeeding(finalEventId)
+  clearFinalSeeding(finalEventId, db)
 
-  // Heat labels: A, B, C, D, ...
-  const HEAT_LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
-
-  // Get qualified athletes for each heat letter, sorted by entry time
   let heatsCreated = 0
   let assigned = 0
   let overflow = 0
+  let heatNumber = 0
 
-  // Determine swimming order based on finalOrder:
-  // finalOrder=0 (fast-to-slow): A is fastest, swum LAST → heat numbers: A gets highest heatnumber
-  // finalOrder=1 (slow-to-fast): A is slowest, swum FIRST → heat numbers: A gets lowest heatnumber
-  const heatLetters: string[] = []
-  for (let i = 0; i < heatCount; i++) {
-    heatLetters.push(HEAT_LETTERS[i])
-  }
+  // One set of finals (A, B, C…) per age group, each with its own heatcount, so one age group's
+  // A final is never mixed into another's. Rows with no / unknown age group go with the first.
+  const finalAgeGroups = db.prepare(
+    `SELECT agegroupid, heatcount FROM agegroup WHERE swimeventid = ? ORDER BY sortcode`
+  ).all(finalEventId) as Array<{ agegroupid: number | null; heatcount: number | null }>
+  const groups = finalAgeGroups.length > 0 ? finalAgeGroups : [{ agegroupid: null, heatcount: 1 }]
+  const knownIds = new Set(finalAgeGroups.map(g => g.agegroupid))
 
-  // Determine swimming order based on finalOrder:
-  // finalOrder=2 (slow-first): slowest final swum first, A (fastest) swum LAST → standard championship
-  // finalOrder=1 (fast-first): A (fastest) swum FIRST, slowest final swum last
-  const swimOrder = finalOrder === 1 ? heatLetters : [...heatLetters].reverse()
+  const updateEntry = db.prepare(
+    isRelay
+      ? `UPDATE relay SET heatid = ?, lane = ? WHERE relayid = ?`
+      : `UPDATE swimresult SET heatid = ?, lane = ? WHERE swimresultid = ?`
+  )
+  const qualifiedStmt = db.prepare(
+    isRelay
+      ? `SELECT relayid AS swimresultid, entrytime, agegroupid FROM relay
+         WHERE swimeventid = ? AND qualcode = ?
+         ORDER BY CASE WHEN entrytime IS NULL THEN 1 ELSE 0 END, entrytime ASC`
+      : `SELECT swimresultid, entrytime, agegroupid FROM swimresult
+         WHERE swimeventid = ? AND qualcode = ?
+         ORDER BY CASE WHEN entrytime IS NULL THEN 1 ELSE 0 END, entrytime ASC`
+  )
 
-  for (let swimIdx = 0; swimIdx < swimOrder.length; swimIdx++) {
-    const letter = swimOrder[swimIdx]
-    const heatNumber = swimIdx + 1 // heat 1 is swum first
+  for (let gi = 0; gi < groups.length; gi++) {
+    const g = groups[gi]
+    const letters = FINAL_LETTERS.slice(0, g.heatcount ?? 1).split('')
+    // finalOrder=2 (slow-first): slowest final swum first, A (fastest) swum LAST → standard championship
+    // finalOrder=1 (fast-first): A (fastest) swum FIRST, slowest final swum last
+    const swimOrder = finalOrder === 1 ? letters : [...letters].reverse()
 
-    const qualified = db.prepare(
-      isRelay
-        ? `SELECT relayid AS swimresultid, entrytime FROM relay
-           WHERE swimeventid = ? AND qualcode = ?
-           ORDER BY CASE WHEN entrytime IS NULL THEN 1 ELSE 0 END, entrytime ASC`
-        : `SELECT swimresultid, entrytime FROM swimresult
-           WHERE swimeventid = ? AND qualcode = ?
-           ORDER BY CASE WHEN entrytime IS NULL THEN 1 ELSE 0 END, entrytime ASC`
-    ).all(finalEventId, letter) as Array<{ swimresultid: number; entrytime: number | null }>
+    for (const letter of swimOrder) {
+      const qualified = (qualifiedStmt.all(finalEventId, letter) as Array<{ swimresultid: number; entrytime: number | null; agegroupid: number | null }>)
+        .filter(q => q.agegroupid === g.agegroupid || (gi === 0 && (q.agegroupid == null || !knownIds.has(q.agegroupid))))
 
-    if (qualified.length === 0) continue
+      if (qualified.length === 0) continue
 
-    const heatId = nextId('heat', 'heatid')
-    heatsCreated++
+      heatNumber++
+      const heatId = nextId('heat', 'heatid', db)
+      heatsCreated++
 
-    db.prepare(
-      `INSERT INTO heat (heatid, swimeventid, heatnumber, racestatus, sortcode, finalcode)
-       VALUES (?, ?, ?, ${HEAT_SEEDED}, ?, ?)`
-    ).run(heatId, finalEventId, heatNumber, heatNumber * 100, letter)
+      db.prepare(
+        `INSERT INTO heat (heatid, swimeventid, heatnumber, racestatus, sortcode, finalcode)
+         VALUES (?, ?, ?, ${HEAT_SEEDED}, ?, ?)`
+      ).run(heatId, finalEventId, heatNumber, heatNumber * 100, letter)
 
-    // Lane assignment: center-out for pool, sequential for beach
-    const maxAssign = Math.min(qualified.length, capacity)
-    if (qualified.length > capacity) {
-      overflow += qualified.length - capacity
-    }
-
-    const updateEntry = db.prepare(
-      isRelay
-        ? `UPDATE relay SET heatid = ?, lane = ? WHERE relayid = ?`
-        : `UPDATE swimresult SET heatid = ?, lane = ? WHERE swimresultid = ?`
-    )
-
-    if (isBeachMeet5) {
-      // Beach: sequential numbering (no lanes)
-      for (let i = 0; i < maxAssign; i++) {
-        updateEntry.run(heatId, i + 1, qualified[i].swimresultid)
-        assigned++
+      // Lane assignment: center-out for pool, sequential for beach
+      const maxAssign = Math.min(qualified.length, capacity)
+      if (qualified.length > capacity) {
+        overflow += qualified.length - capacity
       }
-    } else {
-      // Pool: center-out lane assignment
-      const laneOrder = customLaneOrder ?? buildCenterOutLanes(laneMin, laneMax)
-      for (let i = 0; i < maxAssign; i++) {
-        const lane = laneOrder[i]
-        updateEntry.run(heatId, lane, qualified[i].swimresultid)
-        assigned++
+
+      if (isBeachMeet5) {
+        // Beach: sequential numbering (no lanes)
+        for (let i = 0; i < maxAssign; i++) {
+          updateEntry.run(heatId, i + 1, qualified[i].swimresultid)
+          assigned++
+        }
+      } else {
+        const laneOrder = customLaneOrder ?? buildCenterOutLanes(laneMin, laneMax)
+        for (let i = 0; i < maxAssign; i++) {
+          updateEntry.run(heatId, laneOrder[i], qualified[i].swimresultid)
+          assigned++
+        }
       }
     }
   }

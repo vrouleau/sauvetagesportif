@@ -36,6 +36,7 @@ interface FinalEvent {
   finalOrder: number
   qualByPlace: number | null
   counts: Record<string, number>
+  hasOverflow: boolean
 }
 
 interface FinalCandidate {
@@ -52,6 +53,9 @@ interface FinalCandidate {
   qualCode: string | null
   noAdvance: boolean
   finalFix: boolean
+  ageGroupId: number | null
+  finalHeatCount: number
+  tied: boolean
 }
 
 const HEAT_LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
@@ -164,7 +168,15 @@ export default function FinalsPage({ refreshKey = 0, meetType = 'POOL' }: { refr
     const result = await api.autoQualify(selectedEventId)
     const counts = (result.counts ?? {}) as Record<string, number>
     const total = Object.values(counts).reduce((s, n) => s + n, 0)
-    showStatus(lang === 'en' ? `Qualified ${total} athlete(s)` : `${total} athlète(s) qualifié(s)`)
+    const ties = Number(result.ties ?? 0)
+    showStatus(
+      (lang === 'en' ? `Qualified ${total} athlete(s)` : `${total} athlète(s) qualifié(s)`) +
+      (ties > 0
+        ? (lang === 'en'
+            ? ` — ⚠ ${ties} tied swimmer(s) (?) to decide`
+            : ` — ⚠ ${ties} athlète(s) à égalité (?) à départager`)
+        : '')
+    )
     const [updatedCandidates, updatedEvents] = await Promise.all([
       api.getFinalCandidates(selectedEventId),
       api.getFinalEvents(),
@@ -269,9 +281,7 @@ export default function FinalsPage({ refreshKey = 0, meetType = 'POOL' }: { refr
                       .map(([code, n]) => `${n}${code}`)
                       .join('+')
                   : ''
-                const hasOverflow = Object.entries(ev.counts).some(
-                  ([code, n]) => code !== 'R' && code !== 'W' && n > ev.laneCount
-                )
+                const hasOverflow = ev.hasOverflow
 
                 return (
                   <div
@@ -331,7 +341,7 @@ export default function FinalsPage({ refreshKey = 0, meetType = 'POOL' }: { refr
           {selectedEvent && (
             <span className="ml-auto text-xs text-gray-500">
               {!isBeach && <>{selectedEvent.laneCount} {lang === 'en' ? 'lanes' : 'couloirs'}{' · '}</>}
-              {selectedEvent.heatCount} {lang === 'en' ? 'heat(s)' : 'série(s)'}
+              {lang === 'en' ? 'up to ' : "jusqu'à "}{selectedEvent.heatCount} {lang === 'en' ? 'final(s) per category' : 'finale(s) par catégorie'}
               {' · '}
               {selectedEvent.finalOrder === 2
                 ? (lang === 'en' ? 'Slow first (A last)' : 'Lent en premier (A dernier)')
@@ -375,7 +385,7 @@ export default function FinalsPage({ refreshKey = 0, meetType = 'POOL' }: { refr
                   const showSeparator = selectedEvent &&
                     !isDisabled && c.prelimRank > 0 &&
                     c.prelimRank % selectedEvent.laneCount === 0 &&
-                    c.prelimRank <= selectedEvent.laneCount * selectedEvent.heatCount
+                    c.prelimRank <= selectedEvent.laneCount * c.finalHeatCount
 
                   return (
                     <tr
@@ -386,6 +396,14 @@ export default function FinalsPage({ refreshKey = 0, meetType = 'POOL' }: { refr
                     >
                       <td className="px-2 py-1 text-gray-500 font-mono">
                         {c.prelimRank > 0 ? c.prelimRank : ''}
+                        {c.tied && (
+                          <span
+                            title={lang === 'en'
+                              ? 'Same time across a final boundary — decide who goes where'
+                              : 'Même temps de part et d’autre d’une limite de finale — à départager'}
+                            className="ml-1 text-red-600 font-bold"
+                          >?</span>
+                        )}
                       </td>
                       <td className="px-2 py-1 font-medium">
                         {c.firstName ? `${c.lastName}, ${c.firstName}` : c.lastName}
@@ -419,7 +437,7 @@ export default function FinalsPage({ refreshKey = 0, meetType = 'POOL' }: { refr
                           }`}
                         >
                           <option value="">—</option>
-                          {selectedEvent && Array.from({ length: selectedEvent.heatCount }, (_, i) => {
+                          {selectedEvent && Array.from({ length: c.finalHeatCount }, (_, i) => {
                             const letter = HEAT_LETTERS[i]
                             return <option key={letter} value={letter}>{getQualLabel(letter, lang)}</option>
                           })}
