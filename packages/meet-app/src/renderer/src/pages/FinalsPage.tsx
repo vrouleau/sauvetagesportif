@@ -74,6 +74,7 @@ export default function FinalsPage({ refreshKey = 0, meetType = 'POOL' }: { refr
   const [events, setEvents] = useState<FinalEvent[]>([])
   const [selectedEventId, setSelectedEventId] = useState<number | null>(null)
   const [candidates, setCandidates] = useState<FinalCandidate[]>([])
+  const [selectedAgeGroupId, setSelectedAgeGroupId] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [expandedSessions, setExpandedSessions] = useState<Set<number>>(new Set())
   const [panelWidth, setPanelWidth] = useState(360)
@@ -140,6 +141,27 @@ export default function FinalsPage({ refreshKey = 0, meetType = 'POOL' }: { refr
 
   const selectedEvent = events.find(e => e.eventId === selectedEventId)
 
+  // Age groups of the selected event, in display order (candidates come sorted by age group).
+  // Qualification and seeding are per age group, so the page works on one at a time.
+  const ageGroups: Array<{ id: number | null; name: string; count: number; qualified: number }> = []
+  for (const c of candidates) {
+    let g = ageGroups.find(x => x.id === c.ageGroupId)
+    if (!g) { g = { id: c.ageGroupId, name: c.ageGroupName, count: 0, qualified: 0 }; ageGroups.push(g) }
+    g.count++
+    if (c.qualCode && c.qualCode !== 'R') g.qualified++
+  }
+  const activeAgIndex = Math.max(0, ageGroups.findIndex(g => g.id === selectedAgeGroupId))
+  const activeAg = ageGroups[activeAgIndex]
+  const multiAg = ageGroups.length > 1
+  // undefined = the whole event (single age group), otherwise just the active one
+  const scopeAgId: number | null | undefined = multiAg ? activeAg.id : undefined
+  const visibleCandidates = multiAg ? candidates.filter(c => c.ageGroupId === activeAg.id) : candidates
+
+  function stepAgeGroup(delta: number) {
+    const next = ageGroups[(activeAgIndex + delta + ageGroups.length) % ageGroups.length]
+    if (next) setSelectedAgeGroupId(next.id)
+  }
+
   // ── Actions ──────────────────────────────────────────────────────────────────
 
   async function handleQualChange(athleteId: number, value: string) {
@@ -165,7 +187,7 @@ export default function FinalsPage({ refreshKey = 0, meetType = 'POOL' }: { refr
     if (!selectedEventId) return
     const api = dbApi()
     if (!api) return
-    const result = await api.autoQualify(selectedEventId)
+    const result = await api.autoQualify(selectedEventId, scopeAgId)
     const counts = (result.counts ?? {}) as Record<string, number>
     const total = Object.values(counts).reduce((s, n) => s + n, 0)
     const ties = Number(result.ties ?? 0)
@@ -189,7 +211,7 @@ export default function FinalsPage({ refreshKey = 0, meetType = 'POOL' }: { refr
     if (!selectedEventId) return
     const api = dbApi()
     if (!api) return
-    await api.clearFinalSeeding(selectedEventId)
+    await api.clearFinalSeeding(selectedEventId, scopeAgId)
     showStatus(lang === 'en' ? 'Seeding cleared' : 'Séries effacées')
     const updatedEvents = await api.getFinalEvents()
     setEvents(updatedEvents)
@@ -199,7 +221,7 @@ export default function FinalsPage({ refreshKey = 0, meetType = 'POOL' }: { refr
     if (!selectedEventId) return
     const api = dbApi()
     if (!api) return
-    const result = await api.seedFinals(selectedEventId)
+    const result = await api.seedFinals(selectedEventId, scopeAgId)
     if (result.overflow > 0) {
       showStatus(
         lang === 'en'
@@ -286,7 +308,7 @@ export default function FinalsPage({ refreshKey = 0, meetType = 'POOL' }: { refr
                 return (
                   <div
                     key={ev.eventId}
-                    onClick={() => setSelectedEventId(ev.eventId)}
+                    onClick={() => { setSelectedEventId(ev.eventId); setSelectedAgeGroupId(null) }}
                     className={`flex items-center h-6 pl-7 pr-2 cursor-pointer border-b border-gray-100 transition-colors ${
                       isSelected ? 'bg-blue-100 border-l-2 border-l-blue-500' : 'hover:bg-gray-50'
                     }`}
@@ -315,6 +337,41 @@ export default function FinalsPage({ refreshKey = 0, meetType = 'POOL' }: { refr
 
       {/* Right panel: candidates table */}
       <div className="flex-1 flex flex-col overflow-hidden">
+        {/* Age group selector — qualification and seeding below act on this age group only */}
+        {selectedEventId && multiAg && (
+          <div className="flex items-center gap-1 px-3 py-1.5 border-b border-gray-200 bg-white shrink-0 text-xs">
+            <button
+              onClick={() => stepAgeGroup(-1)}
+              title={lang === 'en' ? 'Previous age group' : 'Catégorie précédente'}
+              className="px-2 py-0.5 border border-gray-300 bg-gray-100 hover:bg-gray-200"
+            >◀</button>
+            {ageGroups.map(g => (
+              <button
+                key={String(g.id)}
+                onClick={() => setSelectedAgeGroupId(g.id)}
+                className={`px-3 py-0.5 border ${
+                  g.id === activeAg.id
+                    ? 'bg-blue-600 text-white border-blue-700 font-semibold'
+                    : 'bg-gray-100 text-gray-700 border-gray-300 hover:bg-gray-200'
+                }`}
+              >
+                {g.name}
+                <span className={`ml-1.5 font-mono ${g.id === activeAg.id ? 'text-blue-100' : g.qualified > 0 ? 'text-green-700' : 'text-gray-400'}`}>
+                  {g.qualified}/{g.count}
+                </span>
+              </button>
+            ))}
+            <button
+              onClick={() => stepAgeGroup(1)}
+              title={lang === 'en' ? 'Next age group' : 'Catégorie suivante'}
+              className="px-2 py-0.5 border border-gray-300 bg-gray-100 hover:bg-gray-200"
+            >▶</button>
+            <span className="ml-2 text-gray-500">
+              {lang === 'en' ? 'Auto-qualify and seeding apply to this age group only' : 'Auto-qualification et séries : cette catégorie seulement'}
+            </span>
+          </div>
+        )}
+
         {/* Toolbar */}
         <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-200 bg-gray-50 shrink-0">
           <button
@@ -377,7 +434,7 @@ export default function FinalsPage({ refreshKey = 0, meetType = 'POOL' }: { refr
                 </tr>
               </thead>
               <tbody>
-                {candidates.map((c) => {
+                {visibleCandidates.map((c) => {
                   // EXH swimmers are excluded from automatic qualification (prelimRank stays 0)
                   // but can still be manually placed into a final heat.
                   const isDisabled = !!c.resultStatus && c.resultStatus !== 'EXH'

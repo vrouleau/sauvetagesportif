@@ -121,8 +121,8 @@ After generation, the heats tab shows:
 
 ### Print Timing Sheets
 
-1. Select a session or event
-2. Click **🖨 Fiches chrono** (Print Timing Sheets)
+1. Reports tab → choose the **Timing Sheets** report
+2. Tick the events (or sessions) to print, then click **Generate**
 3. A PDF is generated with 3 strips per page:
    - Full-width Code128 barcode (for scanner)
    - Event name, heat number, lane number
@@ -132,7 +132,7 @@ After generation, the heats tab shows:
 
 ### Blank Timing Sheets (late arrivals / missing sheets)
 
-1. Click **🖨 Fiches vierges** (Blank sheets) — one page of 3 strips with no barcode (print as many copies as needed)
+1. Reports tab → **Blank Timing Sheets** report → **Generate** — one page of 3 strips with no barcode (print as many copies as needed)
 2. The timer hand-writes **Épreuve** (event), **Série** (heat) and **Couloir** (lane) on the lines, then both times on the lines
 3. In the Scanner tab, capture the sheet with **📸 Capturer fiche vierge** (or the Space bar) — there is no barcode to detect
 4. In **Traitement**, Gemini reads event / heat / lane and the times; check the swimmer shown before accepting. If a prelim and its final share the event number, pick the round
@@ -285,7 +285,7 @@ For venues with electronic timing:
 | Create new pool meet | File → Nouveau meet piscine |
 | Import entries | File → Importer un fichier LENEX |
 | Generate heats | Séries tab → Générer séries |
-| Print timing sheets | Séries tab → 🖨 Fiches chrono |
+| Print timing sheets | Reports tab → Timing Sheets |
 | Enter times manually | Séries tab → Click lane cell → Type time |
 | Scan timing sheets | Scanner tab → Point camera at barcode |
 | Validate OCR times | Traitement tab → Click scan → Verify → Accepter |

@@ -121,8 +121,8 @@ Après la génération, l'onglet séries affiche :
 
 ### Imprimer les fiches chrono
 
-1. Sélectionner une session ou une épreuve
-2. Cliquer **🖨 Fiches chrono**
+1. Onglet **Rapports** → choisir le rapport **Fiches chrono**
+2. Cocher les épreuves (ou sessions) à imprimer, puis cliquer **Générer**
 3. Un PDF est généré avec 3 bandes par page :
    - Code-barres Code128 pleine largeur (pour le scanner)
    - Nom de l'épreuve, numéro de série, numéro de couloir
@@ -132,7 +132,7 @@ Après la génération, l'onglet séries affiche :
 
 ### Fiches chrono vierges (arrivées tardives / fiches manquantes)
 
-1. Cliquer **🖨 Fiches vierges** — une page de 3 bandes sans code-barres (imprimer le nombre de copies voulu)
+1. Onglet **Rapports** → rapport **Fiches chrono vierges** → **Générer** — une page de 3 bandes sans code-barres (imprimer le nombre de copies voulu)
 2. Le chronométreur écrit à la main **Épreuve**, **Série** et **Couloir** sur les lignes, puis les deux temps sur les lignes
 3. Au scanner, capturer la fiche avec **📸 Capturer fiche vierge** (ou la barre d'espace) — il n'y a pas de code-barres à détecter
 4. Dans **Traitement**, Gemini lit l'épreuve / série / couloir et les temps ; vérifier le nageur affiché avant d'accepter. Si une préliminaire et sa finale partagent le numéro d'épreuve, choisir la ronde
@@ -282,7 +282,7 @@ Pour les sites avec chronométrage électronique :
 | Créer un nouveau meet piscine | Fichier → Nouveau meet piscine |
 | Importer les inscriptions | Fichier → Importer un fichier LENEX |
 | Générer les séries | Onglet Séries → Générer séries |
-| Imprimer les fiches chrono | Onglet Séries → 🖨 Fiches chrono |
+| Imprimer les fiches chrono | Onglet Rapports → Fiches chrono |
 | Saisir les temps manuellement | Onglet Séries → Cliquer cellule → Taper le temps |
 | Numériser les fiches | Onglet Scanner → Pointer la caméra sur le code-barres |
 | Valider les temps OCR | Onglet Traitement → Cliquer scan → Vérifier → Accepter |

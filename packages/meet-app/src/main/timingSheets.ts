@@ -41,6 +41,8 @@ export interface TimingSheetLane {
   lane: number
   athleteName?: string
   clubCode?: string
+  /** Printed instead of "Série N" — final heats read "Finale A, 15-18" like Splash */
+  heatLabel?: string
 }
 
 export interface TimingSheetPage {
@@ -60,7 +62,8 @@ export function buildTimingSheetPages(
   lanes: number[],
   _judgeNumber?: number, // kept for API compat but ignored — both judges on same strip
   athleteNames?: Map<number, string>,
-  clubCodes?: Map<number, string>
+  clubCodes?: Map<number, string>,
+  heatLabel?: string
 ): TimingSheetPage[] {
   const pages: TimingSheetPage[] = []
   for (let i = 0; i < lanes.length; i += 3) {
@@ -73,6 +76,7 @@ export function buildTimingSheetPages(
       lane,
       athleteName: athleteNames?.get(lane),
       clubCode: clubCodes?.get(lane),
+      heatLabel,
     }))
     pages.push({ strips })
   }
@@ -218,7 +222,7 @@ export function generateTimingSheetsHtml(heatPages: TimingSheetPage[]): string {
           <div class="strip-header">
             <div class="strip-info">
               <div class="event-name">Épr. ${strip.eventNumber}: ${escHtml(strip.eventName)}</div>
-              <div class="details">Série ${strip.heatNumber} &nbsp;|&nbsp; Couloir ${strip.lane}</div>
+              <div class="details">${escHtml(strip.heatLabel ?? `Série ${strip.heatNumber}`)} &nbsp;|&nbsp; Couloir ${strip.lane}</div>
               ${strip.athleteName ? `<div class="athlete">${escHtml(strip.athleteName)}${strip.clubCode ? ` <span style="color:#666">(${escHtml(strip.clubCode)})</span>` : ''}</div>` : ''}
             </div>
           </div>

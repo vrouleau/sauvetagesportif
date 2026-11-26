@@ -293,7 +293,7 @@ time, `.smb` export carries them through correctly too.
 | `timing:get-scans-for-processing` | List scans by status filter |
 | `timing:run-ocr` | Run OCR engine on a scan (Gemini) |
 | `timing:validate-scan` | Accept times → write to swimresult |
-| `timing:generate-sheets` | Generate timing sheet HTML for a session |
+| `timing:generate-sheets` | Generate timing sheet HTML for a list of event ids (Reports tab) |
 | `timing:generate-blank-sheets` | Blank (hand-identified, no barcode) timing sheet HTML |
 | `timing:find-blank-targets` | Entries seeded at a blank sheet's event/heat/lane |
 | `timing:set-gemini-background` | Enable/disable background Gemini processing |
@@ -452,7 +452,7 @@ Athletes in beach meets get a unique jersey/bib identifier stored in `athlete.na
 ## Timing Sheet OCR Scanning
 
 ### Workflow
-1. **Print** timing sheets from HeatsPage ("🖨 Fiches chrono") — portrait, 3 strips/page
+1. **Print** timing sheets from the Reports tab ("Fiches chrono" — pick the events; "Fiches chrono vierges" for blank strips) — portrait, 3 strips/page
 2. **Scan** sheets in batch (Scanner tab) — camera reads Code128 barcode, captures image
 3. **Process** (Traitement tab) — Gemini reads times in background, operator validates/corrects
 4. **Accept** → writes `backuptime1`, `backuptime2`, averaged `swimtime` to `swimresult`
