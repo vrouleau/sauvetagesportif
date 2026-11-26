@@ -1527,7 +1527,8 @@ ipcMain.handle('file:new-meet', async (_event, meetType?: string, lang?: string)
 
     // Default new meets to combining age groups within a heat (small-meet-friendly;
     // still overridable per meet in Réglages du meet → Répartition des séries)
-    setMeetValues({ COMBINEAGEGROUPS: { type: 'B', value: 'T' } })
+    // and to at least 3 swimmers per heat (what Splash enforces)
+    setMeetValues({ COMBINEAGEGROUPS: { type: 'B', value: 'T' }, MINPERHEAT: { type: 'I', value: '3' } })
 
     // Seed DSQ codes from config/dsq-codes.json
     seedDsqCodes(db, type, lang || 'fr')

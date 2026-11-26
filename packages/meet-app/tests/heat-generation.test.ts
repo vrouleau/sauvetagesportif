@@ -237,6 +237,7 @@ describe.each(BACKENDS)('Heat generation [%s]', (kind) => {
       const heats = getHeats(1)
       expect(heats).toHaveLength(3)
       // Pyramid fills from last: heat 3 gets first 4 (fastest), heat 2 gets next 4, heat 1 gets remaining 2
+      // (minimum-per-heat switched off above; the default of 3 is covered below)
       const h3 = getAssignments(heats[2].heatid)
       const h2 = getAssignments(heats[1].heatid)
       const h1 = getAssignments(heats[0].heatid)
@@ -556,26 +557,37 @@ describe.each(BACKENDS)('Heat generation [%s]', (kind) => {
 
   // ── Minimum per heat tests ──────────────────────────────────────────────────
 
-  describe('minimum swimmers per heat', () => {
-    it('redistributes when a heat has fewer than minimum', async () => {
-      setLanes(1, 4)
-      setMeetValues('MINPERHEAT=I;3')
-      // 5 entries, 4 lanes → 2 heats (heat 1: 1 swimmer, heat 2: 4 swimmers)
-      // After min enforcement: heat 1 should get swimmers from heat 2
-      addEntries(1, 1, 5)
-
+  describe('minimum swimmers per heat (MINPERHEAT, default 3 like Splash)', () => {
+    const sizes = async (n: number) => {
+      addEntries(1, 1, n)
       await generateHeats(1, undefined, db)
+      return getHeats(1).map(h => getAssignments(h.heatid).length)
+    }
 
-      const heats = getHeats(1)
-      // Should still be 2 heats but more balanced
-      for (const h of heats) {
-        const assignments = getAssignments(h.heatid)
-        if (assignments.length > 0) {
-          // No heat should have fewer than 3 (unless total is less)
-          // With 5 entries: could be 3+2 or 2+3
-          expect(assignments.length).toBeGreaterThanOrEqual(2)
-        }
-      }
+    it('37 entries on 4 lanes → 3,3,3 then 4s (matches Splash; key unset = 3)', async () => {
+      setLanes(1, 4)
+      setMeetValues('SEEDMETHOD=I;1')
+      const s = await sizes(37)
+      expect(s.slice().sort((a, b) => a - b)).toEqual([3, 3, 3, 4, 4, 4, 4, 4, 4, 4])
+      expect(s[0]).toBe(3)
+    })
+
+    it('MINPERHEAT=0 switches the rule off', async () => {
+      setLanes(1, 4)
+      setMeetValues('MINPERHEAT=I;0\r\nSEEDMETHOD=I;1')
+      expect(Math.min(...(await sizes(13)))).toBe(1)
+    })
+
+    it('a larger MINPERHEAT is honoured', async () => {
+      setLanes(1, 8)
+      setMeetValues('MINPERHEAT=I;5\r\nSEEDMETHOD=I;1')
+      expect(Math.min(...(await sizes(17)))).toBeGreaterThanOrEqual(5)
+    })
+
+    it.each([0, 1, 2])('also for circle and straight seeding (seed %i)', async (seed) => {
+      setLanes(1, 4)
+      setMeetValues(`SEEDMETHOD=I;${seed}`)
+      expect(Math.min(...(await sizes(9)))).toBeGreaterThanOrEqual(3)
     })
   })
 
