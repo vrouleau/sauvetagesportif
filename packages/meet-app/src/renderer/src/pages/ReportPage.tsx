@@ -512,7 +512,7 @@ body { margin: 0; padding: 0; }
 </style>
 </head>
 <body>
-${rows.some(r => r.upCategorized) ? `<p class="legend"><b class="up">&#8593;</b> ${esc(tx('Surclassé : inscrit dans une catégorie plus âgée que celle de l'athlète', 'Up-categorized: entered in a category older than the athlete's own'))}</p>` : ''}${html}
+${html}
 </body>
 </html>`
 }
@@ -820,7 +820,7 @@ hr.ev-rule { border: none; border-top: 1px solid black; margin: 2px 0 4px 0; }
 </style>
 </head>
 <body>
-${html}
+${rows.some(r => r.upCategorized) ? `<p class="legend"><b class="up">&#8593;</b> ${esc(tx("Surclassé : inscrit dans une catégorie plus âgée que celle de l'athlète", "Up-categorized: entered in a category older than the athlete's own"))}</p>` : ''}${html}
 </body>
 </html>`
 }
