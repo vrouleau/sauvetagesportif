@@ -71,6 +71,7 @@
   "entries_print.born": "Born",
   "entries_print.event": "Event",
   "entries_print.category": "Category",
+  "entries_print.up_categorized": "Up-categorized: entered in a category older than the athlete's own",
   "entries_print.entry_time": "Entry time",
   "entries_print.team": "Team",
   "entries_print.members": "Members",

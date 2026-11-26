@@ -289,6 +289,8 @@ const fr = {
   },
   registration: {
     search: 'Rechercher...',
+    upCategorized: 'Surclassé',
+    upCategorizedHelp: "Catégorie plus âgée que celle de l'athlète ({own}). Splash refuse l'inscription si l'import se fait directement depuis le LXF.",
     delete: 'Supprimer',
     addAthlete: '+ Ajouter athlète',
     dupTitle: 'Athlète déjà existant',
@@ -641,6 +643,8 @@ const en = {
   },
   registration: {
     search: 'Search...',
+    upCategorized: 'Up-categorized',
+    upCategorizedHelp: "Category older than the athlete's own ({own}). Splash rejects the entry if the LXF is imported into it directly.",
     delete: 'Delete',
     addAthlete: '+ Add Athlete',
     dupTitle: 'Athlete already exists',

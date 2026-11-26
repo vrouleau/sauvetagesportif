@@ -28,7 +28,7 @@ entries pages pass `section` so each prints only what it shows.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from html import escape
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -37,7 +37,8 @@ from sqlalchemy.orm import Session, joinedload
 
 from ..database import get_db
 from ..i18n import Section
-from ..meet_config import resolve_meetsid, _get_meet_config, _get_meet_type
+from ..age_group_rules import natural_age_code
+from ..meet_config import resolve_meetsid, _get_meet_config, _get_meet_type, _get_config
 from ..models import BsGlobal, SwimEvent, SwimResult
 from ..models_team import Member, Relay, RelayPos, TeamClub
 from ..swimstyle_names import swimstyle_name_en
@@ -102,7 +103,18 @@ def build_entries_html(db: Session, meetsid: int | None, lang: str = "fr",
     show_indiv = section in ("all", "individual")
     show_relays = section in ("all", "relays")
     title = {"individual": txt["individual"], "relays": txt["relays"]}.get(section, txt["title"])
-    is_beach = _get_meet_type(db) == "BEACH"
+    meet_type = _get_meet_type(db)
+    is_beach = meet_type == "BEACH"
+    age_base = _get_config(db, "age_base_date")
+    season_year = int(age_base[:4]) if age_base else date.today().year
+    _order = ["10-", "11-12", "13-14", "15-18", "Open"]
+
+    def is_up_categorized(m: Member, code: str | None) -> bool:
+        """Entered in a category older than the athlete's own."""
+        if not m.birthdate or code not in _order:
+            return False
+        own = natural_age_code(m.birthdate.date(), meet_type, season_year)
+        return _order.index(code) > _order.index(own)
     meet_name = _get_meet_config(db, meetsid, "meet_name") or txt["title"]
 
     events = (
@@ -186,6 +198,11 @@ def build_entries_html(db: Session, meetsid: int | None, lang: str = "fr",
     clubs = db.query(TeamClub).filter(TeamClub.clubsid.in_(club_ids)).all() if club_ids else []
     clubs.sort(key=lambda c: (c.name or "").lower())
 
+    def up_mark(m: Member, code: str | None) -> str:
+        if not is_up_categorized(m, code):
+            return ""
+        return f' <span class="up" title="{escape(txt["up_categorized"])}">&#8593;</span>'
+
     def member_name(m: Member | None) -> str:
         if m is None:
             return "?"
@@ -251,10 +268,13 @@ def build_entries_html(db: Session, meetsid: int | None, lang: str = "fr",
                     time_td = "" if is_beach else f'<td class="time">{_fmt_time(reg.entrytime)}</td>'
                     parts.append(
                         f'<tr{cls}>{head}<td>{escape(_event_label(reg.event, txt, str(reg.swimeventid), lang))}</td>'
-                        f'<td>{escape(reg.age_code or "")}</td>{time_td}</tr>'
+                        f'<td>{escape(reg.age_code or "")}{up_mark(m, reg.age_code)}</td>{time_td}</tr>'
                     )
                 parts.append("</tbody>")
             parts.append("</table>")
+            if any(is_up_categorized(members[mid], r.age_code)
+                   for mid, rs in club_indiv.items() for r in rs):
+                parts.append(f'<p class="empty"><span class="up">&#8593;</span> {escape(txt["up_categorized"])}</p>')
 
         # Relays
         if not show_relays:
@@ -319,6 +339,7 @@ def build_entries_html(db: Session, meetsid: int | None, lang: str = "fr",
   tr.first td {{ border-top: 1px solid #ccc; }}
   tr, tbody.athlete {{ break-inside: avoid; page-break-inside: avoid; }}
   td.ath {{ font-weight: bold; }}
+  .up {{ font-weight: bold; color: #b45309; }}
   .time {{ text-align: right; white-space: nowrap; }}
   .print-btn {{ position: fixed; top: 12px; right: 12px; padding: 6px 14px; font-size: 12px; }}
   @media print {{ .print-btn {{ display: none; }} body {{ margin: 0; }} }}

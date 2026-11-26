@@ -71,6 +71,7 @@
   "entries_print.born": "Né(e)",
   "entries_print.event": "Épreuve",
   "entries_print.category": "Catégorie",
+  "entries_print.up_categorized": "Surclassé : inscrit dans une catégorie plus âgée que celle de l'athlète",
   "entries_print.entry_time": "Temps d'inscription",
   "entries_print.team": "Équipe",
   "entries_print.members": "Membres",
