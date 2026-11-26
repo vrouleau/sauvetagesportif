@@ -109,6 +109,11 @@ const fr = {
       designationCol: 'Désignation',
       valueCol: 'Valeur',
     },
+    sessionPanel: {
+      title: 'Session',
+      date: 'Date',
+      poolTiming: 'Piscine et chronométrage',
+    },
     meetPanel: {
       title: 'Compétition',
       general: 'Général',
@@ -462,6 +467,11 @@ const en = {
       duration: 'Duration',
       designationCol: 'Designation',
       valueCol: 'Value',
+    },
+    sessionPanel: {
+      title: 'Session',
+      date: 'Date',
+      poolTiming: 'Pool and timing',
     },
     meetPanel: {
       title: 'Competition',
