@@ -39,7 +39,7 @@ import { msToDisplay, displayToMs } from '@shared/logic/timeFormat'
  * For SQLite, we use ? placeholders as before.
  * Returns { clause, params } where clause is the SQL fragment and params are the bind values.
  */
-function inClause(ids: number[]): { clause: string; params: number[] } {
+export function inClause(ids: number[]): { clause: string; params: number[] } {
   if (isPgConnected()) {
     // Inline IDs for PG to avoid "could not determine data type" errors
     return { clause: ids.join(','), params: [] }
@@ -330,6 +330,9 @@ export interface HeatRow {
   id: number
   eventId: number
   number: number
+  /** Final heats only: 'A', 'B'… (Splash labels them "Finale A, 15-18") */
+  finalCode?: string
+  ageGroupName?: string
   status: 'empty' | 'assigned' | 'completed' | 'validated'
   entries: LaneEntryRow[]
 }
@@ -478,12 +481,15 @@ export async function getHeatListSessions(injectedDb?: ReturnType<typeof getLoca
   const { clause: eph, params: ephParams } = inClause(eventIds)
 
   const heats = db.prepare(`
-    SELECT heatid, heatnumber, name, racestatus, sortcode, swimeventid
-    FROM heat WHERE swimeventid IN (${eph})
-    ORDER BY swimeventid, sortcode, heatnumber
+    SELECT h.heatid, h.heatnumber, h.name, h.racestatus, h.sortcode, h.swimeventid, h.finalcode,
+           COALESCE(NULLIF(ag.name, ''), CASE WHEN ag.agemin IS NOT NULL THEN CAST(ag.agemin AS TEXT) || '-' || CASE WHEN ag.agemax IS NULL OR ag.agemax < 0 OR ag.agemax >= 99 THEN '+' ELSE CAST(ag.agemax AS TEXT) END END) AS agname
+    FROM heat h LEFT JOIN agegroup ag ON h.agegroupid = ag.agegroupid
+    WHERE h.swimeventid IN (${eph})
+    ORDER BY h.swimeventid, h.sortcode, h.heatnumber
   `).all(...ephParams) as Array<{
     heatid: number; heatnumber: number | null; name: string | null
     racestatus: number | null; sortcode: number | null; swimeventid: number
+    finalcode: string | null; agname: string | null
   }>
 
   const allHeatIds = heats.map(r => r.heatid)
@@ -657,6 +663,8 @@ export async function getHeatListSessions(injectedDb?: ReturnType<typeof getLoca
       id: h.heatid,
       eventId: h.swimeventid,
       number: h.heatnumber ?? 0,
+      finalCode: h.finalcode || undefined,
+      ageGroupName: h.agname || undefined,
       status: decodeHeatStatus(h.racestatus),
       entries: entryMap.get(h.heatid) ?? [],
     })
@@ -3309,6 +3317,8 @@ function setQualificationRelay(
 export function autoQualify(
   finalEventId: number,
   injectedDb?: ReturnType<typeof getLocalDb>,
+  /** Only this age group (its id on the PRELIM, as in FinalCandidateRow.ageGroupId); omitted = all */
+  prelimAgeGroupId?: number | null,
 ): { counts: Record<string, number>; ties: number } {
   const db = injectedDb ?? getLocalDb()
 
@@ -3320,6 +3330,7 @@ export function autoQualify(
   const groups = new Map<number | null, FinalCandidateRow[]>()
   for (const c of candidates) {
     if (c.resultStatus || c.prelimTimeMs == null) continue
+    if (prelimAgeGroupId !== undefined && c.ageGroupId !== prelimAgeGroupId) continue
     if (!groups.has(c.ageGroupId)) groups.set(c.ageGroupId, [])
     groups.get(c.ageGroupId)!.push(c)
   }
@@ -3349,8 +3360,30 @@ export function autoQualify(
 }
 
 /** Clear final heats (delete heats, reset lane assignments) but keep qualcode */
-export function clearFinalSeeding(finalEventId: number, injectedDb?: ReturnType<typeof getLocalDb>): void {
+export function clearFinalSeeding(
+  finalEventId: number,
+  injectedDb?: ReturnType<typeof getLocalDb>,
+  /** Only this age group (its id on the PRELIM); omitted = the whole event */
+  prelimAgeGroupId?: number | null,
+): void {
   const db = injectedDb ?? getLocalDb()
+  if (prelimAgeGroupId !== undefined) {
+    const finalAgId = lookupFinalAgeGroup(db, finalEventId, prelimAgeGroupId)?.agegroupid ?? null
+    const table = eventIsRelay(db, finalEventId) ? 'relay' : 'swimresult'
+    const idCol = table === 'relay' ? 'relayid' : 'swimresultid'
+    const rows = db.prepare(
+      `SELECT ${idCol} AS id, heatid FROM ${table} WHERE swimeventid = ? AND heatid IS NOT NULL AND agegroupid IS ?`
+    ).all(finalEventId, finalAgId) as Array<{ id: number; heatid: number }>
+    const touched = new Set(rows.map(r => r.heatid))
+    const upd = db.prepare(`UPDATE ${table} SET heatid = NULL, lane = NULL WHERE ${idCol} = ?`)
+    for (const r of rows) upd.run(r.id)
+    // Drop the heats this age group emptied; other age groups' heats stay as they are
+    for (const heatId of touched) {
+      const left = db.prepare(`SELECT COUNT(*) AS c FROM ${table} WHERE heatid = ?`).get(heatId) as { c: number | string }
+      if (Number(left.c) === 0) db.prepare(`DELETE FROM heat WHERE heatid = ?`).run(heatId)
+    }
+    return
+  }
   db.prepare(`DELETE FROM heat WHERE swimeventid = ?`).run(finalEventId)
   if (eventIsRelay(db, finalEventId)) {
     db.prepare(`UPDATE relay SET heatid = NULL, lane = NULL WHERE swimeventid = ?`).run(finalEventId)
@@ -3363,6 +3396,8 @@ export function clearFinalSeeding(finalEventId: number, injectedDb?: ReturnType<
 export function seedFinals(
   finalEventId: number,
   injectedDb?: ReturnType<typeof getLocalDb>,
+  /** Only this age group (its id on the PRELIM); the others' heats are left untouched. Omitted = all */
+  prelimAgeGroupId?: number | null,
 ): { ok: boolean; heatsCreated: number; assigned: number; overflow: number } {
   const db = injectedDb ?? getLocalDb()
 
@@ -3399,13 +3434,15 @@ export function seedFinals(
 
   const isRelay = eventIsRelay(db, finalEventId)
 
-  // Clear existing heats
-  clearFinalSeeding(finalEventId, db)
+  // Clear existing heats (just the chosen age group's when one is given)
+  clearFinalSeeding(finalEventId, db, prelimAgeGroupId)
 
   let heatsCreated = 0
   let assigned = 0
   let overflow = 0
-  let heatNumber = 0
+  let heatNumber = (db.prepare(`SELECT COALESCE(MAX(heatnumber), 0) AS m FROM heat WHERE swimeventid = ?`)
+    .get(finalEventId) as { m: number | string }).m as number
+  heatNumber = Number(heatNumber)
 
   // One set of finals (A, B, C…) per age group, each with its own heatcount, so one age group's
   // A final is never mixed into another's. Rows with no / unknown age group go with the first.
@@ -3414,6 +3451,9 @@ export function seedFinals(
   ).all(finalEventId) as Array<{ agegroupid: number | null; heatcount: number | null }>
   const groups = finalAgeGroups.length > 0 ? finalAgeGroups : [{ agegroupid: null, heatcount: 1 }]
   const knownIds = new Set(finalAgeGroups.map(g => g.agegroupid))
+  const onlyAgId = prelimAgeGroupId !== undefined
+    ? (lookupFinalAgeGroup(db, finalEventId, prelimAgeGroupId)?.agegroupid ?? null)
+    : undefined
 
   const updateEntry = db.prepare(
     isRelay
@@ -3432,6 +3472,7 @@ export function seedFinals(
 
   for (let gi = 0; gi < groups.length; gi++) {
     const g = groups[gi]
+    if (onlyAgId !== undefined && g.agegroupid !== onlyAgId) continue
     const letters = FINAL_LETTERS.slice(0, g.heatcount ?? 1).split('')
     // finalOrder=2 (slow-first): slowest final swum first, A (fastest) swum LAST → standard championship
     // finalOrder=1 (fast-first): A (fastest) swum FIRST, slowest final swum last
@@ -3450,7 +3491,7 @@ export function seedFinals(
       db.prepare(
         `INSERT INTO heat (heatid, swimeventid, heatnumber, racestatus, sortcode, finalcode)
          VALUES (?, ?, ?, ${HEAT_SEEDED}, ?, ?)`
-      ).run(heatId, finalEventId, heatNumber, heatNumber * 100, letter)
+      ).run(heatId, finalEventId, heatNumber, (gi * 100 + swimOrder.indexOf(letter) + 1) * 100, letter)
 
       // Lane assignment: center-out for pool, sequential for beach
       const maxAssign = Math.min(qualified.length, capacity)
@@ -3475,6 +3516,14 @@ export function seedFinals(
   }
 
   fillHeatAgeGroups(db, finalEventId)
+
+  // Seeding one age group at a time: keep heat numbers 1..n in age-group order (sortcode)
+  if (onlyAgId !== undefined) {
+    const all = db.prepare(`SELECT heatid FROM heat WHERE swimeventid = ? ORDER BY sortcode, heatnumber`)
+      .all(finalEventId) as Array<{ heatid: number }>
+    const renum = db.prepare(`UPDATE heat SET heatnumber = ? WHERE heatid = ?`)
+    all.forEach((h, i) => renum.run(i + 1, h.heatid))
+  }
   return { ok: overflow === 0, heatsCreated, assigned, overflow }
 }
 

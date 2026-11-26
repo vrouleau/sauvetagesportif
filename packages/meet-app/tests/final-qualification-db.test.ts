@@ -26,7 +26,7 @@ vi.mock('../src/main/connectionManager', () => ({
   closeDb: () => {},
 }))
 
-const { autoQualify, seedFinals, getFinalCandidates, getFinalEvents } = await import('../src/main/db')
+const { autoQualify, seedFinals, clearFinalSeeding, getFinalCandidates, getFinalEvents } = await import('../src/main/db')
 
 /**
  * The 15-18 / 19+ Final of the real Splash meet: a prelim (event 10) and its Final (event 11)
@@ -148,6 +148,28 @@ describe('Final qualification is per age group', () => {
     }
     expect(membersOf(heats[2].heatid)).toEqual([FIN_1518, FIN_1518, FIN_1518]) // 15-18 A: the 3 decided swimmers
     expect(membersOf(heats[3].heatid)).toEqual([FIN_19, FIN_19, FIN_19, FIN_19])
+  })
+
+  it('can qualify, seed and clear a single age group without touching the others', () => {
+    autoQualify(FINAL, db, PRE_19)
+    expect(athleteIds1518.map(qualOf)).toEqual(Array(16).fill(null)) // 15-18 untouched
+    expect(athleteIds19.map(qualOf)).toEqual(['A', 'A', 'A', 'A'])
+
+    autoQualify(FINAL, db, PRE_1518)
+    seedFinals(FINAL, db, PRE_19)
+    const heatsOf = () => db.prepare(`SELECT finalcode, heatnumber FROM heat WHERE swimeventid=? ORDER BY heatnumber`).all(FINAL) as
+      Array<{ finalcode: string; heatnumber: number }>
+    expect(heatsOf()).toEqual([{ finalcode: 'A', heatnumber: 1 }]) // 19+ only
+
+    seedFinals(FINAL, db, PRE_1518)
+    // 15-18 (C, B, A) sorts before 19+ (A) and everything is renumbered 1..4
+    expect(heatsOf().map(h => h.finalcode)).toEqual(['C', 'B', 'A', 'A'])
+    expect(heatsOf().map(h => h.heatnumber)).toEqual([1, 2, 3, 4])
+
+    clearFinalSeeding(FINAL, db, PRE_19)
+    expect(heatsOf().map(h => h.finalcode)).toEqual(['C', 'B', 'A']) // 15-18's three heats stay
+    const seeded1518 = db.prepare(`SELECT COUNT(*) AS c FROM swimresult WHERE swimeventid=? AND heatid IS NOT NULL`).get(FINAL) as { c: number }
+    expect(Number(seeded1518.c)).toBe(10) // 3 + 3 + 4
   })
 
   it('the final event list reports no overflow when each age group fits its lanes', () => {

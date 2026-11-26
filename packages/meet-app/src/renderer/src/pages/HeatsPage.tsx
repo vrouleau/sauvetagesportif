@@ -45,6 +45,17 @@ function entryKey(e: LaneEntry): string {
   return e.relayId != null ? `r${e.relayId}` : `s${e.swimresultId}`
 }
 
+/** "Série 3", or for a final heat "Finale A, 15-18" / "Final A, 15-18" (Splash's naming). */
+function heatDisplayName(
+  heat: { number: number; finalCode?: string; ageGroupName?: string },
+  heatLabel: string,
+  lang: string,
+): string {
+  if (!heat.finalCode) return `${heatLabel} ${heat.number}`
+  const word = lang === 'en' ? 'Final' : 'Finale'
+  return `${word} ${heat.finalCode}${heat.ageGroupName ? `, ${heat.ageGroupName}` : ''}`
+}
+
 function saveEntryResult(
   entry: LaneEntry,
   finalTime: string | undefined,
@@ -923,43 +934,7 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
     }
   }
 
-  // ── Print timing sheets handler ────────────────────────────────────────────
-
-  async function handlePrintTimingSheets() {
-    const api = (window as any).api?.timing
-    const reportApi = (window as any).api?.report
-    if (!api || !reportApi) return
-
-    // Determine which session to print for
-    const sessionId = selectedSession?.id ?? sessions[0]?.id
-    if (!sessionId) {
-      window.alert('Aucune session disponible.')
-      return
-    }
-
-    const result = await api.generateSheets(sessionId, lang)
-    if (!result.ok) {
-      window.alert(`Erreur: ${result.error}`)
-      return
-    }
-
-    // Use the existing report print/preview flow
-    await reportApi.print(result.html, { line1: '', line2: '', today: '' })
-  }
-
-  // Blank strips (no barcode) for late arrivals / missing sheets — timers
-  // hand-write event / heat / lane; one page of 3, print as many copies as needed.
-  async function handlePrintBlankTimingSheets() {
-    const api = (window as any).api?.timing
-    const reportApi = (window as any).api?.report
-    if (!api || !reportApi) return
-    const result = await api.generateBlankSheets(1)
-    if (!result.ok) {
-      window.alert(`Erreur: ${result.error}`)
-      return
-    }
-    await reportApi.print(result.html, { line1: '', line2: '', today: '' })
-  }
+  // Timing sheets (barcoded and blank) are now reports: Rapports tab → "Fiches chrono" / "Fiches chrono vierges"
 
   async function handlePrintPositionSheets() {
     const api = (window as any).api?.timing
@@ -1002,7 +977,7 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
         heats: ev.heats.map((h, hi) => ({
           heatId: h.id,
           heatNumber: h.number,
-          heatName: `Série ${h.number}`,
+          heatName: heatDisplayName(h, 'Série', 'fr'),
           heatOrder: hi + 1,
           entries: (heatData[h.id] ?? h.entries).map((e) => ({
             lane: e.lane,
@@ -1257,32 +1232,13 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
               </>
             )}
           </div>
-          {isBeach ? (
+          {isBeach && (
             <button
               onClick={handlePrintPositionSheets}
               className="border border-gray-400 bg-white hover:bg-purple-50 px-2 py-0.5 text-xs font-medium text-purple-700"
               title={lang === 'fr' ? 'Imprimer les fiches d\'entrée des positions pour la session' : 'Print position entry sheets for the session'}
             >
               🖨 {lang === 'fr' ? 'Fiches positions' : 'Position sheets'}
-            </button>
-          ) : (
-            <button
-              onClick={handlePrintTimingSheets}
-              className="border border-gray-400 bg-white hover:bg-purple-50 px-2 py-0.5 text-xs font-medium text-purple-700"
-              title="Imprimer les fiches de chronométrage pour la session"
-            >
-              🖨 Fiches chrono
-            </button>
-          )}
-          {!isBeach && (
-            <button
-              onClick={handlePrintBlankTimingSheets}
-              className="border border-gray-400 bg-white hover:bg-purple-50 px-2 py-0.5 text-xs font-medium text-purple-700"
-              title={lang === 'fr'
-                ? 'Fiches chrono vierges (sans code-barres) pour arrivées tardives ou fiches manquantes — épreuve / série / couloir écrits à la main'
-                : 'Blank timing sheets (no barcode) for late arrivals or missing sheets — event / heat / lane written by hand'}
-            >
-              🖨 {lang === 'fr' ? 'Fiches vierges' : 'Blank sheets'}
             </button>
           )}
           {/* Call to Marshall — event selected, no times, not validated */}
@@ -1470,7 +1426,7 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
                                     <rect x="4" y="4" width="12" height="12" rx="1" />
                                   </svg>
                                 </td>
-                                <td className="px-2 py-0.5 pl-8">{t.heats.heatLabel} {heat.number}</td>
+                                <td className="px-2 py-0.5 pl-8">{heatDisplayName(heat, t.heats.heatLabel, lang)}</td>
                                 <td className="px-2 py-0.5 text-center">
                                   <span className={isHeatSelected ? 'text-blue-100' : 'text-gray-500'}>{heat.number}</span>
                                 </td>
@@ -1525,7 +1481,7 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
                   {selectedEvent!.phase}
                 </span>
                 <span className="ml-3 text-gray-500">
-                  {t.heats.heatLabel} {selectedPair.heat.number}. {heatStatus()}
+                  {heatDisplayName(selectedPair.heat, t.heats.heatLabel, lang)}. {heatStatus()}
                 </span>
                 {isSelectedHeatValidated && (
                   <span className="ml-2 px-1.5 py-0.5 bg-green-100 text-green-700 border border-green-300 rounded text-2xs font-medium">

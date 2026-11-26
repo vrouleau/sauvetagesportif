@@ -54,7 +54,7 @@ import {
   validateHeat, invalidateHeat,
   validateEvent, invalidateEvent, validateSession, invalidateSession,
   getFinalEvents, getFinalCandidates, setQualification, autoQualify,
-  clearFinalSeeding, seedFinals,
+  clearFinalSeeding, seedFinals, inClause,
   getCombinedResults,
   getBeachNumberReport,
   getEntriesByEvent,
@@ -1275,18 +1275,20 @@ ipcMain.handle('db:set-qualification', (_event, finalEventId: number, athleteId:
   return { ok: true }
 })
 
-ipcMain.handle('db:auto-qualify', (_event, finalEventId: number) => {
-  const result = autoQualify(finalEventId)
+// The optional ageGroupId (the age group's id on the prelim) limits the action to one age group;
+// omitted (undefined) = every age group of the event.
+ipcMain.handle('db:auto-qualify', (_event, finalEventId: number, ageGroupId?: number | null) => {
+  const result = autoQualify(finalEventId, undefined, ageGroupId)
   return { ok: true, ...result }
 })
 
-ipcMain.handle('db:clear-final-seeding', (_event, finalEventId: number) => {
-  clearFinalSeeding(finalEventId)
+ipcMain.handle('db:clear-final-seeding', (_event, finalEventId: number, ageGroupId?: number | null) => {
+  clearFinalSeeding(finalEventId, undefined, ageGroupId)
   return { ok: true }
 })
 
-ipcMain.handle('db:seed-finals', (_event, finalEventId: number) => {
-  return seedFinals(finalEventId)
+ipcMain.handle('db:seed-finals', (_event, finalEventId: number, ageGroupId?: number | null) => {
+  return seedFinals(finalEventId, undefined, ageGroupId)
 })
 
 ipcMain.handle('db:flush-meet', async () => {
@@ -1872,20 +1874,27 @@ ipcMain.handle('timing:set-gemini-key', (_event, freeKey: string | null, paidKey
   return { ok: true }
 })
 
-ipcMain.handle('timing:generate-sheets', async (_event, sessionId: number, lang?: string) => {
+ipcMain.handle('timing:generate-sheets', async (_event, eventIds: number[], lang?: string) => {
   try {
     const db = getLocalDb()
-    // Get all heats for the session
+    if (!Array.isArray(eventIds) || eventIds.length === 0) return { ok: false, error: 'Aucune épreuve sélectionnée.' }
+    // Heats of the chosen events, in session / event order
+    const { clause, params } = inClause(eventIds)
     const heats = db.prepare(`
       SELECT e.eventnumber, e.swimeventid, e.swimstyleid, h.heatnumber, h.heatid,
+             h.finalcode,
+             COALESCE(NULLIF(ag.name, ''), CASE WHEN ag.agemin IS NOT NULL THEN CAST(ag.agemin AS TEXT) || '-' || CASE WHEN ag.agemax IS NULL OR ag.agemax < 0 OR ag.agemax >= 99 THEN '+' ELSE CAST(ag.agemax AS TEXT) END END) AS agname,
              ss.name as stylename, ss.distance
       FROM heat h
       JOIN swimevent e ON h.swimeventid = e.swimeventid
+      JOIN swimsession s ON e.swimsessionid = s.swimsessionid
       JOIN swimstyle ss ON e.swimstyleid = ss.swimstyleid
-      WHERE e.swimsessionid = ?
-      ORDER BY e.eventnumber, h.heatnumber
-    `).all(sessionId) as Array<{
+      LEFT JOIN agegroup ag ON h.agegroupid = ag.agegroupid
+      WHERE e.swimeventid IN (${clause})
+      ORDER BY s.sessionnumber, e.sortcode, e.eventnumber, h.heatnumber
+    `).all(...params) as Array<{
       eventnumber: number; swimeventid: number; swimstyleid: number | null; heatnumber: number; heatid: number
+      finalcode: string | null; agname: string | null
       stylename: string; distance: number
     }>
 
@@ -1928,7 +1937,9 @@ ipcMain.handle('timing:generate-sheets', async (_event, sessionId: number, lang?
 
       // One strip per lane (both chronos on same strip)
       const pages = buildTimingSheetPages(
-        heat.swimeventid, heat.eventnumber, eventName, heat.heatnumber, laneNumbers, undefined, athleteNames, clubCodes
+        heat.swimeventid, heat.eventnumber, eventName, heat.heatnumber, laneNumbers, undefined, athleteNames, clubCodes,
+        // Final heats read "Finale A, 15-18" like Splash (the printed labels stay French)
+        heat.finalcode ? `Finale ${heat.finalcode}${heat.agname ? `, ${heat.agname}` : ''}` : undefined
       )
       allPages.push(...pages)
     }

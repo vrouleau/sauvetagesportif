@@ -77,12 +77,17 @@ function phaseTag(phase: 'Finale' | 'Eliminatoire' | 'Finale directe'): string {
   return ''
 }
 
-type ReportType = 'heatList' | 'startList' | 'combinedResults' | 'beachNumbers' | 'entriesByEvent' | 'pointStandings' | 'resultsList'
+type ReportType = 'heatList' | 'startList' | 'timingSheets' | 'blankTimingSheets' | 'combinedResults' | 'beachNumbers' | 'entriesByEvent' | 'pointStandings' | 'resultsList'
+
+/** Reports that need no event selection to generate */
+const NO_SELECTION_REPORTS: ReportType[] = ['beachNumbers', 'blankTimingSheets']
 
 const REPORT_LABELS: Record<'fr' | 'en', Record<ReportType, string>> = {
   fr: {
     heatList: 'Liste des Séries',
     startList: 'Fiche de Départs',
+    timingSheets: 'Fiches Chrono',
+    blankTimingSheets: 'Fiches Chrono Vierges',
     entriesByEvent: 'Liste des inscriptions par épreuves',
     resultsList: 'Liste des Résultats',
     combinedResults: 'Résultat Combiné',
@@ -92,6 +97,8 @@ const REPORT_LABELS: Record<'fr' | 'en', Record<ReportType, string>> = {
   en: {
     heatList: 'Heat List',
     startList: 'Start Sheet',
+    timingSheets: 'Timing Sheets',
+    blankTimingSheets: 'Blank Timing Sheets',
     entriesByEvent: 'Entries by Event',
     resultsList: 'Results List',
     combinedResults: 'Combined Results',
@@ -1446,13 +1453,25 @@ export default function ReportPage({ refreshKey = 0, meetType = 'POOL' }: { refr
 
   async function handleGenerate() {
     const sections = buildSections()
-    if (sections.length === 0 && reportType !== 'combinedResults' && reportType !== 'beachNumbers' && reportType !== 'entriesByEvent' && reportType !== 'pointStandings' && reportType !== 'resultsList') return
+    if (sections.length === 0 && reportType !== 'combinedResults' && reportType !== 'beachNumbers' && reportType !== 'entriesByEvent' && reportType !== 'pointStandings' && reportType !== 'resultsList' && reportType !== 'blankTimingSheets') return
 
     let pdf: string
     let exported: string
     let hdrInfo: PdfHeaderInfo
 
-    if (reportType === 'beachNumbers') {
+    if (reportType === 'timingSheets' || reportType === 'blankTimingSheets') {
+      // Barcoded strips for the selected events' seeded heats, or blank hand-filled strips.
+      // The sheets carry no page header (the OCR reads the strips), so the header stays empty.
+      const timing = (window as any).api?.timing
+      if (!timing) return
+      const res = reportType === 'timingSheets'
+        ? await timing.generateSheets([...selectedEventIds], lang)
+        : await timing.generateBlankSheets(1)
+      if (!res.ok) { alert(`Erreur: ${res.error}`); return }
+      pdf = res.html
+      exported = '' // No HTML export
+      hdrInfo = { line1: '', line2: '', today: '' }
+    } else if (reportType === 'beachNumbers') {
       // Fetch beach number report data from main process
       const rows = await dbApi()?.getBeachNumberReport() as BeachNumberReportRow[] | undefined
       pdf = generateBeachNumbersPdfHtml(rows ?? [])
@@ -1579,6 +1598,12 @@ export default function ReportPage({ refreshKey = 0, meetType = 'POOL' }: { refr
         >
           <option value="heatList">{REPORT_LABELS[lang].heatList}</option>
           <option value="startList">{REPORT_LABELS[lang].startList}</option>
+          {meetType !== 'BEACH' && (
+            <>
+              <option value="timingSheets">{REPORT_LABELS[lang].timingSheets}</option>
+              <option value="blankTimingSheets">{REPORT_LABELS[lang].blankTimingSheets}</option>
+            </>
+          )}
           <option value="entriesByEvent">{REPORT_LABELS[lang].entriesByEvent}</option>
           <option value="resultsList">{REPORT_LABELS[lang].resultsList}</option>
           <option value="combinedResults">{REPORT_LABELS[lang].combinedResults}</option>
@@ -1589,7 +1614,7 @@ export default function ReportPage({ refreshKey = 0, meetType = 'POOL' }: { refr
         </select>
         <button
           onClick={handleGenerate}
-          disabled={(selectedEventIds.size === 0 && reportType !== 'beachNumbers') || loading || generating}
+          disabled={(selectedEventIds.size === 0 && !NO_SELECTION_REPORTS.includes(reportType)) || loading || generating}
           className="px-3 py-0.5 h-6 text-xs bg-blue-600 text-white border border-blue-700 hover:bg-blue-700 disabled:opacity-40"
         >
           {generating ? tx('Génération…', 'Generating…') : tx('Générer', 'Generate')}

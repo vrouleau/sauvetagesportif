@@ -211,12 +211,12 @@ const api = {
       ipcRenderer.invoke('db:get-final-candidates', finalEventId),
     setQualification: (finalEventId: number, athleteId: number, qualCode: string | null, noAdvance: boolean) =>
       ipcRenderer.invoke('db:set-qualification', finalEventId, athleteId, qualCode, noAdvance),
-    autoQualify: (finalEventId: number) =>
-      ipcRenderer.invoke('db:auto-qualify', finalEventId),
-    clearFinalSeeding: (finalEventId: number) =>
-      ipcRenderer.invoke('db:clear-final-seeding', finalEventId),
-    seedFinals: (finalEventId: number) =>
-      ipcRenderer.invoke('db:seed-finals', finalEventId),
+    autoQualify: (finalEventId: number, ageGroupId?: number | null) =>
+      ipcRenderer.invoke('db:auto-qualify', finalEventId, ageGroupId),
+    clearFinalSeeding: (finalEventId: number, ageGroupId?: number | null) =>
+      ipcRenderer.invoke('db:clear-final-seeding', finalEventId, ageGroupId),
+    seedFinals: (finalEventId: number, ageGroupId?: number | null) =>
+      ipcRenderer.invoke('db:seed-finals', finalEventId, ageGroupId),
   },
   pg: {
     connect: (config: { host: string; port: number; database: string; user: string; password: string }) =>
@@ -267,8 +267,8 @@ const api = {
       ipcRenderer.invoke('timing:generate-blank-sheets', pageCount),
     markError: (scanId: number, notes: string) =>
       ipcRenderer.invoke('timing:mark-error', scanId, notes),
-    generateSheets: (sessionId: number, lang?: string) =>
-      ipcRenderer.invoke('timing:generate-sheets', sessionId, lang),
+    generateSheets: (eventIds: number[], lang?: string) =>
+      ipcRenderer.invoke('timing:generate-sheets', eventIds, lang),
     generatePositionSheets: (sessionId: number) =>
       ipcRenderer.invoke('timing:generate-position-sheets', sessionId),
     getGeminiKey: () =>

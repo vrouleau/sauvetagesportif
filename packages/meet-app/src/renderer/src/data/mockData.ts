@@ -55,6 +55,9 @@ export interface Heat {
   id: number
   eventId: number
   number: number
+  /** Final heats only: 'A', 'B'… with the age group name — shown as "Final A, 15-18" like Splash */
+  finalCode?: string
+  ageGroupName?: string
   status: 'empty' | 'assigned' | 'completed' | 'validated'
   entries: LaneEntry[]
 }

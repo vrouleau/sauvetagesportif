@@ -151,3 +151,14 @@ describe('Blank timing sheet HTML', () => {
     expect(html).not.toContain('FICHE VIERGE')
   })
 })
+
+describe('final heat label on timing strips', () => {
+  it('prints "Finale A, 15-18" instead of "Série N" when a heat label is given', () => {
+    const pages = buildTimingSheetPages(4082, 6, '50m Portage', 1, [2], undefined, undefined, undefined, 'Finale A, 15-18')
+    const html = generateTimingSheetsHtml(pages)
+    expect(html).toContain('Finale A, 15-18')
+    expect(html).not.toContain('Série 1')
+    const plain = generateTimingSheetsHtml(buildTimingSheetPages(4082, 6, '50m Portage', 1, [2]))
+    expect(plain).toContain('Série 1')
+  })
+})
