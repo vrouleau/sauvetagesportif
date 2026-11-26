@@ -3759,6 +3759,8 @@ export interface EntryByEventRow {
   beachNumber: string | null
   ageGroupName: string
   isRelay: boolean
+  /** Entered in an age group older than the athlete's own (swim-up): Splash refuses these on a direct LXF import. */
+  upCategorized?: boolean
 }
 
 export function getEntriesByEvent(selectedEventIds: number[]): EntryByEventRow[] {
@@ -3789,6 +3791,7 @@ export function getEntriesByEvent(selectedEventIds: number[]): EntryByEventRow[]
              r.entrytime AS entryTime,
              a.nameprefix AS beachNumber,
              COALESCE(NULLIF(ag2.name, ''), CASE WHEN ag2.agemin IS NOT NULL THEN CAST(ag2.agemin AS TEXT) || '-' || CASE WHEN ag2.agemax IS NULL OR ag2.agemax < 0 OR ag2.agemax >= 99 THEN '+' ELSE CAST(ag2.agemax AS TEXT) END END, '') AS ageGroupName,
+             ag2.agemin AS entryAgeMin,
              0 AS isRelay
       FROM swimresult r
       JOIN athlete a ON r.athleteid = a.athleteid
@@ -3801,10 +3804,20 @@ export function getEntriesByEvent(selectedEventIds: number[]): EntryByEventRow[]
       LEFT JOIN agegroup ag2 ON r.agegroupid = ag2.agegroupid
       WHERE r.swimeventid IN (${clause})
       ORDER BY LOWER(a.lastname), LOWER(a.firstname)
-    `).all(...params) as Array<Omit<EntryByEventRow, 'phase' | 'isRelay'> & { round: number | null; isRelay: number; swimstyleId: number | null }>
-    rows.push(...individualRows.map(({ swimstyleId, ...r }) => ({
-      ...r, eventNameEn: swimstyleNameEn(swimstyleId, r.eventName), isRelay: !!r.isRelay,
-    })))
+    `).all(...params) as Array<Omit<EntryByEventRow, 'phase' | 'isRelay'> & { round: number | null; isRelay: number; swimstyleId: number | null; entryAgeMin: number | null }>
+    const meetTypeRow = db.prepare(`SELECT data FROM bsglobal WHERE name = 'MEET_TYPE'`).get() as { data: string } | undefined
+    const meetType = (meetTypeRow?.data || 'POOL').toUpperCase() as 'POOL' | 'BEACH'
+    const seasonYear = getSeasonYear(db)
+    rows.push(...individualRows.map(({ swimstyleId, entryAgeMin, ...r }) => {
+      // Up-categorized: the athlete's matching age is below the entry group's minimum
+      let upCategorized = false
+      const bd = parseBirthDate(r.birthdate)
+      if (bd && entryAgeMin != null && entryAgeMin > 0) {
+        const d = new Date(bd)
+        if (!isNaN(d.getTime())) upCategorized = resolveMatchingAge(d, meetType, seasonYear) < entryAgeMin
+      }
+      return { ...r, eventNameEn: swimstyleNameEn(swimstyleId, r.eventName), isRelay: !!r.isRelay, upCategorized }
+    }))
   }
 
   if (relayEventIds.length > 0) {

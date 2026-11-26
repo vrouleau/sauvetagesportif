@@ -512,7 +512,7 @@ body { margin: 0; padding: 0; }
 </style>
 </head>
 <body>
-${html}
+${rows.some(r => r.upCategorized) ? `<p class="legend"><b class="up">&#8593;</b> ${esc(tx('Surclassé : inscrit dans une catégorie plus âgée que celle de l'athlète', 'Up-categorized: entered in a category older than the athlete's own'))}</p>` : ''}${html}
 </body>
 </html>`
 }
@@ -710,6 +710,7 @@ interface EntryByEventReportRow {
   beachNumber: string | null
   ageGroupName: string
   isRelay: boolean
+  upCategorized?: boolean
 }
 
 function msToDisplay(ms: number | null): string {
@@ -788,7 +789,7 @@ function generateEntriesByEventPdfHtml(rows: EntryByEventReportRow[], isBeach: b
   ${isBeach ? `<td>${beachNum}</td>` : ''}
   <td><b>${name}</b></td>
   <td>${age}</td>
-  <td>${esc(e.ageGroupName ?? '')}</td>
+  <td>${esc(e.ageGroupName ?? '')}${e.upCategorized ? ' <b class="up" title="' + esc(tx('Surclassé', 'Up-categorized')) + '">&#8593;</b>' : ''}</td>
   <td>${esc(e.clubName)}</td>
   ${!isBeach ? `<td align="right">${esc(entryTimeStr)}</td>` : ''}
 </tr>\n`
@@ -813,6 +814,8 @@ hr.ev-rule { border: none; border-top: 1px solid black; margin: 2px 0 4px 0; }
 .entry-table td { padding: 1px 3px; }
 .entry-hdr td { border-bottom: 2px solid #333; padding: 1px 3px; }
 .entry-count { font-size: 8pt; color: #555; text-align: right; margin-top: 2pt; }
+.up { color: #b45309; }
+.legend { font-size: 8pt; color: #555; margin: 0 0 8pt 0; }
 @page { size: Letter portrait; }
 </style>
 </head>
