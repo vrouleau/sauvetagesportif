@@ -698,6 +698,8 @@ def _init_meet_from_template(db: Session, meetsid: int, meet, filename: str) -> 
     # still overridable per meet in meet config → Répartition des séries) —
     # matches meet-app's own default (packages/meet-app/src/main/index.ts)
     _update_meetvalue(db, "COMBINEAGEGROUPS", "B;T", meetsid=meetsid)
+    # …and to at least 3 swimmers per heat, what Splash enforces (meet-app does the same)
+    _update_meetvalue(db, "MINPERHEAT", "I;3", meetsid=meetsid)
 
     # No closure date yet (key and MEETVALUES DEADLINE fallback)
     _set_closure_date(db, "", meetsid=meetsid)

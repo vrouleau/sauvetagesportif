@@ -1774,6 +1774,7 @@ export function deleteAthlete(athleteId: number, injectedDb?: ReturnType<typeof 
 
 import { runSchemaInit } from './schema'
 import { swimstyleNameEn } from './swimstyleNames'
+
 export { runSchemaInit }
 
 // ── Heat generation ───────────────────────────────────────────────────────────
@@ -1810,7 +1811,8 @@ export async function generateHeats(eventId?: number, sessionId?: number, inject
   const globalSeedExhLast = meetCfg.SEEDEXHLAST === 'T'
   const globalSeedLateLast = meetCfg.SEEDLATELAST === 'T'
   const globalCombineAgeGroups = meetCfg.COMBINEAGEGROUPS === 'T'
-  const globalMinPerHeat = parseInt(meetCfg.MINPERHEAT ?? '3', 10)
+  // Minimum swimmers per heat: MEETVALUES.MINPERHEAT (Splash hardcodes 3; new meets get 3, 0 = off)
+  const globalMinPerHeat = Math.max(0, parseInt(meetCfg.MINPERHEAT ?? '3', 10) || 0)
   const qualiFrom = meetCfg.QUALIFROM || null // date string e.g. "2024-01-01"
   const qualiTo = meetCfg.QUALITO || null
   const qualiCourse = parseInt(meetCfg.QUALICOURSE ?? '0', 10) // 0=all, 1=same course only
@@ -2275,15 +2277,24 @@ function seedAndAssignHeats(
     }
   }
 
-  // ── Enforce minimum swimmers per heat (FINA SW 3.1.4) ──
-  // If the first heat has fewer than minPerHeat swimmers, redistribute
+  // ── Enforce minimum swimmers per heat (FINA SW 3.1.4; Splash hardcodes 3, ours is MEETVALUES.MINPERHEAT) ──
+  // A heat left with fewer than minPerHeat swimmers takes one swimmer at a time
+  // from the nearest other heats (round-robin) that can spare one without dropping
+  // below the minimum themselves — e.g. 37 entries on 4 lanes: 1+9×4 → 3+3+3+7×4.
+  // The donor's slowest swimmer is taken (closest in rank to the short heat).
   if (minPerHeat > 0 && heats.length > 1) {
-    for (let h = 0; h < heats.length - 1; h++) {
-      if (heats[h].length > 0 && heats[h].length < minPerHeat && heats[h + 1].length > minPerHeat) {
-        // Move swimmers from next heat to this one until minimum is met
-        while (heats[h].length < minPerHeat && heats[h + 1].length > minPerHeat) {
-          const moved = heats[h + 1].shift()!
-          heats[h].push(moved)
+    for (let h = 0; h < heats.length; h++) {
+      if (heats[h].length === 0) continue
+      const donors = heats.map((_, i) => i).filter(i => i !== h).sort((a, b) => Math.abs(a - h) - Math.abs(b - h) || a - b)
+      let moved = true
+      while (heats[h].length < minPerHeat && moved) {
+        moved = false
+        for (const d of donors) {
+          if (heats[h].length >= minPerHeat) break
+          if (heats[d].length > minPerHeat) {
+            heats[h].push(heats[d].pop()!)
+            moved = true
+          }
         }
       }
     }
