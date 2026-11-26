@@ -2542,27 +2542,6 @@ function NumberRow({ label, value, field }: { label: string; value: number | und
   )
 }
 
-function TimeRow({ label, value, field }: { label: string; value: string | undefined; field: string }) {
-  const onUpdate = useContext(SessionUpdateContext)
-  // Pad time to HH:MM format for <input type="time">
-  const padded = value ? value.replace(/^(\d):/, '0$1:') : ''
-  return (
-    <tr className="border-b border-gray-100 hover:bg-gray-50">
-      <td className="px-4 py-0.5 text-gray-600 w-64">{label}</td>
-      <td className="px-2 py-0.5">
-        <input
-          type="time"
-          className="w-28 border border-gray-200 rounded px-1 py-0 text-xs focus:border-blue-400 focus:outline-none"
-          defaultValue={padded}
-          onBlur={(e) => {
-            onUpdate({ [field]: e.target.value || null })
-          }}
-        />
-      </td>
-    </tr>
-  )
-}
-
 function CheckRow({ label, value, field }: { label: string; value: boolean; field: string }) {
   const onUpdate = useContext(SessionUpdateContext)
   return (
@@ -2610,6 +2589,9 @@ function SessionPropertiesPanel({
   session: Session
   onUpdate: (data: Record<string, unknown>) => void
 }) {
+  const { t } = useLang()
+  const mp = t.events.meetPanel
+  const sp = t.events.sessionPanel
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
 
   function toggleSection(title: string) {
@@ -2634,21 +2616,21 @@ function SessionPropertiesPanel({
 
   // LENEX course names, same as the meet-level COURSE — each backend stores its own number
   const poolOptions = [
-    { value: 'LCM', label: 'Bassin 50m' },
-    { value: 'SCM', label: 'Bassin 25m (SCM)' },
-    { value: 'SCY', label: 'Bassin 25y (SCY)' },
+    { value: 'LCM', label: mp.pool50m },
+    { value: 'SCM', label: mp.pool25m },
+    { value: 'SCY', label: mp.pool25y },
   ]
   const timingOptions = [
     { value: '', label: '—' },
-    { value: 0, label: 'Manuel' },
-    { value: 1, label: 'Semi-automatique' },
-    { value: 2, label: 'Automatique' },
+    { value: 0, label: mp.timingManual },
+    { value: 1, label: mp.timingSemiAuto },
+    { value: 2, label: mp.timingAutomatic },
   ]
   const touchpadOptions = [
     { value: '', label: '—' },
-    { value: 0, label: 'Aucune' },
-    { value: 1, label: "Seulement côté arrivée" },
-    { value: 2, label: 'Les deux côtés' },
+    { value: 0, label: mp.touchNone },
+    { value: 1, label: mp.touchOneSide },
+    { value: 2, label: mp.touchBothSides },
   ]
 
   const courseValue = session.course ?? (session.poolSize === 50 ? 'LCM' : 'SCM')
@@ -2662,67 +2644,36 @@ function SessionPropertiesPanel({
           <rect x="3" y="4" width="14" height="13" rx="1" />
           <path d="M7 2v4M13 2v4M3 9h14" stroke="white" strokeWidth="1.5" fill="none" />
         </svg>
-        Session
+        {sp.title}
       </div>
 
       <div className="flex border-b border-gray-200 bg-gray-50">
-        <div className="flex-1 px-3 py-0.5 font-semibold text-gray-500">Désignation</div>
-        <div className="flex-1 px-3 py-0.5 font-semibold text-gray-500">Valeur</div>
+        <div className="flex-1 px-3 py-0.5 font-semibold text-gray-500">{t.events.eventPanel.designationCol}</div>
+        <div className="flex-1 px-3 py-0.5 font-semibold text-gray-500">{t.events.eventPanel.valueCol}</div>
       </div>
 
       <table className="w-full border-collapse">
         <tbody>
-          {/* Général */}
-          <SectionHeader title="Général" />
-          {!collapsed.has('Général') && (
+          {/* General */}
+          <SectionHeader title={mp.general} />
+          {!collapsed.has(mp.general) && (
             <>
-              <NumberRow label="Numéro" value={session.number} field="sessionnumber" />
-              <DateRow label="Date" value={session.date} field="startdate" />
-              <TextRow label="Nom" value={session.name} field="name" />
+              <NumberRow label={mp.number} value={session.number} field="sessionnumber" />
+              <DateRow label={sp.date} value={session.date} field="startdate" />
+              <TextRow label={mp.name} value={session.name} field="name" />
             </>
           )}
 
-          {/* Horaire */}
-          <SectionHeader title="Horaire (heure de début)" />
-          {!collapsed.has('Horaire (heure de début)') && (
+          {/* Pool and timing */}
+          <SectionHeader title={sp.poolTiming} />
+          {!collapsed.has(sp.poolTiming) && (
             <>
-              <TimeRow label="Heure de départ première épreuve" value={session.time} field="daytime" />
-              <TimeRow label="Temps de fin de la dernière épreuve" value={session.endTime} field="endtime" />
-              <TimeRow label="Séance des chefs d'équipes" value={session.officialMeeting} field="officialmeeting" />
-              <TimeRow label="Début de l'échauffement" value={session.warmupFrom} field="warmupfrom" />
-              <TimeRow label="Fin de l'échauffement" value={session.warmupUntil} field="warmupuntil" />
-              <TextRow label="Remarque" value={session.remarks ?? ''} field="remarks" />
-            </>
-          )}
-
-          {/* Piscine et chronométrage */}
-          <SectionHeader title="Piscine et chronométrage" />
-          {!collapsed.has('Piscine et chronométrage') && (
-            <>
-              <SelectRow label="Longueur du bassin" value={courseValue} field="course" options={poolOptions} />
-              <NumberRow label="N° de la première ligne" value={session.laneMin} field="lanemin" />
-              <NumberRow label="N° de la dernière ligne" value={session.laneMax} field="lanemax" />
-              <SelectRow label="Installation de chronométrage" value={session.timing} field="timing" options={timingOptions} />
-              <SelectRow label="Plaques de touches" value={session.touchpadMode} field="touchpadmode" options={touchpadOptions} />
-              <CheckRow label="Résultats au dixième de secondes" value={session.roundToTenths ?? false} field="roundtotenths" />
-            </>
-          )}
-
-          {/* Jury */}
-          <SectionHeader title="Jury" />
-          {!collapsed.has('Jury') && (
-            <>
-              <TextRow label="Remarque" value={session.remarksJury ?? ''} field="remarksjury" />
-            </>
-          )}
-
-          {/* Autres */}
-          <SectionHeader title="Autres" />
-          {!collapsed.has('Autres') && (
-            <>
-              <NumberRow label="Nbre max. d'inscriptions par athlète" value={session.maxEntriesAthlete} field="maxentriesathlete" />
-              <NumberRow label="Nbre max. d'inscriptions de relais par..." value={session.maxEntriesRelay} field="maxentriesrelay" />
-              <NumberRow label="Frais d'inscription par session: par at..." value={session.feeAthlete} field="feeathlete" />
+              <SelectRow label={mp.poolLength} value={courseValue} field="course" options={poolOptions} />
+              <NumberRow label={mp.laneMin} value={session.laneMin} field="lanemin" />
+              <NumberRow label={mp.laneMax} value={session.laneMax} field="lanemax" />
+              <SelectRow label={mp.timingSystem} value={session.timing} field="timing" options={timingOptions} />
+              <SelectRow label={mp.touchpads} value={session.touchpadMode} field="touchpadmode" options={touchpadOptions} />
+              <CheckRow label={mp.roundToTenths} value={session.roundToTenths ?? false} field="roundtotenths" />
             </>
           )}
         </tbody>
