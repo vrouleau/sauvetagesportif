@@ -22,7 +22,7 @@ import type { RegistrationData, RegistrationStyle } from '../data/api'
 import { formatEntryTime as msToTime, parseEntryTime as parseTime } from '../logic/timeFormat'
 import { addMonthsIso } from '../logic/dateFormat'
 import { eventDisplayName } from '../logic/eventName'
-import { filterCategoriesAroundSuggestion, computeAvailableCategories } from '../logic/ageGroupCode'
+import { filterCategoriesAroundSuggestion, computeAvailableCategories, AGE_CODE_ORDER } from '../logic/ageGroupCode'
 import TimeInput from './TimeInput'
 import HelpTip from './HelpTip'
 
@@ -148,6 +148,16 @@ export default function RegistrationPanel({
     return preferred
   })()
 
+  // Entered in a bracket older than the athlete's own (e.g. a 13-14 athlete in
+  // 15-18 because the meet has no 13-14 group) — easy to miss, since the
+  // dropdown then offers only that one option.
+  const isUpCategorized = (() => {
+    const own = AGE_CODE_ORDER.indexOf(suggested_age_code as typeof AGE_CODE_ORDER[number])
+    const cur = AGE_CODE_ORDER.indexOf(activeCategory as typeof AGE_CODE_ORDER[number])
+    const masters = AGE_CODE_ORDER.indexOf('Masters')
+    return own >= 0 && cur >= 0 && cur !== masters && cur > own
+  })()
+
   const allowedSet = new Set(dropdownCategories)
   const visibleIndividual = individual_events.filter(s =>
     s.categories.some(c => allowedSet.has(c.age_code))
@@ -202,6 +212,14 @@ export default function RegistrationPanel({
             <option key={c} value={c}>{c}</option>
           ))}
         </select>
+        {isUpCategorized && (
+          <span
+            className="text-xs font-medium text-amber-700 bg-amber-50 border border-amber-300 rounded px-1.5 py-0.5"
+            title={tr.upCategorizedHelp.replace('{own}', suggested_age_code)}
+          >
+            ↑ {tr.upCategorized}
+          </span>
+        )}
         {saving && <span className="text-xs text-gray-400 italic">{tr.saving}</span>}
       </div>
 

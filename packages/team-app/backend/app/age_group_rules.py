@@ -58,6 +58,21 @@ def _age_as_of(birthdate: date, ref_date: date) -> int:
     return age
 
 
+def natural_age_code(birthdate: date, meet_type: str, season_year: int) -> str:
+    """The athlete's own category code ("10-" ... "15-18"; "Open" from 19) for
+    the meet. Used to flag entries swum in an older category (up-categorized)."""
+    age = resolve_matching_age(birthdate, meet_type, season_year)
+    if age <= 10:
+        return "10-"
+    if age <= 12:
+        return "11-12"
+    if age <= 14:
+        return "13-14"
+    if age <= 18:
+        return "15-18"
+    return "Open"
+
+
 def resolve_matching_age(birthdate: date, meet_type: str, season_year: int) -> int:
     """Age to use when matching an athlete's birthdate against an event's
     agemin/agemax brackets, per Règlements des compétitions de sauvetage
