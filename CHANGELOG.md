@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.6.2] - 2026-11-26
+
+### Other
+
+- Merge pull request #139 from vrouleau/feat/finals-per-age-group (`56029e0`)
+- meet-app: finals per age group, "Finale A, 15-18" heat names, timing sheets as reports (`a7d069b`)
+- Merge pull request #138 from vrouleau/feat/flag-up-categorized-entries (`3672566`)
+- meet-app: fix entries report legend (escaped quotes, right report) (`f1934b9`)
+- meet-app: flag up-categorized entries in the entries-by-event report (`fedaf3f`)
+- Flag up-categorized entries: badge in registration panel, arrow in entries report (`0248d15`)
+- Merge pull request #137 from vrouleau/feat/min-3-per-heat (`7f157a7`)
+- meet-app: enforce a minimum of 3 swimmers per heat like Splash; new meets default MINPERHEAT=3 (`3a6920e`)
+
 ## [0.6.1] - 2026-11-25
 
 ### 🔧 Chores
