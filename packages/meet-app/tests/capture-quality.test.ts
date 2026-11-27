@@ -98,7 +98,10 @@ function harness(cfg = {}): Harness {
   return {
     tracker, evicted, decisions,
     step(t, motion, sharp, decode) {
-      if (decode) tracker.noteDecode(decode, t)
+      if (decode) {
+        const dropped = tracker.noteDecode(decode, t)
+        if (dropped) decisions.push({ ...dropped, at: t })
+      }
       const d = tracker.pushFrame({ t, motion, sharpness: sharp, frame: t })
       if (d) decisions.push({ ...d, at: t })
     },
@@ -136,13 +139,48 @@ describe('StableCaptureTracker', () => {
     expect(h.decisions[0].frame).toBeGreaterThanOrEqual(700)
   })
 
-  it('needs a decode from the still period (strip removed after being decoded)', () => {
+  it('strip removed after being decoded while moving: saved from its best frame (flagged), never an empty scene', () => {
     const h = harness()
-    for (let t = 0; t <= 300; t += STEP) h.step(t, t === 0 ? null : MOVING, 5, 'E3-U3-H1-L1')
+    for (let t = 0; t <= 300; t += STEP) h.step(t, t === 0 ? null : MOVING, t === 200 ? 80 : 5, 'E3-U3-H1-L1')
     // strip pulled away: empty, still scene, no more decodes
     for (let t = 400; t <= 1900; t += STEP) h.step(t, STILL, 5)
-    expect(h.decisions).toHaveLength(0) // would have captured an empty background
-    expect(h.tracker.status).toBe('idle') // candidate expired
+    expect(h.decisions).toHaveLength(1)
+    expect(h.decisions[0].code).toBe('E3-U3-H1-L1')
+    expect(h.decisions[0].lowQuality).toBe(true)
+    expect(h.decisions[0].frame).toBe(200) // from while the strip was in view
+    expect(h.tracker.status).toBe('idle')
+  })
+
+  it('fast flipping: next strip arrives before the previous settled -> previous is still saved (flagged)', () => {
+    const h = harness()
+    // strip A visible and moving, best frame at 200
+    for (let t = 0; t <= 400; t += STEP) h.step(t, t === 0 ? null : MOVING, t === 200 ? 90 : 10, 'E8-U8-H1-L1')
+    expect(h.decisions).toHaveLength(0)
+    // strip B shows up
+    h.step(500, MOVING, 10, 'E8-U8-H1-L2')
+    expect(h.decisions).toHaveLength(1)
+    expect(h.decisions[0].code).toBe('E8-U8-H1-L1')
+    expect(h.decisions[0].lowQuality).toBe(true)
+    expect(h.decisions[0].frame).toBe(200)
+    // B then settles and is captured normally
+    for (let t = 600; t <= 1300; t += STEP) h.step(t, STILL, 30, 'E8-U8-H1-L2')
+    expect(h.decisions).toHaveLength(2)
+    expect(h.decisions[1].code).toBe('E8-U8-H1-L2')
+    expect(h.decisions[1].lowQuality).toBe(false)
+  })
+
+  it('best frame survives ring eviction and is released only after the decision was consumed', () => {
+    const h = harness({ ringSize: 3, codeTtlMs: 600, maxWaitMs: 99999 })
+    h.step(0, null, 100, 'E9-U9-H1-L1') // sharpest, decoded
+    for (let t = 100; t <= 500; t += STEP) h.step(t, MOVING, 5, 'E9-U9-H1-L1')
+    expect(h.evicted).not.toContain(0) // evicted from the ring but still held
+    // strip leaves; candidate expires -> decision uses frame 0
+    for (let t = 600; t <= 1200; t += STEP) h.step(t, MOVING, 5)
+    expect(h.decisions).toHaveLength(1)
+    expect(h.decisions[0].frame).toBe(0)
+    expect(h.evicted).not.toContain(0) // caller still has to convert it
+    h.step(1300, MOVING, 5) // next call releases it
+    expect(h.evicted).toContain(0)
   })
 
   it('waits for a decode in the still frame, then captures', () => {

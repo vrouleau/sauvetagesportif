@@ -90,6 +90,8 @@ export interface CaptureConfig {
   releaseMs: number
   /** Number of recent full-resolution frames kept to choose the sharpest from. */
   ringSize: number
+  /** Frames up to this long before the first / after the last decode still count as showing the strip (ms). */
+  holdSlackMs: number
 }
 
 /**
@@ -103,7 +105,8 @@ export const DEFAULT_CAPTURE_CONFIG: CaptureConfig = {
   maxWaitMs: 2000,
   codeTtlMs: 1500,
   releaseMs: 1500,
-  ringSize: 6,
+  ringSize: 10,
+  holdSlackMs: 150,
 }
 
 export interface FrameSample<T> {
@@ -133,6 +136,10 @@ export class StableCaptureTracker<T> {
   private onEvict?: (frame: T) => void
   private ring: FrameSample<T>[] = []
   private candidate: { code: string; firstSeen: number; lastDecode: number } | null = null
+  /** Sharpest frame seen while the candidate was readable; kept even after it leaves the ring. */
+  private held: FrameSample<T> | null = null
+  /** Decided frames not in the ring: closed on the next call, once the caller has converted them. */
+  private deferred: T[] = []
   private fired: { code: string; lastSeen: number } | null = null
   private stableSince: number | null = null
 
@@ -144,23 +151,36 @@ export class StableCaptureTracker<T> {
   /**
    * A barcode was decoded from the frame grabbed at time `t` (the grab time, not when the
    * async decode finished — the code must have been readable in a still frame).
+   *
+   * Returns a decision when this decode replaces a candidate that never got captured (the
+   * next strip showed up before the previous one settled): that strip is saved right away
+   * from its best frame, flagged `lowQuality`, instead of being silently dropped.
    */
-  noteDecode(code: string, t: number): void {
+  noteDecode(code: string, t: number): CaptureDecision<T> | null {
+    this.flushDeferred()
     if (this.fired && this.fired.code === code) {
       this.fired.lastSeen = Math.max(this.fired.lastSeen, t)
-      return
+      return null
     }
     if (this.candidate && this.candidate.code === code) {
       this.candidate.lastDecode = Math.max(this.candidate.lastDecode, t)
-      return
+      this.updateHeld()
+      return null
     }
+    const dropped = this.candidate ? this.fallbackDecision() : null
     this.candidate = { code, firstSeen: t, lastDecode: t }
+    this.updateHeld()
+    return dropped
   }
 
   /** Feed the next frame sample; returns a decision when it is time to save. */
   pushFrame(s: FrameSample<T>): CaptureDecision<T> | null {
+    this.flushDeferred()
     this.ring.push(s)
-    while (this.ring.length > this.cfg.ringSize) this.onEvict?.(this.ring.shift()!.frame)
+    while (this.ring.length > this.cfg.ringSize) {
+      const old = this.ring.shift()!
+      if (old !== this.held) this.onEvict?.(old.frame)
+    }
 
     if (s.motion !== null && s.motion <= this.cfg.motionThreshold) {
       if (this.stableSince === null) this.stableSince = s.t
@@ -169,8 +189,13 @@ export class StableCaptureTracker<T> {
     }
 
     if (this.fired && s.t - this.fired.lastSeen >= this.cfg.releaseMs) this.fired = null
-    if (this.candidate && s.t - this.candidate.lastDecode > this.cfg.codeTtlMs) this.candidate = null
+
+    // Strip left view before it ever settled: save what we have instead of dropping it.
+    if (this.candidate && s.t - this.candidate.lastDecode > this.cfg.codeTtlMs) {
+      return this.fallbackDecision()
+    }
     if (!this.candidate) return null
+    this.updateHeld()
 
     // Still long enough, AND the barcode was decoded from a frame at/after the still period
     // (otherwise the strip may have been swapped or removed since it was decoded).
@@ -180,19 +205,15 @@ export class StableCaptureTracker<T> {
       this.candidate.lastDecode >= this.stableSince
     const timedOut = s.t - this.candidate.firstSeen >= this.cfg.maxWaitMs
     if (!steady && !timedOut) return null
+    if (!steady) return this.fallbackDecision()
 
-    const pool = steady ? this.ring.filter((f) => f.t >= this.stableSince!) : this.ring
+    const pool = this.ring.filter((f) => f.t >= this.stableSince!)
     const best = pool.reduce((a, b) => (b.sharpness > a.sharpness ? b : a))
-    const decision: CaptureDecision<T> = {
-      code: this.candidate.code,
-      frame: best.frame,
-      sharpness: best.sharpness,
-      lowQuality: !steady,
-      waitedMs: s.t - this.candidate.firstSeen,
-    }
-    this.fired = { code: this.candidate.code, lastSeen: this.candidate.lastDecode }
+    const c = this.candidate
+    this.takeHeld()
+    this.fired = { code: c.code, lastSeen: c.lastDecode }
     this.candidate = null
-    return decision
+    return { code: c.code, frame: best.frame, sharpness: best.sharpness, lowQuality: false, waitedMs: s.t - c.firstSeen }
   }
 
   /** For UI feedback: nothing in view / barcode seen but moving / barcode seen and still. */
@@ -203,10 +224,58 @@ export class StableCaptureTracker<T> {
 
   /** Drop all state (camera stopped) and release held frames. */
   reset(): void {
+    this.flushDeferred()
     for (const f of this.ring) this.onEvict?.(f.frame)
+    if (this.held && !this.ring.includes(this.held)) this.onEvict?.(this.held.frame)
     this.ring = []
+    this.held = null
     this.candidate = null
     this.fired = null
     this.stableSince = null
+  }
+
+  // ── internals ──
+
+  /** Keep the sharpest frame from while the candidate was readable (±slack around decodes). */
+  private updateHeld(): void {
+    const c = this.candidate
+    if (!c) return
+    const lo = c.firstSeen - this.cfg.holdSlackMs
+    const hi = c.lastDecode + this.cfg.holdSlackMs
+    let best = this.held
+    for (const f of this.ring) {
+      if (f.t < lo || f.t > hi) continue
+      if (!best || f.sharpness > best.sharpness) best = f
+    }
+    if (best !== this.held) {
+      const old = this.held
+      this.held = best
+      if (old && !this.ring.includes(old)) this.onEvict?.(old.frame)
+    }
+  }
+
+  /** Hand the held frame to a decision: it must outlive this call, so close it later. */
+  private takeHeld(): FrameSample<T> | null {
+    const h = this.held
+    this.held = null
+    if (h && !this.ring.includes(h)) this.deferred.push(h.frame)
+    return h
+  }
+
+  /** Capture the candidate from its best frame although it never settled. */
+  private fallbackDecision(): CaptureDecision<T> | null {
+    const c = this.candidate
+    if (!c) return null
+    this.updateHeld()
+    const h = this.takeHeld()
+    this.candidate = null
+    if (!h) return null
+    this.fired = { code: c.code, lastSeen: c.lastDecode }
+    return { code: c.code, frame: h.frame, sharpness: h.sharpness, lowQuality: true, waitedMs: c.lastDecode - c.firstSeen }
+  }
+
+  private flushDeferred(): void {
+    for (const f of this.deferred) this.onEvict?.(f)
+    this.deferred = []
   }
 }

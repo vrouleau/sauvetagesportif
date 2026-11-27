@@ -28,8 +28,8 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import {
-  StableCaptureTracker, rgbaToGray, sharpness, meanAbsDiff,
-  type CaptureDecision, type TrackerStatus,
+  StableCaptureTracker, DEFAULT_CAPTURE_CONFIG, rgbaToGray, sharpness, meanAbsDiff,
+  type CaptureConfig, type CaptureDecision, type TrackerStatus,
 } from '../captureQuality'
 
 /** Frame sampling for the stillness / sharpness check (small canvas keeps it cheap). */
@@ -56,6 +56,25 @@ function timingApi() {
       }
     }
   }).api?.timing ?? null
+}
+
+/**
+ * Optional on-site tuning without a rebuild: in DevTools (F12) run e.g.
+ *   localStorage.setItem('timing-capture-config', JSON.stringify({ motionThreshold: 4, stableMs: 200 }))
+ * then reload. Keys: see CaptureConfig in captureQuality.ts. Unknown/invalid values are ignored.
+ */
+function loadCaptureConfig(): Partial<CaptureConfig> {
+  try {
+    const raw = JSON.parse(localStorage.getItem('timing-capture-config') || '{}') as Record<string, unknown>
+    const out: Record<string, number> = {}
+    for (const k of Object.keys(DEFAULT_CAPTURE_CONFIG)) {
+      const v = raw[k]
+      if (typeof v === 'number' && Number.isFinite(v) && v >= 0) out[k] = v
+    }
+    return out as Partial<CaptureConfig>
+  } catch {
+    return {}
+  }
 }
 
 /** Full-resolution JPEG (base64, no prefix) of a frame, or null. */
@@ -97,7 +116,8 @@ export default function TimingScanPage() {
   const [lowQuality, setLowQuality] = useState(false)
   const [metrics, setMetrics] = useState<{ motion: number | null; sharp: number } | null>(null)
   // Holds the last few full-resolution frames; the sharpest still one is saved.
-  const trackerRef = useRef(new StableCaptureTracker<ImageBitmap>({}, (b) => b.close()))
+  const trackerRef = useRef<StableCaptureTracker<ImageBitmap>>(null as never)
+  if (!trackerRef.current) trackerRef.current = new StableCaptureTracker<ImageBitmap>(loadCaptureConfig(), (b) => b.close())
   const streamRef = useRef<MediaStream | null>(null)
 
   // Load summary
@@ -194,7 +214,11 @@ export default function TimingScanPage() {
           ])
 
           // Don't save here: tell the tracker, which saves once the strip is still.
-          if (result && BARCODE_RE.test(result)) trackerRef.current.noteDecode(result, grabbedAt)
+          if (result && BARCODE_RE.test(result)) {
+            // A decision here = the previous strip was replaced before it settled: save it anyway.
+            const dropped = trackerRef.current.noteDecode(result, grabbedAt)
+            if (dropped) void commitCapture(dropped)
+          }
         } catch { /* continue */ }
 
         await new Promise((r) => setTimeout(r, 200))
