@@ -18,9 +18,7 @@ Per-package context:
 | Entries | team-app (Organizer → Télécharger LXF) | meet-app (File → Importer LENEX) | Clubs, athletes, registrations, entry times |
 | Results | meet-app (File → Exporter résultats) | team-app (Organizer → Importer résultats) | Athletes + final times → archived as historical meet |
 
-Every meet editor field travels in both directions, so the meet can be set up in either app (team-app → create meet → entries → export → meet-app → heats → run): standard LENEX where Splash puts it, plus a hidden `.meetvalues` entry for the seeding/heat settings — one shared map, `config/lenex-meet-fields.json` (see `config/CLAUDE.md`).
-
-Organizer import of results also closes the meet cycle: resets current meet (both admin and organizer paths), regenerates club PINs, clears organizer role. Empty meet state is supported — self-invite shows "no meet planned". See `packages/team-app/CLAUDE.md` for details.
+Every meet editor field travels in both directions (meet can be set up in either app); results import also resets the meet cycle. Details, field map (`config/lenex-meet-fields.json`), swimstyle checks and templates → **`lxf-roundtrip` skill**.
 
 ## Branding
 - App names: **SauvetageMeet** (desktop) / **SauvetageTeam** (web)
@@ -117,182 +115,28 @@ scripts/
 ## Shared critical rules
 
 ### Shared code pattern
-Both apps use the same EventsPage from shared-ui. Changes go in:
-- `packages/shared-ui/src/pages/EventsPage.tsx` (single source of truth)
-- Meet-app picks it up via `@shared` Vite alias (`electron.vite.config.ts`)
-- Team-app picks it up via Docker `COPY packages/shared-ui/src` at build time
+Both apps use the same shared-ui pages; changes go in `packages/shared-ui/src/` (single source of truth; meet-app via the `@shared` Vite alias, team-app via Docker `COPY packages/shared-ui/src`). Checklist → **`shared-ui-change` skill**.
 
 ### Docker build context
 Team-app `docker-compose.yml` uses `context: ../..` (monorepo root). Always run `docker compose` from `packages/team-app/`, never from the root.
 
 ### Column encoding (SQLite; also meet-app's optional shared PostgreSQL)
-- `swimevent.roundname` — event name (NOT `name`)
-- `swimevent.internalevent` — `'T'` = pause/admin event
-- `swimevent.round` — meet-app stores **Splash's own codes** (`packages/meet-app/src/main/rounds.ts`): `1`=TIM, `2`=PRE, `6`=SEM, `9`=FIN, `11`=Break (also `internalevent='T'`). team-app keeps its own (`1`=PRE, `2`=SEM, `4`=FIN, `5`=TIM); the shared EventsPage sends LENEX names (`'PRE'`, `'TIM'`) and each backend maps them. In general meet-app stores every Splash column the way Splash does — Splash reads our rows directly on a shared Postgres database (see `packages/meet-app/CLAUDE.md`, "Splash's encoding")
-- Gender: `0`=All (individual events only), `1`=M, `2`=F, `3`=Mixed (relay events only). An age group's gender always mirrors its parent event's — never independently set (cascades on event gender update, both apps). Individual events: All/M/F. Relay events: Mixed/M/F, no All. LENEX's real `GENDER` attribute enum is `ALL|M|F|MIXED` — our own exporter used to non-conformantly write `X` for Mixed; still accepted on import for backward compatibility. See `docs/AGE_GROUP_GENDER_MODEL.md` for the full design rationale (what Splash/LENEX's data model still supports vs. what our UI enforces).
-- Times: INTEGER milliseconds (`0` = no time, same as NULL)
-- Boolean: CHAR(1) `'T'`/`'F'`
-- `agegroup.agemax` — `99` or `-1` both mean "Open" (no upper limit); meet-app writes `-1` (Splash's value) for no limit, never NULL. `swimevent.preveventid` "no linked prelim" is `-1` too
+meet-app stores every Splash column the way Splash does (Splash reads our rows directly on a shared Postgres database). The rules everyone trips on:
+- Times: INTEGER ms (`0` = no time, same as NULL). Boolean: CHAR(1) `'T'`/`'F'`.
+- Gender: `0`=All (individual only), `1`=M, `2`=F, `3`=Mixed (relay only); an age group's gender always mirrors its event's.
+- `swimevent.round` differs per app (meet-app uses Splash codes, team-app its own); `agemax` `-1`/`99` = Open.
+- `0` and `null` are not interchangeable for optional integers once Splash/GBIN is involved.
 
-### MEETVALUES format
-Meet-level config in `bsglobal` uses Splash's format: `KEY=TYPE;VALUE\r\n`
-Types: `I`=integer, `S`=string, `B`=boolean(T/F), `D`=date(YYYYMMDDHHMMSSMMM), `F`=float
+Full table, round codes, MEETVALUES format (`KEY=TYPE;VALUE\r\n`) → **`splash-encoding` skill**.
 
-## Relay Entry
-
-Relay team management across both apps. Relay events have `relaycount > 1` (typically 4).
-
-### SERC (Simulated Emergency Response Competition)
-
-SERC is a judged technical relay event (swimstyle ID 530). Teams of 4 respond to a staged water emergency with multiple victims.
-
-**Key differences from normal relays:**
-- **No gender/age restrictions** — any mix of men/women, any age group
-- **No age group labels** displayed on teams
-- **Scoring** instead of timing — judges rate criteria 0-10 (×0.5 increments), weighted by factors
-- **Separate SERC tab** in organizer view with setup, scoring grid, results, and print
-
-**SERC components:**
-| Component | What |
-|-----------|------|
-| `backend/app/models_serc.py` | SQLAlchemy models (serc_config, serc_draw_order, serc_score) |
-| `backend/app/routers/serc.py` | CRUD API (config, teams, scores, results, draw order) |
-| `backend/app/routers/serc_print.py` | Printable judge sheets (one page per team per section, bilingual) |
-| `frontend/src/pages/Serc.jsx` | Organizer page (setup, scoring grid, results, QR codes) |
-| `frontend/src/pages/SercJudge.jsx` | Judge tablet form (public, no login, FR/EN toggle) |
-
-**SERC API endpoints:**
-| Endpoint | Purpose |
-|----------|---------|
-| `GET/POST /api/serc/config` | Get/save SERC configuration (victims, factors) |
-| `GET /api/serc/teams` | List relay teams for swimstyle 530 |
-| `GET/POST /api/serc/draw-order/1/randomize` | Randomize team order |
-| `PUT /api/serc/score` | Save a single score (draw, team, section, field, value) |
-| `GET /api/serc/scores/1` | Get all scores grouped by team |
-| `GET /api/serc/results` | Compute ranked results |
-| `GET /api/serc/print/sheets?lang=fr` | Print judge sheets (fr/en/bilingual) |
-
-**Judge tablet form:** `/serc/judge/overall`, `/serc/judge/bystander`, `/serc/judge/victim/1` — public URLs, no login needed. QR codes generated from the scoring page.
-
-### Shared UI Pages
-- `shared-ui/src/pages/RelayEntryPage.tsx` — relay team management (flat event list with age groups shown after event name, team CRUD, member dropdowns)
-- `shared-ui/src/pages/IndividualEntryPage.tsx` — individual entry (toolbar with search, "Add Athlete" / "Delete" buttons, shows only events with `relaycount=1`)
-
-### Navigation Tabs
-Both apps show two entry tabs:
-- "Individual Entries" / "Inscriptions individuelles" → `IndividualEntryPage`
-- "Relay Entries" / "Inscriptions relais" → `RelayEntryPage`
-
-### Meet-app IPC Channels (relay)
-| Channel | Purpose |
+## Domain skills (load on demand)
+Detailed implementation knowledge lives in `.claude/skills/`:
+| Working on… | Skill |
 |---|---|
-| `db:get-clubs` | Get real database club IDs |
-| `db:get-relay-page-data` | Relay events, teams, eligible athletes |
-| `db:create-relay-team` | Create relay team |
-| `db:delete-relay-team` | Delete relay team |
-| `db:set-relay-team-member` | Assign/remove member at position |
-| `db:set-relay-team-name` | Set custom team name |
-| `db:set-relay-team-hc` | Set/clear HC (hors concours) — `relay.resultstatus=4` |
-| `db:set-relay-team-entry-time` | Set/clear pool relay entry time (ms) — `relay.entrytime` |
+| Relay teams, composition rules, entry time/HC, SERC, relay IPC/API | `relay-entry` |
+| Beach meets: bibs (`nameprefix`), ranked results, pool-vs-beach behavior, ID ranges (pool 500-531 / beach 601-624) | `beach-meet` |
+| LXF import/export, meet-level fields, templates, meet reset | `lxf-roundtrip` |
+| Anything in `packages/shared-ui` | `shared-ui-change` |
+| SQL, migrations, importers/exporters, Splash/PG interop | `splash-encoding` |
 
-### Team-app API Endpoints (relay)
-| Endpoint | Purpose |
-|---|---|
-| `GET /api/relay-teams?club_id=X` | Relay page data (events, teams, eligible athletes) |
-| `POST /api/relay-teams` | Create relay team |
-| `DELETE /api/relay-teams/{id}` | Delete relay team |
-| `PUT /api/relay-teams/{id}/members/{pos}` | Assign member at position |
-| `PUT /api/relay-teams/{id}/name` | Set custom team name |
-| `PUT /api/relay-teams/{id}/entry-time` | Set/clear pool relay entry time `{entryTimeMs}` (400 on beach/SERC) |
-| `PUT /api/relay-teams/{id}/hc` | Set/clear HC `{isHC}` — `relays.resultstatus=4` (migration m0008) |
-
-### Relay entry time + HC (exhibition)
-- **Entry time** (pool relays only — beach relays are ranked, SERC is judged): typed by the coach on each team card (`RelayEntryPage`), exported as the relay `ENTRY@entrytime`; meet-app seeds relay heats by `relay.entrytime` like individual entries (NT last).
-- **Suggested time**: each member's *relay best time* = the fastest total of any archived team they swam on, per style/course (`best_times.get_relay_best_times`, team-app; 18-month expiry, HC/DSQ/DNS excluded; Lancer de la corde is course-free). The suggestion is the **average of the members who have one** (`shared-ui/src/logic/relayEntryTime.ts`), filled in and kept in step as members change — until the coach types a time, which is then kept. A "?" bubble next to the time (`RelayEntryTimeHelp`) explains the rule and shows the team's breakdown: each member's relay best time, the average, and whether the time follows the suggestion or was typed (team-app only — meet-app has no relay history, so it shows the rule alone).
-- **Relay history**: meet-app's results export writes `RELAY > RESULTS > RESULT` (team total, status, the swimmers) and relay-only swimmers as `ATHLETE`s; both team-app results imports archive them into `relays`/`relayspos` under the historical meet (`relay_archive.py`).
-- **HC**: set by the club's coach in either app; stored in Splash's own encoding (`resultstatus=4`) on `relay`/`relays` and `swimresult`; travels as LXF `ENTRY status="EXH"` (individual and relay). An HC team skips the composition rules; heat seeding puts HC entries in the exhibition group (`SEEDEXHLAST`).
-
-### Team Composition Rules (see `docs/RELAY_TEAM_RULES.md`)
-- **Age group**: a team's category = the event it was created under (not computed from members). Members must be that exact category or the single adjacent-younger one (swim-up, never the reverse). At least 2 members must match the exact category — 1-3 and 0-4 splits are invalid. Beyond that, any split is valid (4-0, 3-1, 2-2) — no majority requirement. No per-team age label is shown in the UI; the event card's own category applies.
-- **Mixed events (gender=X)**: exactly 2M + 2F required (for 4-person relay)
-- **SERC events (swimstyle 530)**: NO gender or age restrictions — any composition allowed
-- **HC (exhibition) teams**: no gender or age restrictions either, in both apps
-- **Eligibility**: same club, registered for individual events, no duplicate across teams for same event
-- **Team naming**: concatenated last names ("Tremblay/Gagnon/Roy/Boucher") or custom name
-
-### Data Flow
-```
-RelayEntryPage.tsx
-    ↓ useApi()
-    ├── meet-app: registrationApiElectron.ts → Electron IPC → SQLite (relay/relayposition tables)
-    └── team-app: meetApi.js → HTTP fetch → FastAPI → SQLite (relays/relayspos tables)
-```
-
-### LXF Import (relay)
-- **meet-app**: `importLenex` now processes `RELAY` and `RELAYPOSITION` elements from .lxf files, including `ENTRY@entrytime` and `ENTRY@status="EXH"`
-- **team-app**: `upload_entries` also imports relay teams from LXF (entry time + EXH too); the results imports archive relay results as relay history
-
-### SMB Import/Export (relay)
-meet-app handles `relay`, `relayposition`, and `relaysplit` tables in its own SMB backup/restore (Splash interop). team-app has no `.smb` support (removed — superseded by LXF).
-
-## Beach Meets
-
-Beach events are **ranked** (positions 1st, 2nd, 3rd) instead of **timed**. Positions stored as integer milliseconds (position 1 = 1000ms, position 2 = 2000ms).
-
-### Beach Numbers
-
-Athletes in beach meets get a unique jersey/bib number stored in `athlete.nameprefix`. Format: `Letter + 3 chars` (e.g., `C201`, or `C A01` for Masters — no space, 4 chars total).
-
-**Encoding:**
-- Letter (A-Z) = club identifier (from club code characters, fallback to first unused letter)
-- Category char = **fixed global code** per (age bracket, sex) — the same code everywhere, not assigned dynamically per club. Age brackets follow the canonical order (`AGE_CODE_ORDER` in `shared-ui/src/logic/ageGroupCode.ts`): 10-, 11-12, 13-14, 15-18, Open, Masters. Each bracket has a female slot then a male slot:
-  `10-F=0, 10-M=1, 11-12F=2, 11-12M=3, 13-14F=4, 13-14M=5, 15-18F=6, 15-18M=7, OpenF=8, OpenM=9, MastersF=A, MastersM=B`
-  (digits 0-9 cover the first 5 brackets; Masters overflows into letters once digits run out). The bracket comes from the athlete's age group (`agemin`/`agemax`/`name`); the sex comes from the athlete's own `gender` (not the age group's, which can be mixed for X relay events).
-- Last 2 chars (01-99) = athlete sequence within category, alphabetical by lastname/firstname
-
-**Generation triggers:**
-- `importLenex` → calls `generateBeachNumbers(db)` when `MEET_TYPE='BEACH'`
-- `registerForEvent` (late entry) → calls `assignLateBeachNumber(db, athleteId)`
-- `generateHeats` → calls `assignLateBeachNumber` for any athletes missing a number
-
-**Key source:** `packages/meet-app/src/main/beachNumber.ts`
-- `generateBeachNumbers(db)` — full idempotent regeneration (clears all, recomputes)
-- `assignLateBeachNumber(db, athleteId)` — assigns next available number for one athlete
-
-**Constraints:** 26 clubs max, 12 fixed categories (6 age brackets × 2 sexes), 99 athletes per category per club.
-
-**Properties:** deterministic, unique, idempotent, stable (late arrivals don't change existing numbers).
-
-**Display:** HeatsPage, "Identifiants plage" PDF report.
-
-### Meet type flag
-- Stored in `bsglobal` as `MEET_TYPE` (`POOL` or `BEACH`, default `POOL` if missing)
-- Set at meet creation via "Create Pool" / "Create Beach" buttons
-- Auto-detected on LXF import: if any `swimstyleid >= 600` exists → `BEACH`, otherwise `POOL` (only when `MEET_TYPE` not already set)
-- One meet type per database at a time
-
-### Key differences from pool
-| Aspect | Pool | Beach |
-|--------|------|-------|
-| Results | Time in ms | Position as integer (×1000ms) |
-| Lanes | Center-out assignment | No lanes (sequential numbering) |
-| Heat capacity | `session.lanemax - lanemin + 1` | `swimevent.maxentries` or `swimstyle.distance` |
-| Heat seeding | By entry time (circle/pyramid/straight) | Random assignment |
-| Finals qualification | By fastest prelim time | By best prelim position (lowest) |
-| Timing input | `M:SS.cc` format | Integer position (1, 2, 3...) |
-| Scanner/OCR tabs | Visible | Hidden |
-| Best times | Stored and displayed | Skipped (not applicable) |
-| Inscription | Checkbox + best time + entry time | Checkbox only |
-
-### Position entry UX (HeatsPage)
-- Click empty cell → pre-fills with next available position, text selected for override
-- Duplicate position → **swaps** the two athletes' positions
-- Gap prevention: can't enter position > total athletes with positions
-- Rank column hidden (redundant — position IS the result)
-
-### ID ranges (no overlap between pool and beach)
-| Entity | Pool range | Beach range |
-|--------|-----------|-------------|
-| swimstyleid | 500-531 | 601-624 |
-| eventid | 1065-1234 | 6001-6105 |
-| agegroupid | 1066-1236 | 6002-6106 |
+Action skills (run on request): `/team-tests`, `/meet-tests`, `/roundtrip-test`, `/dedupe-athletes`.
