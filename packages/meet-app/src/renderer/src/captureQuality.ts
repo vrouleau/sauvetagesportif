@@ -96,13 +96,13 @@ export interface CaptureConfig {
 
 /**
  * Starting values, to be tuned on the real camera and lighting (the scan page shows live
- * motion/sharpness readouts for that). Sensor noise on a still scene is typically ~0.5–1.5;
- * a strip being moved is well above 5.
+ * motion/sharpness readouts for that). Measured on the real setup: a sheet held in the hand
+ * reads ~6-9 even when held as steady as possible, so the threshold sits just above that.
  */
 export const DEFAULT_CAPTURE_CONFIG: CaptureConfig = {
-  motionThreshold: 2.5,
-  stableMs: 300,
-  maxWaitMs: 2000,
+  motionThreshold: 10,
+  stableMs: 250,
+  maxWaitMs: 1500,
   codeTtlMs: 1500,
   releaseMs: 1500,
   ringSize: 10,
@@ -267,7 +267,13 @@ export class StableCaptureTracker<T> {
     const c = this.candidate
     if (!c) return null
     this.updateHeld()
-    const h = this.takeHeld()
+    let h = this.takeHeld()
+    // No frame was kept for the decoded moment (the decode finished after those frames had
+    // already left the ring): use the ring frame closest to it. A capture from a slightly
+    // off moment beats silently dropping the strip.
+    if (!h && this.ring.length > 0) {
+      h = this.ring.reduce((a, b) => (Math.abs(b.t - c.lastDecode) < Math.abs(a.t - c.lastDecode) ? b : a))
+    }
     this.candidate = null
     if (!h) return null
     this.fired = { code: c.code, lastSeen: c.lastDecode }

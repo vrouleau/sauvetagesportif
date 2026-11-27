@@ -230,6 +230,26 @@ describe('StableCaptureTracker', () => {
     expect(h.decisions[1].code).toBe('E7-U7-H1-L2')
   })
 
+  it('hand-held tremor (mvt 6-9, as measured on the real setup) still counts as steady with the defaults', () => {
+    const h = harness()
+    h.step(0, null, 5)
+    for (let t = 100; t <= 1000; t += STEP) h.step(t, 6 + (t / 100) % 4, 30 + (t % 7), 'E11-U11-H1-L1')
+    expect(h.decisions).toHaveLength(1)
+    expect(h.decisions[0].lowQuality).toBe(false)
+  })
+
+  it('late decode (frames of the decoded moment already left the ring): timeout still captures, never drops', () => {
+    const h = harness({ ringSize: 3 })
+    for (let t = 0; t < 1000; t += STEP) h.step(t, MOVING, 5) // nothing decoded yet
+    // slow Quagga decode of the frame grabbed at t=0 finally reports; ring now only holds 700..900
+    const dropped = h.tracker.noteDecode('E12-U12-H1-L1', 0)
+    expect(dropped).toBeNull()
+    for (let t = 1000; t <= 2000; t += STEP) h.step(t, MOVING, 5, undefined)
+    expect(h.decisions).toHaveLength(1)
+    expect(h.decisions[0].code).toBe('E12-U12-H1-L1')
+    expect(h.decisions[0].lowQuality).toBe(true)
+  })
+
   it('keeps only ringSize frames and reports evictions; reset releases the rest', () => {
     const h = harness({ ringSize: 3 })
     for (let t = 0; t < 600; t += STEP) h.step(t, STILL, 1) // 6 frames, no decode
