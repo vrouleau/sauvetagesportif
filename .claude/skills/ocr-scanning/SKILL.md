@@ -37,6 +37,17 @@ description: Timing sheet scanning and OCR in meet-app — barcode format, sheet
 matches on — it's always unique, unlike `eventNumber`, which a prelim and its final
 can share (see "Prelim/Final event numbering" below).
 
+### Capture timing (stable-then-capture)
+Scanner (`TimingScanPage.tsx` + pure `src/renderer/src/captureQuality.ts`, tests `tests/capture-quality.test.ts`):
+- Barcode decode (Quagga, ~200 ms loop, on a copy <= 1280 px wide) does **not** save anymore; it calls `tracker.noteDecode(code, grabTime)`.
+- A 100 ms sampling loop measures motion (mean abs diff of 320 px gray frames) and sharpness (variance of Laplacian) and feeds the `StableCaptureTracker`, which keeps the last 6 full-res `ImageBitmap`s.
+- It saves the **sharpest frame of the still period** once the scene was still >= 300 ms AND the code was decoded from a frame at/after the stillness start (so a swapped/removed strip never gets captured). Timeout 2 s -> saves anyway with `lowQuality` (amber "image possiblement floue" badge, operator re-presents the strip).
+- Same code re-arms only after it has been out of view 1.5 s (re-presenting replaces the old scan: `timing:save-scan` deletes the previous scan of that barcode). A different code arms immediately.
+- Beep/flash fire at the actual capture, not at first decode. "Hold still" prompt while a code is seen but the strip moves.
+- Camera: requests 1920x1080 @30 and continuous autofocus when supported. Exposure is not touched (manual exposure risks dark images; use more light instead).
+- Thresholds live in `DEFAULT_CAPTURE_CONFIG` (starting values, **not yet tuned on the real camera**); the page shows a live `mvt / nettete` readout bottom-left to tune them: still scene should read below `motionThreshold` (2.5), a moving strip well above.
+- Blank-sheet capture (Space/button) is still immediate/manual.
+
 ### Scan storage
 Separate SQLite: `{userData}/timing_scans.sqlite`
 - `timing_scan` table: image blob, barcode, event/heat/lane, status, recognized/validated times

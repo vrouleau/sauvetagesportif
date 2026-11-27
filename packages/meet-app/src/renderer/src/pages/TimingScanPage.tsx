@@ -27,6 +27,17 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react'
+import {
+  StableCaptureTracker, rgbaToGray, sharpness, meanAbsDiff,
+  type CaptureDecision, type TrackerStatus,
+} from '../captureQuality'
+
+/** Frame sampling for the stillness / sharpness check (small canvas keeps it cheap). */
+const SAMPLE_INTERVAL_MS = 100
+const SAMPLE_WIDTH = 320
+/** Barcode decoding runs on a copy no wider than this (the code spans the strip, so it is plenty). */
+const DECODE_MAX_WIDTH = 1280
+const BARCODE_RE = /^E(\d+)-U(\d+)-H(\d+)-L(\d+)$/
 
 function timingApi() {
   return (window as unknown as {
@@ -47,6 +58,32 @@ function timingApi() {
   }).api?.timing ?? null
 }
 
+/** Full-resolution JPEG (base64, no prefix) of a frame, or null. */
+function bitmapToJpegBase64(bitmap: ImageBitmap): string | null {
+  try {
+    const canvas = document.createElement('canvas')
+    canvas.width = bitmap.width
+    canvas.height = bitmap.height
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return null
+    ctx.drawImage(bitmap, 0, 0)
+    return canvas.toDataURL('image/jpeg', 0.85).split(',')[1] || null
+  } catch {
+    return null
+  }
+}
+
+/** Best-effort camera tuning: continuous autofocus where the camera supports it. */
+async function tuneTrack(track: MediaStreamTrack | undefined): Promise<void> {
+  try {
+    if (!track?.getCapabilities) return
+    const caps = track.getCapabilities() as { focusMode?: string[] }
+    if (Array.isArray(caps.focusMode) && caps.focusMode.includes('continuous')) {
+      await track.applyConstraints({ advanced: [{ focusMode: 'continuous' } as MediaTrackConstraintSet] })
+    }
+  } catch { /* unsupported — keep camera defaults */ }
+}
+
 export default function TimingScanPage() {
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -56,8 +93,11 @@ export default function TimingScanPage() {
   const [lastBarcode, setLastBarcode] = useState<string | null>(null)
   const [flash, setFlash] = useState(false)
   const [summary, setSummary] = useState<{ unprocessed: number; validated: number } | null>(null)
-  const lastBarcodeRef = useRef<string>('')
-  const lastBarcodeTimeRef = useRef<number>(0)
+  const [status, setStatus] = useState<TrackerStatus>('idle')
+  const [lowQuality, setLowQuality] = useState(false)
+  const [metrics, setMetrics] = useState<{ motion: number | null; sharp: number } | null>(null)
+  // Holds the last few full-resolution frames; the sharpest still one is saved.
+  const trackerRef = useRef(new StableCaptureTracker<ImageBitmap>({}, (b) => b.close()))
   const streamRef = useRef<MediaStream | null>(null)
 
   // Load summary
@@ -71,10 +111,12 @@ export default function TimingScanPage() {
   const startCamera = useCallback(async () => {
     try {
       setCameraError(null)
+      // Ask for Full HD: handwritten digits need more pixels than the barcode does.
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 1280 }, height: { ideal: 720 } },
+        video: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } },
       })
       streamRef.current = stream
+      await tuneTrack(stream.getVideoTracks()[0])
       if (videoRef.current) {
         videoRef.current.srcObject = stream
         await new Promise<void>((resolve) => {
@@ -97,6 +139,9 @@ export default function TimingScanPage() {
       streamRef.current = null
     }
     if (videoRef.current) videoRef.current.srcObject = null
+    trackerRef.current.reset()
+    setStatus('idle')
+    setMetrics(null)
     setCameraActive(false)
   }, [])
 
@@ -122,13 +167,15 @@ export default function TimingScanPage() {
 
         try {
           const video = videoRef.current
+          const scale = Math.min(1, DECODE_MAX_WIDTH / video.videoWidth)
           const canvas = document.createElement('canvas')
-          canvas.width = video.videoWidth
-          canvas.height = video.videoHeight
+          canvas.width = Math.round(video.videoWidth * scale)
+          canvas.height = Math.round(video.videoHeight * scale)
           const ctx = canvas.getContext('2d')
           if (!ctx) { await new Promise((r) => setTimeout(r, 200)); continue }
 
-          ctx.drawImage(video, 0, 0)
+          const grabbedAt = performance.now() // the code must have been readable in THIS frame
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
           const imageDataUrl = canvas.toDataURL('image/png')
 
           const result = await Promise.race([
@@ -146,7 +193,8 @@ export default function TimingScanPage() {
             new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000)),
           ])
 
-          if (result) handleBarcodeDecode(result)
+          // Don't save here: tell the tracker, which saves once the strip is still.
+          if (result && BARCODE_RE.test(result)) trackerRef.current.noteDecode(result, grabbedAt)
         } catch { /* continue */ }
 
         await new Promise((r) => setTimeout(r, 200))
@@ -155,6 +203,50 @@ export default function TimingScanPage() {
 
     scanLoop()
     return () => { running = false }
+  }, [cameraActive])
+
+  // Frame sampling loop: measures stillness + sharpness, keeps recent full-res frames in the
+  // tracker, and saves the sharpest still one once a barcode has been read (see captureQuality.ts).
+  useEffect(() => {
+    if (!cameraActive) return
+    let running = true
+    const tracker = trackerRef.current
+    const small = document.createElement('canvas')
+    const smallCtx = small.getContext('2d', { willReadFrequently: true })
+    let prevGray: Uint8Array | null = null
+    let prevStatus: TrackerStatus = 'idle'
+
+    async function sampleLoop() {
+      while (running) {
+        const started = performance.now()
+        const video = videoRef.current
+        if (video && video.videoWidth > 0 && smallCtx) {
+          try {
+            const w = SAMPLE_WIDTH
+            const h = Math.max(2, Math.round((SAMPLE_WIDTH * video.videoHeight) / video.videoWidth))
+            if (small.width !== w || small.height !== h) { small.width = w; small.height = h; prevGray = null }
+            const t = performance.now()
+            smallCtx.drawImage(video, 0, 0, w, h)
+            const gray = rgbaToGray(smallCtx.getImageData(0, 0, w, h).data)
+            const motion = prevGray ? meanAbsDiff(prevGray, gray) : null
+            prevGray = gray
+            const sharp = sharpness(gray, w, h)
+            const frame = await createImageBitmap(video)
+            if (!running) { frame.close(); break }
+
+            const decision = tracker.pushFrame({ t, motion, sharpness: sharp, frame })
+            if (tracker.status !== prevStatus) { prevStatus = tracker.status; setStatus(prevStatus) }
+            setMetrics({ motion, sharp })
+            if (decision) void commitCapture(decision) // converts the frame synchronously, saves async
+          } catch { /* keep sampling */ }
+        }
+        const wait = SAMPLE_INTERVAL_MS - (performance.now() - started)
+        await new Promise((r) => setTimeout(r, Math.max(10, wait)))
+      }
+    }
+
+    sampleLoop()
+    return () => { running = false; tracker.reset() }
   }, [cameraActive])
 
   // Capture a blank (hand-identified) sheet — no barcode to trigger on
@@ -173,6 +265,7 @@ export default function TimingScanPage() {
     if (result.ok) {
       setScanCount((c) => c + 1)
       setLastBarcode('Fiche vierge')
+      setLowQuality(false)
     }
   }, [])
 
@@ -189,26 +282,21 @@ export default function TimingScanPage() {
     return () => window.removeEventListener('keydown', onKey)
   }, [cameraActive, captureBlank])
 
-  // Handle decoded barcode
-  const handleBarcodeDecode = useCallback(async (raw: string) => {
-    const now = Date.now()
-    if (raw === lastBarcodeRef.current && now - lastBarcodeTimeRef.current < 3000) return
-    lastBarcodeRef.current = raw
-    lastBarcodeTimeRef.current = now
-
-    const match = raw.match(/^E(\d+)-U(\d+)-H(\d+)-L(\d+)$/)
+  // Save the frame the tracker picked (sharpest of the recent still frames).
+  const commitCapture = useCallback(async (decision: CaptureDecision<ImageBitmap>) => {
+    const match = decision.code.match(BARCODE_RE)
     if (!match) return
-
     const [, eventStr, swimEventIdStr, heatStr, laneStr] = match
-    const imageBase64 = captureFrame()
+
+    // Convert synchronously: the bitmap is closed once it falls out of the tracker's ring.
+    const imageBase64 = bitmapToJpegBase64(decision.frame)
     if (!imageBase64) return
 
-    // Flash + beep
+    // Flash + beep — only now, so the beep means "picture taken, you can move on"
     setFlash(true)
     setTimeout(() => setFlash(false), 300)
     playBeep()
 
-    // Save
     const api = timingApi()
     if (api) {
       const result = await api.saveScan({
@@ -216,12 +304,13 @@ export default function TimingScanPage() {
         swimEventId: parseInt(swimEventIdStr, 10),
         heatNumber: parseInt(heatStr, 10),
         lane: parseInt(laneStr, 10),
-        barcodeRaw: raw,
+        barcodeRaw: decision.code,
         imageBase64,
       })
       if (result.ok && !result.duplicate) {
         setScanCount((c) => c + 1)
-        setLastBarcode(raw)
+        setLastBarcode(decision.code)
+        setLowQuality(decision.lowQuality)
       }
     }
   }, [])
@@ -312,10 +401,27 @@ export default function TimingScanPage() {
           </div>
         )}
 
+        {/* Hold-still prompt: barcode read, waiting for the strip to settle */}
+        {cameraActive && status !== 'idle' && (
+          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-amber-500/90 text-black text-sm font-medium px-4 py-2 rounded shadow">
+            {status === 'moving' ? 'Code détecté — gardez la fiche immobile…' : 'Ne bougez pas…'}
+          </div>
+        )}
+
+        {/* Live readout to tune the thresholds on site (captureQuality.ts DEFAULT_CAPTURE_CONFIG) */}
+        {cameraActive && metrics && (
+          <div className="absolute bottom-2 left-2 text-[10px] font-mono text-white/70 bg-black/40 px-1.5 py-0.5 rounded">
+            mvt {metrics.motion === null ? '–' : metrics.motion.toFixed(1)} · netteté {Math.round(metrics.sharp)}
+          </div>
+        )}
+
         {/* Last scan indicator */}
         {lastBarcode && (
-          <div className="absolute top-3 left-3 bg-green-700/90 text-white text-sm px-3 py-2 rounded shadow font-mono">
-            ✓ {lastBarcode}
+          <div className={`absolute top-3 left-3 text-white text-sm px-3 py-2 rounded shadow font-mono ${lowQuality ? 'bg-amber-600/95' : 'bg-green-700/90'}`}>
+            {lowQuality ? '⚠' : '✓'} {lastBarcode}
+            {lowQuality && (
+              <div className="font-sans text-xs mt-1">Image possiblement floue — présentez la fiche à nouveau</div>
+            )}
           </div>
         )}
 

@@ -35,6 +35,7 @@ npm test
 
 Test files in `tests/`:
 - `heat-generation.test.ts` — 28 tests
+- `capture-quality.test.ts` — scanner stable-then-capture logic (`captureQuality.ts`)
 - `gbin.test.ts`, `lenex.test.ts`, `schema.test.ts`, `smb.test.ts`, `meetvalues.test.ts`, `timing-scan.test.ts`
 - `concurrency.test.ts` — multi-station PG concurrency (see `meet-tests` skill)
 - `splash-schema-contract.test.ts` — diffs our schema against a real captured Splash-on-Postgres schema (see `splash-interop` skill)
