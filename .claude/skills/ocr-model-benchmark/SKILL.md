@@ -1,6 +1,6 @@
 ---
 name: ocr-model-benchmark
-description: How to choose and change the Gemini model used for timing-sheet OCR in meet-app, and how to benchmark candidates (accuracy, confident-wrong rate, latency, cost) with scripts/benchmark-ocr.ts / `npm run bench:ocr`. Use when asked whether a newer or cheaper Gemini model would be better, when editing GEMINI_MODELS in ocrGemini.ts, or when OCR misreads times.
+description: How to choose and change the Gemini model used for timing-sheet OCR in meet-app, and how to benchmark candidates (accuracy, confident-wrong rate, latency, cost) with scripts/benchmark-ocr.ts / `npm run bench:ocr`. Use when asked whether a newer or cheaper Gemini model would be better, when editing DEFAULT_ATTEMPTS in ocrFallback.ts, or when OCR misreads times.
 ---
 
 ## Gemini model selection for timing-sheet OCR
@@ -12,7 +12,7 @@ description: How to choose and change the Gemini model used for timing-sheet OCR
 
 ### Never decide from price lists alone
 - Third-party price trackers disagree on newer models and go stale. Prices/model IDs/deprecation dates must come from Google's pricing and models pages (ai.google.dev/gemini-api/docs/pricing, .../models). That host may be blocked in cloud sessions — then ask the user to check, don't guess.
-- Older Gemini models are retired on a schedule; check the shutdown date of whatever is in `GEMINI_MODELS`.
+- Older Gemini models are retired on a schedule; check the shutdown date of every model in `DEFAULT_ATTEMPTS`.
 - Research notes (Nov 2026, unverified third-party figures, USD per 1M tokens in/out): 2.5 Flash-Lite ≈ 0.10/0.40; 2.5 Flash ≈ 0.30/2.50; 3.1 Flash-Lite ≈ 0.25/1.50; newer Flash tiers (3.5/3.8) higher. Re-verify before use.
 
 ### Benchmark procedure
