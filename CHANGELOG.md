@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.6.3] - 2026-11-27
+
+### 🔧 Chores
+
+- fix captures silently dropped on timeout; retune stillness for hand-held use (`e95015a`)
+- distinct double low beep for a possibly blurry capture (`7d82d70`)
+- never drop a strip that is flipped before it settles; on-site threshold tuning (`8026215`)
+- capture the sharpest still frame instead of the first decoded frame (`0c23d43`)
+
+### Other
+
+- Merge pull request #145 from vrouleau/claude/stoic-cerf-9di2ia (`62bb3f2`)
+- Timing sheets: scanner fixes, reliable OCR transcription, safer blank-sheet identity, grouped Traitement list, scan archive (`cefc63d`)
+- ocr-model-benchmark skill: refer to DEFAULT_ATTEMPTS (`5bf5865`)
+- Gemini OCR: try 3.5 Flash-Lite free, then 2.5 Flash-Lite free, then 2.5 Flash-Lite paid (`a0a3d4a`)
+- Blank timing sheets: printed FV- barcode so the scanner captures them hands-free (`bb9047e`)
+- Add ocr-model-benchmark skill and bench:ocr npm script (`c9ca627`)
+- Add Gemini OCR model benchmark script for timing sheets (`02d097a`)
+- Merge pull request #142 from vrouleau/claude/clever-hypatia-l76spt (`b742d67`)
+- Merge remote-tracking branch 'origin/main' into claude/clever-hypatia-l76spt (`015bf4f`)
+- Merge pull request #141 from vrouleau/claude/fiche-chrone-sort-order-p2z1ai (`9f11e56`)
+- Trim meet-app and team-app CLAUDE.md; move domain detail into skills (`ed9e7c5`)
+- Trim CLAUDE.md: move relay, beach, LXF, encoding detail to skills and leave pointers (`26fb80c`)
+- Add project skills: knowledge (relay, beach, lxf, shared-ui, splash encoding) and actions (team/meet tests, roundtrip, dedupe) (`b24dc60`)
+- Sort fiches chrono by lane, then event, then heat (`4c28adb`)
+- Merge pull request #140 from vrouleau/chore/clean-session-pane (`e82407b`)
+- shared-ui: clean up Session pane (drop Horaire, Jury, Autres; translate the rest) (`6831b19`)
+
 ## [0.6.2] - 2026-11-26
 
 ### Other
