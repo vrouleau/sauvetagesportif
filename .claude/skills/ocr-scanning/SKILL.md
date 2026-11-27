@@ -59,9 +59,10 @@ Separate SQLite: `{userData}/timing_scans.sqlite`
 
 ### Gemini OCR
 - Changing/comparing models → `ocr-model-benchmark` skill (`npm run bench:ocr`)
-- Model: `gemini-2.5-flash-lite` (1.4s/scan, no thinking overhead)
-- Fallback: `gemini-2.5-flash` if lite unavailable
-- Background processing in main process (runs on any page)
+- Models/keys tried in order (`src/main/ocrFallback.ts`, `AttemptChain`): **3.5 Flash-Lite free -> 2.5 Flash-Lite free -> 2.5 Flash-Lite paid**. Free-tier limits seen in AI Studio (Nov 2026, per project): 3.5 Flash-Lite 15 RPM / 500 RPD, 2.5 Flash-Lite 10 RPM / **20 RPD** (so 2.5 free runs out after ~20 strips). Verify the model IDs (`gemini-3.5-flash-lite` is the expected ID, unconfirmed): a wrong ID 404s and is skipped for 10 min.
+- An attempt is skipped (no wasted call) while cooling down after a 429 (60 s, or the server `retryDelay`; 30 min when the quota is per-day), 404/403 (10 min) or 5xx/network error (15 s), or when it already used its known RPM in the last 60 s (limit-1). Empty/blocked answers and network errors move on to the next attempt; requests time out after 30 s.
+- If nothing can be tried (all rate limited) `generate()` throws `GeminiBusyError`: the background loop leaves the scan queued and retries in 5 s instead of saving it with empty times. Any other error still stores empty times (operator types them).
+- Cooldowns are module-wide (survive engine re-creation) and are cleared when keys are saved. `getCurrentGeminiTier()` = tier of the last answered request.
 - Dual API keys in BSGLOBAL: `GEMINI_KEY_FREE` + `GEMINI_KEY_PAID`
 - Auto-fallback: free → paid on 429 → back to free after 60s
 

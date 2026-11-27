@@ -17,7 +17,7 @@
 // along with Sauvetage Sportif. If not, see <https://www.gnu.org/licenses/>.
 
 /**
- * OCR engine using Google Gemini 2.0 Flash vision API.
+ * OCR engine using the Google Gemini vision API (models + key order: see ocrFallback.ts).
  *
  * Get your API key at: https://aistudio.google.com/apikey
  * (Sign in with your Google account, click "Create API Key")
@@ -43,22 +43,27 @@ interface CroppedDigit { imageBuffer: Buffer; position: number }
 /** Full time OCR result */
 interface TimeOcrResult { timeString: string; digitResults: OcrResult[]; overallConfidence: number }
 
-const GEMINI_MODELS = [
-  'gemini-2.5-flash-lite',
-  'gemini-2.5-flash',
-]
+import { AttemptChain, parseRateLimit, type KeyTier } from './ocrFallback'
 
-function getGeminiUrl(model: string, apiKey: string): string {
-  return `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`
+/** Thrown when no model/key could be tried or all were rate limited: the scan should be retried later, not given up on. */
+export class GeminiBusyError extends Error {
+  constructor(message: string) { super(message); this.name = 'GeminiBusyError' }
+}
+
+const REQUEST_TIMEOUT_MS = 30_000
+
+/** Shared by every engine instance so cooldowns / per-minute counts survive engine re-creation. */
+const attemptChain = new AttemptChain()
+let lastUsedTier: KeyTier = 'free'
+
+function getGeminiUrl(model: string): string {
+  return `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`
 }
 
 export class GeminiOcrEngine implements OcrEngine {
   readonly name = 'gemini' as const
-  private apiKey: string = ''
-
   async initialize(): Promise<void> {
-    this.apiKey = loadGeminiApiKey()
-    if (!this.apiKey) {
+    if (!loadGeminiApiKey()) {
       throw new Error(
         'Gemini API key not configured. ' +
         'Get your key at https://aistudio.google.com/apikey then set it in the app settings.'
@@ -95,9 +100,15 @@ export class GeminiOcrEngine implements OcrEngine {
     return { ...parseBlankSheetResponse(text), raw: text }
   }
 
-  /** Send prompt + JPEG to Gemini (model fallback, free → paid key on 429). */
+  /**
+   * Send prompt + JPEG to Gemini, trying the attempts of `ocrFallback.ts` in order
+   * (3.5 Flash-Lite free -> 2.5 Flash-Lite free -> 2.5 Flash-Lite paid).
+   * Throws GeminiBusyError when nothing could be tried / everything was rate limited.
+   */
   private async generate(prompt: string, imageBuffer: Buffer): Promise<string> {
-    if (!this.apiKey) throw new Error('Gemini API key not set')
+    const keys = loadGeminiKeys()
+    if (!keys.freeKey && !keys.paidKey) throw new Error('Gemini API key not set')
+    const keyFor = (tier: KeyTier) => (tier === 'free' ? keys.freeKey : keys.paidKey)
 
     const body = JSON.stringify({
       contents: [{
@@ -108,42 +119,60 @@ export class GeminiOcrEngine implements OcrEngine {
       }],
       generationConfig: { temperature: 0, maxOutputTokens: 1000 },
     })
-    const post = (model: string, key: string) => fetch(getGeminiUrl(model, key), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body,
-    })
-    const textOf = async (resp: Response): Promise<string> => {
-      const data = await resp.json() as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> }
-      return data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? ''
-    }
 
-    // Try models in order (fallback if rate limited)
     let lastError = ''
-    for (const model of GEMINI_MODELS) {
-      const response = await post(model, this.apiKey)
+    let rateLimited = false
+    for (const attempt of attemptChain.available(Date.now(), (t) => !!keyFor(t))) {
+      const label = `${attempt.model} (${attempt.tier})`
+      attemptChain.noteRequest(attempt, Date.now())
 
-      if (response.status === 429) {
-        // Rate limited — try switching to paid key, retry same model
-        const paidKey = switchToPaidKey()
-        if (paidKey && paidKey !== this.apiKey) {
-          this.apiKey = paidKey
-          const retryResp = await post(model, paidKey)
-          if (retryResp.ok) return textOf(retryResp)
-        }
-        lastError = `Rate limited on ${model}`
+      let resp: Response
+      try {
+        resp = await fetch(getGeminiUrl(attempt.model), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': keyFor(attempt.tier) },
+          body,
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        })
+      } catch (e) {
+        attemptChain.noteTransientFailure(attempt, Date.now())
+        lastError = `${label}: ${e instanceof Error ? e.message : String(e)}`
         continue
       }
 
-      if (!response.ok) {
-        lastError = `Gemini API error ${response.status}: ${await response.text()}`
+      if (resp.status === 429) {
+        attemptChain.noteRateLimited(attempt, Date.now(), parseRateLimit(await resp.text().catch(() => '')))
+        rateLimited = true
+        lastError = `Rate limited on ${label}`
+        continue
+      }
+      if (!resp.ok) {
+        const detail = (await resp.text().catch(() => '')).slice(0, 200)
+        // 404/403: model id wrong/retired or not allowed for this key -> back off for a while.
+        // 400 (bad image / bad key) is not model-specific: no cooldown, just try the next attempt.
+        if (resp.status === 404 || resp.status === 403) attemptChain.noteUnavailable(attempt, Date.now())
+        else if (resp.status >= 500) attemptChain.noteTransientFailure(attempt, Date.now())
+        lastError = `Gemini API error ${resp.status} on ${label}: ${detail}`
         continue
       }
 
-      return textOf(response)
+      const data = await resp.json().catch(() => null) as
+        { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> } | null
+      const text = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? ''
+      if (!text) { // blocked / empty answer: try the next model instead of returning nothing
+        lastError = `Empty answer from ${label}`
+        continue
+      }
+      attemptChain.noteSuccess(attempt)
+      lastUsedTier = attempt.tier
+      return text
     }
 
-    throw new Error(lastError || 'All Gemini models failed')
+    // Nothing usable right now (all cooling down / over their per-minute quota) or all failed.
+    if (rateLimited || !lastError) {
+      throw new GeminiBusyError(lastError || 'Gemini: every model/key is rate limited right now')
+    }
+    throw new Error(lastError)
   }
 
   async dispose(): Promise<void> {
@@ -154,46 +183,27 @@ export class GeminiOcrEngine implements OcrEngine {
 // ── API Key management ────────────────────────────────────────────────────────
 // Keys are stored in the BSGLOBAL table of the local meet database.
 // Two keys: free tier (GEMINI_KEY_FREE) and paid tier (GEMINI_KEY_PAID).
-// The engine uses the free key first, falls back to paid on rate limit,
-// then returns to free after 60 seconds.
+// Which model/key is tried first, and when to move on, lives in ocrFallback.ts.
 
 import { getLocalDb } from './db'
 
 let cachedFreeKey = ''
 let cachedPaidKey = ''
-let usingPaidSince: number | null = null // timestamp when we switched to paid
 
 const CONFIG_FILE = 'gemini-config.json'
 
+/** Any configured key (used to check that OCR can run at all). */
 export function loadGeminiApiKey(): string {
-  // Return the appropriate key based on rate limit state
   refreshKeysFromDb()
-
-  // If we switched to paid less than 60s ago, keep using paid
-  if (usingPaidSince && Date.now() - usingPaidSince < 60000) {
-    return cachedPaidKey || cachedFreeKey
-  }
-
-  // Reset to free tier
-  usingPaidSince = null
   return cachedFreeKey || cachedPaidKey
 }
 
-/** Called when free tier is rate-limited — switch to paid */
-export function switchToPaidKey(): string {
-  if (cachedPaidKey) {
-    usingPaidSince = Date.now()
-    return cachedPaidKey
-  }
-  return ''
-}
-
-/** Get the current tier being used */
+/** The key tier that answered the last request (for the UI indicator). */
 export function getCurrentGeminiTier(): 'free' | 'paid' | 'none' {
   refreshKeysFromDb()
   if (!cachedFreeKey && !cachedPaidKey) return 'none'
-  if (usingPaidSince && Date.now() - usingPaidSince < 60000) return 'paid'
-  return 'free'
+  if (lastUsedTier === 'paid' && cachedPaidKey) return 'paid'
+  return cachedFreeKey ? 'free' : 'paid'
 }
 
 export function loadGeminiKeys(): { freeKey: string; paidKey: string } {
@@ -202,6 +212,7 @@ export function loadGeminiKeys(): { freeKey: string; paidKey: string } {
 }
 
 export function saveGeminiKeys(freeKey: string, paidKey: string): void {
+  attemptChain.reset() // new keys: forget rate-limit cooldowns
   try {
     const db = getLocalDb()
     if (freeKey !== undefined) {

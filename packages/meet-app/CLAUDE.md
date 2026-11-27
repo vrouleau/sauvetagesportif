@@ -36,6 +36,7 @@ npm test
 Test files in `tests/`:
 - `heat-generation.test.ts` — 28 tests
 - `capture-quality.test.ts` — scanner stable-then-capture logic (`captureQuality.ts`)
+- `ocr-fallback.test.ts` — Gemini model/key fallback order, cooldowns, RPM pacing (`ocrFallback.ts`)
 - `gbin.test.ts`, `lenex.test.ts`, `schema.test.ts`, `smb.test.ts`, `meetvalues.test.ts`, `timing-scan.test.ts`
 - `concurrency.test.ts` — multi-station PG concurrency (see `meet-tests` skill)
 - `splash-schema-contract.test.ts` — diffs our schema against a real captured Splash-on-Postgres schema (see `splash-interop` skill)
@@ -81,7 +82,8 @@ src/main/
   timingSheets.ts       — Timing sheet PDF generator (HTML + Code128 SVG)
   timingScanDb.ts       — Local SQLite for scanned images + processing state
   ocrEngine.ts          — OCR engine interface
-  ocrGemini.ts          — Gemini 2.5 Flash Lite vision OCR (primary)
+  ocrGemini.ts          — Gemini vision OCR (walks the attempt list)
+  ocrFallback.ts        — Which Gemini model + key to try, cooldowns, RPM pacing (3.5 Flash-Lite free -> 2.5 Flash-Lite free -> 2.5 Flash-Lite paid)
   geminiBackground.ts   — Background Gemini processing loop (main process)
 src/preload/index.ts    — contextBridge API
 src/renderer/src/

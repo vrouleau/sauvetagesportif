@@ -6,8 +6,8 @@ description: How to choose and change the Gemini model used for timing-sheet OCR
 ## Gemini model selection for timing-sheet OCR
 
 ### Where the model is set
-- `packages/meet-app/src/main/ocrGemini.ts` → `GEMINI_MODELS` (ordered: first is primary, next is tried on 429/error; free key → paid key switch happens per model).
-- Today: `gemini-2.5-flash-lite`, then `gemini-2.5-flash`. Request: temperature 0, `maxOutputTokens: 1000`, one JPEG + `CHRONO_PROMPT` (or `BLANK_SHEET_PROMPT`, `src/main/blankTimingSheet.ts`). No `thinkingConfig` is sent.
+- `packages/meet-app/src/main/ocrFallback.ts` → `DEFAULT_ATTEMPTS` (ordered list of model + key tier; `ocrGemini.ts` walks it, skipping attempts in cooldown or over their known RPM).
+- Today: `gemini-3.5-flash-lite` (free key), `gemini-2.5-flash-lite` (free key), `gemini-2.5-flash-lite` (paid key). Request: temperature 0, `maxOutputTokens: 1000`, one JPEG + `CHRONO_PROMPT` (or `BLANK_SHEET_PROMPT`, `src/main/blankTimingSheet.ts`). No `thinkingConfig` is sent.
 - Workload is tiny: one small image + short prompt + ~20 output tokens per strip, so cost per sheet is a fraction of a cent. **Accuracy and the "confident-wrong" rate matter far more than a 2–3x price difference**; fewer manual corrections is the real saving.
 
 ### Never decide from price lists alone
@@ -32,7 +32,7 @@ description: How to choose and change the Gemini model used for timing-sheet OCR
 - Prefer the model with the lowest WRONG rate; among near-equals, lower latency, then cost.
 - A candidate must not regress WRONG vs. current primary. Slight increase in `unclear` is acceptable.
 - Thinking models: tokens used for thinking count against `maxOutputTokens` (1000) and are billed as output; if a 2.5 Flash answer comes back empty/truncated, that's why — compare with `--thinking-budget 0`.
-- To switch: edit `GEMINI_MODELS`, update the model line in `.claude/skills/ocr-scanning/SKILL.md` ("Gemini OCR") and `packages/meet-app/CLAUDE.md` (`ocrGemini.ts` line), and fix the stale "Gemini 2.0 Flash" header comment in `ocrGemini.ts`.
+- To switch: edit `DEFAULT_ATTEMPTS` (and the `ocr-fallback` test), update the model lines in `.claude/skills/ocr-scanning/SKILL.md` ("Gemini OCR") and `packages/meet-app/CLAUDE.md` (`ocrGemini.ts` / `ocrFallback.ts` lines).
 
 ### Script internals
 `packages/meet-app/scripts/benchmark-ocr.ts` is standalone (no Electron): imports only `CHRONO_PROMPT` / `parseChronoTimes` from `blankTimingSheet.ts`, mirrors `generate()` in `ocrGemini.ts`, retries 429/5xx with backoff, interleaves models per sheet so outages hit all evenly. `GEMINI_BASE_URL` overrides the endpoint (useful for a local mock when testing the script offline). Keep its request shape in sync with `ocrGemini.ts` if that changes.
