@@ -28,8 +28,12 @@
  *   too, pre-filled by Gemini, and must resolve to a seeded entry to accept
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { parseLooseTimeToMs } from '@shared/logic/timeFormat'
+import {
+  ROUND_LABEL, UNRESOLVED, groupKeyOf, sortScans, scanListKey, itemLabel, buildGroups,
+  type ScanGroup,
+} from '../scanGroups'
 
 type ScanStatus = 'unprocessed' | 'recognized' | 'validated' | 'error'
 
@@ -66,10 +70,20 @@ interface BlankTarget {
   hasTime: boolean
 }
 
+/** A look-alike reading (7<->1, 2<->7, ...) of a blank sheet's identity that exists in the meet. */
+interface BlankAlternative extends BlankTarget {
+  distance: number
+}
+
+interface EventLabel {
+  swimEventId: number
+  eventNumber: number
+  round: number
+  eventName: string
+}
+
 const isBlank = (scan: ScanRecord | null) => !!scan && scan.barcodeRaw.startsWith('BLANK-')
 
-// swimevent.round — Splash codes (src/main/rounds.ts)
-const ROUND_LABEL: Record<number, string> = { 1: 'Finale directe', 2: 'Préliminaire', 6: 'Demi-finale', 9: 'Finale' }
 
 function scanLabel(scan: ScanRecord): string {
   if (!isBlank(scan)) return scan.barcodeRaw
@@ -89,6 +103,8 @@ function timingApi() {
           target?: { eventNumber: number; swimEventId: number; heatNumber: number; lane: number },
         ) => Promise<{ ok: boolean; error?: string }>
         findBlankTargets: (eventNumber: number, heatNumber: number, lane: number) => Promise<BlankTarget[]>
+        findBlankAlternatives: (eventNumber: number, heatNumber: number, lane: number) => Promise<BlankAlternative[]>
+        getEventLabels: () => Promise<EventLabel[]>
         markError: (scanId: number, notes: string) => Promise<{ ok: boolean }>
       }
     }
@@ -113,6 +129,29 @@ export default function TimingProcessPage() {
   const [editLane, setEditLane] = useState('')
   const [targets, setTargets] = useState<BlankTarget[]>([])
   const [targetId, setTargetId] = useState(0)
+  const [alternatives, setAlternatives] = useState<BlankAlternative[]>([])
+  // Left list: groups by event, collapsible
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const [eventLabels, setEventLabels] = useState<Map<number, EventLabel>>(new Map())
+  const labelIdsTried = useRef<Set<number>>(new Set())
+  const currentItemRef = useRef<HTMLButtonElement | null>(null)
+  const scansRef = useRef<ScanRecord[]>([])
+  const currentIdRef = useRef<number | null>(null)
+
+  // New data from the main process: keep display order, and keep the current scan selected
+  // even if the sort moved it (e.g. Gemini just resolved a blank sheet's event).
+  const applyScans = useCallback((data: ScanRecord[]) => {
+    const sorted = sortScans(data)
+    if (scanListKey(scansRef.current) === scanListKey(sorted)) return
+    scansRef.current = sorted
+    setScans(sorted)
+    const id = currentIdRef.current
+    if (id !== null) {
+      const idx = sorted.findIndex((s) => s.scanId === id)
+      if (idx >= 0) setCurrentIndex(idx)
+      else setCurrentIndex((i) => Math.min(i, Math.max(0, sorted.length - 1))) // list replaced (e.g. scans loaded)
+    }
+  }, [])
 
   // Sync toggle with main process
   useEffect(() => {
@@ -126,36 +165,56 @@ export default function TimingProcessPage() {
       const api = timingApi()
       if (!api) return
       const data = await api.getScansForProcessing(filter)
-      setScans((prev) => {
-        const key = (list: ScanRecord[]) => JSON.stringify(list.map(s => ({
-          id: s.scanId, s: s.status, t1: s.recognizedTime1, e: s.eventNumber, h: s.heatNumber, l: s.lane, u: s.swimEventId,
-        })))
-        if (key(prev) !== key(data)) {
-          return data
-        }
-        return prev
-      })
+      applyScans(data)
       // Update tier
       const bg = await (window as any).api?.timing?.getGeminiBackground()
       if (bg?.tier) setGeminiTier(bg.tier)
     }, 3000)
     return () => clearInterval(interval)
-  }, [filter])
+  }, [filter, applyScans])
 
   // Load scans
   const loadScans = useCallback(async () => {
     const api = timingApi()
     if (!api) return
     const data = await api.getScansForProcessing(filter)
-    setScans(data)
+    applyScans(data)
     if (data.length > 0 && currentIndex >= data.length) {
       setCurrentIndex(0)
     }
-  }, [filter])
+  }, [filter, applyScans])
 
   useEffect(() => { loadScans() }, [loadScans])
 
   const currentScan = scans[currentIndex] ?? null
+
+  useEffect(() => { scansRef.current = scans }, [scans])
+  useEffect(() => { currentIdRef.current = currentScan?.scanId ?? null }, [currentScan?.scanId])
+
+  // Event names for the group titles: fetched once, and again only for events not seen yet
+  useEffect(() => {
+    const missing = scans.filter((s) => s.swimEventId > 0 && !eventLabels.has(s.swimEventId) && !labelIdsTried.current.has(s.swimEventId))
+    if (missing.length === 0) return
+    missing.forEach((s) => labelIdsTried.current.add(s.swimEventId))
+    timingApi()?.getEventLabels().then((list) => setEventLabels(new Map(list.map((l) => [l.swimEventId, l]))))
+  }, [scans, eventLabels])
+
+  const groups = useMemo<ScanGroup<ScanRecord>[]>(() => buildGroups(scans, eventLabels), [scans, eventLabels])
+
+  // The group of the scan being worked on opens by itself (others stay as the user left them)
+  useEffect(() => {
+    if (!currentScan) return
+    const key = groupKeyOf(currentScan)
+    setExpanded((prev) => (prev.has(key) ? prev : new Set(prev).add(key)))
+  }, [currentScan?.scanId, currentScan?.swimEventId])
+
+  useEffect(() => { currentItemRef.current?.scrollIntoView({ block: 'nearest' }) }, [currentScan?.scanId, expanded])
+
+  const toggleGroup = (key: string) => setExpanded((prev) => {
+    const next = new Set(prev)
+    if (next.has(key)) next.delete(key); else next.add(key)
+    return next
+  })
 
   // When current scan changes OR Gemini fills in times, update edit fields
   useEffect(() => {
@@ -205,6 +264,16 @@ export default function TimingProcessPage() {
         return open.length === 1 ? open[0].swimEventId : 0
       })
     })
+    return () => { cancelled = true }
+  }, [blank, editEvent, editHeat, editLane])
+
+  // Look-alike readings of the handwritten identity (7<->1, 2<->7, ...) that exist in the meet
+  useEffect(() => {
+    if (!blank) { setAlternatives([]); return }
+    const e = parseInt(editEvent, 10), h = parseInt(editHeat, 10), l = parseInt(editLane, 10)
+    if (!(e > 0 && h > 0 && l > 0)) { setAlternatives([]); return }
+    let cancelled = false
+    timingApi()?.findBlankAlternatives(e, h, l).then((list) => { if (!cancelled) setAlternatives(list) })
     return () => { cancelled = true }
   }, [blank, editEvent, editHeat, editLane])
 
@@ -383,27 +452,58 @@ export default function TimingProcessPage() {
         </div>
       ) : (
         <div className="flex-1 flex gap-4 min-h-0">
-          {/* Scan list (left strip) */}
-          <div className="w-48 flex flex-col bg-white border border-gray-200 rounded overflow-hidden">
-            <div className="px-2 py-1.5 bg-gray-50 border-b border-gray-200 text-xs font-semibold text-gray-600">
-              Fiches
+          {/* Scan list (left strip): one collapsible group per event */}
+          <div className="w-60 flex flex-col bg-white border border-gray-200 rounded overflow-hidden">
+            <div className="px-2 py-1.5 bg-gray-50 border-b border-gray-200 text-xs font-semibold text-gray-600 flex items-center justify-between">
+              <span>Fiches</span>
+              <span className="font-normal text-gray-500 flex gap-2">
+                <button
+                  onClick={() => setExpanded(new Set(groups.map((g) => g.key)))}
+                  className="hover:text-blue-600"
+                  title="Déplier toutes les épreuves"
+                >⊞ Tout</button>
+                <button
+                  onClick={() => setExpanded(new Set(currentScan ? [groupKeyOf(currentScan)] : []))}
+                  className="hover:text-blue-600"
+                  title="Replier toutes les épreuves (sauf celle en cours)"
+                >⊟ Replier</button>
+              </span>
             </div>
             <div className="flex-1 overflow-y-auto">
-              {scans.map((scan, i) => (
-                <button
-                  key={scan.scanId}
-                  onClick={() => setCurrentIndex(i)}
-                  className={`w-full text-left px-2 py-1.5 text-xs border-b border-gray-100 flex items-center gap-2 ${
-                    i === currentIndex ? 'bg-blue-50 border-l-2 border-l-blue-500' : 'hover:bg-gray-50'
-                  }`}
-                >
-                  <span className={`${statusColor(scan.status)} font-bold`}>{statusLabel(scan.status)}</span>
-                  <span className="font-mono flex-1">{scanLabel(scan)}</span>
-                  {scan.status === 'validated' && (
-                    <span className="text-2xs text-green-600">✓</span>
-                  )}
-                </button>
-              ))}
+              {groups.map((g) => {
+                const open = expanded.has(g.key)
+                const done = g.validated === g.items.length
+                return (
+                  <div key={g.key}>
+                    <button
+                      onClick={() => toggleGroup(g.key)}
+                      className={`w-full text-left px-2 py-1.5 text-xs border-b border-gray-200 flex items-center gap-1.5 sticky top-0 z-10 ${
+                        g.key === UNRESOLVED ? 'bg-orange-50 hover:bg-orange-100' : 'bg-gray-50 hover:bg-gray-100'
+                      }`}
+                      title={g.title}
+                    >
+                      <span className="text-gray-400 w-3 shrink-0">{open ? '▾' : '▸'}</span>
+                      <span className={`flex-1 font-semibold leading-tight break-words ${done ? 'text-gray-400' : 'text-gray-700'}`}>{g.title}</span>
+                      <span className={`shrink-0 font-mono ${done ? 'text-green-600' : 'text-gray-500'}`}>
+                        {done ? '✓ ' : ''}{g.validated}/{g.items.length}
+                      </span>
+                    </button>
+                    {open && g.items.map(({ scan, index }) => (
+                      <button
+                        key={scan.scanId}
+                        ref={index === currentIndex ? currentItemRef : undefined}
+                        onClick={() => setCurrentIndex(index)}
+                        className={`w-full text-left pl-6 pr-2 py-1.5 text-xs border-b border-gray-100 flex items-center gap-2 ${
+                          index === currentIndex ? 'bg-blue-50 border-l-2 border-l-blue-500' : 'hover:bg-gray-50'
+                        }`}
+                      >
+                        <span className={`${statusColor(scan.status)} font-bold`}>{statusLabel(scan.status)}</span>
+                        <span className="font-mono flex-1 truncate">{itemLabel(scan)}</span>
+                      </button>
+                    ))}
+                  </div>
+                )
+              })}
             </div>
           </div>
 
@@ -483,6 +583,38 @@ export default function TimingProcessPage() {
                       <div className="text-gray-400">Saisir épreuve / série / couloir</div>
                     )}
                   </div>
+
+                  {/* The handwriting can be misread (7<->1, 2<->7...) and a wrong identity files the times under the wrong swimmer */}
+                  {alternatives.length > 0 && (
+                    <div className="mt-3">
+                      <div className={`text-xs font-semibold mb-1 ${!blankTarget || blankTarget.hasTime ? 'text-orange-600' : 'text-gray-500'}`}>
+                        Mal lu ? Autres lectures possibles
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        {alternatives.map((a) => (
+                          <button
+                            key={`${a.swimEventId}-${a.heatNumber}-${a.lane}`}
+                            onClick={() => {
+                              setEditEvent(String(a.eventNumber))
+                              setEditHeat(String(a.heatNumber))
+                              setEditLane(String(a.lane))
+                              setTargetId(a.swimEventId)
+                            }}
+                            className="text-left text-xs border border-gray-200 rounded px-2 py-1 hover:bg-blue-50 hover:border-blue-300"
+                            title={a.eventName}
+                          >
+                            <div className="font-mono font-semibold">
+                              Épr. {a.eventNumber} · S{a.heatNumber} · C{a.lane}
+                              {a.hasTime && <span className="font-sans font-normal text-orange-600"> · a déjà un temps</span>}
+                            </div>
+                            <div className="text-gray-600 truncate">
+                              {a.entryLabel}{a.clubCode ? ` (${a.clubCode})` : ''}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 

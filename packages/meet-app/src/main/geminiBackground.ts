@@ -25,7 +25,7 @@
  */
 
 import { getScansByStatus, updateScanOcrResult, updateScanIdentity, type TimingScan } from './timingScanDb'
-import { GeminiOcrEngine, loadGeminiApiKey } from './ocrGemini'
+import { GeminiOcrEngine, GeminiBusyError, loadGeminiApiKey } from './ocrGemini'
 import { isBlankScan, findBlankSheetCandidates, pickBlankSheetTarget } from './blankTimingSheet'
 import { getLocalDb } from './db'
 
@@ -43,8 +43,9 @@ export async function recognizeScan(engine: GeminiOcrEngine, scan: TimingScan): 
     updateScanOcrResult(scan.scanId, {
       recognizedTime1: result.time1 || '',
       recognizedTime2: result.time2 || '',
-      ocrEngine: 'gemini',
+      ocrEngine: `gemini:${result.model}`,
       ocrConfidence: result.confidence,
+      ocrRaw: result.raw,
     })
     return result
   }
@@ -66,8 +67,9 @@ export async function recognizeScan(engine: GeminiOcrEngine, scan: TimingScan): 
   updateScanOcrResult(scan.scanId, {
     recognizedTime1: reading.time1 || '',
     recognizedTime2: reading.time2 || '',
-    ocrEngine: 'gemini',
+    ocrEngine: `gemini:${reading.model}`,
     ocrConfidence: swimEventId ? reading.confidence : Math.min(reading.confidence, 0.3),
+    ocrRaw: reading.raw,
   })
   return reading
 }
@@ -136,7 +138,14 @@ async function processLoop(): Promise<void> {
       }
 
       await recognizeScan(engine, next)
-    } catch {
+    } catch (e) {
+      if (e instanceof GeminiBusyError) {
+        // Every model/key is rate limited right now: leave the scan queued and try again soon
+        // (the quota recovers) instead of giving up on it with empty times.
+        attemptedIds.delete(next.scanId)
+        await sleep(5000)
+        continue
+      }
       // Mark as recognized with empty times so we don't retry
       updateScanOcrResult(next.scanId, {
         recognizedTime1: '',

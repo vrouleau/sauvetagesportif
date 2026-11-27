@@ -267,6 +267,16 @@ Pour les sites avec chronométrage électronique :
 2. Choisir un emplacement et un nom de fichier
 3. Le fichier `.smb` contient l'état complet du meet (structure, inscriptions, résultats, config)
 
+### Sauvegarder les fiches scannées (.scans)
+
+Le `.smb` ne contient **pas** les fiches de chronométrage scannées (elles sont dans un fichier local séparé). Pour les garder en historique :
+
+1. Menu Fichier → **Sauvegarder les fiches scannées (.scans)…** — enregistre toutes les fiches avec leur image et leurs temps lus/validés
+2. Plus tard, restaurez d'abord le `.smb` du meet, puis menu Fichier → **Charger des fiches scannées (.scans)…**
+3. Consultez-les dans l'onglet Traitement (filtre *Validés* ou *Tous*)
+
+Le chargement **remplace** les fiches actuellement dans l'application. Si le fichier vient d'un autre meet que celui qui est ouvert, un avertissement s'affiche : valider une de ses fiches enregistrerait le temps dans le mauvais meet.
+
 ### Synchroniser vers la base distante
 
 1. Menu Fichier → **Synchronisation ↑ (app → BD)**

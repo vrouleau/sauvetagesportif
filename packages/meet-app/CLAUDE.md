@@ -15,6 +15,8 @@ npm run dev
 
 F12 opens DevTools. **Do NOT run from Claude Code terminal** (ELECTRON_RUN_AS_NODE=1 crashes it).
 
+`npm run dev:debug` = `npm run dev` + the **scanner debug panel** (Scanner tab: decode/capture/save counters, last errors). Same thing in any build via DevTools: `localStorage.setItem('timing-scan-debug','1')` then reload.
+
 **After switching between `npm test` and `npm run dev`:**
 - Before `npm run dev`: `npm run rebuild`
 - Before `npm test`: `npm rebuild better-sqlite3`
@@ -35,6 +37,11 @@ npm test
 
 Test files in `tests/`:
 - `heat-generation.test.ts` — 28 tests
+- `capture-quality.test.ts` — scanner stable-then-capture logic (`captureQuality.ts`)
+- `ocr-fallback.test.ts` — Gemini model/key fallback order, cooldowns, RPM pacing (`ocrFallback.ts`)
+- `scan-groups.test.ts` — Traitement list grouping/sorting by event (`scanGroups.ts`)
+- `scan-archive.test.ts` — save/load scans to a `.scans` file (`scanArchive.ts`)
+- `blank-timing-sheet.test.ts` — blank sheets, OCR prompts/parsing, look-alike identity alternatives
 - `gbin.test.ts`, `lenex.test.ts`, `schema.test.ts`, `smb.test.ts`, `meetvalues.test.ts`, `timing-scan.test.ts`
 - `concurrency.test.ts` — multi-station PG concurrency (see `meet-tests` skill)
 - `splash-schema-contract.test.ts` — diffs our schema against a real captured Splash-on-Postgres schema (see `splash-interop` skill)
@@ -79,8 +86,10 @@ src/main/
   timingBarcode.ts      — Barcode encode/decode (E{n}-H{n}-L{n} format)
   timingSheets.ts       — Timing sheet PDF generator (HTML + Code128 SVG)
   timingScanDb.ts       — Local SQLite for scanned images + processing state
+  scanArchive.ts        — Pure save/load of scans to a `.scans` file (File menu)
   ocrEngine.ts          — OCR engine interface
-  ocrGemini.ts          — Gemini 2.5 Flash Lite vision OCR (primary)
+  ocrGemini.ts          — Gemini vision OCR (walks the attempt list)
+  ocrFallback.ts        — Which Gemini model + key to try, cooldowns, RPM pacing (3.5 Flash-Lite free -> 2.5 Flash-Lite free -> 2.5 Flash-Lite paid)
   geminiBackground.ts   — Background Gemini processing loop (main process)
 src/preload/index.ts    — contextBridge API
 src/renderer/src/
@@ -90,7 +99,8 @@ src/renderer/src/
   pages/EventsPage.tsx  — Thin wrapper: ApiProvider + shared EventsPage
   pages/HeatsPage.tsx   — Heat runner + Quantum toolbar + Print timing sheets
   pages/TimingScanPage.tsx — Camera barcode scanner (batch mode)
-  pages/TimingProcessPage.tsx — OCR processing queue + manual time entry
+  pages/TimingProcessPage.tsx — OCR processing queue + manual time entry (scans grouped by event)
+  scanGroups.ts         — Pure grouping/sorting of the scan list by event
 ```
 
 ## IPC channels

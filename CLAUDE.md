@@ -136,6 +136,7 @@ Detailed implementation knowledge lives in `.claude/skills/`:
 | Relay teams, composition rules, entry time/HC, SERC, relay IPC/API | `relay-entry` |
 | Beach meets: bibs (`nameprefix`), ranked results, pool-vs-beach behavior, ID ranges (pool 500-531 / beach 601-624) | `beach-meet` |
 | LXF import/export, meet-level fields, templates, meet reset | `lxf-roundtrip` |
+| Choosing/benchmarking the Gemini OCR model (`npm run bench:ocr`) | `ocr-model-benchmark` |
 | Anything in `packages/shared-ui` | `shared-ui-change` |
 | SQL, migrations, importers/exporters, Splash/PG interop | `splash-encoding` |
 
