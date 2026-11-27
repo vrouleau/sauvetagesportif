@@ -44,6 +44,7 @@ Separate SQLite: `{userData}/timing_scans.sqlite`
 - Cleared via "Vider les scans" button or `npm run clean`
 
 ### Gemini OCR
+- Changing/comparing models → `ocr-model-benchmark` skill (`npm run bench:ocr`)
 - Model: `gemini-2.5-flash-lite` (1.4s/scan, no thinking overhead)
 - Fallback: `gemini-2.5-flash` if lite unavailable
 - Background processing in main process (runs on any page)

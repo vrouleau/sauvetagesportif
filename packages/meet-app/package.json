@@ -15,6 +15,7 @@
     "test": "npm rebuild better-sqlite3 && vitest run",
     "test:watch": "npm rebuild better-sqlite3 && vitest",
     "rebuild": "node scripts/rebuild.js",
+    "bench:ocr": "node scripts/benchmark-ocr.ts",
     "postinstall": "node scripts/rebuild.js"
   },
   "build": {
