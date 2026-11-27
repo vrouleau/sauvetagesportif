@@ -46,68 +46,7 @@ shared-ui page is actually loaded in a browser.
 
 ## Integration tests (WSL)
 
-All test commands run from a **WSL terminal**. The test suite is in `tests/`.
-
-### How it works
-
-- `conftest.py` manages the Docker stack automatically via `docker compose -p team-app-test -f docker-compose.yml -f docker-compose.test.yml --env-file tests/test.env`
-- `-p team-app-test` gives the test stack its own project name — **without it, `down -v` targets the same named volume as the plain dev stack (`docker compose up -d` with no `-p`, project name defaults to the directory name) and silently wipes your local dev database.** This has happened before; always pass `-p team-app-test` (or an equivalent unique name) for any test/e2e compose invocation, never reuse the bare `docker-compose.yml` project.
-- `docker-compose.test.yml` adds a port mapping: backend exposed on `http://127.0.0.1:8000`
-- It also replaces Resend with a **fake** (`tests/fake_resend/server.py`, service `fake-resend` on `127.0.0.1:8025`): the backend's `RESEND_API_URL` points at it, it records every email payload and can be told to fail (`POST /control {"fail": true}`). Tests use the `fake_resend` fixture (conftest) to read the outbox. **Tests never send real email.** The stack also sets `RESEND_FROM_EMAIL=no-reply@test.local` and `SUPPORT_EMAIL=support@test.local`.
-- `tests/test.env` provides test-only credentials (`ADMIN_PIN=314159`, `SECRET_KEY=test-only-key-not-for-production`)
-- By default the session fixture runs `down -v && up --build -d` (wipes the test DB, rebuilds images) then tears down after — this is safe because it's scoped to the `team-app-test` project, not the dev stack.
-
-### Standard run (let pytest manage the stack)
-
-```bash
-# In WSL terminal
-cd /mnt/c/Users/eoivnru/Documents/MeetManager/sauvetagesportif/packages/team-app
-pip install -r tests/requirements-test.txt   # first time: pytest + requests
-python3 -m pytest tests/ -v
-```
-
-pytest wipes+rebuilds the stack, waits for backend health, runs all tests, then tears down.
-
-### Run against a stack you already have up
-
-```bash
-MEETMGR_SKIP_STACK=1 python3 -m pytest tests/ -v
-```
-
-Backend URL defaults to `http://127.0.0.1:8000` — no override needed when using the test compose file.
-
-### Keep the stack running after tests
-
-```bash
-MEETMGR_KEEP_STACK=1 python3 -m pytest tests/ -v
-```
-
-### Unit tests (no Docker needed)
-
-```bash
-python3 -m pytest tests/unit/ -v
-```
-
-### Environment variables
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `MEETMGR_URL` | `http://127.0.0.1:8000` | Backend base URL |
-| `MEETMGR_SKIP_STACK` | unset | `1` = skip docker stack management |
-| `MEETMGR_KEEP_STACK` | unset | `1` = skip teardown after suite |
-| `ADMIN_PIN` | `314159` | Admin PIN (sourced from `tests/test.env`) |
-
-### Regenerating test fixtures
-
-Only needed if you change the generators:
-
-```bash
-python3 tests/generate_test_entries.py --out tests/fixtures/test_entries.lxf
-python3 tests/generate_test_results.py \
-    --meet tests/fixtures/meet_template.lxf \
-    --entries tests/fixtures/test_entries.lxf \
-    --out tests/fixtures/test_results.lxf
-```
+Run from a WSL terminal in `packages/team-app/`: `python3 -m pytest tests/ -v` (unit only: `tests/unit/`). **Always** use compose project `-p team-app-test` for test stacks — without it `down -v` wipes the dev database. Full details, env vars, fixtures → **`/team-tests` skill** (`reference.md`).
 
 ## Schema (single unified schema)
 
@@ -138,48 +77,11 @@ The old dual-schema architecture (separate `club`/`athlete` tables + dual-write)
 - `backup_max_count` — auto-backup retention count (default 7)
 - `meet_type` — `POOL` or `BEACH` for the *current* meet (also read as `MEET_TYPE`, the meet-app/`.smb` key name)
 
-`meet_type` is a **cached flag**, not an independent source of truth — the
-real signal is always the swimstyleid range (pool 500-531, beach 601-624).
-It's recomputed fresh on every `POST /api/upload/meet`, scanning only *that
-upload's own* events — deliberately not the SwimStyle catalog (see below),
-so a stale historical style can't misclassify a new upload. `POST
-/api/admin/new-meet` sets it explicitly from the request body. Historical
-imports (`import-historical`, `import-results-lxf`) never touch it.
+**`meet_type`** is a cached flag (real signal = swimstyleid range); swimstyle catalog is never pruned; LXF uploads carry the `.swimstyles` dotfile → `lxf-roundtrip` skill (`team-app-lifecycle.md`).
 
-**Swimstyle id guard:** every LXF upload flags style ids outside `config/swimstyle-ranges.json` (pool 500-531 / beach 601-624) in the same 409 `new_swimstyles` warning as catalog-new ids (`reason` field per style, `?force=true` overrides); a meet structure mixing pool and beach ids is a 400 `mixed_swimstyles` (not overridable). See `config/CLAUDE.md`.
+## Best times
 
-**SwimStyle catalog is never pruned across meets.** Historical events/results
-keep referencing old style ids, so once a pool meet has ever run, its 5xx
-styles stay in the catalog forever (same in reverse for 6xx beach styles).
-Any endpoint that reads the catalog directly (`GET /api/swim-styles`) must
-filter by the current `meet_type`, or it'll offer styles from the wrong
-sport — this bit us for real once already.
-
-**Full catalog travels with every LXF export** (`generate_lxf`, `generate_meet_lxf_from_db`):
-LENEX only carries a SWIMSTYLE inside an EVENT, so the zip also gets a hidden
-`.swimstyles` JSON dotfile (`export.current_meet_swimstyles` — the same
-meet-type-filtered list `GET /api/swim-styles` returns). meet-app loads it on
-import so a last-minute event can use a style no event had. Splash ignores dotfiles.
-
-## Best times storage
-
-One resolver in `best_times.py` (`get_best_times_for_member` / `get_public_best_times`) feeds registration, the public Best Times page and the LXF exports. Per (athlete, style, course), anything older than `BEST_TIME_MAX_AGE_MONTHS` (default 18) is ignored:
-1. **Coach best time** (`athlete_best_times`, migration m0006) — authoritative while valid, even if a faster historical result exists.
-2. Otherwise the **fastest official, non-HC result** from `results`, with that result's own date — or its meet's `mindate` when the result has none (most historical rows). Rows with neither date never expire.
-
-Coach best times are written only at meet close, never on registration:
-- `capture_coach_best_times` — `import-results-lxf` (before the import) and `close-meet-without-results` store each individual registration's entry time for the meet's course, dated to the meet start (`mindate`, else first session date). Entry times equal to the current best time (the pre-filled default) are skipped so a historical value isn't re-dated — and so are entry times equal to one of the athlete's *expired* times for that style/course (`_expired_times`): a best time pre-filled at registration that aged out before the meet was closed, which would otherwise be re-dated to this meet and kept for another 18 months. Relays and beach meets skipped.
-- `refresh_best_times_from_meet` — end of every results import (`lxf_to_team.archive_results_lxf`, both entry points): a faster result replaces the stored time/date, unless the meet is older than the stored value.
-
-**Entry-time help bubble:** `GET /api/athletes/{id}/registration` returns each style's `best_time_{lcm,scm}_date`/`_source` and a top-level `best_time_policy` (`max_age_months`, `typed_time_date` = `coach_best_time_date()`, the date capture would stamp). The shared `RegistrationPanel` shows a "?" next to each individual entry time (only when `best_time_policy` is present — meet-app has no best times): the BT's origin, date and expiry, and that a typed time becomes the new BT at meet close.
-
-**Team events never have individual best times:** styles with `relaycount > 1` (relays, SERC, Lancer de la corde 10/12.5 m 523/524 — a pair, entered in the relay tab) are excluded from the resolver, even if a file recorded them per athlete.
-
-**Relay best times (separate, only to suggest relay entry times):** `get_relay_best_times(db, member_ids, style, course)` — every member of an archived relay team (`relays.totaltime` + `relayspos`, written by both results imports via `relay_archive.py`) is credited with the team's total; a member's relay best time is the fastest one. Same rules as individual: pool only, official, `relays.resultstatus` NULL/0 (HC/DSQ/DNS/DNF excluded), 18-month expiry (team's `eventdate`, else meet `mindate`), SERC excluded, deck throws (distance < 25 m) course-free. Live registrations (no `totaltime`) never count. `GET /api/relay-teams` returns it per member (`relayBestTimeMs`); the shared relay page suggests the team entry time as the average of the members who have one.
-
-**Throws are course-free:** individual pool styles with `0 < distance < 25` (`COURSE_FREE_MAX_DISTANCE`) — Lancer de précision 4/7 m (521/522) — don't depend on the pool's length: one best time across 50 m and 25 m (latest coach value, else fastest result), kept under the course it was actually done in (`pick_course()` reads it for any course). Registration and the public page get a `course_free` flag and show a single box. This relies on `swimstyle.distance`: meet uploads (`events.py`) now correct distance and upgrade relaycount of existing styles from the meet file (historical imports used to create them with no distance and relaycount=1); migration `m0007` applied the bundled pool/beach templates once to existing catalogs (an open meet can't be re-uploaded without losing its registrations).
-
-**Beach meets never count** (results are finishing positions stored as ms, not times): the resolver, refresh, capture and the athlete-history best times all exclude styles `>= BEACH_STYLE_MIN` (600). Pool styles use 5xx IDs, beach styles use 6xx — no collisions. Beach results are no longer archived at all (both results importers refuse them — see "Beach meets are never archived"); the exclusions above still guard beach rows archived before that.
+One resolver (`best_times.py`) feeds registration, the public Best Times page and LXF exports; 18-month expiry; coach times vs archived results; beach never counts → **`best-times` skill**.
 
 ## API endpoints
 
@@ -217,44 +119,11 @@ Coach best times are written only at meet close, never on registration:
 | `POST /api/invoices/notify-organizer` | One summary email to the organizer for a batch of emailed invoices (`{club_ids, lang}`) | Organizer/Admin |
 | `GET /api/admin/gemini-keys` | Get masked Gemini API keys | Admin |
 | `POST /api/admin/gemini-keys` | Set free/paid Gemini API keys | Admin |
-| `GET /api/relay-teams?club_id=X` | Relay page data (events, teams, eligible athletes) | Authenticated |
-| `POST /api/relay-teams` | Create relay team | Authenticated |
-| `DELETE /api/relay-teams/{id}` | Delete relay team | Authenticated |
-| `PUT /api/relay-teams/{id}/members/{pos}` | Assign/remove member at position | Authenticated |
-| `PUT /api/relay-teams/{id}/name` | Set custom team name | Authenticated |
-| `PUT /api/relay-teams/{id}/entry-time` | Set/clear pool relay entry time `{entryTimeMs}` — 400 on beach/SERC | Authenticated (own club) |
-| `PUT /api/relay-teams/{id}/hc` | Set/clear HC `{isHC}` (`relays.resultstatus=4`) | Authenticated (own club) |
-| `GET/POST /api/serc/config` | SERC configuration (victims, factors, bystander) | Organizer/Admin |
-| `GET /api/serc/teams` | SERC relay teams (swimstyle 530) | Organizer/Admin |
-| `PUT /api/serc/score` | Save individual score (0-10 or -10 rough) | Public |
-| `GET /api/serc/scores/1` | All scores grouped by team | Public |
-| `GET /api/serc/results` | Ranked results (weighted totals) | Public |
-| `POST /api/serc/draw-order/1/randomize` | Randomize team draw order | Organizer/Admin |
-| `GET /api/serc/print/sheets?lang=fr` | Printable judge sheets (fr/en/bilingual) | Public |
+| Relay + SERC endpoints (`/api/relay-teams…`, `/api/serc/…`) | see `relay-entry` skill (`team-app-details.md`) | — |
 
 ## Relay Teams
 
-Full CRUD management for relay team entries (events with `relaycount > 1`).
-
-### Workflow
-1. Coach navigates to "Inscriptions relais" tab
-2. Selects a relay event → sees existing teams (A, B, C…)
-3. Creates a team → assigns members from dropdown (filtered by eligibility)
-4. Team age group = the category of the event the team was created under (not computed from members); no per-team label shown, event card header applies
-5. Exported in .lxf via `relays`/`relayspos` tables (Team Manager schema)
-
-### Key rules
-- Team age group: anchored to the event's own category; members must be that exact category or the single adjacent-younger one (swim-up), ≥2 members must match exactly (1-3/0-4 invalid), any split beyond that is OK (4-0/3-1/2-2) — see `docs/RELAY_TEAM_RULES.md`
-- Mixed events: exactly 2M + 2F
-- **SERC events (swimstyle 530): NO gender/age restrictions** — any mix allowed
-- Member eligibility: same club, registered for individual events, not on another team for same event
-- Team naming: auto = concatenated last names; custom name via `PUT /api/relay-teams/{id}/name`
-- **HC (exhibition) teams**: no gender/age restrictions (like SERC); exported as relay `ENTRY status="EXH"` (individual HC registrations too, `swimresult.resultstatus=4`)
-- **Entry time** (pool, not SERC): exported as the relay `ENTRY@entrytime`; suggested from the members' relay best times (see "Best times storage")
-- Closure date and club ownership apply to entry time and HC like every other relay edit
-
-### LXF import
-`upload_entries` (seed.py) also imports relay teams from uploaded .lxf files.
+Coach workflow, composition rules, HC/entry time → **`relay-entry` skill** (`team-app-details.md`).
 
 ## Source layout
 
@@ -287,40 +156,7 @@ frontend/src/
 
 ## Meet lifecycle (LXF round-trip)
 
-Full data flow between meet-app and team-app:
-
-| Step | Direction | What | How |
-|---|---|---|---|
-| 1. Setup | meet-app → team-app | Meet structure (events, sessions, agegroups) | meet-app: File → "Exporter la structure du meet LENEX…" → upload via Organizer page |
-| 2. Invitations | team-app | Clubs register athletes | Organizer sends PINs; coaches log in and register |
-| 3. Entries | team-app → meet-app | Registrations + entry times | team-app: Organizer → "Télécharger LXF"; meet-app: File → Importer LENEX |
-| 4. Competition | meet-app | Run heats, record times | — |
-| 5. Results | meet-app → team-app | Final results + athletes | meet-app: File → "Exporter les résultats LENEX…"; team-app: Organizer → "Importer résultats" |
-
-**Step 5 (organizer path) also closes the meet cycle:**
-- Archives results as a completed historical meet (`meetstate=3`)
-- Resets the current meet (clears registrations, events, bsglobal meet keys) — **both organizer and admin paths trigger reset**
-- Regenerates all club PINs (coaches must re-authenticate for next meet)
-- Clears `organizer_club_id` (organizer path) — organizer is logged out
-- Admin then sets a new organizer for the next meet via Admin page
-
-**Admin import** (`POST /api/import-results-lxf` with admin PIN): same historical archival + reset. Both paths refuse a file with no results (an entries/meet-structure LXF picked by mistake) and ask for confirmation before closing the open meet with a file whose meet name or event ids don't match it. If a completed meet with the same name and start date already exists, its results are replaced rather than duplicated (a dateless file matches by name only when exactly one completed meet has it).
-
-**One results importer:** `import-results-lxf` (`lxf_to_team.import_lxf_as_meet`) and `admin/import-historical` (`historical_import.import_historical_meet`) are thin entry points over `lxf_to_team.archive_results_lxf`; they differ only in policy — the admin one warns when the file looks like the open meet and asks (`needs_force`) before replacing an archived meet, the closing one replaces it silently. Same athlete matching, sessions/events, defusedxml parsing and response keys (`results_imported`, `relays_imported`, `athletes_matched`…) for both. They used to be two copies that drifted (one never wrote `results.eventnumb`); keep any new import rule in `archive_results_lxf`.
-
-**Beach meets are never archived:** the results importer refuses (both entry points) a file with any style `>= BEACH_STYLE_MIN` (`is_beach_results`, decided from the file, not the per-install `meet_type` flag). The Organizer page hides "Importer résultats" for a beach meet; it's closed with "Fermer sans résultats".
-
-**Archived results carry `results.eventnumb`** (the event number): `results.py` groups a historical meet's results by it and the athlete history sorts by it. The Organizer import used to leave it NULL (all events lumped under "event 0").
-
-**Next-meet stub:** when the closed (or deleted) meet was the last open one, `_reload_pool_template` creates the next meet from the pool template with the same meet config as "New meet" (`_init_meet_from_template`: meet_course, filename, masters, currency, fees, AGEDATE, COMBINEAGEGROUPS). It used to get only AGEDATE — no `meet_course` — which hid every relay entry-time suggestion in the next meet.
-
-**MEETVALUES blob** (meet-scoped `meet_config` row, Splash `KEY=TYPE;VALUE` CRLF lines): read and write it only through `meet_config.parse_meetvalues` / `serialize_meetvalues` / `read_meetvalues` / `write_meetvalues` (`keep_type=True` = raw `TYPE;VALUE`, else the prefix is stripped), or `_update_meetvalue` for one key — never hand-split the blob. Team-app twin of meet-app's `parseMeetValues`/`serializeMeetValues` (`db.ts`).
-
-**Meet course (pool length):** stored in three places that must agree — `meet_config.meet_course` (LENEX string, canonical), `meets.course` and MEETVALUES `COURSE` (team-app's own ints 1=LCM, 2=SCY, 3=SCM — **not** Splash's, where 2=SCM, 3=SCY; meet-app stores Splash's). The shared editor and the API (`/meet-config` COURSE, session `course`) use the LENEX name, never the number. Write it only with `meet_config._set_meet_course`, read it only with `_get_meet_course` (never None: a meet with no stored course is LCM, what the meet editor shows). New sessions take the meet's course. **Changing the course in the meet editor** (`set_meet_config` COURSE) moves the meet's sessions to it and recomputes every relay entry time still following the suggestion for the new course (`best_times.refresh_relay_entry_times_for_course`; typed times kept) — an organizer who fixes the pool length late rebuilds nothing. `best_times.suggest_relay_entry_time` is the Python copy of shared-ui's `suggestRelayEntryTime` (same half-up rounding) — keep them in step.
-
-**Meet editor fields in LXF:** every field of the meet editor travels in both directions, mapped by `config/lenex-meet-fields.json` (see `config/CLAUDE.md`): standard LENEX the way Splash writes it (MEET attributes, POOL, FACILITY, QUALIFY, CONTACT, FEES) and the hidden `.meetvalues` entry for the seeding/heat settings. Both exports write it (`export._add_meet_element`, closure date → `deadline`, `meet_currency` on FEEs); a structure upload applies the file's fields and takes its deadline as the closure date; a meet created from a template takes the template's fields (not its deadline) as defaults.
-
-**Empty meet state:** After reset (or fresh install), the meet has no events. Self-invite page shows "no meet planned" when empty; the login screen's meet list skips the nameless/eventless stub and says no meet is planned. Admin or organizer uploads a new meet .lxf to start the next cycle.
+Setup → invitations → entries → competition → results; step 5 archives, resets the meet, regenerates PINs → **`lxf-roundtrip` skill** (`team-app-lifecycle.md`).
 
 ## In-App Documentation
 
@@ -329,16 +165,10 @@ Full data flow between meet-app and team-app:
 - Accessed via: `/usage` route (tab navigation between guides)
 - Screenshots: `frontend/public/docs/assets/team-*.png`
 
-## Combined Events
 
-Meet-app only (`src/main/combinedEvents.ts`, see `packages/meet-app/CLAUDE.md`)
-— generates cumulative point-standings XML from `config/combined-events-config.json`
-in meet-app's own `bsglobal`. team-app had a Python port (`combined_events.py`)
-until 2026-06-16, when it was swapped for `point_scores.py` (a different,
-Splash-native `POINTSCORE` mechanism); that in turn was removed 2026-08-03 as
-dead code — nothing in team-app ever read either, and LXF export never
-carried `COMBINEDEVENTS`/`POINTSCORE` to meet-app. team-app currently has no
-combined-events implementation of its own, and doesn't need one.
+## Combined events
+
+Meet-app only; team-app has no implementation → `combined-events` skill.
 
 ## Backup & Restore (Admin page)
 
@@ -359,41 +189,14 @@ Dedicated backup/restore section in the Admin page (replaces the old Data Manage
 - `GET /api/admin/backups/{filename}` — download specific backup
 - `DELETE /api/admin/backups/{filename}` — delete specific backup
 
-## LXF Normalization (offline tool)
 
-Historic .lxf files from previous seasons often have stale swimstyle IDs, accent issues, or missing HANDICAP exception codes. Fix them offline with `scripts/normalize_lxf.py` before importing:
+## LXF normalization / HANDICAP codes
 
-```bash
-python scripts/normalize_lxf.py TEMPLATE.lxf ENTRIES.lxf HISTORIC.lxf
-```
+Offline `scripts/normalize_lxf.py` and `<HANDICAP exception>` handling → **`lxf-normalize` skill**.
 
-- Remaps swimstyle IDs to the current template's canonical IDs (matched by name, not ID)
-- Fuzzy-matches clubs (code → name → difflib 0.80) and athletes (license → exact → difflib 0.85)
-- Copies `<HANDICAP exception="X" />` child elements to athletes missing them
-- Logs all changes verbosely; `⚠ verify` suffix on fuzzy matches for manual review
+## Invoices & outgoing email
 
-## HANDICAP / Para exception codes
-
-Athletes with a Para/disability classification carry `<HANDICAP exception="X" />` as a child element of `<ATHLETE>` in LXF (not a direct attribute).
-
-Both LXF importers read this element and set `members.handicapex`:
-- `seed.py` — Upload Lenex (Admin page)
-- `lxf_to_team.py` — results importer behind Import results .lxf (Invitation page) and Import historical .lxf (Admin page)
-
-Existing members missing `handicapex` are backfilled on re-import; existing non-null values are never overwritten.
-
-## Invoices
-
-After the closure date the Organizer page shows **Download PDF / Send PDF / Send Stripe**.
-- **Invoice number** (`invoices.invoice_number`): `YEAR-MEETSID-CLUBSID`, e.g. `2026-012-0045`. Year = `meets.mindate`, else first session date. Revision suffix `-R2`… when a send's total differs from the last sent total (`club_meet_invites.invoice_rev` / `invoice_last_total_cents`, migration m0005). Downloading a PDF previews the number without persisting; `record_invoice_sent` persists it on a successful send.
-- **Export to QuickBooks** (`quickbooks_export.py`, `POST /api/invoices/quickbooks-export`, Organizer "Export QuickBooks" button after the closure date): no connection — QuickBooks Online imports invoices and customers from CSV (Settings > Import data), so the organizer's bookkeeper loads a ZIP. Pure builder: `build_files(entries, meet_name, today, options, lang)`; the router only gathers `ExportEntry`s (club, email, `invoice_number`, `_club_line_items`) — the same lines and `YEAR-MEET-CLUB` numbers as the PDF, `-Rn` dropped (QuickBooks keeps the first number). Intuit's limits shape it: ≤100 invoices and ≤1,000 rows per file (an invoice is never cut across files; `split_into_files`), every line carries item + amount + tax code, and the invoice's customer must match the customer file's name exactly (`customer_name`: no `:`). Per-export options (item name default `Frais d'inscription`, exempt tax code default `Exempt`, due days default 30; `quickbooks_export.options_from` clamps/merges them) come from the form and are **remembered on the server** in app-level `bsglobal` `qb_export_options:<organizer club id>` (bare `qb_export_options` when the meet has no organizer club) — written by each successful export, read by `GET /api/invoices/quickbooks-export/options` to fill the form, and a field the request omits keeps the remembered value. They are not meet-scoped, so closing a meet leaves them: the same club's next meet, from any browser, starts with the same form. CSV is UTF-8 with BOM, dates `dd/MM/yyyy`, descriptions single-line with the em dash replaced. **Nothing is recorded as sent** (like the PDF download), so re-exporting after a club changed its entries reuses the same invoice number: QuickBooks refuses or duplicates it — the how-to in the ZIP says to correct such an invoice in QuickBooks. The invoice headers are Intuit's own sample file's, exactly (`INVOICE_HEADERS`, checked against a real download of the Canadian multi-currency sample, which also confirmed the `dd/MM/yyyy` dates and `Exempt` as a tax code name), and the rows are laid out like the sample's: the customer, dates and memo only on an invoice's first line, later lines carrying just the invoice number and item fields.
-- **Send count**: `club_meet_invites.stripe_send_count` is the shared counter for Stripe *and* email sends (name predates the email path).
-- **Email path**: pays by Interac e-Transfer to the organizer club's email, invoice number in the memo. No Autodeposit: security question "What is the invoice number?" / « Quel est le numéro de facture? », answer = invoice number. The UI then calls `notify-organizer` once per batch; it rebuilds numbers from persisted revisions, not from the request.
-- **Who is named** (`_invoice_email_parties`): Interac recipient = organizer club's email if the meet has an organizer, else `SUPPORT_EMAIL` (no organizer → the admin is the organizer). Contact sentence, Reply-To and batch summary = `SUPPORT_EMAIL` when the admin sends or there is no organizer, else the organizer. No Interac recipient (organizer without email, or no organizer and no `SUPPORT_EMAIL`) → 400 before anything is sent.
-
-### Outgoing email (all via `emailing.send_email`)
-- From address = `RESEND_FROM_EMAIL` (must be on a Resend-verified domain); display name = organizer club name (`from_header`), `SauvetageTeam` when there's no organizer and for the organizer batch summary.
-- Reply-To is always set where a human can answer — invite: organizer email (support when the recipient is the organizer / no organizer); invoice: see `_invoice_email_parties`. Without Reply-To, replies go to the no-reply From address.
+Invoice numbers, QuickBooks export, Interac email path, Resend → **`team-invoicing` skill**.
 
 ## Closure Date
 

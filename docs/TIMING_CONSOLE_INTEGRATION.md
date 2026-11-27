@@ -66,7 +66,7 @@ real cases:
 2. **Pool meets with no touchpads** (the common case for this app): use
    meet-app's own manual timing workflow — lane judges write down times,
    entered/averaged in meet-app, with the printed-sheet + camera photo-scan
-   + OCR pipeline (`packages/meet-app/CLAUDE.md`, "Timing Sheet OCR
+   + OCR pipeline (`.claude/skills/ocr-scanning`, formerly "Timing Sheet OCR
    Scanning") handling capture and validation instead of a live console feed.
 
 No code changes result from this — this is a scope decision, documented here
