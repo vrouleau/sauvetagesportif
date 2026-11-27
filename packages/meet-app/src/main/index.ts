@@ -1898,7 +1898,8 @@ ipcMain.handle('timing:generate-sheets', async (_event, eventIds: number[], lang
       stylename: string; distance: number
     }>
 
-    const allPages: ReturnType<typeof buildTimingSheetPages> = []
+    const allStrips: Array<{ strip: ReturnType<typeof buildTimingSheetPages>[number]['strips'][number]; order: number }> = []
+    let heatOrder = 0
     const meetTypeTS = db.prepare(`SELECT data FROM bsglobal WHERE name = 'MEET_TYPE'`).get() as { data: string } | undefined
     const isBeachTS = (meetTypeTS?.data || 'POOL').toUpperCase() === 'BEACH'
 
@@ -1941,7 +1942,19 @@ ipcMain.handle('timing:generate-sheets', async (_event, eventIds: number[], lang
         // Final heats read "Finale A, 15-18" like Splash (the printed labels stay French)
         heat.finalcode ? `Finale ${heat.finalcode}${heat.agname ? `, ${heat.agname}` : ''}` : undefined
       )
-      allPages.push(...pages)
+      for (const p of pages) for (const s of p.strips) allStrips.push({ strip: s, order: heatOrder })
+      heatOrder++
+    }
+
+    // Sorted lane → event → heat (event/heat order = the query's session/event order), so the
+    // strips can be cut and handed to each lane judge as one pile. Pages never mix lanes.
+    allStrips.sort((a, b) => a.strip.lane - b.strip.lane || a.order - b.order)
+    const allPages: ReturnType<typeof buildTimingSheetPages> = []
+    for (let i = 0; i < allStrips.length;) {
+      const lane = allStrips[i].strip.lane
+      const strips: typeof allStrips[number]['strip'][] = []
+      while (i < allStrips.length && allStrips[i].strip.lane === lane && strips.length < 3) strips.push(allStrips[i++].strip)
+      allPages.push({ strips })
     }
 
     const html = generateTimingSheetsHtml(allPages)
