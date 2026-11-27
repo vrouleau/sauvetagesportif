@@ -38,6 +38,8 @@ const SAMPLE_WIDTH = 320
 /** Barcode decoding runs on a copy no wider than this (the code spans the strip, so it is plenty). */
 const DECODE_MAX_WIDTH = 1280
 const BARCODE_RE = /^E(\d+)-U(\d+)-H(\d+)-L(\d+)$/
+/** Printed on blank strips: `FV-<batch>-<nn>` (see blankTimingSheet.ts). */
+const BLANK_CODE_RE = /^FV-([2-9A-HJ-NP-Z]{4}-\d{2,3})$/
 
 function timingApi() {
   return (window as unknown as {
@@ -214,7 +216,7 @@ export default function TimingScanPage() {
           ])
 
           // Don't save here: tell the tracker, which saves once the strip is still.
-          if (result && BARCODE_RE.test(result)) {
+          if (result && (BARCODE_RE.test(result) || BLANK_CODE_RE.test(result))) {
             // A decision here = the previous strip was replaced before it settled: save it anyway.
             const dropped = trackerRef.current.noteDecode(result, grabbedAt)
             if (dropped) void commitCapture(dropped)
@@ -308,9 +310,12 @@ export default function TimingScanPage() {
 
   // Save the frame the tracker picked (sharpest of the recent still frames).
   const commitCapture = useCallback(async (decision: CaptureDecision<ImageBitmap>) => {
-    const match = decision.code.match(BARCODE_RE)
-    if (!match) return
-    const [, eventStr, swimEventIdStr, heatStr, laneStr] = match
+    // Blank strip: no event/heat/lane yet (Gemini + operator resolve them in Traitement).
+    // Stored as BLANK-<batch>-<nn>, so re-presenting the same strip replaces its scan.
+    const blank = decision.code.match(BLANK_CODE_RE)
+    const match = blank ? null : decision.code.match(BARCODE_RE)
+    if (!blank && !match) return
+    const [, eventStr, swimEventIdStr, heatStr, laneStr] = match ?? []
 
     // Convert synchronously: the bitmap is closed once it falls out of the tracker's ring.
     const imageBase64 = bitmapToJpegBase64(decision.frame)
@@ -324,16 +329,16 @@ export default function TimingScanPage() {
     const api = timingApi()
     if (api) {
       const result = await api.saveScan({
-        eventNumber: parseInt(eventStr, 10),
-        swimEventId: parseInt(swimEventIdStr, 10),
-        heatNumber: parseInt(heatStr, 10),
-        lane: parseInt(laneStr, 10),
-        barcodeRaw: decision.code,
+        eventNumber: blank ? 0 : parseInt(eventStr, 10),
+        swimEventId: blank ? 0 : parseInt(swimEventIdStr, 10),
+        heatNumber: blank ? 0 : parseInt(heatStr, 10),
+        lane: blank ? 0 : parseInt(laneStr, 10),
+        barcodeRaw: blank ? `BLANK-${blank[1]}` : decision.code,
         imageBase64,
       })
       if (result.ok && !result.duplicate) {
         setScanCount((c) => c + 1)
-        setLastBarcode(decision.code)
+        setLastBarcode(blank ? 'Fiche vierge' : decision.code)
         setLowQuality(decision.lowQuality)
       }
     }
@@ -465,9 +470,9 @@ export default function TimingScanPage() {
           <button
             onClick={captureBlank}
             className="px-4 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700"
-            title="Les fiches vierges n'ont pas de code-barres : cadrez la fiche puis capturez (Espace)"
+            title="Les fiches vierges imprimées avec code-barres se capturent seules. Ce bouton (Espace) sert pour les anciennes fiches vierges sans code-barres."
           >
-            📸 Capturer fiche vierge (Espace)
+            📸 Capturer fiche sans code (Espace)
           </button>
           <button
             onClick={stopCamera}

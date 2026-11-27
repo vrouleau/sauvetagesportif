@@ -21,7 +21,8 @@ description: Timing sheet scanning and OCR in meet-app — barcode format, sheet
 ### Blank sheets (late arrivals / missing sheets)
 - HeatsPage "🖨 Fiches vierges" (pool) → `timing:generate-blank-sheets` → `generateBlankTimingSheetsHtml`:
   same strip, no barcode; `Épreuve / Série / Couloir` hand-written on underlines (+ a swimmer line)
-- Scanner: no barcode to trigger on → manual "📸 Capturer fiche vierge" button / Space bar;
+- Each printed blank strip now carries its own Code128 barcode **`FV-<batch>-<nn>`** (batch = 4 random unambiguous chars per print job, nn = strip number), so the scanner captures it hands-free like any other strip (same stable-then-capture logic). Stored as `barcode_raw = 'BLANK-<batch>-<nn>'` (`blankScanIdFromCode`) with event/heat/lane/swimEventId = 0; unique per strip, so re-presenting a strip replaces its scan and two blank strips never collide. The printed prefix is short on purpose (FV-, not BLANK-): longer codes -> narrower bars -> Quagga read ~75% vs 100% in a synthetic test. Layout: barcode on top, id/name/chrono rows tightened to fit the 3.2in strip (verified by rendering). Scan page regex `BLANK_CODE_RE` mirrors `BLANK_SHEET_CODE_RE` (a test keeps them in sync).
+- Older blank strips without a barcode: manual "📸 Capturer fiche sans code" button / Space bar;
   saved as `barcode_raw = 'BLANK-<ms>'` with event/heat/lane/swimEventId = 0
 - Gemini (`recognizeScan` in `geminiBackground.ts`) uses `BLANK_SHEET_PROMPT` for these (reads E/H/L + C1/C2),
   then `findBlankSheetCandidates` maps event number + heat + lane to the seeded swimresult/relay.

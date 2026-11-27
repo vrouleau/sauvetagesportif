@@ -32,6 +32,7 @@
  */
 
 import { encodeBarcode } from './timingBarcode'
+import { newBlankBatchId, makeBlankSheetCode } from './blankTimingSheet'
 
 export interface TimingSheetLane {
   eventNumber: number
@@ -154,14 +155,16 @@ const SHEET_STYLES = `
       .reg-bl { bottom: 3pt; left: 3pt; }
       .reg-br { bottom: 3pt; right: 3pt; }
       /* Blank strip: hand-written identity on underlines */
-      .blank-tag { position: absolute; top: 0.1in; right: 0.3in; font-size: 8pt; font-weight: bold; letter-spacing: 1pt; color: #555; }
-      .id-row { display: flex; align-items: flex-end; gap: 0.3in; margin-top: 0.1in; }
+      /* Blank strip carries a barcode too: tighter spacing so everything still fits the 3.2in strip */
+      .blank-barcode { margin-top: 0; }
+      .blank-barcode svg { height: 44pt; }
+      .id-row { display: flex; align-items: flex-end; gap: 0.3in; margin-top: 0.05in; }
       .id-field { display: flex; align-items: flex-end; gap: 6pt; }
       .id-label { font-size: 12pt; font-weight: bold; }
-      .id-line { width: 1.1in; height: 0.45in; border-bottom: 2px solid #000; }
-      .name-row { display: flex; align-items: flex-end; gap: 6pt; margin-top: 0.12in; }
+      .id-line { width: 1.1in; height: 0.4in; border-bottom: 2px solid #000; }
+      .name-row { display: flex; align-items: flex-end; gap: 6pt; margin-top: 0.05in; }
       .name-label { font-size: 9pt; color: #444; white-space: nowrap; }
-      .name-line { flex: 1; height: 0.3in; border-bottom: 1px solid #666; }
+      .name-line { flex: 1; height: 0.26in; border-bottom: 1px solid #666; }
     </style>
 `
 
@@ -248,13 +251,22 @@ export function generateTimingSheetsHtml(heatPages: TimingSheetPage[]): string {
  */
 export function generateBlankTimingSheetsHtml(pageCount = 1): string {
   const pages = Math.max(1, Math.min(50, Math.floor(pageCount) || 1))
-  const strip = `
+  const batchId = newBlankBatchId()
+  let n = 0
+  // Each strip gets its own Code128 `FV-<batch>-<nn>` so the scanner triggers on it
+  // (hands-free) and two blank strips are never mistaken for one another.
+  const strip = () => {
+    const code = makeBlankSheetCode(batchId, ++n)
+    return `
         <div class="strip">
           <div class="reg-mark reg-tl"></div>
           <div class="reg-mark reg-tr"></div>
           <div class="reg-mark reg-bl"></div>
           <div class="reg-mark reg-br"></div>
-          <div class="blank-tag">FICHE VIERGE</div>
+          <div class="barcode-area blank-barcode">
+            ${generateCode128Svg(code)}
+            <div class="barcode-text">FICHE VIERGE &nbsp;·&nbsp; ${code}</div>
+          </div>
           <div class="id-row">
             <div class="id-field"><span class="id-label">Épreuve</span><span class="id-line"></span></div>
             <div class="id-field"><span class="id-label">Série</span><span class="id-line"></span></div>
@@ -264,8 +276,9 @@ export function generateBlankTimingSheetsHtml(pageCount = 1): string {
           ${CHRONO_ROWS_HTML}
         </div>
       `
-  const pageHtml = `<div class="page">${[strip, strip, strip].join('<div class="cut-line"></div>')}</div>`
-  return wrapSheetsHtml(pageHtml.repeat(pages))
+  }
+  const page = () => `<div class="page">${[strip(), strip(), strip()].join('<div class="cut-line"></div>')}</div>`
+  return wrapSheetsHtml(Array.from({ length: pages }, page).join(''))
 }
 
 function wrapSheetsHtml(pagesHtml: string): string {

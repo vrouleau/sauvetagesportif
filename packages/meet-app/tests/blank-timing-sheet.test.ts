@@ -17,11 +17,14 @@
 // along with Sauvetage Sportif. If not, see <https://www.gnu.org/licenses/>.
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import type Database from 'better-sqlite3'
 import { createTestDb, seedMeet } from './helpers'
 import {
   isBlankScan, makeBlankBarcode, parseChronoTimes, parseBlankSheetResponse,
   findBlankSheetCandidates, pickBlankSheetTarget,
+  newBlankBatchId, makeBlankSheetCode, isBlankSheetCode, blankScanIdFromCode, BLANK_SHEET_CODE_RE,
 } from '../src/main/blankTimingSheet'
 import { generateBlankTimingSheetsHtml, generateTimingSheetsHtml, buildTimingSheetPages } from '../src/main/timingSheets'
 import { decodeBarcode } from '../src/main/timingBarcode'
@@ -33,6 +36,35 @@ describe('Blank scan id', () => {
     expect(isBlankScan(raw)).toBe(true)
     expect(isBlankScan('E5-U1496-H2-L3')).toBe(false)
     expect(decodeBarcode(raw)).toBeNull()
+  })
+})
+
+describe('Printed blank-strip barcode', () => {
+  it('is FV-<batch>-<nn>, distinct from event barcodes and from stored blank scan ids', () => {
+    const code = makeBlankSheetCode('K3F9', 7)
+    expect(code).toBe('FV-K3F9-07')
+    expect(isBlankSheetCode(code)).toBe(true)
+    expect(decodeBarcode(code)).toBeNull()
+    expect(isBlankSheetCode('E5-U1496-H2-L3')).toBe(false)
+    expect(isBlankSheetCode('BLANK-1700000000000')).toBe(false)
+    expect(isBlankSheetCode('FV-K3F0-07')).toBe(false) // no ambiguous 0/O/1/I
+  })
+
+  it('maps to the stored BLANK-… scan id so the whole blank flow applies', () => {
+    const stored = blankScanIdFromCode('FV-K3F9-07')
+    expect(stored).toBe('BLANK-K3F9-07')
+    expect(isBlankScan(stored!)).toBe(true)
+    expect(blankScanIdFromCode('E5-U1496-H2-L3')).toBeNull()
+  })
+
+  it('batch ids are 4 unambiguous characters', () => {
+    for (let i = 0; i < 200; i++) expect(newBlankBatchId()).toMatch(/^[2-9A-HJ-NP-Z]{4}$/)
+  })
+
+  it('scan page regex stays in sync with the generator', () => {
+    const page = readFileSync(join(__dirname, '../src/renderer/src/pages/TimingScanPage.tsx'), 'utf-8')
+    const m = page.match(/const BLANK_CODE_RE = \/(.+)\/\n/)
+    expect(m?.[1]).toBe(BLANK_SHEET_CODE_RE.source.replace(/\\\//g, '/'))
   })
 })
 
@@ -120,7 +152,7 @@ describe('Blank sheet target resolution', () => {
 })
 
 describe('Blank timing sheet HTML', () => {
-  it('has underlined event/heat/lane and chrono fields, and no barcode', () => {
+  it('has underlined event/heat/lane and chrono fields, plus a unique FV- barcode per strip', () => {
     const html = generateBlankTimingSheetsHtml()
     expect((html.match(/class="strip"/g) ?? []).length).toBe(3)
     expect((html.match(/class="id-line"/g) ?? []).length).toBe(9)
@@ -132,7 +164,16 @@ describe('Blank timing sheet HTML', () => {
     expect((html.match(/class="time-line /g) ?? []).length).toBe(3 * 2 * 3) // 3 strips × 2 chronos × M/SS/HH
     expect(html).not.toContain('digit-box')
     expect((html.match(/class="sig-line"/g) ?? []).length).toBe(3 * 2) // one judge's initials per chrono
-    expect(html).not.toContain('<svg')
+    // one scannable barcode per strip, each different (so two blank strips never collide)
+    expect((html.match(/<svg /g) ?? []).length).toBe(3)
+    const codes = [...html.matchAll(/FICHE VIERGE &nbsp;·&nbsp; (FV-[A-Z0-9]{4}-\d{2})/g)].map((m) => m[1])
+    expect(codes).toHaveLength(3)
+    expect(new Set(codes).size).toBe(3)
+    for (const c of codes) expect(isBlankSheetCode(c)).toBe(true)
+    // numbering continues across pages of one print job and differs between jobs
+    const two = [...generateBlankTimingSheetsHtml(2).matchAll(/(FV-[A-Z0-9]{4}-\d{2})/g)].map((m) => m[1])
+    expect(new Set(two).size).toBe(6)
+    expect(two[5].endsWith('-06')).toBe(true)
   })
 
   it('repeats pages and clamps the count', () => {

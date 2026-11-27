@@ -19,9 +19,10 @@
 /**
  * Blank timing sheets — for late arrivals / missing chrono sheets.
  *
- * A blank strip has no barcode: the timer hand-writes Event / Heat / Lane on
- * underlined fields next to the two chrono times. The scanner captures it
- * manually (no barcode to trigger on) and stores it with a `BLANK-…` id and
+ * A blank strip has no event/heat/lane barcode: the timer hand-writes Event / Heat / Lane
+ * on underlined fields next to the two chrono times. It carries a generic `BLANK-…`
+ * barcode (see below) that triggers the scanner; older strips without one are captured
+ * manually (button / Space). The scan is stored with a `BLANK-…` id and
  * event/heat/lane = 0; Gemini then reads the identity along with the times,
  * and `findBlankSheetCandidates` maps it to the entry seeded at that lane.
  *
@@ -36,6 +37,43 @@ export function isBlankScan(barcodeRaw: string): boolean {
 
 export function makeBlankBarcode(now: number = Date.now()): string {
   return `${BLANK_BARCODE_PREFIX}${now}`
+}
+
+// ── Printed blank-strip barcode ───────────────────────────────────────────────
+// Each blank strip carries its own Code128 barcode `FV-<batch>-<nn>` ("Fiche Vierge") so the
+// scanner can trigger on it (no button press with the other hand). `<batch>` is random per
+// print job, `<nn>` numbers the strips of that job, so every strip is unique: re-presenting
+// the same strip replaces its scan, and two different blank strips never collide.
+// The scanner stores it as `BLANK-<batch>-<nn>` (`blankScanIdFromCode`) so `isBlankScan` and
+// the whole blank flow apply unchanged. The printed prefix is deliberately short: a longer
+// `BLANK-…` code made the bars narrower and Quagga read it noticeably less reliably
+// (~75% vs 100% in a synthetic test over widths 480-1280 px and slight blur).
+
+/** No 0/O/1/I so a hand-typed or misread code can't be ambiguous. */
+const BLANK_BATCH_ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'
+
+export const BLANK_SHEET_CODE_RE = /^FV-([2-9A-HJ-NP-Z]{4}-\d{2,3})$/
+
+export function newBlankBatchId(rand: () => number = Math.random): string {
+  let id = ''
+  for (let i = 0; i < 4; i++) id += BLANK_BATCH_ALPHABET[Math.floor(rand() * BLANK_BATCH_ALPHABET.length)]
+  return id
+}
+
+/** The code printed (as a barcode) on strip number `n` of a print job. */
+export function makeBlankSheetCode(batchId: string, n: number): string {
+  return `FV-${batchId}-${String(n).padStart(2, '0')}`
+}
+
+/** True for the barcode printed on a blank strip. */
+export function isBlankSheetCode(raw: string): boolean {
+  return BLANK_SHEET_CODE_RE.test(raw)
+}
+
+/** Scan id (`barcode_raw`) to store for a scanned blank-strip barcode, or null if it isn't one. */
+export function blankScanIdFromCode(raw: string): string | null {
+  const m = raw.match(BLANK_SHEET_CODE_RE)
+  return m ? `${BLANK_BARCODE_PREFIX}${m[1]}` : null
 }
 
 // ── Gemini prompts + parsing ──────────────────────────────────────────────────
