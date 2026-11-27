@@ -319,7 +319,7 @@ export default function TimingScanPage() {
     // Flash + beep — only now, so the beep means "picture taken, you can move on"
     setFlash(true)
     setTimeout(() => setFlash(false), 300)
-    playBeep()
+    playBeep(decision.lowQuality)
 
     const api = timingApi()
     if (api) {
@@ -351,17 +351,21 @@ export default function TimingScanPage() {
     return canvas.toDataURL('image/jpeg', 0.85).split(',')[1] || null
   }
 
-  function playBeep() {
+  /** One high beep = captured OK. Two low beeps = captured but possibly blurry, present the sheet again. */
+  function playBeep(lowQuality = false) {
     try {
       const ctx = new AudioContext()
-      const osc = ctx.createOscillator()
-      const gain = ctx.createGain()
-      osc.connect(gain)
-      gain.connect(ctx.destination)
-      osc.frequency.value = 880
-      gain.gain.value = 0.3
-      osc.start()
-      osc.stop(ctx.currentTime + 0.15)
+      const tones = lowQuality ? [0, 0.22] : [0]
+      for (const offset of tones) {
+        const osc = ctx.createOscillator()
+        const gain = ctx.createGain()
+        osc.connect(gain)
+        gain.connect(ctx.destination)
+        osc.frequency.value = lowQuality ? 330 : 880
+        gain.gain.value = 0.3
+        osc.start(ctx.currentTime + offset)
+        osc.stop(ctx.currentTime + offset + 0.15)
+      }
     } catch { /* */ }
   }
 
