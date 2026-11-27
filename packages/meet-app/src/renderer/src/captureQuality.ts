@@ -32,6 +32,18 @@
  * Pure (no DOM, no electron) so it can be unit tested; the page feeds it frames.
  */
 
+// ── Barcode text ─────────────────────────────────────────────────────────────
+
+/**
+ * Quagga can return the right code with stray non-printable characters attached
+ * (seen on the real camera: a trailing GS control char, 0x1D, after "E7-U4054-H7-L1"),
+ * which made the strict format check reject every read. Printed codes only use plain
+ * ASCII (0x20-0x7E), so drop everything else.
+ */
+export function cleanBarcodeText(raw: string): string {
+  return raw.replace(/[^\x20-\x7e]/g, '').trim()
+}
+
 // ── Image metrics (grayscale, row-major, length = w*h) ───────────────────────
 
 /** RGBA pixel data → 8-bit luma. */
@@ -214,6 +226,13 @@ export class StableCaptureTracker<T> {
     this.fired = { code: c.code, lastSeen: c.lastDecode }
     this.candidate = null
     return { code: c.code, frame: best.frame, sharpness: best.sharpness, lowQuality: false, waitedMs: s.t - c.firstSeen }
+  }
+
+  /** Snapshot of the internal state, for the scanner debug panel (see SCAN_DEBUG in TimingScanPage.tsx). */
+  debugState(now: number): string {
+    const c = this.candidate
+    const f = this.fired
+    return `cand=${c ? `${c.code} first=${Math.round(now - c.firstSeen)}ms-ago last=${Math.round(now - c.lastDecode)}ms-ago` : 'none'} fired=${f ? f.code : 'none'} ring=${this.ring.length} held=${this.held ? 'y' : 'n'} stableFor=${this.stableSince === null ? '-' : Math.round(now - this.stableSince) + 'ms'}`
   }
 
   /** For UI feedback: nothing in view / barcode seen but moving / barcode seen and still. */

@@ -43,8 +43,9 @@ export async function recognizeScan(engine: GeminiOcrEngine, scan: TimingScan): 
     updateScanOcrResult(scan.scanId, {
       recognizedTime1: result.time1 || '',
       recognizedTime2: result.time2 || '',
-      ocrEngine: 'gemini',
+      ocrEngine: `gemini:${result.model}`,
       ocrConfidence: result.confidence,
+      ocrRaw: result.raw,
     })
     return result
   }
@@ -66,8 +67,9 @@ export async function recognizeScan(engine: GeminiOcrEngine, scan: TimingScan): 
   updateScanOcrResult(scan.scanId, {
     recognizedTime1: reading.time1 || '',
     recognizedTime2: reading.time2 || '',
-    ocrEngine: 'gemini',
+    ocrEngine: `gemini:${reading.model}`,
     ocrConfidence: swimEventId ? reading.confidence : Math.min(reading.confidence, 0.3),
+    ocrRaw: reading.raw,
   })
   return reading
 }

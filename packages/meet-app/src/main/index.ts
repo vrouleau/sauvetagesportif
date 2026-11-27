@@ -72,6 +72,7 @@ import {
 import { importLenex, exportLenexResults, exportMeetLenex, checkLenexSwimstyles } from './lenex'
 import { rangesLabel } from './swimstyleRanges'
 import { saveSMB, restoreSMB } from './smb'
+import { archiveFileName } from './scanArchive'
 import { regenerateCombinedEvents } from './combinedEvents'
 import { regeneratePointScores } from './pointScores'
 import {
@@ -80,10 +81,11 @@ import {
   updateScanIdentity, validateScan,
   getScanSummary, getScansByStatus,
   clearAllScans, deleteScan,
+  saveScansArchive, readScansArchiveInfo, loadScansArchive, InvalidScanArchiveError,
   type ScanStatus,
 } from './timingScanDb'
 import { generateTimingSheetsHtml, generateBlankTimingSheetsHtml, buildTimingSheetPages } from './timingSheets'
-import { isBlankScan, findBlankSheetCandidates } from './blankTimingSheet'
+import { isBlankScan, findBlankSheetCandidates, findBlankSheetAlternatives, listEventLabels } from './blankTimingSheet'
 import { generatePositionSheetsHtml, type PositionSheetEvent, type PositionSheetHeat } from './positionSheets'
 import { type OcrEngine } from './ocrEngine'
 import { startGeminiBackground, setGeminiBackgroundEnabled, isGeminiBackgroundEnabled, resetGeminiAttempted, recognizeScan } from './geminiBackground'
@@ -1300,6 +1302,149 @@ ipcMain.handle('db:flush-meet', async () => {
   }
 })
 
+// ── Scans belong to a meet ────────────────────────────────────────────────────
+
+/**
+ * The scan database (timing_scans.sqlite) is a separate file from the meet database and its
+ * scans point at that meet's event ids. After a meet is replaced (SMB restore, new meet) the old
+ * scans would sit in the queue and could be accepted into the NEW meet's entries (same ids, other
+ * swimmers). So they are cleared, after asking when there is anything to lose.
+ * Returns how many scans were deleted.
+ */
+async function flushScansForReplacedMeet(win: BrowserWindow | null): Promise<number> {
+  let summary: Record<ScanStatus, number>
+  try { summary = getScanSummary() } catch { return 0 }
+  const total = summary.unprocessed + summary.recognized + summary.validated + summary.error
+  if (total === 0) return 0
+
+  const pending = summary.unprocessed + summary.recognized
+  const box = await dialog.showMessageBox(win ?? BrowserWindow.getFocusedWindow()!, {
+    type: 'warning',
+    buttons: ['Supprimer les fiches', 'Garder les fiches'],
+    defaultId: 0,
+    cancelId: 1,
+    title: 'Fiches scannées',
+    message: `${total} fiche(s) scannée(s) appartiennent à l'ancienne compétition.`,
+    detail:
+      (pending > 0 ? `${pending} n'ont pas encore été validées. ` : 'Toutes ont été validées. ') +
+      "Si vous les gardez, elles pourraient être acceptées dans les épreuves de la nouvelle compétition (mauvais nageurs). " +
+      'Supprimer les fiches ?',
+  })
+  refocusAfterDialog(win)
+  if (box.response !== 0) return 0
+  const deleted = clearAllScans()
+  resetGeminiAttempted()
+  return deleted
+}
+
+// ── Scan archive (File menu) ──────────────────────────────────────────────────
+// "Sauvegarder / Charger les fiches scannées": keep a finished meet's scanned sheets in a
+// `.scans` file next to its `.smb`, and bring them back later to browse (Traitement tab).
+
+function currentMeetName(): string {
+  try { return (getMeetInfo().name ?? '').trim() } catch { return '' }
+}
+
+function currentMeetType(): string {
+  try {
+    const row = getLocalDb().prepare(`SELECT data FROM bsglobal WHERE name = 'MEET_TYPE'`).get() as { data: string } | undefined
+    return (row?.data || '').toUpperCase()
+  } catch { return '' }
+}
+
+async function scanArchiveBox(win: BrowserWindow | null, options: Electron.MessageBoxOptions): Promise<Electron.MessageBoxReturnValue> {
+  const parent = win ?? BrowserWindow.getFocusedWindow()
+  const result = parent ? await dialog.showMessageBox(parent, options) : await dialog.showMessageBox(options)
+  refocusAfterDialog(win)
+  return result
+}
+
+async function saveScansToFile(win: BrowserWindow | null): Promise<void> {
+  let summary: Record<ScanStatus, number>
+  try { summary = getScanSummary() } catch { summary = { unprocessed: 0, recognized: 0, validated: 0, error: 0 } }
+  if (summary.unprocessed + summary.recognized + summary.validated + summary.error === 0) {
+    await scanArchiveBox(win, { type: 'info', buttons: ['OK'], title: 'Fiches scannées', message: 'Aucune fiche scannée à sauvegarder.' })
+    return
+  }
+  const meetName = currentMeetName()
+  const parent = win ?? BrowserWindow.getFocusedWindow()
+  const options: Electron.SaveDialogOptions = {
+    title: 'Sauvegarder les fiches scannées',
+    filters: [{ name: 'Fiches scannées', extensions: ['scans'] }],
+    defaultPath: archiveFileName(meetName),
+  }
+  const picked = parent ? await dialog.showSaveDialog(parent, options) : await dialog.showSaveDialog(options)
+  refocusAfterDialog(win)
+  if (picked.canceled || !picked.filePath) return
+  try {
+    const info = saveScansArchive(picked.filePath, { meetName, meetType: currentMeetType() })
+    await scanArchiveBox(win, {
+      type: 'info', buttons: ['OK'], title: 'Fiches scannées',
+      message: `${info.total} fiche(s) sauvegardée(s).`,
+      detail: `${info.validated} validée(s), ${info.pending} non validée(s).\n${picked.filePath}`,
+    })
+  } catch (e) {
+    dialog.showErrorBox('Sauvegarde des fiches', e instanceof Error ? e.message : String(e))
+    refocusAfterDialog(win)
+  }
+}
+
+async function loadScansFromFile(win: BrowserWindow | null): Promise<void> {
+  const parent = win ?? BrowserWindow.getFocusedWindow()
+  const options: Electron.OpenDialogOptions = {
+    title: 'Charger des fiches scannées',
+    filters: [{ name: 'Fiches scannées', extensions: ['scans'] }],
+    properties: ['openFile'],
+  }
+  const picked = parent ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options)
+  refocusAfterDialog(win)
+  if (picked.canceled || picked.filePaths.length === 0) return
+  const filePath = picked.filePaths[0]
+
+  try {
+    const info = readScansArchiveInfo(filePath)
+    let current = 0
+    try {
+      const s = getScanSummary()
+      current = s.unprocessed + s.recognized + s.validated + s.error
+    } catch { /* no scan database yet */ }
+
+    const meetNow = currentMeetName()
+    const otherMeet = !!info.meetName && !!meetNow && info.meetName.toLowerCase() !== meetNow.toLowerCase()
+    const when = info.savedAt ? new Date(info.savedAt).toLocaleString('fr-CA') : ''
+    const details: string[] = [
+      `${info.validated} validée(s), ${info.pending} non validée(s).`,
+      current > 0 ? `Les ${current} fiche(s) actuellement dans l'application seront REMPLACÉES (sauvegardez-les d'abord si besoin).` : '',
+      otherMeet
+        ? `⚠ Ces fiches viennent de « ${info.meetName} », mais la compétition ouverte est « ${meetNow} ». ` +
+          "Pour les consulter, restaurez d'abord le .smb correspondant : valider une fiche ici l'enregistrerait dans la mauvaise compétition."
+        : '',
+      'Elles apparaîtront dans l\'onglet Traitement (filtre « Validés » ou « Tous »).',
+    ].filter(Boolean)
+
+    const box = await scanArchiveBox(win, {
+      type: otherMeet ? 'warning' : 'question',
+      buttons: ['Charger', 'Annuler'],
+      defaultId: otherMeet ? 1 : 0,
+      cancelId: 1,
+      title: 'Charger des fiches scannées',
+      message: `Charger ${info.total} fiche(s)${info.meetName ? ` de « ${info.meetName} »` : ''}${when ? ` (sauvegardées le ${when})` : ''} ?`,
+      detail: details.join('\n\n'),
+    })
+    if (box.response !== 0) return
+
+    const loaded = loadScansArchive(filePath)
+    resetGeminiAttempted()
+    await scanArchiveBox(win, { type: 'info', buttons: ['OK'], title: 'Fiches scannées', message: `${loaded} fiche(s) chargée(s).` })
+  } catch (e) {
+    dialog.showErrorBox(
+      'Chargement des fiches',
+      e instanceof InvalidScanArchiveError ? e.message : `Impossible de charger les fiches : ${e instanceof Error ? e.message : String(e)}`,
+    )
+    refocusAfterDialog(win)
+  }
+}
+
 // ── File IPC ──────────────────────────────────────────────────────────────────
 
 ipcMain.handle('file:open-lenex-dialog', async (event) => {
@@ -1477,13 +1622,14 @@ ipcMain.handle('file:restore-smb', async (event) => {
     // Regenerate combined events & point scores after restore
     regenerateCombinedEvents(getLocalDb())
     regeneratePointScores(getLocalDb())
-    return { ok: true, ...summary }
+    const scansCleared = await flushScansForReplacedMeet(win)
+    return { ok: true, ...summary, scansCleared }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
   }
 })
 
-ipcMain.handle('file:new-meet', async (_event, meetType?: string, lang?: string) => {
+ipcMain.handle('file:new-meet', async (event, meetType?: string, lang?: string) => {
   try {
     const type = (meetType || 'pool').toLowerCase()
     const db = getLocalDb()
@@ -1539,7 +1685,9 @@ ipcMain.handle('file:new-meet', async (_event, meetType?: string, lang?: string)
     regenerateCombinedEvents(db)
     regeneratePointScores(db)
 
-    return { ok: true, summary, meetType: type.toUpperCase() }
+    const scansCleared = await flushScansForReplacedMeet(BrowserWindow.fromWebContents(event.sender))
+
+    return { ok: true, summary, meetType: type.toUpperCase(), scansCleared }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
   }
@@ -1821,6 +1969,24 @@ ipcMain.handle('timing:validate-scan', (
 ipcMain.handle('timing:find-blank-targets', (_event, eventNumber: number, heatNumber: number, lane: number) => {
   try {
     return findBlankSheetCandidates(getLocalDb(), eventNumber, heatNumber, lane)
+  } catch {
+    return []
+  }
+})
+
+/** Look-alike readings (7↔1, 2↔7, …) of a blank sheet's handwritten event/heat/lane that exist in the meet. */
+ipcMain.handle('timing:find-blank-alternatives', (_event, eventNumber: number, heatNumber: number, lane: number) => {
+  try {
+    return findBlankSheetAlternatives(getLocalDb(), eventNumber, heatNumber, lane)
+  } catch {
+    return []
+  }
+})
+
+/** Event names for grouping the Traitement scan list. */
+ipcMain.handle('timing:get-event-labels', () => {
+  try {
+    return listEventLabels(getLocalDb())
   } catch {
     return []
   }
@@ -2113,6 +2279,15 @@ function createWindow(): void {
         {
           label: 'Restaurer un meet (.smb)…',
           click: () => mainWindow.webContents.send('menu:restore-smb'),
+        },
+        { type: 'separator' },
+        {
+          label: 'Sauvegarder les fiches scannées (.scans)…',
+          click: () => { void saveScansToFile(mainWindow) },
+        },
+        {
+          label: 'Charger des fiches scannées (.scans)…',
+          click: () => { void loadScansFromFile(mainWindow) },
         },
         { type: 'separator' },
         {

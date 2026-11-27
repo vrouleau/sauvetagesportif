@@ -270,6 +270,16 @@ For venues with electronic timing:
 2. Choose a location and filename
 3. The `.smb` file contains the complete meet state (structure, entries, results, config)
 
+### Save the scanned timing sheets (.scans)
+
+The `.smb` does **not** contain the scanned timing sheets (they live in a separate local file). To keep them as history:
+
+1. File menu → **Sauvegarder les fiches scannées (.scans)…** — saves every scanned sheet with its image and its read/validated times
+2. Later, restore the meet's `.smb` first, then File menu → **Charger des fiches scannées (.scans)…**
+3. Browse them in the Traitement tab (filter *Validés* or *Tous*)
+
+Loading **replaces** the scans currently in the app. If the file comes from another meet than the one that is open, you are warned: validating one of its sheets would record the time in the wrong meet.
+
 ### Sync to Remote Database
 
 1. File menu → **Synchronisation ↑ (app → BD)**

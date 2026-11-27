@@ -263,6 +263,9 @@ const api = {
     ) => ipcRenderer.invoke('timing:validate-scan', scanId, time1, timeMs1, time2, timeMs2, target),
     findBlankTargets: (eventNumber: number, heatNumber: number, lane: number) =>
       ipcRenderer.invoke('timing:find-blank-targets', eventNumber, heatNumber, lane),
+    findBlankAlternatives: (eventNumber: number, heatNumber: number, lane: number) =>
+      ipcRenderer.invoke('timing:find-blank-alternatives', eventNumber, heatNumber, lane),
+    getEventLabels: () => ipcRenderer.invoke('timing:get-event-labels'),
     generateBlankSheets: (pageCount?: number) =>
       ipcRenderer.invoke('timing:generate-blank-sheets', pageCount),
     markError: (scanId: number, notes: string) =>

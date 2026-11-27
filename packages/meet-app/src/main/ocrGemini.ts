@@ -62,6 +62,8 @@ function getGeminiUrl(model: string): string {
 
 export class GeminiOcrEngine implements OcrEngine {
   readonly name = 'gemini' as const
+  /** Model id that answered the most recent request (stored with the scan for audits). */
+  lastModel = ''
   async initialize(): Promise<void> {
     if (!loadGeminiApiKey()) {
       throw new Error(
@@ -87,17 +89,18 @@ export class GeminiOcrEngine implements OcrEngine {
     time2: string
     confidence: number
     raw: string
+    model: string
   }> {
     const text = await this.generate(CHRONO_PROMPT, imageBuffer)
-    return { ...parseChronoTimes(text), raw: text }
+    return { ...parseChronoTimes(text), raw: text, model: this.lastModel }
   }
 
   /**
    * Read a hand-filled blank strip: event / heat / lane plus both chrono times.
    */
-  async recognizeBlankSheet(imageBuffer: Buffer): Promise<BlankSheetReading & { raw: string }> {
+  async recognizeBlankSheet(imageBuffer: Buffer): Promise<BlankSheetReading & { raw: string; model: string }> {
     const text = await this.generate(BLANK_SHEET_PROMPT, imageBuffer)
-    return { ...parseBlankSheetResponse(text), raw: text }
+    return { ...parseBlankSheetResponse(text), raw: text, model: this.lastModel }
   }
 
   /**
@@ -165,6 +168,7 @@ export class GeminiOcrEngine implements OcrEngine {
       }
       attemptChain.noteSuccess(attempt)
       lastUsedTier = attempt.tier
+      this.lastModel = attempt.model
       return text
     }
 

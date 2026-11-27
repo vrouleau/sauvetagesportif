@@ -21,14 +21,14 @@
  *
  * Pure scanning mode — no time entry here.
  * Workflow: activate camera → scan sheets one after another → beep confirms each.
- * Blank sheets (no barcode) are captured manually — button or Space bar — and
+ * Blank sheets carry their own FV-… barcode and are captured like any other strip; they
  * get their event/heat/lane from Gemini / the operator in the Traitement tab.
  * Time entry happens in the Traitement tab.
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import {
-  StableCaptureTracker, DEFAULT_CAPTURE_CONFIG, rgbaToGray, sharpness, meanAbsDiff,
+  StableCaptureTracker, DEFAULT_CAPTURE_CONFIG, cleanBarcodeText, rgbaToGray, sharpness, meanAbsDiff,
   type CaptureConfig, type CaptureDecision, type TrackerStatus,
 } from '../captureQuality'
 
@@ -37,6 +37,15 @@ const SAMPLE_INTERVAL_MS = 100
 const SAMPLE_WIDTH = 320
 /** Barcode decoding runs on a copy no wider than this (the code spans the strip, so it is plenty). */
 const DECODE_MAX_WIDTH = 1280
+/**
+ * Scanner debug panel (decode / capture / save counters and errors). Off by default.
+ * Turn on with `npm run dev:debug` (sets VITE_SCAN_DEBUG=1), or at runtime, also in a packaged
+ * build: DevTools (F12) -> localStorage.setItem('timing-scan-debug', '1') then reload.
+ */
+const SCAN_DEBUG = (() => {
+  if (import.meta.env.VITE_SCAN_DEBUG === '1') return true
+  try { return localStorage.getItem('timing-scan-debug') === '1' } catch { return false }
+})()
 const BARCODE_RE = /^E(\d+)-U(\d+)-H(\d+)-L(\d+)$/
 /** Printed on blank strips: `FV-<batch>-<nn>` (see blankTimingSheet.ts). */
 const BLANK_CODE_RE = /^FV-([2-9A-HJ-NP-Z]{4}-\d{2,3})$/
@@ -107,7 +116,6 @@ async function tuneTrack(track: MediaStreamTrack | undefined): Promise<void> {
 
 export default function TimingScanPage() {
   const videoRef = useRef<HTMLVideoElement>(null)
-  const canvasRef = useRef<HTMLCanvasElement>(null)
   const [cameraActive, setCameraActive] = useState(false)
   const [cameraError, setCameraError] = useState<string | null>(null)
   const [scanCount, setScanCount] = useState(0)
@@ -121,6 +129,9 @@ export default function TimingScanPage() {
   const trackerRef = useRef<StableCaptureTracker<ImageBitmap>>(null as never)
   if (!trackerRef.current) trackerRef.current = new StableCaptureTracker<ImageBitmap>(loadCaptureConfig(), (b) => b.close())
   const streamRef = useRef<MediaStream | null>(null)
+  // Debug panel counters: which stage of scan -> capture -> save is failing (shown only when SCAN_DEBUG)
+  const dbgRef = useRef({ loops: 0, decodes: 0, lastRaw: '', decodeMs: 0, decodeErr: '', sampleErr: '', samples: 0, decisions: 0, lastDecision: '', commitErr: '', saveRes: '', noteCalls: 0, rejected: 0, rejectedRaw: '', trk: '' })
+  const [dbg, setDbg] = useState(dbgRef.current)
 
   // Load summary
   useEffect(() => {
@@ -179,9 +190,10 @@ export default function TimingScanPage() {
       try {
         const mod = await import('@ericblade/quagga2')
         Quagga = mod.default || mod
-      } catch { return }
+      } catch (e) { dbgRef.current.decodeErr = 'quagga import: ' + String(e); console.error('[scan] quagga import failed', e); return }
 
       while (running) {
+        dbgRef.current.loops++
         if (!videoRef.current || videoRef.current.videoWidth === 0) {
           await new Promise((r) => setTimeout(r, 200))
           continue
@@ -200,6 +212,7 @@ export default function TimingScanPage() {
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
           const imageDataUrl = canvas.toDataURL('image/png')
 
+          const decodeStart = performance.now()
           const result = await Promise.race([
             new Promise<string | null>((resolve) => {
               Quagga.decodeSingle({
@@ -215,13 +228,18 @@ export default function TimingScanPage() {
             new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000)),
           ])
 
+          dbgRef.current.decodeMs = Math.round(performance.now() - decodeStart)
+          if (result) { dbgRef.current.decodes++; dbgRef.current.lastRaw = JSON.stringify(result) }
+          const code = result ? cleanBarcodeText(String(result)) : ''
           // Don't save here: tell the tracker, which saves once the strip is still.
-          if (result && (BARCODE_RE.test(result) || BLANK_CODE_RE.test(result))) {
+          if (code && !(BARCODE_RE.test(code) || BLANK_CODE_RE.test(code))) { dbgRef.current.rejected++; dbgRef.current.rejectedRaw = JSON.stringify(code) }
+          if (code && (BARCODE_RE.test(code) || BLANK_CODE_RE.test(code))) {
+            dbgRef.current.noteCalls++
             // A decision here = the previous strip was replaced before it settled: save it anyway.
-            const dropped = trackerRef.current.noteDecode(result, grabbedAt)
+            const dropped = trackerRef.current.noteDecode(code, grabbedAt)
             if (dropped) void commitCapture(dropped)
           }
-        } catch { /* continue */ }
+        } catch (e) { dbgRef.current.decodeErr = String(e); console.error('[scan] decode loop error', e) }
 
         await new Promise((r) => setTimeout(r, 200))
       }
@@ -260,11 +278,16 @@ export default function TimingScanPage() {
             const frame = await createImageBitmap(video)
             if (!running) { frame.close(); break }
 
+            dbgRef.current.samples++
             const decision = tracker.pushFrame({ t, motion, sharpness: sharp, frame })
             if (tracker.status !== prevStatus) { prevStatus = tracker.status; setStatus(prevStatus) }
             setMetrics({ motion, sharp })
+            if (SCAN_DEBUG) {
+              dbgRef.current.trk = tracker.debugState(performance.now())
+              setDbg({ ...dbgRef.current })
+            }
             if (decision) void commitCapture(decision) // converts the frame synchronously, saves async
-          } catch { /* keep sampling */ }
+          } catch (e) { dbgRef.current.sampleErr = String(e); console.error('[scan] sampler error', e) }
         }
         const wait = SAMPLE_INTERVAL_MS - (performance.now() - started)
         await new Promise((r) => setTimeout(r, Math.max(10, wait)))
@@ -275,51 +298,21 @@ export default function TimingScanPage() {
     return () => { running = false; tracker.reset() }
   }, [cameraActive])
 
-  // Capture a blank (hand-identified) sheet — no barcode to trigger on
-  const captureBlank = useCallback(async () => {
-    const imageBase64 = captureFrame()
-    if (!imageBase64) return
-    setFlash(true)
-    setTimeout(() => setFlash(false), 300)
-    playBeep()
-    const api = timingApi()
-    if (!api) return
-    const barcodeRaw = `BLANK-${Date.now()}`
-    const result = await api.saveScan({
-      eventNumber: 0, swimEventId: 0, heatNumber: 0, lane: 0, barcodeRaw, imageBase64,
-    })
-    if (result.ok) {
-      setScanCount((c) => c + 1)
-      setLastBarcode('Fiche vierge')
-      setLowQuality(false)
-    }
-  }, [])
-
-  // Space bar = capture blank sheet (while the camera runs)
-  useEffect(() => {
-    if (!cameraActive) return
-    function onKey(e: KeyboardEvent) {
-      if (e.code !== 'Space' || e.repeat) return
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
-      e.preventDefault()
-      captureBlank()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [cameraActive, captureBlank])
-
   // Save the frame the tracker picked (sharpest of the recent still frames).
   const commitCapture = useCallback(async (decision: CaptureDecision<ImageBitmap>) => {
     // Blank strip: no event/heat/lane yet (Gemini + operator resolve them in Traitement).
     // Stored as BLANK-<batch>-<nn>, so re-presenting the same strip replaces its scan.
     const blank = decision.code.match(BLANK_CODE_RE)
     const match = blank ? null : decision.code.match(BARCODE_RE)
+    dbgRef.current.decisions++
+    dbgRef.current.lastDecision = `${decision.code} lowQ=${decision.lowQuality} waited=${Math.round(decision.waitedMs)}ms`
+    if (SCAN_DEBUG) console.log('[scan] decision', decision.code, decision.lowQuality, decision.waitedMs)
     if (!blank && !match) return
     const [, eventStr, swimEventIdStr, heatStr, laneStr] = match ?? []
 
     // Convert synchronously: the bitmap is closed once it falls out of the tracker's ring.
     const imageBase64 = bitmapToJpegBase64(decision.frame)
-    if (!imageBase64) return
+    if (!imageBase64) { dbgRef.current.commitErr = 'jpeg conversion failed (bitmap closed?)'; console.error('[scan] jpeg conversion failed'); return }
 
     // Flash + beep — only now, so the beep means "picture taken, you can move on"
     setFlash(true)
@@ -327,6 +320,7 @@ export default function TimingScanPage() {
     playBeep(decision.lowQuality)
 
     const api = timingApi()
+    if (!api) { dbgRef.current.commitErr = 'window.api.timing missing'; console.error('[scan] window.api.timing missing') }
     if (api) {
       const result = await api.saveScan({
         eventNumber: blank ? 0 : parseInt(eventStr, 10),
@@ -336,6 +330,8 @@ export default function TimingScanPage() {
         barcodeRaw: blank ? `BLANK-${blank[1]}` : decision.code,
         imageBase64,
       })
+      dbgRef.current.saveRes = JSON.stringify(result)
+      if (SCAN_DEBUG) console.log('[scan] saveScan ->', result)
       if (result.ok && !result.duplicate) {
         setScanCount((c) => c + 1)
         setLastBarcode(blank ? 'Fiche vierge' : decision.code)
@@ -343,18 +339,6 @@ export default function TimingScanPage() {
       }
     }
   }, [])
-
-  function captureFrame(): string | null {
-    const video = videoRef.current
-    const canvas = canvasRef.current
-    if (!video || !canvas) return null
-    canvas.width = video.videoWidth
-    canvas.height = video.videoHeight
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return null
-    ctx.drawImage(video, 0, 0)
-    return canvas.toDataURL('image/jpeg', 0.85).split(',')[1] || null
-  }
 
   /** One high beep = captured OK. Two low beeps = captured but possibly blurry, present the sheet again. */
   function playBeep(lowQuality = false) {
@@ -410,7 +394,6 @@ export default function TimingScanPage() {
       {/* Camera */}
       <div className="flex-1 relative bg-black rounded overflow-hidden">
         <video ref={videoRef} className="w-full h-full object-contain" muted playsInline />
-        <canvas ref={canvasRef} className="hidden" />
 
         {/* Flash */}
         {flash && <div className="absolute inset-0 bg-green-400/30 pointer-events-none" />}
@@ -448,6 +431,22 @@ export default function TimingScanPage() {
           </div>
         )}
 
+        {/* Debug panel: only with SCAN_DEBUG (npm run dev:debug) */}
+        {SCAN_DEBUG && cameraActive && (
+          <div className="absolute top-14 right-3 w-80 text-[10px] leading-tight font-mono text-yellow-200 bg-black/75 px-2 py-1 rounded whitespace-pre-wrap break-all">
+            {`status=${status}  samples=${dbg.samples}  scanLoops=${dbg.loops}
+decodes=${dbg.decodes}  lastDecodeMs=${dbg.decodeMs}
+lastRaw=${dbg.lastRaw || '-'}
+decisions=${dbg.decisions}  ${dbg.lastDecision}
+saveRes=${dbg.saveRes || '-'}
+noteCalls=${dbg.noteCalls}  rejected=${dbg.rejected} ${dbg.rejectedRaw}
+tracker: ${dbg.trk}
+ERR decode=${dbg.decodeErr || '-'}
+ERR sampler=${dbg.sampleErr || '-'}
+ERR commit=${dbg.commitErr || '-'}`}
+          </div>
+        )}
+
         {/* Last scan indicator */}
         {lastBarcode && (
           <div className={`absolute top-3 left-3 text-white text-sm px-3 py-2 rounded shadow font-mono ${lowQuality ? 'bg-amber-600/95' : 'bg-green-700/90'}`}>
@@ -467,13 +466,6 @@ export default function TimingScanPage() {
       {/* Controls */}
       {cameraActive && (
         <div className="flex justify-center gap-3">
-          <button
-            onClick={captureBlank}
-            className="px-4 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700"
-            title="Les fiches vierges imprimées avec code-barres se capturent seules. Ce bouton (Espace) sert pour les anciennes fiches vierges sans code-barres."
-          >
-            📸 Capturer fiche sans code (Espace)
-          </button>
           <button
             onClick={stopCamera}
             className="px-4 py-1 bg-gray-600 text-white text-xs rounded hover:bg-gray-700"

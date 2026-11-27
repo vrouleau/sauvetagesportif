@@ -25,6 +25,11 @@
 import Database from 'better-sqlite3'
 import { app } from 'electron'
 import { join } from 'path'
+import { existsSync, unlinkSync } from 'fs'
+import {
+  copyScansTo, writeArchiveMeta, readArchiveInfo, replaceScansFromArchive,
+  InvalidScanArchiveError, type ArchiveMeta, type ArchiveInfo,
+} from './scanArchive'
 
 let scanDb: Database.Database | null = null
 
@@ -78,6 +83,7 @@ CREATE TABLE IF NOT EXISTS timing_scan (
   time_ms1        INTEGER,
   time_ms2        INTEGER,
   ocr_engine      TEXT,
+  ocr_raw         TEXT,
   ocr_confidence  REAL,
   processed_at    TEXT,
   validated_at    TEXT,
@@ -113,6 +119,10 @@ export function getScanDb(): Database.Database {
   }
 
   scanDb.exec(SCHEMA_SQL)
+  // Databases created before ocr_raw existed: add the column in place (keeps existing scans).
+  if (!(scanDb.prepare('PRAGMA table_info(timing_scan)').all() as Array<{ name: string }>).some((c) => c.name === 'ocr_raw')) {
+    scanDb.exec('ALTER TABLE timing_scan ADD COLUMN ocr_raw TEXT')
+  }
   return scanDb
 }
 
@@ -123,6 +133,44 @@ export function closeScanDb(): void {
     scanDb = null
   }
 }
+
+// ── Archive (File menu: save / load scans) ───────────────────────────────────
+
+/** Save every scan (images included) to a `.scans` file. Overwrites `filePath` (the save dialog already asked). */
+export function saveScansArchive(filePath: string, meta: Omit<ArchiveMeta, 'savedAt'>): ArchiveInfo {
+  const db = getScanDb()
+  if (existsSync(filePath)) unlinkSync(filePath) // VACUUM INTO refuses to overwrite
+  copyScansTo(db, filePath)
+  const out = new Database(filePath)
+  try {
+    writeArchiveMeta(out, { ...meta, savedAt: new Date().toISOString() })
+    return readArchiveInfo(out)
+  } finally {
+    out.close()
+  }
+}
+
+/** What a `.scans` file contains (throws InvalidScanArchiveError when it isn't one). */
+export function readScansArchiveInfo(filePath: string): ArchiveInfo {
+  let db: Database.Database
+  try {
+    db = new Database(filePath, { readonly: true, fileMustExist: true })
+  } catch {
+    throw new InvalidScanArchiveError()
+  }
+  try {
+    return readArchiveInfo(db)
+  } finally {
+    db.close()
+  }
+}
+
+/** Replace the current scans with the archive's. Returns how many scans there are afterwards. */
+export function loadScansArchive(filePath: string): number {
+  return replaceScansFromArchive(getScanDb(), filePath)
+}
+
+export { InvalidScanArchiveError }
 
 // ── CRUD operations ───────────────────────────────────────────────────────────
 
@@ -174,16 +222,19 @@ export function findExistingScan(barcodeRaw: string): TimingScan | null {
 export function updateScanOcrResult(scanId: number, result: {
   recognizedTime1: string
   recognizedTime2: string
+  /** `gemini:<model id>` — which model actually answered. */
   ocrEngine: string
   ocrConfidence: number
+  /** The model's answer exactly as received, kept for auditing misreads. */
+  ocrRaw?: string
 }): void {
   const db = getScanDb()
   db.prepare(`
     UPDATE timing_scan
     SET recognized_time1 = ?, recognized_time2 = ?, ocr_engine = ?, ocr_confidence = ?,
-        status = 'recognized', processed_at = ?
+        ocr_raw = ?, status = 'recognized', processed_at = ?
     WHERE scan_id = ?
-  `).run(result.recognizedTime1, result.recognizedTime2, result.ocrEngine, result.ocrConfidence, new Date().toISOString(), scanId)
+  `).run(result.recognizedTime1, result.recognizedTime2, result.ocrEngine, result.ocrConfidence, result.ocrRaw ?? null, new Date().toISOString(), scanId)
 }
 
 /**

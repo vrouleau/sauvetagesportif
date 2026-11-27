@@ -18,7 +18,7 @@
 
 import { describe, it, expect } from 'vitest'
 import {
-  rgbaToGray, sharpness, meanAbsDiff, StableCaptureTracker, DEFAULT_CAPTURE_CONFIG,
+  cleanBarcodeText, rgbaToGray, sharpness, meanAbsDiff, StableCaptureTracker, DEFAULT_CAPTURE_CONFIG,
   type CaptureDecision,
 } from '../src/renderer/src/captureQuality'
 
@@ -50,6 +50,15 @@ function blur(src: Uint8Array, radius = 3): Uint8Array {
   }
   return out
 }
+
+describe('cleanBarcodeText', () => {
+  it('drops stray control characters the reader appends (seen live: trailing GS \u001d)', () => {
+    expect(cleanBarcodeText('E7-U4054-H7-L1\u001d')).toBe('E7-U4054-H7-L1')
+    expect(cleanBarcodeText('\u0000FV-K3F9-07\r\n')).toBe('FV-K3F9-07')
+    expect(cleanBarcodeText('E5-U1496-H2-L3')).toBe('E5-U1496-H2-L3')
+    expect(cleanBarcodeText('')).toBe('')
+  })
+})
 
 describe('image metrics', () => {
   it('rgbaToGray converts luma', () => {

@@ -23,6 +23,8 @@ import type Database from 'better-sqlite3'
 import { createTestDb, seedMeet } from './helpers'
 import {
   isBlankScan, makeBlankBarcode, parseChronoTimes, parseBlankSheetResponse,
+  normalizeChronoTime, CHRONO_PROMPT, BLANK_SHEET_PROMPT,
+  digitVariants, findBlankSheetAlternatives, listEventLabels,
   findBlankSheetCandidates, pickBlankSheetTarget,
   newBlankBatchId, makeBlankSheetCode, isBlankSheetCode, blankScanIdFromCode, BLANK_SHEET_CODE_RE,
 } from '../src/main/blankTimingSheet'
@@ -68,6 +70,74 @@ describe('Printed blank-strip barcode', () => {
   })
 })
 
+describe('Chrono time validation (learned from real scans)', () => {
+  it('the three boxes as written are padded IN CODE: a lone digit is the units digit', () => {
+    // the real sheet "1 : 5 . 6" is 1:05.06; the model padded the hundredths on the wrong side (1:05.60)
+    expect(normalizeChronoTime('1|5|6')).toBe('1:05.06')
+    expect(normalizeChronoTime('2|40|01')).toBe('2:40.01')
+    expect(normalizeChronoTime('1|05|30')).toBe('1:05.30')
+    expect(normalizeChronoTime('2|7|6')).toBe('2:07.06')
+    expect(normalizeChronoTime(' 1 | 05 | 30 ')).toBe('1:05.30')
+    expect(parseChronoTimes('C1:2|40|01\nC2:1|5|6')).toEqual({ time1: '2:40.01', time2: '1:05.06', confidence: 0.95 })
+  })
+
+  it('empty boxes: minutes -> 0, hundredths -> 00', () => {
+    expect(normalizeChronoTime('|42|38')).toBe('0:42.38')
+    expect(normalizeChronoTime('1|05|')).toBe('1:05.00')
+    expect(normalizeChronoTime('|7|')).toBe('0:07.00')
+  })
+
+  it('missing seconds, impossible seconds, extra digits or boxes, junk: BLANK for the operator, never rewritten', () => {
+    expect(normalizeChronoTime('1||30')).toBe('')      // empty seconds
+    expect(normalizeChronoTime('5|67|89')).toBe('')    // 67 seconds (was read as 1:07.89)
+    expect(normalizeChronoTime('8|76|54')).toBe('')
+    expect(normalizeChronoTime('0|99|97')).toBe('')
+    expect(normalizeChronoTime('1|05|300')).toBe('')   // 3 digits in a box
+    expect(normalizeChronoTime('123|05|30')).toBe('')
+    expect(normalizeChronoTime('1|05')).toBe('')       // two boxes
+    expect(normalizeChronoTime('1|05|30|7')).toBe('')  // four boxes
+    expect(normalizeChronoTime('a|05|30')).toBe('')    // not digits
+    expect(normalizeChronoTime('||')).toBe('')
+    expect(normalizeChronoTime('unclear')).toBe('')
+    expect(normalizeChronoTime('')).toBe('')
+    expect(parseChronoTimes('C1:5|67|89\nC2:1|16|54')).toEqual({ time1: '', time2: '1:16.54', confidence: 0.3 })
+    expect(parseChronoTimes('C1:unclear\nC2:unclear')).toEqual({ time1: '', time2: '', confidence: 0.3 })
+  })
+
+  it('the plain M:SS.HH form is still understood (same padding rules)', () => {
+    expect(normalizeChronoTime('0:42.38')).toBe('0:42.38')
+    expect(normalizeChronoTime('42.38')).toBe('0:42.38')
+    expect(normalizeChronoTime('1:5.30')).toBe('1:05.30')
+    expect(normalizeChronoTime(' 2 : 07 . 40 ')).toBe('2:07.40')
+    expect(normalizeChronoTime('1:05.6')).toBe('1:05.06') // lone hundredths digit = units
+    expect(normalizeChronoTime('5:67.89')).toBe('')
+    expect(normalizeChronoTime('1:05.123')).toBe('')
+    expect(parseChronoTimes('C1:42.38\nC2:0:12.34')).toEqual({ time1: '0:42.38', time2: '0:12.34', confidence: 0.95 })
+  })
+
+  it('blank sheets use the same boxes and validation', () => {
+    const r = parseBlankSheetResponse('E:2\nH:7\nL:2\nC1:5|67|89\nC2:|42|38')
+    expect(r).toMatchObject({ eventNumber: 2, heatNumber: 7, lane: 2, time1: '', time2: '0:42.38' })
+    expect(r.confidence).toBe(0.3)
+    expect(parseBlankSheetResponse('E:2\nH:7\nL:2\nC1:1|5|6\nC2:2|40|01')).toEqual({
+      eventNumber: 2, heatNumber: 7, lane: 2, time1: '1:05.06', time2: '2:40.01', confidence: 0.95,
+    })
+  })
+
+  it('prompts ask for a plain transcription of the boxes (no padding, no arithmetic) and keep the answer format', () => {
+    for (const p of [CHRONO_PROMPT, BLANK_SHEET_PROMPT]) {
+      expect(p).toContain('Transcribe each box separately, exactly as written')
+      expect(p).toContain('Do no arithmetic, padding, correction or conversion')
+      expect(p).toContain('If a box is empty, leave it empty')
+      expect(p).toContain('Never add a digit that is not written')
+      expect(p).toContain('C1:<minutes>|<seconds>|<hundredths>')
+      expect(p).toContain('C2:<minutes>|<seconds>|<hundredths>')
+      expect(p).not.toMatch(/C1:1:23\.45|C2:1:24\.02/)  // the old example leaked "1" into empty minutes
+      expect(p).not.toContain('pad it with a leading 0') // padding is no longer the model's job
+    }
+  })
+})
+
 describe('Gemini response parsing', () => {
   it('parses chrono times (barcoded strips — unchanged behaviour)', () => {
     expect(parseChronoTimes('C1:1:23.45\nC2:1:24.02')).toEqual({ time1: '1:23.45', time2: '1:24.02', confidence: 0.95 })
@@ -92,6 +162,23 @@ describe('Gemini response parsing', () => {
   it('does not confuse C1/C2 lines with E/H/L', () => {
     const r = parseBlankSheetResponse('C1:1:02.33\nC2:1:02.40\nE:2\nH:1\nL:6')
     expect(r).toMatchObject({ eventNumber: 2, heatNumber: 1, lane: 6, time1: '1:02.33', time2: '1:02.40' })
+  })
+})
+
+describe('Look-alike digits (handwriting)', () => {
+  it('lists the numbers reachable by swapping digits for look-alikes, with the number of swaps', () => {
+    expect([...digitVariants(7)].sort()).toEqual([[1, 1], [2, 1], [7, 0]])
+    expect(digitVariants(12).get(12)).toBe(0)
+    expect(digitVariants(12).get(17)).toBe(1) // 2 -> 7
+    expect(digitVariants(12).get(72)).toBe(1) // 1 -> 7
+    expect(digitVariants(12).get(77)).toBe(2)
+    expect(digitVariants(6).get(0)).toBeUndefined() // 0 is not a valid event / heat / lane
+    expect(digitVariants(0).size).toBe(0)
+    expect(digitVariants(-3).size).toBe(0)
+  })
+
+  it('never produces a number with a leading zero', () => {
+    for (const n of [6, 60, 16, 106]) for (const v of digitVariants(n).keys()) expect(String(v)).toMatch(/^[1-9]\d*$/)
   })
 })
 
@@ -130,6 +217,35 @@ describe('Blank sheet target resolution', () => {
     const c = findBlankSheetCandidates(db, 2, 1, 2)
     expect(c).toHaveLength(1)
     expect(c[0]).toMatchObject({ swimEventId: 2, entryLabel: 'TST A', clubCode: 'TST' })
+  })
+
+  it('offers look-alike readings that exist in the meet (E2-H7-L2 misread as E7-H1-L2)', () => {
+    // The sheet really said event 1, heat 7, lane 2 (Roe); the OCR read heat 1 instead (7 -> 1).
+    db.exec(`INSERT INTO heat (heatid, swimeventid, heatnumber) VALUES (11, 1, 7)`)
+    db.exec(`INSERT INTO swimresult (swimresultid, swimeventid, athleteid, heatid, lane) VALUES (101, 1, 2, 11, 2)`)
+    const alts = findBlankSheetAlternatives(db, 1, 1, 2)
+    // heat 1 lane 2 is empty in this meet; heat 7 lane 2 (Roe) is the look-alike of the reading
+    expect(alts.map((a) => [a.eventNumber, a.heatNumber, a.lane, a.entryLabel, a.distance])).toEqual([[1, 7, 2, 'Roe, Jane', 1]])
+  })
+
+  it('alternatives: open entries before ones that already have a time, then fewest changed digits', () => {
+    db.exec(`INSERT INTO heat (heatid, swimeventid, heatnumber) VALUES (11, 1, 7)`)
+    db.exec(`INSERT INTO swimresult (swimresultid, swimeventid, athleteid, heatid, lane, swimtime) VALUES (101, 1, 2, 11, 2, 61230)`) // heat 7 lane 2: has a time
+    db.exec(`INSERT INTO athlete (athleteid, clubid, firstname, lastname, gender, birthdate, nation) VALUES (3, 1, 'Sam', 'Poe', 1, '2002-03-03', 'CAN')`)
+    db.exec(`INSERT INTO swimresult (swimresultid, swimeventid, athleteid, heatid, lane) VALUES (102, 1, 3, 11, 7)`) // heat 7 lane 7: open, 2 swaps away
+    const alts = findBlankSheetAlternatives(db, 1, 1, 2)
+    expect(alts.map((a) => [a.heatNumber, a.lane, a.hasTime, a.distance])).toEqual([[7, 7, false, 2], [7, 2, true, 1]])
+  })
+
+  it('alternatives: none when nothing look-alike exists, or the identity is unreadable', () => {
+    expect(findBlankSheetAlternatives(db, 1, 1, 3)).toEqual([]) // only the exact reading exists
+    expect(findBlankSheetAlternatives(db, 0, 1, 3)).toEqual([])
+    expect(findBlankSheetAlternatives(db, 1, 0, 3)).toEqual([])
+  })
+
+  it('lists every event with its display name', () => {
+    const labels = listEventLabels(db)
+    expect(labels.find((l) => l.swimEventId === 1)).toMatchObject({ eventNumber: 1, eventName: '100m Freestyle' })
   })
 
   it('prelim + final sharing an event number: picks the round without a time', () => {
