@@ -82,3 +82,5 @@ Judged technical relay (swimstyle 530), teams of 4. No gender/age restrictions, 
 Judge URLs (public): `/serc/judge/overall`, `/serc/judge/bystander`, `/serc/judge/victim/1`. A DQ'd (draw, team) contributes 0 to that draw and is excluded from its ranking (rank omitted).
 
 Remember: UI changes to `RelayEntryPage.tsx` / `IndividualEntryPage.tsx` live in shared-ui and affect both apps (see the `shared-ui-change` skill).
+
+More detail: `meet-app-details.md`, `team-app-details.md` (workflow, key rules, API table with access levels).

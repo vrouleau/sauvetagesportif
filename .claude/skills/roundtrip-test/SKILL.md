@@ -28,3 +28,5 @@ Arguments: `$ARGUMENTS` (defaults: `--type pool --clubs 12 --athletes 300 --dsq-
 
 ## Report
 Per step: done by me / needs user / blocked, plus anything suspicious (rows with no heat, DSQ codes missing, athletes without results, relay results absent, swimstyle warnings on import). For automated regression coverage instead of a manual run, point to `/team-tests` and `/meet-tests` (LXF round-trip unit tests live in `test_meet_course_roundtrip.py` and `lenex.test.ts`).
+
+More: `generate-results.md` (generate_results.py details, default DB detection, fixtures).

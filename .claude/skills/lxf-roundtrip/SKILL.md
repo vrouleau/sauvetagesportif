@@ -39,3 +39,5 @@ Relay teams travel as `RELAY`/`RELAYPOSITION` with `ENTRY@entrytime`; HC = `ENTR
 - LXF files keep the French swimstyle name (Splash expects it).
 - Meet type auto-detected on import (see `beach-meet` skill).
 - Synthetic round-trip testing: see the `/roundtrip-test` skill.
+
+More detail: `meet-app-details.md` (importLenex/export specifics), `team-app-lifecycle.md` (meet lifecycle, reset, meet_type, swimstyle catalog, MEETVALUES/course helpers).

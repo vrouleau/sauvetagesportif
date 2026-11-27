@@ -38,3 +38,5 @@ python3 tests/generate_test_entries.py --out tests/fixtures/test_entries.lxf
 python3 tests/generate_test_results.py --meet tests/fixtures/meet_template.lxf \
     --entries tests/fixtures/test_entries.lxf --out tests/fixtures/test_results.lxf
 ```
+
+More: `reference.md` (how the test stack works, env vars, fixtures).

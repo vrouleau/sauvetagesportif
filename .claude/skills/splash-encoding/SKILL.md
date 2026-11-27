@@ -32,3 +32,5 @@ Splash format: `KEY=TYPE;VALUE\r\n`. Types: `I` integer, `S` string, `B` boolean
 - **Postgres returns `COUNT(*)` as a string**: handled by `pgWorker.js` type parsers; backend parity differences live in `db.ts` (`inClause()`) and `pgBackend.ts` (placeholder rewriting).
 - **Dates**: see `docs/DATE_HANDLING.md`. Age bracket reference dates: `config/age-group-rules.json`.
 - SQLite and the optional shared PostgreSQL must behave identically (`describe.each(['sqlite','pg'])` suites).
+
+More: `meet-app-splash-columns.md` (how meet-app stores rounds, courses, heat racestatus, dsqitem options). Investigation history: `splash-interop` skill.

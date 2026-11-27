@@ -61,3 +61,5 @@ Concurrency note: beach-number assignment uses `SELECT MAX+1` without locking; s
 - Duplicate position → **swaps** the two athletes' positions.
 - Gap prevention: can't enter a position > total athletes with positions.
 - Rank column hidden (position IS the result).
+
+More: `meet-app-details.md` (original beach number notes, tests).

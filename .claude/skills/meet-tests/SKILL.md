@@ -27,3 +27,5 @@ Arguments: `$ARGUMENTS`
 ## Notes
 - Do NOT launch the Electron app from the Claude Code terminal (`ELECTRON_RUN_AS_NODE=1` crashes it).
 - Test files: `heat-generation`, `gbin`, `lenex`, `schema`, `smb`, `meetvalues`, `timing-scan`, `concurrency`, `splash-schema-contract`, `age-group-rules`, `swimstyle-ranges`.
+
+More: `pg-testing.md` (Postgres parity/concurrency tests, native Windows Postgres on port 5433).
