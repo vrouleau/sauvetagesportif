@@ -6,7 +6,7 @@ description: Timing sheet scanning and OCR in meet-app — barcode format, sheet
 ## Timing Sheet OCR Scanning
 
 ### Workflow
-1. **Print** timing sheets from the Reports tab ("Fiches chrono" — pick the events; "Fiches chrono vierges" for blank strips) — portrait, 3 strips/page
+1. **Print** timing sheets from the Reports tab ("Fiches chrono" — pick the events; sorted lane → event → heat so strips can be cut into one pile per lane judge; "Fiches chrono vierges" for blank strips) — portrait, 3 strips/page
 2. **Scan** sheets in batch (Scanner tab) — camera reads Code128 barcode, captures image
 3. **Process** (Traitement tab) — Gemini reads times in background, operator validates/corrects
 4. **Accept** → writes `backuptime1`, `backuptime2`, averaged `swimtime` to `swimresult`
