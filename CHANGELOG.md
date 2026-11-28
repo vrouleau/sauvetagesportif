@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.6.4] - 2026-11-28
+
+### 🔧 Chores
+
+- shared header (meet — report name), simpler event row headers, remove Print button (`74d8791`)
+
 ## [0.6.3] - 2026-11-27
 
 ### 🔧 Chores
