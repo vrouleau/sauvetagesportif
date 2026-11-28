@@ -531,7 +531,7 @@ function AppInner() {
         {page === 'heats' && <HeatsPage refreshKey={refreshKey} meetType={meetType} />}
         {page === 'report' && <ReportPage refreshKey={refreshKey} meetType={meetType} />}
         {page === 'scan' && <TimingScanPage />}
-        {page === 'process' && <TimingProcessPage />}
+        {page === 'process' && <TimingProcessPage onGotoHeats={() => setPage('heats')} />}
       </div>
 
       {/* Modals */}

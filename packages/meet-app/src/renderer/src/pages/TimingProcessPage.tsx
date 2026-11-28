@@ -111,7 +111,7 @@ function timingApi() {
   }).api?.timing ?? null
 }
 
-export default function TimingProcessPage() {
+export default function TimingProcessPage({ onGotoHeats }: { onGotoHeats?: () => void }) {
   const [scans, setScans] = useState<ScanRecord[]>([])
   const [currentIndex, setCurrentIndex] = useState(0)
   const [filter, setFilter] = useState<ScanStatus | 'all'>('unprocessed')
@@ -399,6 +399,16 @@ export default function TimingProcessPage() {
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-bold">Traitement</h1>
         <div className="flex items-center gap-3">
+          {/* Quick flip to the Heats tab */}
+          {onGotoHeats && (
+            <button
+              onClick={onGotoHeats}
+              className="px-2 py-0.5 text-xs rounded border bg-gray-100 text-gray-700 border-gray-300 hover:bg-gray-200"
+            >
+              Goto Heat
+            </button>
+          )}
+
           {/* Filter */}
           <select
             value={filter}
