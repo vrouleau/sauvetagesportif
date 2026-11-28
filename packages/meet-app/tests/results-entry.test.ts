@@ -88,7 +88,7 @@ describe.each(BACKENDS)('saveResult / getHeatListSessions backend parity [%s]', 
     })
   })
 
-  it('records a DSQ status and clears the displayed final time', async () => {
+  it('records a DSQ status but keeps the time, so clearing the DSQ restores it', async () => {
     await withDb(async (db) => {
       seedMeet(db)
       db.exec(`INSERT INTO heat (heatid, swimeventid, heatnumber, racestatus, sortcode) VALUES (1, 1, 1, 4, 1)`)
@@ -99,7 +99,22 @@ describe.each(BACKENDS)('saveResult / getHeatListSessions backend parity [%s]', 
       const sessions = await getHeatListSessions(db)
       const entry = sessions[0]?.events[0]?.heats[0]?.entries[0]
       expect(entry!.status).toBe('DSQ')
-      expect(entry!.finalTime).toBeUndefined()
+      expect(entry!.finalTime).toBe('1:05.43')
+    })
+  })
+
+  it('DNS and DNF still clear the displayed final time', async () => {
+    await withDb(async (db) => {
+      seedMeet(db)
+      db.exec(`INSERT INTO heat (heatid, swimeventid, heatnumber, racestatus, sortcode) VALUES (1, 1, 1, 4, 1)`)
+      db.exec(`INSERT INTO swimresult (swimresultid, athleteid, swimeventid, heatid, lane, agegroupid) VALUES (1, 1, 1, 1, 4, 1)`)
+
+      for (const status of ['DNS', 'DNF'] as const) {
+        await saveResult(1, '1:05.43', null, status, undefined, null, db)
+        const entry = (await getHeatListSessions(db))[0]?.events[0]?.heats[0]?.entries[0]
+        expect(entry!.status).toBe(status)
+        expect(entry!.finalTime).toBeUndefined()
+      }
     })
   })
 })
