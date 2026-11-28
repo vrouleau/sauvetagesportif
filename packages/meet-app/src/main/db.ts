@@ -551,8 +551,10 @@ export async function getHeatListSessions(injectedDb?: ReturnType<typeof getLoca
     const birthYear = parseBirthYear(r.birthdate)
     // For beach meets, display position as plain integer instead of time format
     // EXH (exhibition/hors concours) keeps its recorded time/position — only points/standings/
-    // qualification are suppressed. DNS/DNF/DSQ still clear it.
-    const finalTimeDisplay = (status && status !== 'EXH') ? undefined : (
+    // qualification are suppressed. DSQ also keeps the stored time (the UI shows the status, and
+    // clearing a mistaken DSQ restores it); every ranking/seeding query excludes resultstatus > 0.
+    // DNS/DNF still clear it.
+    const finalTimeDisplay = (status === 'DNS' || status === 'DNF') ? undefined : (
       isBeachMeet && r.swimtime != null
         ? String(Math.round(r.swimtime / 1000))
         : msToDisplay(r.swimtime)
@@ -627,8 +629,10 @@ export async function getHeatListSessions(injectedDb?: ReturnType<typeof getLoca
       if (!entryMap.has(r.heatid)) entryMap.set(r.heatid, [])
       const status = decodeResultStatus(r.resultstatus)
       // EXH (exhibition/hors concours) keeps its recorded time/position — only points/standings/
-    // qualification are suppressed. DNS/DNF/DSQ still clear it.
-    const finalTimeDisplay = (status && status !== 'EXH') ? undefined : (
+    // qualification are suppressed. DSQ also keeps the stored time (the UI shows the status, and
+    // clearing a mistaken DSQ restores it); every ranking/seeding query excludes resultstatus > 0.
+    // DNS/DNF still clear it.
+    const finalTimeDisplay = (status === 'DNS' || status === 'DNF') ? undefined : (
         isBeachMeet && r.swimtime != null
           ? String(Math.round(r.swimtime / 1000))
           : msToDisplay(r.swimtime)
@@ -955,7 +959,7 @@ export async function saveResult(
 
   // Live push: notify if a time was written
   if (swimtime != null || resultstatus) {
-    _notifyLivePushForResult(db, swimresultId, swimtime, reactiontime, resultstatus, splits)
+    _notifyLivePushForResult(db, swimresultId, resultstatus === 3 ? null : swimtime, reactiontime, resultstatus, splits)
   }
 }
 
@@ -3245,9 +3249,10 @@ export function setQualification(
     const prelimId = linkedPrelim(finalEvent?.preveventid)
     if (prelimId != null) {
       const prelimResult = db.prepare(
-        `SELECT swimtime, agegroupid FROM swimresult WHERE swimeventid = ? AND athleteid = ?`
-      ).get(prelimId, athleteId) as { swimtime: number | null; agegroupid: number | null } | undefined
-      entryTime = prelimResult?.swimtime ?? null
+        `SELECT swimtime, resultstatus, agegroupid FROM swimresult WHERE swimeventid = ? AND athleteid = ?`
+      ).get(prelimId, athleteId) as { swimtime: number | null; resultstatus: number | null; agegroupid: number | null } | undefined
+      // A DSQ'd (or DNS/DNF) prelim time is not a valid seed time. EXH (4) keeps its time.
+      entryTime = prelimResult && (!prelimResult.resultstatus || prelimResult.resultstatus === 4) ? prelimResult.swimtime ?? null : null
       prelimAgId = prelimResult?.agegroupid ?? null
     }
 
@@ -3273,9 +3278,11 @@ function setQualificationRelay(
   noAdvance: boolean,
 ): void {
   const prelim = db.prepare(
-    `SELECT clubid, teamnumber, name, swimtime, agegroupid FROM relay WHERE relayid = ?`
-  ).get(prelimRelayId) as { clubid: number | null; teamnumber: number | null; name: string | null; swimtime: number | null; agegroupid: number | null } | undefined
+    `SELECT clubid, teamnumber, name, swimtime, resultstatus, agegroupid FROM relay WHERE relayid = ?`
+  ).get(prelimRelayId) as { clubid: number | null; teamnumber: number | null; name: string | null; swimtime: number | null; resultstatus: number | null; agegroupid: number | null } | undefined
   if (!prelim) return
+  // A DSQ'd (or DNS/DNF) prelim time is not a valid seed time. EXH (4) keeps its time.
+  if (prelim.resultstatus && prelim.resultstatus !== 4) prelim.swimtime = null
 
   const existing = db.prepare(
     `SELECT relayid FROM relay WHERE swimeventid = ? AND clubid IS ? AND teamnumber IS ?`

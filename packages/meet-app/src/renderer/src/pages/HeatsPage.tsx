@@ -642,8 +642,9 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
       if (selectedHeatId === null) return prev
       const updated = (prev[selectedHeatId] ?? []).map((e) => {
         if (e.lane !== lane) return e
-        // EXH keeps the recorded time/position — only DNS/DNF/DSQ clear it.
-        const next: LaneEntry = { ...e, status, finalTime: (status && status !== 'EXH') ? undefined : e.finalTime }
+        // EXH and DSQ keep the recorded time (a DSQ time is hidden, not erased, so clearing a
+        // mistaken DSQ restores it) — only DNS/DNF clear it.
+        const next: LaneEntry = { ...e, status, finalTime: (status === 'DNS' || status === 'DNF') ? undefined : e.finalTime }
         const dsqId = status === 'DSQ' ? selectedDsqItemId : null
         saveEntryResult(next, next.finalTime, null, next.status ?? null, next.splitTimes, dsqId)
         return next
