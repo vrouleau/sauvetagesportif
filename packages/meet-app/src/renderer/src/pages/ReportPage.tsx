@@ -142,14 +142,16 @@ export interface PdfHeaderInfo {
   today: string   // formatted date for footer
 }
 
-function buildPdfHeaderInfo(meetInfo: MeetInfo, sections: ReportEventSection[]): PdfHeaderInfo {
+/** Single header/footer definition shared by every report except the timing sheets:
+ *  line 1 = "meet name — report name", line 2 = city + date range. */
+function buildPdfHeaderInfo(meetInfo: MeetInfo, sections: ReportEventSection[], reportType: ReportType): PdfHeaderInfo {
   const dates = [...new Set(sections.map(s => s.sessionDate).filter(Boolean))].sort()
   const dateRange = dates.length > 1
     ? `${dates[0]} - ${dates[dates.length - 1]}`
     : (dates[0] ?? '')
   return {
-    line1: meetInfo.name || tx('Compétition', 'Meet'),
-    line2: `${meetInfo.city}${dateRange ? ', ' + dateRange : ''}`,
+    line1: `${meetInfo.name || tx('Compétition', 'Meet')} — ${REPORT_LABELS[reportLang][reportType]}`,
+    line2: `${meetInfo.city ?? ''}${dateRange ? (meetInfo.city ? ', ' : '') + dateRange : ''}`,
     today: new Date().toLocaleDateString('fr-CA'),
   }
 }
@@ -168,16 +170,12 @@ function generatePdfHtml(
       ? esc(s.eventName)
       : `${esc(prefix)},&nbsp;${esc(s.eventName)}`
     const ageRange = esc(formatAgeRange(s.ageMin, s.ageMax))
-    const dateTimeStr = s.sessionDate
-      ? esc(`${s.sessionDate} - ${s.scheduledTime}`)
-      : esc(s.scheduledTime)
-
     let html = `<div class="ev">
 <table width="100%" cellspacing="0" cellpadding="0" border="0">
 <tr valign="top">
-  <td width="25%">Epreuve ${s.eventNumber}${phaseTag(s.phase)}<br>${dateTimeStr}</td>
-  <td width="50%" align="center">${centerName}<br><br></td>
-  <td width="25%" align="right">${ageRange}<br>${tx('Liste des s&eacute;ries', 'Heat list')}</td>
+  <td width="15%"><b>&Eacute;preuve ${s.eventNumber}${phaseTag(s.phase)}</b></td>
+  <td width="55%" align="center"><b>${centerName}</b></td>
+  <td width="30%" align="right"><em class="f8">${ageRange}</em></td>
 </tr>
 </table>
 <hr class="ev-rule">
@@ -630,14 +628,6 @@ ${categoriesHtml}
 </html>`
 }
 
-function buildCombinedResultsPdfHeaderInfo(meetInfo: MeetInfo): PdfHeaderInfo {
-  return {
-    line1: meetInfo.name || tx('Compétition', 'Meet'),
-    line2: meetInfo.city || '',
-    today: new Date().toLocaleDateString('fr-CA'),
-  }
-}
-
 // ── Beach Numbers (Identifiants plage) PDF generator ─────────────────────────
 
 interface BeachNumberReportRow {
@@ -687,14 +677,6 @@ body { margin: 0; padding: 0; }
 ${html}
 </body>
 </html>`
-}
-
-function buildBeachNumbersPdfHeaderInfo(meetInfo: MeetInfo): PdfHeaderInfo {
-  return {
-    line1: meetInfo.name || tx('Compétition', 'Meet'),
-    line2: meetInfo.city ? `${meetInfo.city} — ${REPORT_LABELS[reportLang].beachNumbers}` : REPORT_LABELS[reportLang].beachNumbers,
-    today: new Date().toLocaleDateString('fr-CA'),
-  }
 }
 
 // ── Entries by Event (Liste des inscriptions par épreuves) PDF generator ──────
@@ -839,14 +821,6 @@ function parseBirthYearEntry(bd: string | number | null): number {
   return m ? Number(m[1]) : 0
 }
 
-function buildEntriesByEventPdfHeaderInfo(meetInfo: MeetInfo): PdfHeaderInfo {
-  return {
-    line1: meetInfo.name || tx('Compétition', 'Meet'),
-    line2: meetInfo.city ? `${meetInfo.city} — ${REPORT_LABELS[reportLang].entriesByEvent}` : REPORT_LABELS[reportLang].entriesByEvent,
-    today: new Date().toLocaleDateString('fr-CA'),
-  }
-}
-
 // ── Point Standings (Classement au points) PDF generator ─────────────────────
 
 interface PointStandingsGroup {
@@ -925,14 +899,6 @@ ${body}
 </html>`
 }
 
-function buildPointStandingsPdfHeaderInfo(meetInfo: MeetInfo): PdfHeaderInfo {
-  return {
-    line1: meetInfo.name || tx('Compétition', 'Meet'),
-    line2: meetInfo.city ? `${meetInfo.city} — Classement au points` : 'Classement au points',
-    today: new Date().toLocaleDateString('fr-CA'),
-  }
-}
-
 // ── Results List (Liste des Résultats) PDF generator ─────────────────────────
 
 interface ResultsListAthleteRow {
@@ -983,14 +949,12 @@ function generateResultsListPdfHtml(
     const prefix = genderPrefix(s.gender, overallMin)
     const centerName = (s.gender === 'X') ? esc(s.eventName) : `${esc(prefix)},&nbsp;${esc(s.eventName)}`
     const ageRange = esc(formatAgeRange(overallMin, overallMax))
-    const dateTimeStr = s.sessionDate ? esc(`${s.sessionDate} - ${s.scheduledTime}`) : esc(s.scheduledTime)
-
     html += `<div class="ev">
 <table width="100%" cellspacing="0" cellpadding="0" border="0">
 <tr valign="top">
-  <td width="25%">Epreuve ${s.eventNumber}${phaseTag(s.phase)}<br>${dateTimeStr}</td>
-  <td width="50%" align="center">${centerName}<br><br></td>
-  <td width="25%" align="right">${ageRange}<br>${tx('Liste des r&eacute;sultats', 'Results list')}</td>
+  <td width="15%"><b>&Eacute;preuve ${s.eventNumber}${phaseTag(s.phase)}</b></td>
+  <td width="55%" align="center"><b>${centerName}</b></td>
+  <td width="30%" align="right"><em class="f8">${ageRange}</em></td>
 </tr>
 </table>
 <hr class="ev-rule">
@@ -1055,14 +1019,6 @@ hr.ev-rule { border: none; border-top: 1px solid black; margin: 2px 0 4px 0; }
 ${html}
 </body>
 </html>`
-}
-
-function buildResultsListPdfHeaderInfo(meetInfo: MeetInfo): PdfHeaderInfo {
-  return {
-    line1: meetInfo.name || tx('Compétition', 'Meet'),
-    line2: meetInfo.city ? `${meetInfo.city} — ${REPORT_LABELS[reportLang].resultsList}` : REPORT_LABELS[reportLang].resultsList,
-    today: new Date().toLocaleDateString('fr-CA'),
-  }
 }
 
 // ── HTML export generator (TOC + hyperlinks, matches reference .htm format) ────
@@ -1476,7 +1432,7 @@ export default function ReportPage({ refreshKey = 0, meetType = 'POOL' }: { refr
       const rows = await dbApi()?.getBeachNumberReport() as BeachNumberReportRow[] | undefined
       pdf = generateBeachNumbersPdfHtml(rows ?? [])
       exported = '' // No HTML export for beachNumbers
-      hdrInfo = buildBeachNumbersPdfHeaderInfo(meetInfo)
+      hdrInfo = buildPdfHeaderInfo(meetInfo, sections, 'beachNumbers')
     } else if (reportType === 'entriesByEvent') {
       // Fetch entries by event from main process
       const eventIds = [...selectedEventIds]
@@ -1485,7 +1441,7 @@ export default function ReportPage({ refreshKey = 0, meetType = 'POOL' }: { refr
       const isBeach = meetType === 'BEACH'
       pdf = generateEntriesByEventPdfHtml(rows ?? [], isBeach, lang)
       exported = '' // No HTML export
-      hdrInfo = buildEntriesByEventPdfHeaderInfo(meetInfo)
+      hdrInfo = buildPdfHeaderInfo(meetInfo, sections, 'entriesByEvent')
     } else if (reportType === 'pointStandings') {
       // Fetch point standings from main process
       const eventIds = [...selectedEventIds]
@@ -1497,7 +1453,7 @@ export default function ReportPage({ refreshKey = 0, meetType = 'POOL' }: { refr
       }
       pdf = generatePointStandingsPdfHtml(data)
       exported = '' // No HTML export
-      hdrInfo = buildPointStandingsPdfHeaderInfo(meetInfo)
+      hdrInfo = buildPdfHeaderInfo(meetInfo, sections, 'pointStandings')
     } else if (reportType === 'resultsList') {
       // Fetch per-event results (split by age group) from main process
       const eventIds = [...selectedEventIds]
@@ -1506,7 +1462,7 @@ export default function ReportPage({ refreshKey = 0, meetType = 'POOL' }: { refr
       const resultsByEvent = new Map((eventRows ?? []).map(e => [e.eventId, e]))
       pdf = generateResultsListPdfHtml(sections, resultsByEvent, meetType === 'BEACH')
       exported = '' // No HTML export for resultsList
-      hdrInfo = buildResultsListPdfHeaderInfo(meetInfo)
+      hdrInfo = buildPdfHeaderInfo(meetInfo, sections, 'resultsList')
     } else if (reportType === 'combinedResults') {
       // Fetch combined results from main process
       const eventIds = [...selectedEventIds]
@@ -1518,7 +1474,7 @@ export default function ReportPage({ refreshKey = 0, meetType = 'POOL' }: { refr
       }
       pdf = generateCombinedResultsPdfHtml(categories)
       exported = '' // No HTML export for combinedResults
-      hdrInfo = buildCombinedResultsPdfHeaderInfo(meetInfo)
+      hdrInfo = buildPdfHeaderInfo(meetInfo, sections, 'combinedResults')
     } else if (reportType === 'startList') {
       // Determine lane range from sessions
       let laneMin = 1
@@ -1533,11 +1489,11 @@ export default function ReportPage({ refreshKey = 0, meetType = 'POOL' }: { refr
       }
       pdf = generateStartListPdfHtml(sections, laneMin, laneMax, meetInfo)
       exported = '' // No HTML export for startList
-      hdrInfo = buildPdfHeaderInfo(meetInfo, sections)
+      hdrInfo = buildPdfHeaderInfo(meetInfo, sections, reportType)
     } else {
       exported = generateHeatListHtml(meetInfo, sections, true)
       pdf = generatePdfHtml(sections)
-      hdrInfo = buildPdfHeaderInfo(meetInfo, sections)
+      hdrInfo = buildPdfHeaderInfo(meetInfo, sections, reportType)
     }
 
     setExportHtml(exported)
@@ -1562,12 +1518,6 @@ export default function ReportPage({ refreshKey = 0, meetType = 'POOL' }: { refr
   }
 
   // ── Print / PDF / HTML ─────────────────────────────────────────────────────
-
-  async function handlePrint() {
-    if (!pdfHtml || !pdfHeaderInfo) return
-    const r = await reportApi()?.print(pdfHtml, pdfHeaderInfo)
-    if (r && !r.ok && !r.canceled) alert(`Erreur impression: ${r.error}`)
-  }
 
   async function handleSavePdf() {
     if (!pdfHtml || !pdfHeaderInfo) return
@@ -1688,13 +1638,6 @@ export default function ReportPage({ refreshKey = 0, meetType = 'POOL' }: { refr
 
           {/* Preview toolbar */}
           <div className="flex items-center gap-1 px-3 py-1.5 bg-gray-200 border-b border-gray-300 shrink-0">
-            <button
-              onClick={handlePrint}
-              disabled={!pdfHtml || generating}
-              className="px-3 py-0.5 text-xs border border-gray-400 bg-white hover:bg-gray-100 disabled:opacity-40"
-            >
-              Imprimer
-            </button>
             <button
               onClick={handleSavePdf}
               disabled={!pdfHtml || generating}
