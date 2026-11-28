@@ -111,7 +111,14 @@ function timingApi() {
   }).api?.timing ?? null
 }
 
-export default function TimingProcessPage({ onGotoHeats }: { onGotoHeats?: () => void }) {
+export default function TimingProcessPage({
+  onGotoHeats,
+  onValidated,
+}: {
+  onGotoHeats?: () => void
+  /** Called after a scan is accepted, with the event/heat it was written to. */
+  onValidated?: (eventNumber: number, heatNumber: number) => void
+}) {
   const [scans, setScans] = useState<ScanRecord[]>([])
   const [currentIndex, setCurrentIndex] = useState(0)
   const [filter, setFilter] = useState<ScanStatus | 'all'>('unprocessed')
@@ -313,6 +320,8 @@ export default function TimingProcessPage({ onGotoHeats }: { onGotoHeats?: () =>
       alert(res.error ?? 'Erreur')
       return
     }
+
+    onValidated?.(target?.eventNumber ?? currentScan.eventNumber, target?.heatNumber ?? currentScan.heatNumber)
 
     // Update local state
     setScans((prev) => {

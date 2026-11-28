@@ -16,7 +16,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with Sauvetage Sportif. If not, see <https://www.gnu.org/licenses/>.
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import EventsPage from './pages/EventsPage'
 import HeatsPage from './pages/HeatsPage'
 import IndividualEntryPageWrapper from './pages/IndividualEntryPageWrapper'
@@ -252,6 +252,9 @@ function SmbStatusDialog({
 
 function AppInner() {
   const [page, setPage] = useState<Page>('events')
+  // Last scan validated in Traitement, and the heat the Heats tab should open on
+  const lastValidatedRef = useRef<{ eventNumber: number; heatNumber: number } | null>(null)
+  const [heatsFocus, setHeatsFocus] = useState<{ eventNumber: number; heatNumber: number } | null>(null)
   const { lang, setLang, t } = useLang()
   useEffect(() => { setDialogLang(lang) }, [lang])
   const [showGeminiConfig, setShowGeminiConfig] = useState(false)
@@ -499,7 +502,7 @@ function AppInner() {
           return (
             <button
               key={p}
-              onClick={() => setPage(p)}
+              onClick={() => { setHeatsFocus(null); setPage(p) }}
               className={`px-5 h-full text-xs font-medium border-r border-gray-600 transition-colors ${
                 page === p
                   ? 'bg-white text-gray-900 shadow-inner'
@@ -528,10 +531,13 @@ function AppInner() {
         {page === 'individualEntries' && <IndividualEntryPageWrapper refreshKey={refreshKey} onImportLxf={handleImportLenex} onExportLxf={handleExportMeetLenex} />}
         {page === 'relayEntries' && <RelayEntryPageWrapper refreshKey={refreshKey} />}
         {page === 'finals' && <FinalsPage refreshKey={refreshKey} meetType={meetType} />}
-        {page === 'heats' && <HeatsPage refreshKey={refreshKey} meetType={meetType} />}
+        {page === 'heats' && <HeatsPage refreshKey={refreshKey} meetType={meetType} focus={heatsFocus} />}
         {page === 'report' && <ReportPage refreshKey={refreshKey} meetType={meetType} />}
         {page === 'scan' && <TimingScanPage />}
-        {page === 'process' && <TimingProcessPage onGotoHeats={() => setPage('heats')} />}
+        {page === 'process' && <TimingProcessPage
+          onValidated={(eventNumber, heatNumber) => { lastValidatedRef.current = { eventNumber, heatNumber } }}
+          onGotoHeats={() => { setHeatsFocus(lastValidatedRef.current); setPage('heats') }}
+        />}
       </div>
 
       {/* Modals */}
