@@ -664,7 +664,7 @@ export default function TimingProcessPage({
                 />
                 {delta && (
                   <div className={`text-xs mt-1 text-center ${DELTA_TEXT_CLASS[delta.level]}`}>
-                    Δ {(delta.ms / 1000).toFixed(2)} s{delta.level === 'bad' ? ' — écart anormal' : delta.level === 'warn' ? ' — à vérifier' : ''}
+                    Δ {(delta.ms / 1000).toFixed(2)} s{delta.level === 'bad' ? ' — écart anormal' : delta.level === 'high' ? ' — écart élevé' : delta.level === 'warn' ? ' — à vérifier' : ''}
                   </div>
                 )}
               </div>
@@ -711,11 +711,12 @@ function parseTimeInput(str: string): number | null {
 }
 
 // Chrono 1 vs Chrono 2 agreement: two watches on the same swimmer should be
-// close. Thresholds in ms: ≤ OK is normal, ≤ WARN is suspicious, above is abnormal.
-const DELTA_OK_MS = 200
-const DELTA_WARN_MS = 500
+// close. Thresholds in ms: up to OK is normal, then increasingly suspicious.
+const DELTA_OK_MS = 500
+const DELTA_WARN_MS = 800
+const DELTA_HIGH_MS = 1200
 
-type DeltaLevel = 'ok' | 'warn' | 'bad'
+type DeltaLevel = 'ok' | 'warn' | 'high' | 'bad'
 
 function chronoDelta(t1: string, t2: string): { ms: number; level: DeltaLevel } | null {
   if (!t1 || !t2) return null
@@ -723,18 +724,22 @@ function chronoDelta(t1: string, t2: string): { ms: number; level: DeltaLevel } 
   const b = parseTimeInput(t2)
   if (a === null || b === null) return null
   const ms = Math.abs(a - b)
-  return { ms, level: ms <= DELTA_OK_MS ? 'ok' : ms <= DELTA_WARN_MS ? 'warn' : 'bad' }
+  const level: DeltaLevel =
+    ms <= DELTA_OK_MS ? 'ok' : ms <= DELTA_WARN_MS ? 'warn' : ms <= DELTA_HIGH_MS ? 'high' : 'bad'
+  return { ms, level }
 }
 
 const DELTA_BOX_CLASS: Record<DeltaLevel | 'none', string> = {
   none: 'border-gray-300',
   ok: 'border-green-500 bg-green-50',
-  warn: 'border-amber-500 bg-amber-50',
+  warn: 'border-amber-400 bg-amber-50',
+  high: 'border-orange-500 bg-orange-50',
   bad: 'border-red-500 bg-red-50',
 }
 
 const DELTA_TEXT_CLASS: Record<DeltaLevel, string> = {
   ok: 'text-green-700',
   warn: 'text-amber-700',
+  high: 'text-orange-700',
   bad: 'text-red-700 font-semibold',
 }
