@@ -245,7 +245,16 @@ function DsqSearchDropdown({ items, value, onChange, disabled, eventType }: {
 
 // ── HeatsPage ─────────────────────────────────────────────────────────────────
 
-export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refreshKey?: number; meetType?: string }) {
+export default function HeatsPage({
+  refreshKey = 0,
+  meetType = 'POOL',
+  focus = null,
+}: {
+  refreshKey?: number
+  meetType?: string
+  /** Event/heat to expand and select once data has loaded (e.g. from the Traitement tab). */
+  focus?: { eventNumber: number; heatNumber: number } | null
+}) {
   const { t, lang } = useLang()
   const isBeach = meetType === 'BEACH'
 
@@ -366,6 +375,24 @@ export default function HeatsPage({ refreshKey = 0, meetType = 'POOL' }: { refre
     // Load DSQ catalog
     api.getDsqItems?.().then((items: any[]) => setDsqItems(items || [])).catch(() => {})
   }, [refreshKey])
+
+  // Jump to a requested event/heat once data has loaded
+  useEffect(() => {
+    if (loading || !focus) return
+    for (const s of sessions) {
+      for (const ev of s.events) {
+        if (ev.isAdmin || ev.number !== focus.eventNumber) continue
+        const heat = ev.heats.find((h) => h.number === focus.heatNumber)
+        if (!heat) continue
+        setExpandedSessions((prev) => new Set(prev).add(s.id))
+        setExpandedEvents((prev) => new Set(prev).add(ev.id))
+        setSelectedHeatId(heat.id)
+        setSelectedEventId(null)
+        setSelectedSessionId(null)
+        return
+      }
+    }
+  }, [loading, focus, sessions])
 
   // ── Refs sync ──────────────────────────────────────────────────────────────
 

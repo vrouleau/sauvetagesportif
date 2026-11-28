@@ -111,7 +111,14 @@ function timingApi() {
   }).api?.timing ?? null
 }
 
-export default function TimingProcessPage() {
+export default function TimingProcessPage({
+  onGotoHeats,
+  onValidated,
+}: {
+  onGotoHeats?: () => void
+  /** Called after a scan is accepted, with the event/heat it was written to. */
+  onValidated?: (eventNumber: number, heatNumber: number) => void
+}) {
   const [scans, setScans] = useState<ScanRecord[]>([])
   const [currentIndex, setCurrentIndex] = useState(0)
   const [filter, setFilter] = useState<ScanStatus | 'all'>('unprocessed')
@@ -314,6 +321,8 @@ export default function TimingProcessPage() {
       return
     }
 
+    onValidated?.(target?.eventNumber ?? currentScan.eventNumber, target?.heatNumber ?? currentScan.heatNumber)
+
     // Update local state
     setScans((prev) => {
       const updated = prev.map((s) =>
@@ -393,12 +402,24 @@ export default function TimingProcessPage() {
     return 'text-gray-400'
   }
 
+  const delta = chronoDelta(editTime1, editTime2)
+
   return (
     <div className="h-full flex flex-col p-4 gap-3">
       {/* Header */}
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-bold">Traitement</h1>
         <div className="flex items-center gap-3">
+          {/* Quick flip to the Heats tab */}
+          {onGotoHeats && (
+            <button
+              onClick={onGotoHeats}
+              className="px-2 py-0.5 text-xs rounded border bg-gray-100 text-gray-700 border-gray-300 hover:bg-gray-200"
+            >
+              Goto Heat
+            </button>
+          )}
+
           {/* Filter */}
           <select
             value={filter}
@@ -627,7 +648,7 @@ export default function TimingProcessPage() {
                   value={editTime1}
                   onChange={(e) => setEditTime1(e.target.value)}
                   placeholder="M:SS.HH"
-                  className="w-full text-lg font-mono text-center border-2 border-gray-300 rounded px-2 py-1 focus:border-blue-500 focus:outline-none"
+                  className={`w-full text-lg font-mono text-center border-2 ${DELTA_BOX_CLASS[delta?.level ?? 'none']} rounded px-2 py-1 focus:border-blue-500 focus:outline-none`}
                 />
               </div>
 
@@ -639,8 +660,13 @@ export default function TimingProcessPage() {
                   value={editTime2}
                   onChange={(e) => setEditTime2(e.target.value)}
                   placeholder="M:SS.HH"
-                  className="w-full text-lg font-mono text-center border-2 border-gray-300 rounded px-2 py-1 focus:border-blue-500 focus:outline-none"
+                  className={`w-full text-lg font-mono text-center border-2 ${DELTA_BOX_CLASS[delta?.level ?? 'none']} rounded px-2 py-1 focus:border-blue-500 focus:outline-none`}
                 />
+                {delta && (
+                  <div className={`text-xs mt-1 text-center ${DELTA_TEXT_CLASS[delta.level]}`}>
+                    Δ {(delta.ms / 1000).toFixed(2)} s{delta.level === 'bad' ? ' — écart anormal' : delta.level === 'high' ? ' — écart élevé' : delta.level === 'warn' ? ' — à vérifier' : ''}
+                  </div>
+                )}
               </div>
 
               {/* Accept */}
@@ -682,4 +708,38 @@ export default function TimingProcessPage() {
 
 function parseTimeInput(str: string): number | null {
   return parseLooseTimeToMs(str)
+}
+
+// Chrono 1 vs Chrono 2 agreement: two watches on the same swimmer should be
+// close. Thresholds in ms: up to OK is normal, then increasingly suspicious.
+const DELTA_OK_MS = 500
+const DELTA_WARN_MS = 800
+const DELTA_HIGH_MS = 1200
+
+type DeltaLevel = 'ok' | 'warn' | 'high' | 'bad'
+
+function chronoDelta(t1: string, t2: string): { ms: number; level: DeltaLevel } | null {
+  if (!t1 || !t2) return null
+  const a = parseTimeInput(t1)
+  const b = parseTimeInput(t2)
+  if (a === null || b === null) return null
+  const ms = Math.abs(a - b)
+  const level: DeltaLevel =
+    ms <= DELTA_OK_MS ? 'ok' : ms <= DELTA_WARN_MS ? 'warn' : ms <= DELTA_HIGH_MS ? 'high' : 'bad'
+  return { ms, level }
+}
+
+const DELTA_BOX_CLASS: Record<DeltaLevel | 'none', string> = {
+  none: 'border-gray-300',
+  ok: 'border-green-500 bg-green-50',
+  warn: 'border-amber-400 bg-amber-50',
+  high: 'border-orange-500 bg-orange-50',
+  bad: 'border-red-500 bg-red-50',
+}
+
+const DELTA_TEXT_CLASS: Record<DeltaLevel, string> = {
+  ok: 'text-green-700',
+  warn: 'text-amber-700',
+  high: 'text-orange-700',
+  bad: 'text-red-700 font-semibold',
 }
